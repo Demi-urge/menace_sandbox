@@ -22,6 +22,9 @@ except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
 from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    get_active_bootstrap_pipeline,
     get_structural_bootstrap_owner as _get_structural_bootstrap_owner,
     normalise_manager_arg,
     prepare_pipeline_for_bootstrap,
@@ -148,25 +151,99 @@ def _prepare_or_wait_for_bootstrap(owner: object | None = None) -> SelfCodingMan
     owner_token = owner if owner is not None else object()
     with structural_bootstrap_owner_guard(owner_token):
         try:
-            _pipeline, _pipeline_promoter = _build_pipeline()
-            orchestrator = get_orchestrator("StructuralEvolutionBot", _get_data_bot(), _get_engine())
-            th = _load_thresholds()
-            _manager = internalize_coding_bot(
-                "StructuralEvolutionBot",
-                _get_engine(),
+            bootstrap_pipeline, bootstrap_manager = None, None
+            bootstrap_promoter: Callable[[object], None] | None = None
+            bootstrap_context = None
+
+            try:
+                bootstrap_pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
+            except Exception:
+                bootstrap_pipeline, bootstrap_manager = None, None
+
+            try:
+                bootstrap_context = _current_bootstrap_context()
+            except Exception:
+                bootstrap_context = None
+
+            if bootstrap_context is not None:
+                if bootstrap_pipeline is None:
+                    bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
+                if bootstrap_manager is None:
+                    bootstrap_manager = getattr(bootstrap_context, "manager", None)
+
+            try:
+                broker = _bootstrap_dependency_broker()
+                broker_pipeline, broker_sentinel = broker.resolve()
+                if bootstrap_pipeline is None:
+                    bootstrap_pipeline = broker_pipeline
+                if bootstrap_manager is None:
+                    bootstrap_manager = broker_sentinel
+            except Exception:
+                bootstrap_pipeline, bootstrap_manager = bootstrap_pipeline, bootstrap_manager
+
+            for candidate in (
+                bootstrap_pipeline,
+                bootstrap_manager,
                 _pipeline,
-                data_bot=_get_data_bot(),
-                bot_registry=_get_registry(),
-                evolution_orchestrator=orchestrator,
-                threshold_service=ThresholdService(),
-                roi_threshold=th.roi_drop,
-                error_threshold=th.error_increase,
-                test_failure_threshold=th.test_failure_increase,
-            )
+                _manager,
+                getattr(bootstrap_context, "pipeline", None)
+                if bootstrap_context is not None
+                else None,
+                getattr(bootstrap_context, "manager", None)
+                if bootstrap_context is not None
+                else None,
+            ):
+                if bootstrap_promoter is None and candidate is not None:
+                    bootstrap_promoter = getattr(candidate, "_pipeline_promoter", None)
+
+            if bootstrap_manager is None and bootstrap_pipeline is not None:
+                try:
+                    bootstrap_manager = getattr(bootstrap_pipeline, "manager", bootstrap_manager)
+                except Exception:
+                    bootstrap_manager = bootstrap_manager
+
+            if (
+                bootstrap_pipeline is None
+                and _pipeline is None
+                and bootstrap_manager is None
+                and not bootstrap_context
+            ):
+                _pipeline, _pipeline_promoter = _build_pipeline()
+            else:
+                if _pipeline is None:
+                    _pipeline = bootstrap_pipeline
+                if _pipeline is None and bootstrap_context is not None:
+                    _pipeline = getattr(bootstrap_context, "pipeline", None)
+                if _pipeline_promoter is None and bootstrap_promoter is not None:
+                    _pipeline_promoter = bootstrap_promoter
+            if _manager is None:
+                _manager = bootstrap_manager
+            if _manager is None and bootstrap_context is not None:
+                _manager = getattr(bootstrap_context, "manager", None)
+            if _pipeline is None and _manager is not None:
+                try:
+                    _pipeline = getattr(_manager, "pipeline", None)
+                except Exception:
+                    _pipeline = None
+            if _manager is None:
+                orchestrator = get_orchestrator("StructuralEvolutionBot", _get_data_bot(), _get_engine())
+                th = _load_thresholds()
+                _manager = internalize_coding_bot(
+                    "StructuralEvolutionBot",
+                    _get_engine(),
+                    _pipeline,
+                    data_bot=_get_data_bot(),
+                    bot_registry=_get_registry(),
+                    evolution_orchestrator=orchestrator,
+                    threshold_service=ThresholdService(),
+                    roi_threshold=th.roi_drop,
+                    error_threshold=th.error_increase,
+                    test_failure_threshold=th.test_failure_increase,
+                )
             globals()["manager"] = _manager
             globals()["data_bot"] = _get_data_bot()
             globals()["registry"] = _get_registry()
-            if _pipeline_promoter is not None:
+            if _pipeline_promoter is not None and _manager is not None:
                 _pipeline_promoter(_manager)
             return _manager
         except BaseException as exc:  # pragma: no cover - propagate and record
