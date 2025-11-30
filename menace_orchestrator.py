@@ -353,8 +353,41 @@ class MenaceOrchestrator:
 
             if bootstrap_pipeline is None and _bootstrap_signals_active():
                 raise RuntimeError(
-                    "bootstrap already active; refusing to start new pipeline until dependencies publish"
+                    "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
                 )
+
+        if bootstrap_pipeline is None and _bootstrap_signals_active():
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            if broker_pipeline is not None:
+                bootstrap_pipeline = broker_pipeline
+                dependency_broker.advertise(
+                    pipeline=bootstrap_pipeline,
+                    sentinel=broker_sentinel,
+                )
+            else:
+                active_promise = getattr(_GLOBAL_BOOTSTRAP_COORDINATOR, "_active", None)
+                if active_promise is not None and not getattr(active_promise, "done", True):
+                    remaining = reuse_wait_timeout
+                    event = getattr(active_promise, "_event", None)
+                    if event is not None:
+                        event.wait(timeout=remaining)
+                    if getattr(active_promise, "done", False):
+                        try:
+                            pipeline_promised, promote_promised = active_promise.wait()
+                            bootstrap_pipeline = pipeline_promised
+                            bootstrap_promoter = promote_promised
+                            dependency_broker.advertise(
+                                pipeline=pipeline_promised,
+                                sentinel=getattr(pipeline_promised, "manager", None),
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed waiting on bootstrap promise before pipeline creation"
+                            )
+                if bootstrap_pipeline is None:
+                    raise RuntimeError(
+                        "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
+                    )
 
         if bootstrap_pipeline is None:
             placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
