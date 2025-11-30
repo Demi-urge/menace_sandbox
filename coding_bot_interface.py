@@ -1913,6 +1913,40 @@ def _bootstrap_dependency_broker() -> _BootstrapDependencyBroker:
     return broker
 
 
+def advertise_bootstrap_placeholder(
+    *,
+    dependency_broker: _BootstrapDependencyBroker | None = None,
+    pipeline: Any | None = None,
+    manager: Any | None = None,
+    owner: bool = True,
+) -> tuple[Any, Any]:
+    """Advertise a bootstrap placeholder pipeline/manager to the broker.
+
+    This ensures downstream imports can reuse an in-flight bootstrap sentinel
+    instead of initiating redundant bootstraps while the real pipeline is
+    being constructed.
+    """
+
+    broker = dependency_broker or _bootstrap_dependency_broker()
+    sentinel = manager or SimpleNamespace(bootstrap_placeholder=True)
+    _mark_bootstrap_placeholder(sentinel)
+
+    pipeline_candidate = pipeline or SimpleNamespace(
+        manager=sentinel,
+        initial_manager=getattr(sentinel, "initial_manager", sentinel),
+        bootstrap_placeholder=True,
+    )
+    try:
+        if getattr(pipeline_candidate, "manager", None) is None:
+            pipeline_candidate.manager = sentinel
+    except Exception:  # pragma: no cover - best effort attribute set
+        logger.debug("failed to attach manager to pipeline placeholder", exc_info=True)
+
+    _mark_bootstrap_placeholder(pipeline_candidate)
+    broker.advertise(pipeline=pipeline_candidate, sentinel=sentinel, owner=owner)
+    return pipeline_candidate, sentinel
+
+
 def _push_bootstrap_context(
     *,
     registry: Any,

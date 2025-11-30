@@ -13,6 +13,10 @@ import threading
 import asyncio
 import uuid
 from dynamic_path_router import resolve_path, get_project_root
+from .coding_bot_interface import advertise_bootstrap_placeholder
+
+_BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder()
+
 from .knowledge_graph import KnowledgeGraph
 
 from .advanced_error_management import AutomatedRollbackManager

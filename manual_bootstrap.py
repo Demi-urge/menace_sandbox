@@ -54,6 +54,13 @@ except ModuleNotFoundError:  # pragma: no cover - sandbox fallback
         "menace_sandbox.coding_bot_interface"
     )
 
+try:
+    _BOOTSTRAP_PLACEHOLDER = _coding_bot_interface.advertise_bootstrap_placeholder()
+except Exception:  # pragma: no cover - placeholder advertisement best effort
+    logging.getLogger(__name__).debug(
+        "failed to advertise manual bootstrap placeholder", exc_info=True
+    )
+
 prepare_pipeline_for_bootstrap = _coding_bot_interface.prepare_pipeline_for_bootstrap
 _DisabledSelfCodingManager = getattr(
     _coding_bot_interface, "_DisabledSelfCodingManager", None

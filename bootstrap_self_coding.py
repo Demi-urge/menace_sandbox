@@ -384,7 +384,7 @@ def bootstrap_self_coding(bot_name: str) -> None:
     from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
     from menace_sandbox.coding_bot_interface import (
         _bootstrap_dependency_broker,
-        _mark_bootstrap_placeholder,
+        advertise_bootstrap_placeholder,
         fallback_helper_manager,
         prepare_pipeline_for_bootstrap,
     )
@@ -426,11 +426,10 @@ def bootstrap_self_coding(bot_name: str) -> None:
                 initial_manager=fallback_manager,
                 bootstrap_placeholder=True,
             )
-            _mark_bootstrap_placeholder(fallback_manager)
-            _mark_bootstrap_placeholder(placeholder_pipeline)
-            _bootstrap_dependency_broker().advertise(
+            advertise_bootstrap_placeholder(
+                dependency_broker=_bootstrap_dependency_broker(),
                 pipeline=placeholder_pipeline,
-                sentinel=fallback_manager,
+                manager=fallback_manager,
                 owner=True,
             )
             return prepare_pipeline_for_bootstrap(
