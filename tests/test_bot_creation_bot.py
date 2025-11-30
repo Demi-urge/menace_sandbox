@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,81 @@ def _metrics(tmp_path):
         )
     )
     return mdb
+
+
+def _reset_pipeline_state():
+    bcb._pipeline_instance = None
+    bcb._pipeline_promoter = None
+
+
+def test_pipeline_reuses_dependency_broker(monkeypatch, caplog):
+    pipeline = SimpleNamespace(manager=object(), _pipeline_promoter=lambda _: None)
+    advertisements: list[tuple[object | None, object | None]] = []
+
+    class DummyBroker:
+        def resolve(self):
+            return pipeline, pipeline.manager
+
+        def advertise(self, *, pipeline=None, sentinel=None):
+            advertisements.append((pipeline, sentinel))
+
+    monkeypatch.setattr(bcb, "_bootstrap_dependency_broker", lambda: DummyBroker())
+    monkeypatch.setattr(bcb, "get_active_bootstrap_pipeline", lambda: (None, None))
+    monkeypatch.setattr(bcb, "_pipeline_instance", None)
+    monkeypatch.setattr(bcb, "_pipeline_promoter", None)
+    monkeypatch.setattr(bcb, "_get_pipeline_cls", lambda: type("Dummy", (), {}))
+    monkeypatch.setattr(
+        bcb,
+        "prepare_pipeline_for_bootstrap",
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("should not prepare when broker pipeline available")
+        ),
+    )
+    caplog.set_level("INFO", logger=bcb.logger.name)
+
+    try:
+        assert bcb._get_pipeline_instance() is pipeline
+    finally:
+        _reset_pipeline_state()
+
+    assert advertisements == [(pipeline, pipeline.manager)]
+    assert "bot-creation-bootstrap-reuse" in caplog.text
+
+
+def test_pipeline_prepare_advertises(monkeypatch, caplog):
+    pipeline = SimpleNamespace(manager=object())
+    def promoter(manager):
+        return manager
+
+    advertisements: list[tuple[object | None, object | None]] = []
+
+    class DummyBroker:
+        def resolve(self):
+            return None, None
+
+        def advertise(self, *, pipeline=None, sentinel=None):
+            advertisements.append((pipeline, sentinel))
+
+    monkeypatch.setattr(bcb, "_bootstrap_dependency_broker", lambda: DummyBroker())
+    monkeypatch.setattr(bcb, "get_active_bootstrap_pipeline", lambda: (None, None))
+    monkeypatch.setattr(bcb, "_pipeline_instance", None)
+    monkeypatch.setattr(bcb, "_pipeline_promoter", None)
+    monkeypatch.setattr(bcb, "_get_pipeline_cls", lambda: type("Dummy", (), {}))
+    monkeypatch.setattr(
+        bcb,
+        "prepare_pipeline_for_bootstrap",
+        lambda **_: (pipeline, promoter),
+    )
+    caplog.set_level("INFO", logger=bcb.logger.name)
+
+    try:
+        assert bcb._get_pipeline_instance() is pipeline
+        assert bcb._pipeline_promoter is promoter
+    finally:
+        _reset_pipeline_state()
+
+    assert advertisements[-1] == (pipeline, pipeline.manager)
+    assert "bot-creation-bootstrap-prepare" in caplog.text
 
 
 def _ctx_builder():
