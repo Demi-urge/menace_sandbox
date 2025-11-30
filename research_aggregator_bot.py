@@ -278,15 +278,31 @@ def _ensure_runtime_dependencies(
         cached = _bootstrap_pipeline_cache.get(owner)
         if cached is not None:
             pipeline_hint, promote_pipeline, manager_override = cached
+            try:
+                dependency_broker.advertise(
+                    pipeline=pipeline_hint,
+                    sentinel=manager_override,
+                    owner=owner is not False,
+                )
+            except Exception:  # pragma: no cover - broker propagation best effort
+                logger.debug(
+                    "Failed to propagate cached bootstrap broker state", exc_info=True
+                )
 
     pipeline_override = pipeline_hint
 
     dependency_broker = _bootstrap_dependency_broker()
+    if dependency_broker is None:
+        raise RuntimeError(
+            "Bootstrap dependency broker unavailable; cannot initialise ResearchAggregatorBot"
+        )
+
     broker_active_pipeline = getattr(dependency_broker, "active_pipeline", None)
     broker_active_sentinel = getattr(dependency_broker, "active_sentinel", None)
     broker_active_owner = bool(getattr(dependency_broker, "active_owner", False))
     placeholder_pipeline: object | None = None
     placeholder_manager: object | None = None
+    broker_placeholder_seeded = False
     if _runtime_state is None:
         try:
             placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
@@ -297,14 +313,20 @@ def _ensure_runtime_dependencies(
                 else getattr(bootstrap_context, "manager", None),
                 owner=owner is not False,
             )
+            broker_placeholder_seeded = True
         except Exception:  # pragma: no cover - best effort broker seeding
-            logger.debug(
-                "Failed to advertise early bootstrap placeholder for ResearchAggregatorBot",
+            logger.warning(
+                "Failed to advertise early bootstrap placeholder; bootstrap helpers may re-initialise",
                 exc_info=True,
             )
 
-    if dependency_broker is None:
-        dependency_broker = _bootstrap_dependency_broker()
+    if not broker_placeholder_seeded and not _looks_like_pipeline_candidate(
+        broker_active_pipeline
+    ):
+        warnings.warn(
+            "No bootstrap dependency broker placeholder available; refusing implicit pipeline construction",
+            RuntimeWarning,
+        )
 
     if _runtime_state is not None:
         _ensure_self_coding_decorated(_runtime_state)
@@ -314,15 +336,40 @@ def _ensure_runtime_dependencies(
         if _runtime_placeholder is not None:
             return _runtime_placeholder
 
-        reg = registry if registry is not None else BotRegistry()
-        dbot = data_bot if data_bot is not None else DataBot(start_server=False)
+        sentinel_seed = (
+            manager_override
+            if manager_override is not None
+            else placeholder_manager
+            if placeholder_manager is not None
+            else broker_active_sentinel
+        )
+        pipeline_seed = (
+            pipeline_override
+            or pipeline
+            or pipeline_hint
+            or placeholder_pipeline
+            or broker_active_pipeline
+        )
+
+        reg = (
+            registry
+            if registry is not None
+            else BotRegistry(bootstrap=bool(sentinel_seed))
+        )
+        dbot = (
+            data_bot
+            if data_bot is not None
+            else DataBot(start_server=False, bootstrap=bool(sentinel_seed))
+        )
         ctx_builder = _context_builder
         if ctx_builder is None:
-            ctx_builder = create_context_builder()
+            ctx_builder = create_context_builder(bootstrap_safe=bool(sentinel_seed))
         eng = engine if engine is not None else SelfCodingEngine(
             CodeDB(),
             GPTMemoryManager(),
             context_builder=ctx_builder,
+            pipeline=pipeline_seed,
+            data_bot=dbot,
         )
 
         _runtime_placeholder = _RuntimeDependencies(
@@ -338,17 +385,40 @@ def _ensure_runtime_dependencies(
         )
         return _runtime_placeholder
 
-    reg = registry if registry is not None else BotRegistry()
-    dbot = data_bot if data_bot is not None else DataBot(start_server=False)
+    sentinel_seed = (
+        manager_override
+        if manager_override is not None
+        else placeholder_manager
+        if placeholder_manager is not None
+        else broker_active_sentinel
+    )
+    pipeline_seed = (
+        pipeline_override
+        or pipeline
+        or pipeline_hint
+        or placeholder_pipeline
+        or broker_active_pipeline
+    )
+
+    reg = (
+        registry if registry is not None else BotRegistry(bootstrap=bool(sentinel_seed))
+    )
+    dbot = (
+        data_bot
+        if data_bot is not None
+        else DataBot(start_server=False, bootstrap=bool(sentinel_seed))
+    )
 
     ctx_builder = _context_builder
     if ctx_builder is None:
-        ctx_builder = create_context_builder()
+        ctx_builder = create_context_builder(bootstrap_safe=bool(sentinel_seed))
 
     eng = engine if engine is not None else SelfCodingEngine(
         CodeDB(),
         GPTMemoryManager(),
         context_builder=ctx_builder,
+        pipeline=pipeline_seed,
+        data_bot=dbot,
     )
 
     _runtime_initializing = True
@@ -622,6 +692,16 @@ def _ensure_runtime_dependencies(
                     raise RuntimeError(message)
 
                 if pipe is None:
+                    if not broker_placeholder_seeded and not _looks_like_pipeline_candidate(
+                        broker_active_pipeline
+                    ):
+                        message = (
+                            "Bootstrap dependency broker missing placeholder; refusing to "
+                            "construct a new pipeline for ResearchAggregatorBot"
+                        )
+                        logger.error(message)
+                        raise RuntimeError(message)
+
                     pipeline_manager_hint = (
                         manager_override
                         if manager_override is not None
