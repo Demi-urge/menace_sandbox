@@ -199,6 +199,14 @@ class MenaceOrchestrator:
         bootstrap_heartbeat = None
         dependency_broker = _bootstrap_dependency_broker()
         broker_pipeline, broker_sentinel = dependency_broker.resolve()
+        if broker_pipeline is not None or broker_sentinel is not None:
+            dependency_broker.advertise(
+                pipeline=broker_pipeline, sentinel=broker_sentinel, owner=False
+            )
+        else:
+            broker_pipeline, broker_sentinel = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker, owner=False
+            )
         owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
         guard_promise = (
             _peek_owner_promise(owner_guard) if owner_guard is not None else None
@@ -224,10 +232,16 @@ class MenaceOrchestrator:
 
         self.pipeline_promoter: Callable[[Any], None] | None = None
         def _bootstrap_signals_active() -> bool:
+            single_flight_promise = getattr(
+                _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+            )()
             return (
                 bootstrap_context is not None
                 or bool(bootstrap_heartbeat)
                 or guard_promise is not None
+                or broker_sentinel is not None
+                or (single_flight_promise is not None
+                    and not getattr(single_flight_promise, "done", True))
             )
 
         if broker_pipeline is None and _bootstrap_signals_active():
@@ -255,7 +269,9 @@ class MenaceOrchestrator:
             wait_start = time.perf_counter()
             backoff = 0.05
             while bootstrap_pipeline is None and _bootstrap_signals_active():
-                active_promise = getattr(_GLOBAL_BOOTSTRAP_COORDINATOR, "_active", None)
+                active_promise = getattr(
+                    _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+                )()
                 if active_promise is not None and not getattr(active_promise, "done", True):
                     remaining = None
                     if reuse_wait_timeout is not None:
@@ -370,7 +386,9 @@ class MenaceOrchestrator:
                     sentinel=broker_sentinel,
                 )
             else:
-                active_promise = getattr(_GLOBAL_BOOTSTRAP_COORDINATOR, "_active", None)
+                active_promise = getattr(
+                    _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+                )()
                 if active_promise is not None and not getattr(active_promise, "done", True):
                     remaining = reuse_wait_timeout
                     event = getattr(active_promise, "_event", None)
@@ -394,7 +412,40 @@ class MenaceOrchestrator:
                         "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
                     )
 
-        if bootstrap_pipeline is None:
+        single_flight_promise = getattr(
+            _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+        )()
+        single_flight_active = single_flight_promise is not None and not getattr(
+            single_flight_promise, "done", True
+        )
+
+        if bootstrap_pipeline is None and (broker_sentinel is not None or single_flight_active):
+            if single_flight_active:
+                event = getattr(single_flight_promise, "_event", None)
+                if event is not None:
+                    event.wait(timeout=reuse_wait_timeout)
+                if getattr(single_flight_promise, "done", False):
+                    try:
+                        promised_pipeline, promised_promoter = single_flight_promise.wait()
+                        bootstrap_pipeline = promised_pipeline
+                        bootstrap_promoter = promised_promoter
+                        broker_sentinel = getattr(bootstrap_pipeline, "manager", broker_sentinel)
+                    except Exception:
+                        self.logger.exception(
+                            "failed waiting on bootstrap promise before pipeline creation"
+                        )
+
+            if bootstrap_pipeline is None:
+                bootstrap_pipeline = broker_pipeline or SimpleNamespace(
+                    manager=broker_sentinel
+                )
+            dependency_broker.advertise(
+                pipeline=bootstrap_pipeline,
+                sentinel=broker_sentinel,
+                owner=False,
+            )
+
+        if bootstrap_pipeline is None and broker_sentinel is None and not single_flight_active:
             placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
             placeholder_data_bot = _bootstrap_helper_stub("menace_orchestrator.data_bot")
             component_budgets = compute_prepare_pipeline_component_budgets()
@@ -433,7 +484,7 @@ class MenaceOrchestrator:
                     "bootstrap_heartbeat": bool(bootstrap_heartbeat),
                 },
             )
-        self.pipeline_manager = getattr(self.pipeline, "manager", None)
+        self.pipeline_manager = getattr(self.pipeline, "manager", None) or broker_sentinel
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
         self.ad_client = ad_client or AdIntegration()
