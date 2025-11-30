@@ -51,6 +51,110 @@ def capture(monkeypatch, tmp_path):
     return events
 
 
+def test_main_reuses_broker_placeholder(monkeypatch, tmp_path):
+    class DummyContextBuilder:
+        def refresh_db_weights(self):
+            return {"ok": True}
+
+    builder = DummyContextBuilder()
+    placeholder = SimpleNamespace()
+    sentinel = object()
+    broker = object()
+    monkeypatch.setattr(sw, "_BOOTSTRAP_PLACEHOLDER", placeholder)
+    monkeypatch.setattr(sw, "_BOOTSTRAP_SENTINEL", sentinel)
+    monkeypatch.setattr(sw, "_BOOTSTRAP_BROKER", broker)
+    monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+
+    def _fail_prepare(*_a, **_k):
+        raise AssertionError("prepare_pipeline_for_bootstrap should not run")
+
+    monkeypatch.setattr(sw, "prepare_pipeline_for_bootstrap", _fail_prepare)
+
+    claim_calls: list[dict] = []
+    promotions: list = []
+
+    def _claim(**kwargs):
+        claim_calls.append(kwargs)
+        pipeline = SimpleNamespace(manager=sentinel)
+
+        def _promote(manager):
+            promotions.append(manager)
+
+        return pipeline, _promote, sentinel, False
+
+    monkeypatch.setattr(sw, "claim_bootstrap_dependency_entry", _claim)
+
+    class DummyManager:
+        pass
+
+    class DummyEngine:
+        def __init__(self, *_a, **_k):
+            pass
+
+    class DummyLogger:
+        def __init__(self, *_a, **_k):
+            pass
+
+    class DummyRegistry:
+        def __init__(self, *_a, **_k):
+            pass
+
+    class DummyDataBot:
+        def __init__(self, *_a, **_k):
+            pass
+
+    monkeypatch.setattr(sw, "ContextBuilder", DummyContextBuilder)
+    monkeypatch.setattr(sw, "SelfCodingEngine", DummyEngine)
+    monkeypatch.setattr(sw, "CodeDB", lambda: object())
+    monkeypatch.setattr(sw, "MenaceMemoryManager", lambda: object())
+    monkeypatch.setattr(sw, "TelemetryFeedback", lambda *a, **k: DummyLogger())
+    monkeypatch.setattr(sw, "ErrorLogger", lambda *a, **k: DummyLogger())
+    monkeypatch.setattr(sw, "BotRegistry", DummyRegistry)
+    monkeypatch.setattr(sw, "DataBot", DummyDataBot)
+    monkeypatch.setattr(sw, "ModelAutomationPipeline", object)
+    monkeypatch.setattr(sw, "SelfCodingManager", DummyManager)
+    monkeypatch.setattr(sw, "internalize_coding_bot", lambda *_a, **_k: DummyManager())
+    monkeypatch.setattr(
+        sw,
+        "get_thresholds",
+        lambda *_a, **_k: SimpleNamespace(
+            roi_drop=0.1, error_increase=0.2, test_failure_increase=0.3
+        ),
+    )
+    monkeypatch.setattr(sw, "persist_sc_thresholds", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test")
+    monkeypatch.setattr(sw, "_expected_account_id", lambda *_a, **_k: None)
+    monkeypatch.setattr(sw, "_read_last_run_ts", lambda: None)
+    monkeypatch.setattr(sw, "load_local_ledger", lambda *_a, **_k: [])
+    monkeypatch.setattr(sw, "load_billing_logs", lambda *_a, **_k: [])
+    monkeypatch.setattr(sw, "load_approved_workflows", lambda: set())
+    monkeypatch.setattr(sw, "_allowed_account_ids", lambda: set())
+    monkeypatch.setattr(sw, "fetch_recent_charges", lambda *_a, **_k: [])
+    monkeypatch.setattr(sw, "fetch_recent_refunds", lambda *_a, **_k: [])
+    monkeypatch.setattr(sw, "fetch_recent_events", lambda *_a, **_k: [])
+    monkeypatch.setattr(sw, "_fetch_and_apply_recent_issues", lambda: None)
+    monkeypatch.setattr(sw, "detect_account_mismatches", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "detect_unauthorized_charges", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "detect_missing_charges", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "detect_unauthorized_refunds", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "detect_missing_refunds", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "detect_unauthorized_failures", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "detect_event_anomalies", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "detect_revenue_mismatches", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "_emit_anomaly_summaries", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "compare_revenue_window", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "_refresh_instruction_cache", lambda: None)
+    monkeypatch.setattr(sw, "_update_last_run_ts", lambda *_a, **_k: None)
+
+    sw.main([], context_builder=builder)
+
+    assert claim_calls, "claim_bootstrap_dependency_entry was not invoked"
+    kwargs = claim_calls[0]
+    assert kwargs["dependency_broker"] is broker
+    assert kwargs["pipeline"] is placeholder
+    assert kwargs["manager"] is sentinel
+    assert promotions and isinstance(promotions[0], DummyManager)
+
 def test_orphan_charge_logged(capture, monkeypatch):
     events = capture
 

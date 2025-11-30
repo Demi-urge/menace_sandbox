@@ -47,9 +47,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+import alert_dispatcher
 import audit_logger
 import yaml
-import alert_dispatcher
 from dynamic_path_router import resolve_path
 from audit_trail import AuditTrail
 from logging.handlers import RotatingFileHandler
@@ -58,7 +58,12 @@ import shutil
 import types
 from snippet_compressor import compress_snippets
 
+from bootstrap_placeholder import advertise_broker_placeholder
+from coding_bot_interface import claim_bootstrap_dependency_entry, prepare_pipeline_for_bootstrap
+
 logger = logging.getLogger(__name__)
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = advertise_broker_placeholder()
 
 try:  # pragma: no cover - fail fast if self-coding manager missing
     from self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -66,8 +71,6 @@ except Exception as exc:  # pragma: no cover - critical dependency
     raise RuntimeError(
         "stripe_watchdog requires SelfCodingManager; install self-coding dependencies."
     ) from exc
-
-from coding_bot_interface import prepare_pipeline_for_bootstrap
 
 try:  # pragma: no cover - best effort to import sanity layer
     import menace_sanity_layer
@@ -1941,7 +1944,15 @@ def main(
                 bus = _SHARED_EVENT_BUS
                 registry = BotRegistry(event_bus=bus) if BotRegistry else None
                 data_bot = DataBot(event_bus=bus) if DataBot else None
-                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                (
+                    pipeline,
+                    promote_pipeline,
+                    manager,
+                    _prepared,
+                ) = claim_bootstrap_dependency_entry(
+                    dependency_broker=_BOOTSTRAP_BROKER,
+                    pipeline=_BOOTSTRAP_PLACEHOLDER,
+                    manager=_BOOTSTRAP_SENTINEL,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=builder,
                     event_bus=bus,
@@ -1971,7 +1982,8 @@ def main(
                     raise RuntimeError(
                         "internalize_coding_bot failed to return a SelfCodingManager"
                     )
-                promote_pipeline(manager)
+                if promote_pipeline:
+                    promote_pipeline(manager)
                 telemetry = TelemetryFeedback(
                     ErrorLogger(context_builder=builder),
                     manager,
