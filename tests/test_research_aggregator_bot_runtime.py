@@ -809,6 +809,47 @@ def test_bootstrap_depth_blocks_new_pipeline(monkeypatch):
     module.prepare_pipeline_for_bootstrap.assert_not_called()
 
 
+def test_bootstrap_requires_injected_pipeline(monkeypatch):
+    """Bootstrap mode refuses to create a pipeline when none was injected."""
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        mock_registry.return_value = mock.Mock(name="registry")
+        mock_data_bot.return_value = mock.Mock(name="data_bot")
+        module = _import_fresh()
+
+    broker = SimpleNamespace(
+        resolve=lambda: (None, None),
+        active_pipeline=None,
+        active_sentinel=None,
+    )
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(depth=1, helper_promotion_callbacks=[mock.Mock()])
+    module._bootstrap_dependency_broker = lambda: broker
+    module._current_bootstrap_context = lambda: None
+    module._peek_owner_promise = lambda *_a, **_k: None
+    module._GLOBAL_BOOTSTRAP_COORDINATOR = SimpleNamespace(peek_active=lambda: None)
+    module._using_bootstrap_sentinel = lambda *_a, **_k: False
+    module.read_bootstrap_heartbeat = lambda: {"ts": time.time()}
+    module._resolve_bootstrap_wait_timeout = lambda *_a, **_k: 0.0
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+    module.advertise_bootstrap_placeholder = mock.Mock(return_value=(None, None))
+
+    monkeypatch.setattr(module, "create_context_builder", lambda: mock.Mock(name="builder"))
+    monkeypatch.setattr(module, "SelfCodingEngine", lambda *_a, **_k: mock.Mock())
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", lambda: object)
+
+    with pytest.raises(RuntimeError, match="Active bootstrap requires an injected"):
+        module._ensure_runtime_dependencies()
+
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
 def test_active_heartbeat_uses_broker_pipeline(monkeypatch):
     """A heartbeat with advertised dependencies should reuse the broker pipeline."""
 

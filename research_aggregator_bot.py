@@ -213,7 +213,13 @@ def _ensure_runtime_dependencies(
     manager_override: SelfCodingManager | None = None,
     promote_pipeline: Callable[[SelfCodingManager | None], None] | None = None,
 ) -> _RuntimeDependencies:
-    """Instantiate heavy runtime helpers on demand."""
+    """Instantiate heavy runtime helpers on demand.
+
+    During bootstrap the pipeline and manager must be injected (directly or via
+    the dependency broker).  The bootstrap path will refuse to spin up a fresh
+    pipeline and instead reuses any advertised placeholder/promise, raising an
+    explicit error when nothing has been provided.
+    """
 
     global registry
     global data_bot
@@ -275,6 +281,8 @@ def _ensure_runtime_dependencies(
     pipeline_override = pipeline_hint
 
     dependency_broker = _bootstrap_dependency_broker()
+    broker_active_pipeline = getattr(dependency_broker, "active_pipeline", None)
+    broker_active_sentinel = getattr(dependency_broker, "active_sentinel", None)
     placeholder_pipeline: object | None = None
     placeholder_manager: object | None = None
     if _runtime_state is None:
@@ -453,6 +461,35 @@ def _ensure_runtime_dependencies(
         if pipe is None:
             bootstrap_active = _is_bootstrap_active()
             if bootstrap_active:
+                broker_pipeline, broker_manager = dependency_broker.resolve()
+                if (
+                    pipe is None
+                    and not _looks_like_pipeline_candidate(broker_pipeline)
+                    and _looks_like_pipeline_candidate(broker_active_pipeline)
+                ):
+                    broker_pipeline = broker_active_pipeline
+                    broker_manager = broker_manager or broker_active_sentinel
+                if _looks_like_pipeline_candidate(broker_pipeline):
+                    pipe = broker_pipeline
+                    if manager_override is None and manager is None:
+                        manager_override = broker_manager
+                if pipe is None and broker_active_pipeline is not None:
+                    pipe = broker_active_pipeline
+                    if manager_override is None:
+                        manager_override = broker_active_sentinel
+                if pipe is None and placeholder_pipeline is not None:
+                    pipe = placeholder_pipeline
+                    if manager_override is None and placeholder_manager is not None:
+                        manager_override = placeholder_manager
+                if pipe is None:
+                    waited = time.perf_counter() - wait_start
+                    raise RuntimeError(
+                        "Active bootstrap requires an injected ModelAutomationPipeline "
+                        "or manager; none available after waiting "
+                        f"{wait_timeout if wait_timeout is not None else round(waited, 3)}s "
+                        f"(waited {round(waited, 3)}s)"
+                    )
+            if pipe is None:
                 waited = time.perf_counter() - wait_start
                 raise TimeoutError(
                     "Active bootstrap detected but no dependency broker or active promise advertised a ModelAutomationPipeline "
@@ -1437,7 +1474,13 @@ class InfoDB(EmbeddableDBMixin):
 
 
 class ResearchAggregatorBot:
-    """Collects, refines and stores research with energy-based depth."""
+    """Collects, refines and stores research with energy-based depth.
+
+    When running under bootstrap, callers must provide the active
+    ``ModelAutomationPipeline`` and/or ``SelfCodingManager`` (directly or via
+    the dependency broker).  The bot will not construct a new pipeline while
+    bootstrap coordination is in progress.
+    """
 
     def __init__(
         self,
