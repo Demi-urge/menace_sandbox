@@ -5555,6 +5555,63 @@ def _prepare_pipeline_for_bootstrap_impl(
         dependency_broker.advertise(owner=True)
         dependency_owner_reset = True
     active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+    active_heartbeat = read_bootstrap_heartbeat()
+    heartbeat_bootstrap_active = bool(active_heartbeat)
+    broker_active = bool(broker_pipeline or broker_sentinel)
+    if guard_enabled and heartbeat_bootstrap_active:
+        if active_promise is not None:
+            active_promise.waiters += 1
+            logger.info(
+                "prepare_pipeline.bootstrap.heartbeat_reuse_promise",
+                extra={
+                    "event": "prepare-pipeline-bootstrap-heartbeat-reuse-promise",
+                    "waiters": active_promise.waiters,
+                    "dependency_broker": broker_active,
+                    "heartbeat": bool(active_heartbeat),
+                },
+            )
+            try:
+                return active_promise.wait()
+            finally:
+                if dependency_owner_reset:
+                    dependency_broker.advertise(owner=False)
+        if broker_active:
+            if broker_pipeline is None:
+                broker_pipeline = SimpleNamespace(
+                    manager=broker_sentinel,
+                    initial_manager=broker_sentinel,
+                    bootstrap_placeholder=True,
+                )
+                _mark_bootstrap_placeholder(broker_pipeline)
+
+            def _reuse_promote(real_manager: Any) -> None:
+                if real_manager is None:
+                    return
+                _assign_bootstrap_manager_placeholder(
+                    broker_pipeline,
+                    real_manager,
+                    propagate_nested=True,
+                )
+
+            dependency_broker.advertise(
+                pipeline=broker_pipeline, sentinel=broker_sentinel, owner=True
+            )
+            if dependency_owner_reset:
+                dependency_owner_reset = False
+            logger.info(
+                "prepare_pipeline.bootstrap.heartbeat_broker_reuse",
+                extra={
+                    "event": "prepare-pipeline-bootstrap-heartbeat-broker-reuse",
+                    "dependency_broker": True,
+                    "pipeline_candidate": getattr(
+                        getattr(broker_pipeline, "__class__", None),
+                        "__name__",
+                        str(type(broker_pipeline)),
+                    ),
+                    "heartbeat": bool(active_heartbeat),
+                },
+            )
+            return broker_pipeline, _reuse_promote
     if not guard_enabled:
         if active_promise is not None:
             logger.info(
@@ -5631,6 +5688,20 @@ def _prepare_pipeline_for_bootstrap_impl(
             if active_promise is not None:
                 return active_promise.wait()
             raise RuntimeError("bootstrap recursion refused without reusable sentinel")
+        if active_promise is not None:
+            telemetry = {
+                "event": "prepare-pipeline-bootstrap-recursion-deferred",
+                "owner_guard": getattr(
+                    getattr(active_owner_guard, "__class__", None), "__name__", str(active_owner_guard)
+                ),
+                "owner_depth": active_owner_depth,
+                "has_active_promise": True,
+                "active_waiters": active_promise.waiters,
+                "dependency_broker": broker_active,
+                "heartbeat": bool(active_heartbeat),
+            }
+            logger.info("prepare_pipeline.bootstrap.recursion_deferred", extra=telemetry)
+            return active_promise.wait()
     single_flight_owner = True
     single_flight_promise: _BootstrapPipelinePromise | None = None
     if guard_enabled:
@@ -5778,7 +5849,7 @@ def _prepare_pipeline_for_bootstrap_impl_inner(
 
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     active_guard_token = getattr(_BOOTSTRAP_STATE, "active_bootstrap_token", None)
-    active_heartbeat = read_bootstrap_heartbeat()
+    active_heartbeat = active_heartbeat or read_bootstrap_heartbeat()
     sentinel_candidate = manager_override or manager_sentinel
     dependency_broker = _bootstrap_dependency_broker()
     broker_pipeline, broker_sentinel = dependency_broker.resolve()
