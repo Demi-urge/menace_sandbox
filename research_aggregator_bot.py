@@ -329,6 +329,15 @@ def _ensure_runtime_dependencies(
 
     success = False
 
+    def _is_bootstrap_active() -> bool:
+        heartbeat = read_bootstrap_heartbeat()
+        return bool(
+            getattr(_BOOTSTRAP_STATE, "depth", 0)
+            or guard_promise is not None
+            or _current_bootstrap_context() is not None
+            or heartbeat
+        )
+
     try:
         pipeline_cls = _PipelineCls if _PipelineCls is not None else _resolve_pipeline_cls()
         promote_pipeline = promote_pipeline or _active_bootstrap_promoter()
@@ -348,41 +357,33 @@ def _ensure_runtime_dependencies(
             pipe = pipeline
         elif _looks_like_pipeline_candidate(pipeline_hint):
             pipe = pipeline_hint
-        if pipe is None and guard_promise is not None:
-            wait_timeout = _resolve_bootstrap_wait_timeout()
-            wait_start = time.perf_counter()
-            while pipe is None:
-                broker_pipeline, broker_manager = dependency_broker.resolve()
-                if manager_override is None and manager is None and broker_manager is not None:
+        wait_timeout = _resolve_bootstrap_wait_timeout()
+        wait_start = time.perf_counter()
+        while pipe is None and _is_bootstrap_active():
+            broker_pipeline, broker_manager = dependency_broker.resolve()
+            if manager_override is None and manager is None and broker_manager is not None:
+                manager_override = broker_manager
+            if _looks_like_pipeline_candidate(broker_pipeline):
+                pipe = broker_pipeline
+                if (
+                    manager_override is None
+                    and manager is None
+                    and broker_manager is not None
+                ):
                     manager_override = broker_manager
-                if _looks_like_pipeline_candidate(broker_pipeline):
-                    pipe = broker_pipeline
-                    if (
-                        manager_override is None
-                        and manager is None
-                        and broker_manager is not None
-                    ):
-                        manager_override = broker_manager
+                break
+
+            bootstrap_context = _current_bootstrap_context()
+            if bootstrap_context is not None:
+                context_pipeline = getattr(bootstrap_context, "pipeline", None)
+                if _looks_like_pipeline_candidate(context_pipeline):
+                    pipe = context_pipeline
+                    if manager_override is None:
+                        context_manager = getattr(bootstrap_context, "manager", None)
+                        if context_manager is not None:
+                            manager_override = context_manager
                     break
 
-                bootstrap_context = _current_bootstrap_context()
-                if bootstrap_context is not None:
-                    context_pipeline = getattr(bootstrap_context, "pipeline", None)
-                    if _looks_like_pipeline_candidate(context_pipeline):
-                        pipe = context_pipeline
-                        if manager_override is None:
-                            context_manager = getattr(bootstrap_context, "manager", None)
-                            if context_manager is not None:
-                                manager_override = context_manager
-                        break
-
-                if wait_timeout is not None and (
-                    time.perf_counter() - wait_start
-                ) >= wait_timeout:
-                    break
-                time.sleep(0.01)
-
-        if pipe is None:
             guard_pipeline, guard_manager = get_active_bootstrap_pipeline()
             if _looks_like_pipeline_candidate(guard_pipeline):
                 pipe = guard_pipeline
@@ -391,64 +392,36 @@ def _ensure_runtime_dependencies(
                 guard_promoter = _active_bootstrap_promoter()
                 if guard_promoter is not None:
                     promote_pipeline = guard_promoter
+                break
+
+            if wait_timeout is not None and (time.perf_counter() - wait_start) >= wait_timeout:
+                break
+            time.sleep(0.01)
 
         if pipe is None:
-            bootstrap_context = _current_bootstrap_context()
-            if bootstrap_context is not None:
-                context_pipeline = getattr(bootstrap_context, "pipeline", None)
-                context_manager = getattr(bootstrap_context, "manager", None)
-                if _looks_like_pipeline_candidate(context_pipeline):
-                    pipe = context_pipeline
-                    if manager_override is None and context_manager is not None:
-                        manager_override = context_manager
-                    context_promoter = _active_bootstrap_promoter()
-                    if context_promoter is not None:
-                        promote_pipeline = context_promoter
-
-        if pipe is None:
-            bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-            bootstrap_context = _current_bootstrap_context()
-            active_heartbeat = read_bootstrap_heartbeat()
-            bootstrap_active = (
-                bootstrap_depth > 0
-                or guard_promise is not None
-                or bootstrap_context is not None
-                or bool(active_heartbeat)
-            )
+            bootstrap_active = _is_bootstrap_active()
             if bootstrap_active:
-                broker_pipeline, broker_manager = dependency_broker.resolve()
-                if manager_override is None and manager is None and broker_manager is not None:
-                    manager_override = broker_manager
-                if _looks_like_pipeline_candidate(broker_pipeline):
-                    pipe = broker_pipeline
-            if pipe is None and not bootstrap_active:
-                pipe, promoted = prepare_pipeline_for_bootstrap(
-                    pipeline_cls=pipeline_cls,
-                    context_builder=ctx_builder,
-                    bot_registry=reg,
-                    data_bot=dbot,
-                    bootstrap_runtime_manager=manager_override
-                    if manager_override is not None
-                    else manager,
-                    manager_override=manager_override,
+                raise RuntimeError(
+                    "Active bootstrap detected but no ModelAutomationPipeline was advertised for ResearchAggregatorBot"
                 )
-                if promoted is not None and not promote_explicit:
-                    promote_pipeline = promoted
-            if pipe is None:
-                placeholder_manager = manager_override or manager or broker_manager
-                if placeholder_manager is None:
-                    placeholder_manager = SimpleNamespace(bootstrap_placeholder=True)
-                pipe = SimpleNamespace(
-                    manager=placeholder_manager,
-                    initial_manager=placeholder_manager,
-                    bootstrap_placeholder=True,
-                )
-                if promote_pipeline is None:
-                    promote_pipeline = _active_bootstrap_promoter() or (lambda *_a: None)
-                if not bootstrap_active:
-                    raise RuntimeError(
-                        "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
-                    )
+
+            pipe, promoted = prepare_pipeline_for_bootstrap(
+                pipeline_cls=pipeline_cls,
+                context_builder=ctx_builder,
+                bot_registry=reg,
+                data_bot=dbot,
+                bootstrap_runtime_manager=manager_override
+                if manager_override is not None
+                else manager,
+                manager_override=manager_override,
+            )
+            if promoted is not None and not promote_explicit:
+                promote_pipeline = promoted
+
+        if pipe is None:
+            raise RuntimeError(
+                "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
+            )
 
         if promote_pipeline is None:
             promote_pipeline = _active_bootstrap_promoter() or (lambda *_args: None)
