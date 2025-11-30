@@ -26,6 +26,7 @@ from .coding_bot_interface import (
     _current_bootstrap_context,
     _is_bootstrap_placeholder,
     _looks_like_pipeline_candidate,
+    advertise_bootstrap_placeholder,
     _using_bootstrap_sentinel,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
@@ -140,24 +141,35 @@ class AutoEscalationManager:
                         or _bootstrap_dependency_broker()
                     )
 
-                    broker_pipeline, broker_manager = dependency_broker.resolve()
+                    broker_pipeline = None
+                    broker_manager = None
+                    try:
+                        broker_pipeline, broker_manager = dependency_broker.resolve()
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.debug(
+                            "auto-escalation bootstrap broker resolve failed", exc_info=True
+                        )
 
                     pipeline_candidate = None
                     manager_candidate = None
                     promote_pipeline = None
 
-                    if bootstrap_context is not None:
-                        pipeline_candidate = getattr(bootstrap_context, "pipeline", None)
-                        manager_candidate = getattr(bootstrap_context, "manager", None)
-                        if manager_candidate is None:
-                            manager_candidate = getattr(bootstrap_context, "sentinel", None)
-
-                    if pipeline_candidate is None and _looks_like_pipeline_candidate(
+                    if _looks_like_pipeline_candidate(broker_pipeline) or _is_bootstrap_placeholder(
                         broker_pipeline
                     ):
                         pipeline_candidate = broker_pipeline
                     if manager_candidate is None:
                         manager_candidate = broker_manager
+
+                    if bootstrap_context is not None:
+                        pipeline_candidate = pipeline_candidate or getattr(
+                            bootstrap_context, "pipeline", None
+                        )
+                        manager_candidate = manager_candidate or getattr(
+                            bootstrap_context, "manager", None
+                        )
+                        if manager_candidate is None:
+                            manager_candidate = getattr(bootstrap_context, "sentinel", None)
 
                     if pipeline_candidate is None:
                         active_promise = getattr(
@@ -176,20 +188,38 @@ class AutoEscalationManager:
                                 ) from exc
 
                     pipeline = None
+                    placeholder_present = any(
+                        _is_bootstrap_placeholder(candidate)
+                        for candidate in (pipeline_candidate, manager_candidate)
+                    )
 
                     if pipeline_candidate is not None:
-                        if not _looks_like_pipeline_candidate(pipeline_candidate):
+                        if not (
+                            _looks_like_pipeline_candidate(pipeline_candidate)
+                            or _is_bootstrap_placeholder(pipeline_candidate)
+                        ):
                             raise RuntimeError(
                                 "AutoEscalationManager received invalid bootstrap pipeline"
                             )
                         pipeline = pipeline_candidate
                         if manager_candidate is None:
                             manager_candidate = getattr(pipeline_candidate, "manager", None)
-                        if _is_bootstrap_placeholder(manager_candidate):
+                        if _is_bootstrap_placeholder(manager_candidate) or _is_bootstrap_placeholder(
+                            pipeline_candidate
+                        ):
                             self.logger.info(
                                 "auto_escalation.bootstrap.reuse_placeholder",
                                 extra={
                                     "event": "auto-escalation-bootstrap-placeholder-reuse",
+                                    "dependency_broker": bool(dependency_broker),
+                                },
+                            )
+                        elif pipeline_candidate is broker_pipeline or manager_candidate is broker_manager:
+                            self.logger.info(
+                                "auto_escalation.bootstrap.reuse",
+                                extra={
+                                    "event": "auto-escalation-bootstrap-reuse",
+                                    "dependency_broker": bool(dependency_broker),
                                 },
                             )
                         if promote_pipeline is None:
@@ -206,6 +236,28 @@ class AutoEscalationManager:
                         from .self_coding_manager import SelfCodingManager
                         from .model_automation_pipeline import ModelAutomationPipeline
 
+                        if dependency_broker is not None and not placeholder_present:
+                            try:
+                                pipeline_candidate, manager_candidate = (
+                                    advertise_bootstrap_placeholder(
+                                        dependency_broker=dependency_broker,
+                                        pipeline=pipeline_candidate,
+                                        manager=manager_candidate,
+                                    )
+                                )
+                                self.logger.info(
+                                    "auto_escalation.bootstrap.advertise_placeholder",
+                                    extra={
+                                        "event": "auto-escalation-bootstrap-placeholder-advertise",
+                                        "dependency_broker": bool(dependency_broker),
+                                    },
+                                )
+                            except Exception:  # pragma: no cover - best effort
+                                self.logger.debug(
+                                    "auto-escalation failed to advertise bootstrap placeholder",
+                                    exc_info=True,
+                                )
+
                         pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
                             pipeline_cls=ModelAutomationPipeline,
                             context_builder=self.context_builder,
@@ -213,6 +265,14 @@ class AutoEscalationManager:
                             data_bot=data_bot,
                             event_bus=event_bus,
                             manager_override=manager_candidate,
+                        )
+
+                        self.logger.info(
+                            "auto_escalation.bootstrap.prepare",
+                            extra={
+                                "event": "auto-escalation-bootstrap-prepare",
+                                "dependency_broker": bool(dependency_broker),
+                            },
                         )
 
                     if pipeline is None or promote_pipeline is None:
