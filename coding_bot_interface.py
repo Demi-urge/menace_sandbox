@@ -1924,7 +1924,10 @@ def advertise_bootstrap_placeholder(
 
     This ensures downstream imports can reuse an in-flight bootstrap sentinel
     instead of initiating redundant bootstraps while the real pipeline is
-    being constructed.
+    being constructed.  The cascade-avoidance contract relies on entry modules
+    publishing the active placeholder as early as possible so late imports
+    reuse the shared promise rather than spawning competing
+    ``prepare_pipeline_for_bootstrap`` calls.
     """
 
     broker = dependency_broker or _bootstrap_dependency_broker()
@@ -1943,6 +1946,14 @@ def advertise_bootstrap_placeholder(
         logger.debug("failed to attach manager to pipeline placeholder", exc_info=True)
 
     _mark_bootstrap_placeholder(pipeline_candidate)
+    logger.info(
+        "advertising bootstrap placeholder",
+        extra={
+            "dependency_broker": True,
+            "owner": owner,
+            "pipeline_placeholder": bool(pipeline),
+        },
+    )
     broker.advertise(pipeline=pipeline_candidate, sentinel=sentinel, owner=owner)
     return pipeline_candidate, sentinel
 

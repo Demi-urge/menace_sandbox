@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+    get_active_bootstrap_pipeline,
+    self_coding_managed,
+)
 from .data_bot import DataBot, MetricsDB
 
 import importlib
@@ -184,6 +189,17 @@ class _LazyDataBot:
 
 _REGISTRY_PROXY = _LazyBotRegistry()
 _DATA_BOT_PROXY = _LazyDataBot()
+
+_BOOTSTRAP_DEPENDENCY_BROKER = _bootstrap_dependency_broker()
+_BOOTSTRAP_PIPELINE, _BOOTSTRAP_MANAGER = get_active_bootstrap_pipeline()
+(
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+    _BOOTSTRAP_PLACEHOLDER_MANAGER,
+) = advertise_bootstrap_placeholder(
+    dependency_broker=_BOOTSTRAP_DEPENDENCY_BROKER,
+    pipeline=_BOOTSTRAP_PIPELINE,
+    manager=_BOOTSTRAP_MANAGER,
+)
 
 
 def _get_registry_proxy() -> _LazyBotRegistry:

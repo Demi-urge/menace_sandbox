@@ -51,7 +51,12 @@ from bootstrap_timeout_policy import (
     load_escalated_timeout_floors,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
-from coding_bot_interface import get_prepare_pipeline_coordinator
+from coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+    get_active_bootstrap_pipeline,
+    get_prepare_pipeline_coordinator,
+)
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
@@ -59,6 +64,18 @@ from dependency_hints import format_system_package_instructions
 
 
 shutdown_event = threading.Event()
+
+
+_DEPENDENCY_BROKER = _bootstrap_dependency_broker()
+_ACTIVE_PIPELINE, _ACTIVE_MANAGER = get_active_bootstrap_pipeline()
+(
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+    _BOOTSTRAP_PLACEHOLDER_MANAGER,
+) = advertise_bootstrap_placeholder(
+    dependency_broker=_DEPENDENCY_BROKER,
+    pipeline=_ACTIVE_PIPELINE,
+    manager=_ACTIVE_MANAGER,
+)
 
 
 def kill_handler(sig, frame):
@@ -1111,7 +1128,13 @@ def _bootstrap_sandbox_manager(
     suggestion_db: "PatchSuggestionDB | None" = None,
     online_tracker: _BootstrapOnlineTracker | None = None,
 ) -> tuple["SelfCodingEngine", "SelfCodingManager"]:
-    """Build the sandbox SelfCodingManager using the bootstrap sentinel."""
+    """Build the sandbox SelfCodingManager using the bootstrap sentinel.
+
+    The bootstrap placeholder published at module import time is threaded into
+    the pipeline construction call so any nested imports reuse the advertised
+    promise rather than spawning a fresh ``prepare_pipeline_for_bootstrap``
+    cascade.
+    """
 
     from menace.self_coding_engine import SelfCodingEngine
     from menace.menace_memory_manager import MenaceMemoryManager
@@ -1132,6 +1155,8 @@ def _bootstrap_sandbox_manager(
         event_bus=event_bus,
         bot_registry=registry,
         data_bot=data_bot,
+        bootstrap_manager=_BOOTSTRAP_PLACEHOLDER_MANAGER,
+        manager_sentinel=_BOOTSTRAP_PLACEHOLDER_MANAGER,
     )
     if online_tracker is not None:
         online_tracker.mark_component("vector_seeding")

@@ -14,7 +14,10 @@ provides two primary operations:
 The service is intended to run as a lightweight daemon.  The CLI entry
 ``python -m vector_service.vector_database_service`` starts a Uvicorn server
 listening on ``VECTOR_SERVICE_HOST``/``VECTOR_SERVICE_PORT`` or on a Unix
-domain socket specified by ``VECTOR_SERVICE_SOCKET``.
+domain socket specified by ``VECTOR_SERVICE_SOCKET``.  A bootstrap placeholder
+is advertised during import so any late-loading helpers reuse the shared
+promise instead of spawning redundant ``prepare_pipeline_for_bootstrap``
+attempts when vector dependencies touch the automation pipeline.
 """
 
 from __future__ import annotations
@@ -29,6 +32,19 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
+
+try:  # pragma: no cover - prefer package import when available
+    from menace_sandbox.coding_bot_interface import (
+        _bootstrap_dependency_broker,
+        advertise_bootstrap_placeholder,
+        get_active_bootstrap_pipeline,
+    )
+except Exception:  # pragma: no cover - flat execution fallback
+    from coding_bot_interface import (  # type: ignore
+        _bootstrap_dependency_broker,
+        advertise_bootstrap_placeholder,
+        get_active_bootstrap_pipeline,
+    )
 
 from .vectorizer import SharedVectorService
 from .embedding_backfill import (
@@ -49,6 +65,20 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 _svc = SharedVectorService()
+_dependency_broker = _bootstrap_dependency_broker()
+_active_pipeline, _active_manager = get_active_bootstrap_pipeline()
+(
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+    _BOOTSTRAP_PLACEHOLDER_MANAGER,
+) = advertise_bootstrap_placeholder(
+    dependency_broker=_dependency_broker,
+    pipeline=_active_pipeline,
+    manager=_active_manager,
+)
+try:
+    _svc.bootstrap_manager = _BOOTSTRAP_PLACEHOLDER_MANAGER  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - advisory only
+    logger.debug("unable to attach bootstrap placeholder manager to vector service", exc_info=True)
 
 
 def _watcher() -> None:
