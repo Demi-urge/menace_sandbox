@@ -619,6 +619,117 @@ def test_prepare_pipeline_single_flight_reuses_active(monkeypatch, caplog):
     assert len(prepare_logs) == 1
 
 
+def test_prepare_pipeline_reentrancy_honours_active_promise(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    start_event = threading.Event()
+    release_event = threading.Event()
+    init_count = 0
+
+    class _Pipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            **_kwargs,
+        ) -> None:
+            nonlocal init_count
+            init_count += 1
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            start_event.set()
+            release_event.wait(timeout=1)
+
+    def _prepare(target_list: list[tuple[Any, Any]], guard: bool) -> None:
+        target_list.append(
+            cbi._prepare_pipeline_for_bootstrap_impl(
+                pipeline_cls=_Pipeline,
+                context_builder=SimpleNamespace(),
+                bot_registry=DummyRegistry(),
+                data_bot=DummyDataBot(),
+                bootstrap_guard=guard,
+            )
+        )
+
+    results: list[tuple[Any, Any]] = []
+    secondary_results: list[tuple[Any, Any]] = []
+    first_thread = threading.Thread(target=_prepare, args=(results, True))
+    second_thread = threading.Thread(target=_prepare, args=(secondary_results, False))
+
+    first_thread.start()
+    try:
+        assert start_event.wait(1)
+        second_thread.start()
+        release_event.set()
+        first_thread.join(timeout=1)
+        second_thread.join(timeout=1)
+    finally:
+        release_event.set()
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    assert init_count == 1
+    pipeline_a, promote_a = results[0]
+    pipeline_b, promote_b = secondary_results[0]
+    assert pipeline_a is pipeline_b
+    assert promote_a is promote_b
+
+
+def test_prepare_pipeline_guardless_reuses_dependency_broker(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    start_event = threading.Event()
+    release_event = threading.Event()
+    init_count = 0
+
+    class _Pipeline:
+        def __init__(self, *_args, **_kwargs) -> None:
+            nonlocal init_count
+            init_count += 1
+            start_event.set()
+            release_event.wait(timeout=1)
+
+    results: list[tuple[Any, Any]] = []
+    secondary_results: list[tuple[Any, Any]] = []
+
+    def _prepare(target_list: list[tuple[Any, Any]]) -> None:
+        target_list.append(
+            cbi._prepare_pipeline_for_bootstrap_impl(
+                pipeline_cls=_Pipeline,
+                context_builder=SimpleNamespace(),
+                bot_registry=DummyRegistry(),
+                data_bot=DummyDataBot(),
+                bootstrap_guard=False,
+            )
+        )
+
+    first_thread = threading.Thread(target=_prepare, args=(results,))
+    second_thread = threading.Thread(target=_prepare, args=(secondary_results,))
+
+    first_thread.start()
+    try:
+        assert start_event.wait(1)
+        second_thread.start()
+        release_event.set()
+        first_thread.join(timeout=1)
+        second_thread.join(timeout=1)
+    finally:
+        release_event.set()
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    assert init_count == 1
+    pipeline_a, promote_a = results[0]
+    pipeline_b, promote_b = secondary_results[0]
+    assert pipeline_a is pipeline_b
+    assert promote_a is promote_b
+
+
 def test_prepare_pipeline_enforces_minimum_timeout(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=cbi.logger.name)
     cbi._PREPARE_PIPELINE_WATCHDOG["stages"].clear()
