@@ -2,6 +2,7 @@ from collections import deque
 import threading
 import time
 from types import SimpleNamespace
+from typing import Callable
 
 import pytest
 
@@ -274,3 +275,133 @@ def test_placeholder_reentry_reuses_pipeline_concurrently(caplog):
         record.message.startswith("prepare_pipeline.bootstrap.reentry_block")
         for record in caplog.records
     )
+
+
+@pytest.mark.integration
+def test_placeholder_promise_shared_by_helpers(monkeypatch):
+    """Helpers should reuse broker promises once a placeholder is seeded.
+
+    This exercises concurrent helper entry points (BotPlanningBot plus a
+    vector-service consumer) while a bootstrap placeholder is already
+    advertised so they reuse the shared broker promise instead of spawning
+    redundant pipelines. See docs/bootstrap_troubleshooting.md for the
+    broker-first flow that prevents recursion guard churn during bootstrap.
+    """
+
+    import bot_planning_bot
+
+    cbi._REENTRY_ATTEMPTS.clear()
+
+    shared_broker = cbi._BootstrapDependencyBroker()
+    placeholder_pipeline, placeholder_manager = cbi.advertise_bootstrap_placeholder(
+        dependency_broker=shared_broker, owner=True
+    )
+
+    broker_calls: list[str] = []
+
+    def _spy_broker():
+        broker_calls.append(threading.current_thread().name)
+        return shared_broker
+
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", _spy_broker)
+    monkeypatch.setattr(bot_planning_bot, "_bootstrap_dependency_broker", _spy_broker)
+
+    promise = cbi._BootstrapPipelinePromise()
+    stub_coordinator = SimpleNamespace(
+        peek_active=lambda: promise, claim=lambda: (False, promise), settle=lambda *_, **__: None
+    )
+    monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", stub_coordinator)
+
+    prepare_calls: list[type[object] | None] = []
+    real_prepare = cbi.prepare_pipeline_for_bootstrap
+
+    def _spy_prepare(**kwargs):
+        prepare_calls.append(kwargs.get("pipeline_cls"))
+        return real_prepare(**kwargs)
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _spy_prepare)
+    monkeypatch.setattr(bot_planning_bot, "prepare_pipeline_for_bootstrap", _spy_prepare)
+
+    constructor_calls: list[str] = []
+
+    class _StubPipeline:
+        def __init__(
+            self,
+            *,
+            context_builder: object,
+            bot_registry: object,
+            data_bot: object,
+            manager: object,
+            **_: object,
+        ) -> None:
+            constructor_calls.append(threading.current_thread().name)
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            self.initial_manager = manager
+            self.bootstrap_placeholder = False
+
+    monkeypatch.setattr(bot_planning_bot, "ModelAutomationPipeline", _StubPipeline)
+
+    barrier = threading.Barrier(3)
+    pipelines: list[object] = []
+    promoters: list[Callable[[object], None]] = []
+
+    def _owner_pipeline() -> None:
+        barrier.wait()
+        time.sleep(0.05)
+        pipeline = _StubPipeline(
+            context_builder=object(),
+            bot_registry=object(),
+            data_bot=object(),
+            manager=placeholder_manager,
+        )
+        shared_broker.advertise(pipeline=pipeline, sentinel=pipeline.manager, owner=True)
+        promise.resolve((pipeline, lambda *_: None))
+
+    def _bot_planning_helper() -> None:
+        barrier.wait()
+        pipeline, promote = bot_planning_bot.prepare_pipeline_for_bootstrap(
+            pipeline_cls=_StubPipeline,
+            context_builder=object(),
+            bot_registry=object(),
+            data_bot=object(),
+            bootstrap_wait_timeout=0.2,
+        )
+        pipelines.append(pipeline)
+        promoters.append(promote)
+
+    def _vector_service_helper() -> None:
+        barrier.wait()
+        broker = cbi._bootstrap_dependency_broker()
+        broker.resolve()
+        pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=_StubPipeline,
+            context_builder=object(),
+            bot_registry=object(),
+            data_bot=object(),
+            bootstrap_wait_timeout=0.2,
+        )
+        pipelines.append(pipeline)
+        promoters.append(promote)
+
+    threads = [
+        threading.Thread(target=_owner_pipeline, name="owner"),
+        threading.Thread(target=_bot_planning_helper, name="bot-planning-helper"),
+        threading.Thread(target=_vector_service_helper, name="vector-helper"),
+    ]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert constructor_calls == ["owner"], "expected only the owner to construct the pipeline"
+    assert len(prepare_calls) == 2
+    assert len(set(id(pipe) for pipe in pipelines)) == 1
+    assert all(callable(promote) for promote in promoters)
+    assert shared_broker.active_pipeline is not None
+    assert shared_broker.active_sentinel is not None
+    assert all(name in broker_calls for name in ("bot-planning-helper", "vector-helper"))
+    assert cbi._REENTRY_ATTEMPTS == {}
