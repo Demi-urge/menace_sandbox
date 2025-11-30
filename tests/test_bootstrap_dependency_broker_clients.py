@@ -399,6 +399,150 @@ def test_bootstrap_helpers_share_single_promise(monkeypatch, caplog):
     assert broker_advertises, "dependency broker should be exercised during bootstrap"
 
 
+def test_helper_import_reuses_advertised_placeholder(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+
+    import menace_sandbox.coding_bot_interface as cbi
+
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+    cbi._REENTRY_ATTEMPTS.clear()
+
+    manager = SimpleNamespace(name="bootstrap-manager")
+    promotions: list[object | None] = []
+
+    def _promote(real_manager: object | None) -> None:
+        promotions.append(real_manager)
+
+    pipeline = SimpleNamespace(manager=manager, _pipeline_promoter=_promote)
+
+    class _Broker:
+        def __init__(self, pipeline: object, sentinel: object):
+            self.pipeline = pipeline
+            self.sentinel = sentinel
+            self.calls: list[tuple[str, object | None, object | None, bool]] = []
+            self.active_owner = False
+
+        def resolve(self):
+            return self.pipeline, self.sentinel
+
+        def advertise(self, pipeline=None, sentinel=None, owner: bool | None = None):  # noqa: ANN001
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            if owner:
+                self.active_owner = True
+            self.calls.append(("advertise", self.pipeline, self.sentinel, bool(owner)))
+            return self.pipeline, self.sentinel
+
+    dependency_broker = _Broker(pipeline, manager)
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: dependency_broker)
+
+    placeholder_pipeline, placeholder_manager = cbi.advertise_bootstrap_placeholder(
+        dependency_broker=dependency_broker,
+        pipeline=pipeline,
+        manager=manager,
+        owner=True,
+    )
+
+    owner_started = threading.Event()
+    release_owner = threading.Event()
+    prepare_calls: list[dict[str, object]] = []
+
+    def _prepare_pipeline_for_bootstrap(**kwargs: object):
+        owner, promise = cbi._GLOBAL_BOOTSTRAP_COORDINATOR.claim()
+        event_logger = logging.getLogger("bootstrap-owner")
+        event_logger.info("prepare-pipeline-stub", extra={"owner": owner, "waiters": promise.waiters})
+        prepare_calls.append({"owner": owner, "waiters": promise.waiters, "kwargs": kwargs})
+        if owner:
+            owner_started.set()
+            release_owner.wait(timeout=3)
+            dependency_broker.advertise(pipeline=pipeline, sentinel=manager, owner=True)
+            promise.resolve((pipeline, _promote))
+        return promise.wait()
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _prepare_pipeline_for_bootstrap)
+
+    owner_thread = threading.Thread(
+        target=cbi.prepare_pipeline_for_bootstrap,
+        kwargs={"helper": "owner"},
+        daemon=True,
+    )
+    owner_thread.start()
+    owner_started.wait(timeout=3)
+
+    assert dependency_broker.active_owner, "placeholder owner should mark broker active"
+    active_promise = cbi._GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+    assert active_promise is not None
+    assert active_promise.waiters == 1
+
+    helper_results: list[dict[str, object]] = []
+
+    def _install_helper():
+        module = ModuleType("menace_sandbox.workflow_evolution_helper")
+
+        def _bootstrap_helper():
+            broker = cbi._bootstrap_dependency_broker()
+            advertised_pipeline, advertised_manager = cbi.advertise_bootstrap_placeholder(
+                dependency_broker=broker,
+            )
+            pipeline_candidate, promoter = cbi.prepare_pipeline_for_bootstrap(
+                helper="workflow-evolution-helper",
+            )
+            helper_results.append(
+                {
+                    "advertised_pipeline": advertised_pipeline,
+                    "advertised_manager": advertised_manager,
+                    "pipeline": pipeline_candidate,
+                    "promoter": promoter,
+                    "resolved": broker.resolve(),
+                }
+            )
+            return pipeline_candidate, promoter
+
+        module.bootstrap_helper = _bootstrap_helper
+        module.__file__ = str(Path(__file__))
+        monkeypatch.setitem(sys.modules, "menace_sandbox.workflow_evolution_helper", module)
+        return module
+
+    helper_module = _install_helper()
+
+    helper_thread = threading.Thread(
+        target=lambda: importlib.import_module(helper_module.__name__).bootstrap_helper(),
+        daemon=True,
+    )
+    helper_thread.start()
+
+    release_owner.set()
+    owner_thread.join(timeout=3)
+    helper_thread.join(timeout=3)
+
+    assert prepare_calls and prepare_calls[0]["owner"] is True
+    assert any(not call["owner"] for call in prepare_calls), "helper should reuse active promise"
+
+    assert helper_results, "bootstrap helper should record results"
+    helper_result = helper_results[0]
+    assert helper_result["pipeline"] is pipeline
+    assert helper_result["advertised_pipeline"] is placeholder_pipeline
+    assert helper_result["resolved"][0] is pipeline
+    assert helper_result["resolved"][1] is manager
+
+    assert promotions == [], "promoter should not run during reuse"
+    assert dependency_broker.calls, "dependency broker should be exercised"
+    assert len(dependency_broker.calls) >= 2, "placeholder advertise and reuse should both log"
+
+    owner_logs = [
+        record for record in caplog.records if record.getMessage() == "prepare-pipeline-stub"
+    ]
+    assert len(owner_logs) == 2, "owner and helper should both log prepare telemetry"
+    assert all(getattr(record, "owner", None) is not None for record in owner_logs)
+    assert {record.owner for record in owner_logs} == {True, False}
+
+    assert cbi._REENTRY_ATTEMPTS.get("menace_sandbox.workflow_evolution_helper") is None
+
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+
 def test_active_promise_short_circuits_recursion(monkeypatch, caplog):
     import coding_bot_interface as cbi
 
