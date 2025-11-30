@@ -4265,6 +4265,89 @@ class _BootstrapManagerPromise:
                 )
 
 
+class _BootstrapPipelinePromise:
+    """Coordinates single-flight pipeline bootstrap requests."""
+
+    __slots__ = ("_event", "_result", "_error", "waiters")
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._result: tuple[Any, Callable[[Any], None]] | None = None
+        self._error: BaseException | None = None
+        self.waiters = 0
+
+    @property
+    def done(self) -> bool:
+        return self._event.is_set()
+
+    def resolve(self, result: tuple[Any, Callable[[Any], None]]) -> None:
+        self._result = result
+        self._event.set()
+
+    def fail(self, error: BaseException) -> None:
+        self._error = error
+        self._event.set()
+
+    def wait(self) -> tuple[Any, Callable[[Any], None]]:
+        self._event.wait()
+        if self._error is not None:
+            raise self._error
+        if self._result is None:
+            raise RuntimeError("bootstrap pipeline promise resolved without result")
+        return self._result
+
+
+class _BootstrapPipelineCoordinator:
+    """Single-flight guard ensuring only one pipeline bootstrap runs at once."""
+
+    __slots__ = ("_active", "_lock")
+
+    def __init__(self) -> None:
+        self._active: _BootstrapPipelinePromise | None = None
+        self._lock = threading.Lock()
+
+    def claim(self) -> tuple[bool, _BootstrapPipelinePromise | None]:
+        """Return ``(owner, promise)`` for the active bootstrap flow."""
+
+        with self._lock:
+            if self._active is not None and not self._active.done:
+                self._active.waiters += 1
+                return False, self._active
+            self._active = _BootstrapPipelinePromise()
+            self._active.waiters = 1
+            return True, self._active
+
+    def settle(
+        self,
+        promise: _BootstrapPipelinePromise | None,
+        *,
+        result: tuple[Any, Callable[[Any], None]] | None = None,
+        error: BaseException | None = None,
+    ) -> None:
+        """Resolve the active promise and clear it when applicable."""
+
+        if promise is None:
+            return
+        try:
+            if error is not None:
+                promise.fail(error)
+            elif result is not None:
+                promise.resolve(result)
+        finally:
+            with self._lock:
+                if self._active is promise:
+                    self._active = None
+
+    def reset(self) -> None:
+        """Clear any tracked bootstrap promise (testing convenience)."""
+
+        with self._lock:
+            self._active = None
+
+
+_GLOBAL_BOOTSTRAP_COORDINATOR = _BootstrapPipelineCoordinator()
+
+
 def _peek_owner_promise(owner_guard: Any) -> _BootstrapManagerPromise | None:
     """Return the promise registered for *owner_guard* when present."""
 
@@ -5319,7 +5402,10 @@ def prepare_pipeline_for_bootstrap(
 ) -> tuple[Any, Callable[[Any], None]]:
     """Instantiate *pipeline_cls* with a bootstrap sentinel manager.
 
-    See ``_prepare_pipeline_for_bootstrap_impl`` for full parameter details.
+    A global single-flight coordinator ensures concurrent callers reuse the
+    active bootstrap promise when the guard is enabled so that helpers share the
+    same promotion lifecycle.  See ``_prepare_pipeline_for_bootstrap_impl`` for
+    full parameter details.
     """
 
     try:
@@ -5365,6 +5451,113 @@ def prepare_pipeline_for_bootstrap(
 
 
 def _prepare_pipeline_for_bootstrap_impl(
+    *,
+    pipeline_cls: type[Any],
+    context_builder: Any,
+    bot_registry: Any,
+    data_bot: Any,
+    stop_event: threading.Event | None = None,
+    timeout: float | None = None,
+    deadline: float | None = None,
+    bootstrap_wait_timeout: float | None = None,
+    bootstrap_manager: Any | None = None,
+    bootstrap_runtime_manager: Any | None = None,
+    force_manager_kwarg: bool = False,
+    manager_override: Any | None = None,
+    manager_sentinel: Any | None = None,
+    sentinel_factory: Callable[[], Any] | None = None,
+    extra_manager_sentinels: Iterable[Any] | None = None,
+    bootstrap_safe: bool = False,
+    bootstrap_fast: bool = True,
+    vectorizer_budget: float | None = None,
+    retriever_budget: float | None = None,
+    db_warmup_budget: float | None = None,
+    orchestrator_budget: float | None = None,
+    component_timeouts: Mapping[str, float] | None = None,
+    bootstrap_guard: bool = True,
+    defer_background_tasks: bool = True,
+    deferred_stage_labels: Iterable[str] | None = None,
+    deferred_readiness_gates: Iterable[str] | None = None,
+    **pipeline_kwargs: Any,
+) -> tuple[Any, Callable[[Any], None]]:
+    """Single-flight wrapper around the bootstrap pipeline preparation.
+
+    When ``bootstrap_guard`` is enabled (the default), concurrent callers
+    receive the active pipeline bootstrap promise instead of starting a new
+    pipeline.  This ensures helpers block or subscribe to the same promotion
+    lifecycle until the owner resolves the sentinel manager.  Trusted
+    re-entries can disable the guard via ``bootstrap_guard=False`` to bypass the
+    single-flight coordinator when appropriate.
+    """
+
+    guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
+    guard_enabled = bootstrap_guard and str(guard_env or "").lower() not in (
+        "1",
+        "true",
+        "yes",
+    )
+    single_flight_owner = True
+    single_flight_promise: _BootstrapPipelinePromise | None = None
+    if guard_enabled:
+        single_flight_owner, single_flight_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.claim()
+        if not single_flight_owner and single_flight_promise is not None:
+            logger.info(
+                "prepare_pipeline single-flight reuse",
+                extra={
+                    "event": "prepare-pipeline-single-flight-reuse",
+                    "waiters": single_flight_promise.waiters,
+                },
+            )
+            return single_flight_promise.wait()
+        logger.info(
+            "prepare_pipeline_for_bootstrap single-flight owner",
+            extra={
+                "event": "prepare-pipeline-single-flight-owner",
+                "waiters": single_flight_promise.waiters if single_flight_promise else 1,
+            },
+        )
+
+    try:
+        result = _prepare_pipeline_for_bootstrap_impl_inner(
+            pipeline_cls=pipeline_cls,
+            context_builder=context_builder,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            stop_event=stop_event,
+            timeout=timeout,
+            deadline=deadline,
+            bootstrap_wait_timeout=bootstrap_wait_timeout,
+            bootstrap_manager=bootstrap_manager,
+            bootstrap_runtime_manager=bootstrap_runtime_manager,
+            force_manager_kwarg=force_manager_kwarg,
+            manager_override=manager_override,
+            manager_sentinel=manager_sentinel,
+            sentinel_factory=sentinel_factory,
+            extra_manager_sentinels=extra_manager_sentinels,
+            bootstrap_safe=bootstrap_safe,
+            bootstrap_fast=bootstrap_fast,
+            vectorizer_budget=vectorizer_budget,
+            retriever_budget=retriever_budget,
+            db_warmup_budget=db_warmup_budget,
+            orchestrator_budget=orchestrator_budget,
+            component_timeouts=component_timeouts,
+            bootstrap_guard=bootstrap_guard,
+            defer_background_tasks=defer_background_tasks,
+            deferred_stage_labels=deferred_stage_labels,
+            deferred_readiness_gates=deferred_readiness_gates,
+            **pipeline_kwargs,
+        )
+    except Exception as exc:
+        if single_flight_owner and single_flight_promise is not None:
+            _GLOBAL_BOOTSTRAP_COORDINATOR.settle(single_flight_promise, error=exc)
+        raise
+
+    if single_flight_owner and single_flight_promise is not None:
+        _GLOBAL_BOOTSTRAP_COORDINATOR.settle(single_flight_promise, result=result)
+    return result
+
+
+def _prepare_pipeline_for_bootstrap_impl_inner(
     *,
     pipeline_cls: type[Any],
     context_builder: Any,

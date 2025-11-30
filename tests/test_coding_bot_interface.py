@@ -2,7 +2,7 @@ import itertools
 import sys
 import contextvars
 import logging
-import sys
+import threading
 import types
 from types import SimpleNamespace
 from typing import Any
@@ -545,6 +545,78 @@ def test_prepare_pipeline_timeout_emits_watchdog(monkeypatch, caplog):
 
     if hasattr(cbi._BOOTSTRAP_STATE, "vector_heavy"):
         delattr(cbi._BOOTSTRAP_STATE, "vector_heavy")
+
+
+def test_prepare_pipeline_single_flight_reuses_active(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    start_event = threading.Event()
+    release_event = threading.Event()
+    results: list[tuple[Any, Any]] = []
+    secondary_results: list[tuple[Any, Any]] = []
+    errors: list[BaseException] = []
+
+    class _Pipeline:
+        def __init__(
+            self,
+            *,
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+            manager=None,
+            **_kwargs,
+        ) -> None:
+            self.context_builder = context_builder
+            self.bot_registry = bot_registry
+            self.data_bot = data_bot
+            self.manager = manager
+            start_event.set()
+            release_event.wait(timeout=1)
+
+    def _prepare(target_list: list[tuple[Any, Any]]) -> None:
+        try:
+            target_list.append(
+                cbi.prepare_pipeline_for_bootstrap(
+                    pipeline_cls=_Pipeline,
+                    context_builder=SimpleNamespace(),
+                    bot_registry=DummyRegistry(),
+                    data_bot=DummyDataBot(),
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - defensive
+            errors.append(exc)
+
+    first_thread = threading.Thread(target=_prepare, args=(results,))
+    second_thread = threading.Thread(target=_prepare, args=(secondary_results,))
+
+    first_thread.start()
+    try:
+        assert start_event.wait(1), "first pipeline did not start"
+        second_thread.start()
+        release_event.set()
+        first_thread.join(timeout=1)
+        second_thread.join(timeout=1)
+    finally:
+        release_event.set()
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+
+    assert not errors
+    assert results and secondary_results
+    pipeline_a, promote_a = results[0]
+    pipeline_b, promote_b = secondary_results[0]
+    assert pipeline_a is pipeline_b
+    assert promote_a is promote_b
+
+    prepare_logs = [
+        record
+        for record in caplog.records
+        if "prepare_pipeline_for_bootstrap" in record.getMessage()
+    ]
+    assert len(prepare_logs) == 1
 
 
 def test_prepare_pipeline_enforces_minimum_timeout(monkeypatch, caplog):
