@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 import types
@@ -350,4 +351,66 @@ def test_broker_pipeline_advertised_and_reused(monkeypatch):
     ]
     ar._pipeline_promoter(sentinel_manager)
     assert promoter_calls == [sentinel_manager]
+
+
+def test_delayed_broker_advertisement_waits(monkeypatch):
+    _stub_vector_service(monkeypatch)
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    ar = importlib.reload(importlib.import_module("menace_sandbox.automated_reviewer"))
+
+    ar._pipeline = None
+    ar._manager_instance = None
+    ar._pipeline_promoter = None
+
+    resolve_calls = {"count": 0}
+
+    class DummyPipeline:
+        manager = None
+
+    broker_manager = types.SimpleNamespace()
+    broker_pipeline = DummyPipeline()
+
+    def _delayed_resolve():
+        resolve_calls["count"] += 1
+        if resolve_calls["count"] < 3:
+            return None, None
+        return broker_pipeline, broker_manager
+
+    class DummyBroker:
+        def resolve(self):
+            return _delayed_resolve()
+
+        def advertise(self, *_, **__):
+            return None
+
+    monkeypatch.setattr(ar, "_bootstrap_dependency_broker", lambda: DummyBroker())
+    monkeypatch.setattr(ar, "get_active_bootstrap_pipeline", lambda: (None, None))
+    monkeypatch.setattr(ar, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(ar, "_GLOBAL_BOOTSTRAP_COORDINATOR", mock.Mock(peek_active=lambda: None))
+    monkeypatch.setattr(ar, "_resolve_bootstrap_wait_timeout", lambda *_a, **_k: 0.2)
+    monkeypatch.setattr(ar._BOOTSTRAP_STATE, "depth", 1, raising=False)
+
+    builder = ar.ContextBuilder()
+    monkeypatch.setattr(ar, "create_context_builder", lambda: builder)
+    monkeypatch.setattr(ar, "SelfCodingEngine", lambda *_a, **_k: mock.Mock())
+    monkeypatch.setattr(ar, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(ar, "MenaceMemoryManager", mock.Mock(name="MenaceMemoryManager"))
+    monkeypatch.setattr(ar, "get_orchestrator", lambda *_a, **_k: mock.Mock())
+    monkeypatch.setattr(
+        ar,
+        "get_thresholds",
+        lambda *_a, **_k: types.SimpleNamespace(
+            roi_drop=1.0, error_increase=2.0, test_failure_increase=3.0
+        ),
+    )
+    monkeypatch.setattr(ar, "persist_sc_thresholds", lambda *_, **__: None)
+    monkeypatch.setattr(ar, "ThresholdService", lambda *_, **__: mock.Mock())
+    monkeypatch.setattr(ar, "internalize_coding_bot", lambda *_, **__: broker_manager)
+    monkeypatch.setattr(ar, "prepare_pipeline_for_bootstrap", mock.Mock())
+
+    manager = ar._ensure_self_coding_manager()
+
+    assert manager is broker_manager
+    assert ar._pipeline is broker_pipeline
+    assert resolve_calls["count"] >= 3
 
