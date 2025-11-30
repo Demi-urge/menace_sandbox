@@ -467,6 +467,11 @@ def _ensure_runtime_dependencies(
         if pipe is None:
             bootstrap_active = _is_bootstrap_active()
             if bootstrap_active:
+                broker_expectation = bool(
+                    broker_active_owner
+                    or broker_active_pipeline is not None
+                    or broker_active_sentinel is not None
+                )
                 broker_pipeline, broker_manager = dependency_broker.resolve()
                 if (
                     pipe is None
@@ -479,6 +484,42 @@ def _ensure_runtime_dependencies(
                     pipe = broker_pipeline
                     if manager_override is None and manager is None:
                         manager_override = broker_manager
+                elif broker_expectation:
+                    wait_deadline = (
+                        None
+                        if wait_timeout is None
+                        else time.perf_counter() + max(wait_timeout, 0.05)
+                    )
+                    backoff = 0.01
+                    while pipe is None and (
+                        wait_deadline is None or time.perf_counter() < wait_deadline
+                    ):
+                        broker_pipeline, broker_manager = dependency_broker.resolve()
+                        broker_active_pipeline = getattr(
+                            dependency_broker, "active_pipeline", broker_active_pipeline
+                        )
+                        broker_active_sentinel = getattr(
+                            dependency_broker, "active_sentinel", broker_active_sentinel
+                        )
+                        broker_active_owner = bool(
+                            getattr(dependency_broker, "active_owner", broker_active_owner)
+                        )
+                        if _looks_like_pipeline_candidate(broker_pipeline):
+                            pipe = broker_pipeline
+                            if manager_override is None and manager is None:
+                                manager_override = broker_manager
+                            break
+                        if _looks_like_pipeline_candidate(broker_active_pipeline):
+                            pipe = broker_active_pipeline
+                            if manager_override is None:
+                                manager_override = (
+                                    broker_active_sentinel or broker_manager
+                                )
+                            break
+                        if not broker_active_owner and not broker_active_pipeline:
+                            break
+                        time.sleep(backoff)
+                        backoff = min(backoff * 2, 0.25)
                 if pipe is None and broker_active_pipeline is not None:
                     pipe = broker_active_pipeline
                     if manager_override is None:
