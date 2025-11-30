@@ -94,8 +94,8 @@ from .coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
     _current_bootstrap_context,
+    claim_bootstrap_dependency_entry,
     get_active_bootstrap_pipeline,
-    prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
 from .data_bot import DataBot, persist_sc_thresholds
@@ -367,10 +367,11 @@ class Watchdog:
                     )
 
         placeholder_advertised = False
+        placeholder_manager = None
 
         if pipeline is None:
             try:
-                advertise_bootstrap_placeholder(
+                pipeline, placeholder_manager = advertise_bootstrap_placeholder(
                     dependency_broker=dependency_broker, owner=True
                 )
                 placeholder_advertised = True
@@ -380,13 +381,24 @@ class Watchdog:
                 )
 
             try:
-                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                (
+                    pipeline,
+                    promote_pipeline,
+                    manager_candidate,
+                    _prepared,
+                ) = claim_bootstrap_dependency_entry(
+                    dependency_broker=dependency_broker,
+                    pipeline=pipeline,
+                    manager=manager,
+                    owner=True,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=self.context_builder,
                     event_bus=bus_local,
                     bot_registry=self.registry,
                     data_bot=DATA_BOT,
+                    manager_override=placeholder_manager,
                 )
+                manager = manager or manager_candidate
             except Exception:
                 if placeholder_advertised:
                     try:
@@ -397,7 +409,6 @@ class Watchdog:
                             exc_info=True,
                         )
                 raise
-            manager = None
         persist_sc_thresholds(
             self.__class__.__name__,
             roi_drop=self.thresholds.roi_loss_percent,
