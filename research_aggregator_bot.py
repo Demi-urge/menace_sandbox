@@ -12,6 +12,7 @@ from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
     _looks_like_pipeline_candidate,
     _bootstrap_dependency_broker,
+    read_bootstrap_heartbeat,
     get_active_bootstrap_pipeline,
     _current_bootstrap_context,
     _using_bootstrap_sentinel,
@@ -52,6 +53,7 @@ import os
 import logging
 import warnings
 from datetime import datetime
+from types import SimpleNamespace
 
 from .chatgpt_enhancement_bot import (
     EnhancementDB,
@@ -334,10 +336,10 @@ def _ensure_runtime_dependencies(
         guard_promise = _peek_owner_promise(owner_guard) if owner_guard is not None else None
         dependency_broker = _bootstrap_dependency_broker()
         broker_pipeline, broker_manager = dependency_broker.resolve()
+        if manager_override is None and manager is None and broker_manager is not None:
+            manager_override = broker_manager
         if pipeline_hint is None and _looks_like_pipeline_candidate(broker_pipeline):
             pipeline_hint = broker_pipeline
-            if manager_override is None and manager is None and broker_manager is not None:
-                manager_override = broker_manager
 
         pipe = None
         if pipeline_override is not None:
@@ -351,6 +353,8 @@ def _ensure_runtime_dependencies(
             wait_start = time.perf_counter()
             while pipe is None:
                 broker_pipeline, broker_manager = dependency_broker.resolve()
+                if manager_override is None and manager is None and broker_manager is not None:
+                    manager_override = broker_manager
                 if _looks_like_pipeline_candidate(broker_pipeline):
                     pipe = broker_pipeline
                     if (
@@ -404,12 +408,20 @@ def _ensure_runtime_dependencies(
         if pipe is None:
             bootstrap_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
             bootstrap_context = _current_bootstrap_context()
+            active_heartbeat = read_bootstrap_heartbeat()
             bootstrap_active = (
                 bootstrap_depth > 0
                 or guard_promise is not None
                 or bootstrap_context is not None
+                or bool(active_heartbeat)
             )
-            if not bootstrap_active:
+            if bootstrap_active:
+                broker_pipeline, broker_manager = dependency_broker.resolve()
+                if manager_override is None and manager is None and broker_manager is not None:
+                    manager_override = broker_manager
+                if _looks_like_pipeline_candidate(broker_pipeline):
+                    pipe = broker_pipeline
+            if pipe is None and not bootstrap_active:
                 pipe, promoted = prepare_pipeline_for_bootstrap(
                     pipeline_cls=pipeline_cls,
                     context_builder=ctx_builder,
@@ -423,13 +435,20 @@ def _ensure_runtime_dependencies(
                 if promoted is not None and not promote_explicit:
                     promote_pipeline = promoted
             if pipe is None:
-                if bootstrap_active:
-                    raise RuntimeError(
-                        "bootstrap pipeline unavailable while bootstrap is in progress"
-                    )
-                raise RuntimeError(
-                    "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
+                placeholder_manager = manager_override or manager or broker_manager
+                if placeholder_manager is None:
+                    placeholder_manager = SimpleNamespace(bootstrap_placeholder=True)
+                pipe = SimpleNamespace(
+                    manager=placeholder_manager,
+                    initial_manager=placeholder_manager,
+                    bootstrap_placeholder=True,
                 )
+                if promote_pipeline is None:
+                    promote_pipeline = _active_bootstrap_promoter() or (lambda *_a: None)
+                if not bootstrap_active:
+                    raise RuntimeError(
+                        "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
+                    )
 
         if promote_pipeline is None:
             promote_pipeline = _active_bootstrap_promoter() or (lambda *_args: None)
@@ -462,25 +481,31 @@ def _ensure_runtime_dependencies(
                 "Failed to persist self-coding thresholds for ResearchAggregatorBot"
             )
 
+        pipeline_placeholder = bool(getattr(pipe, "bootstrap_placeholder", False))
         try:
-            mgr = mgr if mgr is not None else internalize_coding_bot(
-                "ResearchAggregatorBot",
-                eng,
-                pipe,
-                data_bot=dbot,
-                bot_registry=reg,
-                evolution_orchestrator=orchestrator,
-                threshold_service=ThresholdService(),
-                roi_threshold=thresholds.roi_drop,
-                error_threshold=thresholds.error_increase,
-                test_failure_threshold=thresholds.test_failure_increase,
-            )
+            if mgr is None and not pipeline_placeholder and _looks_like_pipeline_candidate(pipe):
+                mgr = internalize_coding_bot(
+                    "ResearchAggregatorBot",
+                    eng,
+                    pipe,
+                    data_bot=dbot,
+                    bot_registry=reg,
+                    evolution_orchestrator=orchestrator,
+                    threshold_service=ThresholdService(),
+                    roi_threshold=thresholds.roi_drop,
+                    error_threshold=thresholds.error_increase,
+                    test_failure_threshold=thresholds.test_failure_increase,
+                )
+            elif mgr is None:
+                mgr = manager_override or manager or getattr(pipe, "manager", None)
         except Exception as exc:  # pragma: no cover - fallback for degraded envs
             logger.warning(
                 "Self-coding manager unavailable for ResearchAggregatorBot: %s", exc
             )
             mgr = None
         else:
+            if promote_pipeline is None:
+                promote_pipeline = _active_bootstrap_promoter() or (lambda *_args: None)
             promote_pipeline(mgr)
 
         registry = reg
