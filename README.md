@@ -31,6 +31,15 @@ All `prepare_pipeline_for_bootstrap` callers now run through the `wait_for_boots
 
 When a helper skips the guardrails, the bootstrap chain can enter a **cascade failure** where each new module import spawns another bootstrap attempt that immediately stalls on the recursion guard. The `_bootstrap_dependency_broker` prevents this by advertising an in-flight placeholder pipeline (and its sentinel manager) to late imports so they reuse the active bootstrap instead of creating yet another one, while the global single-flight coordinator serialises simultaneous callers. Always route new bootstrap helpers through `prepare_pipeline_for_bootstrap` (or `advertise_bootstrap_placeholder` for modules that only need to publish a sentinel) so they can claim or reuse the single-flight promise and broadcast the placeholder via the broker. If your logs fill with repeated `prepare_pipeline_for_bootstrap` owner/reuse lines or `recursion_refused` messages, audit the import path to find the module constructing a pipeline without the broker and add it to the shared bootstrap chain so it reuses the advertised sentinel instead of re-entering bootstrap.
 
+The shared `coding_bot_interface.advertise_bootstrap_placeholder` helper now seeds the dependency broker for all bootstrap participants; modules that construct a `ModelAutomationPipeline` during startup must reuse the advertised placeholder instead of invoking `prepare_pipeline_for_bootstrap` directly. Today that list includes:
+
+- `bootstrap_self_coding.py`, `manual_bootstrap.py`, `start_autonomous_sandbox.py`, `sandbox_runner.py`, `menace_master.py`, and `menace_cli.py` entrypoints.
+- Orchestration and watchdog surfaces such as `menace_orchestrator.py`, `watchdog.py`, and `cognition_layer.py`.
+- Bot wrappers that warm pipelines on import (`bot_development_bot.py`, `enhancement_bot.py`, `prediction_manager_bot.py`, `research_aggregator_bot.py`, and related helpers).
+- Service adapters that expose the pipeline to other components, including `vector_service/vector_database_service.py`.
+
+When adding a new bootstrap participant, thread it through `advertise_bootstrap_placeholder` (or reuse an existing advertised placeholder) so late imports claim the shared sentinel rather than re-entering bootstrap and triggering the recursion guard.
+
 ### Bootstrap timeouts and tuning
 
 The bootstrap helpers respect several environment variables that govern how long the GUI (and CLI equivalents) wait for pipelines to stand up:
