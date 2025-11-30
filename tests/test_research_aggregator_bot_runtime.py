@@ -644,6 +644,75 @@ def test_dependency_broker_reuses_inflight_pipeline(monkeypatch):
     module.prepare_pipeline_for_bootstrap.assert_not_called()
 
 
+def test_dependency_broker_advertisement_short_circuits(monkeypatch):
+    """An advertised broker pipeline prevents redundant bootstrap work."""
+
+    broker_manager = mock.Mock(name="broker_manager")
+    broker_pipeline = SimpleNamespace(manager=broker_manager)
+    broker_promote = mock.Mock(name="broker_promote")
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    broker = mock.Mock(
+        resolve=mock.Mock(return_value=(broker_pipeline, broker_manager)),
+        advertise=mock.Mock(),
+    )
+    module._BOOTSTRAP_STATE = SimpleNamespace(
+        helper_promotion_callbacks=[broker_promote], depth=1
+    )
+    monkeypatch.setattr(
+        module, "_bootstrap_dependency_broker", mock.Mock(return_value=broker)
+    )
+    monkeypatch.setattr(
+        module,
+        "get_active_bootstrap_pipeline",
+        mock.Mock(return_value=(None, None)),
+    )
+    monkeypatch.setattr(module, "_looks_like_pipeline_candidate", lambda value: bool(value))
+    monkeypatch.setattr(module, "_using_bootstrap_sentinel", lambda *_a, **_k: False)
+    module._current_bootstrap_context = lambda: None
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=broker_manager))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies()
+
+    assert state.pipeline is broker_pipeline
+    assert state.manager is broker_manager
+    broker.advertise.assert_called_once_with(
+        pipeline=broker_pipeline, sentinel=broker_manager
+    )
+    broker_promote.assert_called_once_with(broker_manager)
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
 def test_bootstrap_guard_promise_waits_for_pipeline(monkeypatch):
     """A guard promise blocks fresh bootstrap attempts until the pipeline appears."""
 
