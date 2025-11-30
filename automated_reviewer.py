@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import logging
 import json
+import threading
 import uuid
 from typing import Optional
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import (
+    _BOOTSTRAP_STATE,
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    get_active_bootstrap_pipeline,
     normalise_manager_arg,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
@@ -60,46 +65,189 @@ from snippet_compressor import compress_snippets
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
-pipeline, _pipeline_promoter = prepare_pipeline_for_bootstrap(
-    pipeline_cls=ModelAutomationPipeline,
-    context_builder=_context_builder,
-    bot_registry=registry,
-    data_bot=data_bot,
-)
-evolution_orchestrator = get_orchestrator("AutomatedReviewer", data_bot, engine)
-_th = get_thresholds("AutomatedReviewer")
-persist_sc_thresholds(
-    "AutomatedReviewer",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "AutomatedReviewer",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-    threshold_service=ThresholdService(),
-)
+_self_coding_lock = threading.RLock()
+_context_builder: ContextBuilder | None = None
+_engine: SelfCodingEngine | None = None
+_pipeline: ModelAutomationPipeline | None = None
+_pipeline_promoter: Callable[[SelfCodingManager], None] | None = None
+_evolution_orchestrator = None
+_thresholds = None
+_manager_instance: SelfCodingManager | None = None
 
 
-def _promote_pipeline_manager(manager: SelfCodingManager | None) -> None:
-    global _pipeline_promoter
-    promoter = _pipeline_promoter
-    if promoter is None or manager is None:
-        return
-    promoter(manager)
-    _pipeline_promoter = None
+def _ensure_self_coding_manager() -> SelfCodingManager:
+    """Initialise shared self-coding infrastructure lazily."""
+
+    global _context_builder, _engine, _pipeline_promoter, _pipeline
+    global _evolution_orchestrator, _thresholds, _manager_instance
+
+    with _self_coding_lock:
+        if _context_builder is None:
+            _context_builder = create_context_builder()
+
+        if _engine is None:
+            _engine = SelfCodingEngine(
+                CodeDB(), MenaceMemoryManager(), context_builder=_context_builder
+            )
+
+        bootstrap_pipeline: ModelAutomationPipeline | None = None
+        bootstrap_manager: SelfCodingManager | None = None
+        promoter: Callable[[SelfCodingManager], None] | None = None
+
+        if _pipeline is None or _manager_instance is None:
+            try:
+                bootstrap_pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
+            except Exception:
+                bootstrap_pipeline, bootstrap_manager = None, None
+
+            try:
+                broker_pipeline, broker_manager = _bootstrap_dependency_broker().resolve()
+            except Exception:
+                broker_pipeline, broker_manager = None, None
+
+            if bootstrap_pipeline is None:
+                bootstrap_pipeline = broker_pipeline
+            if bootstrap_manager is None:
+                bootstrap_manager = broker_manager
+
+            bootstrap_context = _current_bootstrap_context()
+            if bootstrap_context is not None:
+                if bootstrap_pipeline is None:
+                    bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
+                if bootstrap_manager is None:
+                    bootstrap_manager = getattr(bootstrap_context, "manager", None)
+
+            for candidate in (bootstrap_pipeline, bootstrap_manager):
+                if promoter is None and candidate is not None:
+                    promoter = getattr(candidate, "_pipeline_promoter", None)
+
+            if _pipeline is None and bootstrap_pipeline is not None:
+                _pipeline = bootstrap_pipeline
+            if _pipeline_promoter is None and promoter is not None:
+                _pipeline_promoter = promoter
+            if _manager_instance is None and bootstrap_manager is not None:
+                _manager_instance = bootstrap_manager
+
+        bootstrap_heartbeat = False
+        try:
+            from bootstrap_timeout_policy import read_bootstrap_heartbeat
+
+            bootstrap_heartbeat = bool(read_bootstrap_heartbeat())
+        except Exception:
+            bootstrap_heartbeat = False
+
+        bootstrap_inflight = bool(
+            bootstrap_heartbeat
+            or getattr(_BOOTSTRAP_STATE, "depth", 0)
+            or _current_bootstrap_context()
+        )
+
+        skip_prepare = bootstrap_inflight and bool(_pipeline or _manager_instance)
+
+        if _pipeline is None and not skip_prepare:
+            pipeline, promoter = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=_context_builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+            )
+            _pipeline = pipeline
+            _pipeline_promoter = promoter
+
+        if _evolution_orchestrator is None:
+            assert _engine is not None
+            _evolution_orchestrator = get_orchestrator(
+                "AutomatedReviewer", data_bot, _engine
+            )
+
+        if _thresholds is None:
+            _thresholds = get_thresholds("AutomatedReviewer")
+            persist_sc_thresholds(
+                "AutomatedReviewer",
+                roi_drop=_thresholds.roi_drop,
+                error_increase=_thresholds.error_increase,
+                test_failure_increase=_thresholds.test_failure_increase,
+            )
+
+        if _manager_instance is None:
+            manager = internalize_coding_bot(
+                "AutomatedReviewer",
+                _engine,
+                _pipeline,
+                data_bot=data_bot,
+                bot_registry=registry,
+                evolution_orchestrator=_evolution_orchestrator,
+                roi_threshold=_thresholds.roi_drop,
+                error_threshold=_thresholds.error_increase,
+                test_failure_threshold=_thresholds.test_failure_increase,
+                threshold_service=ThresholdService(),
+            )
+            _manager_instance = manager
+            if _pipeline_promoter is not None:
+                try:
+                    _pipeline_promoter(manager)
+                finally:
+                    _pipeline_promoter = None
+
+    assert _manager_instance is not None
+    return _manager_instance
 
 
-_promote_pipeline_manager(manager)
+class _ManagerProxy:
+    """Proxy resolving the shared self-coding manager lazily."""
+
+    __self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+    def __call__(self) -> SelfCodingManager:
+        return _ensure_self_coding_manager()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(_ensure_self_coding_manager(), item)
+
+
+manager: SelfCodingManager | _ManagerProxy = _ManagerProxy()
+
+
+def get_manager() -> SelfCodingManager:
+    """Return the shared :class:`SelfCodingManager` instance."""
+
+    return _ensure_self_coding_manager()
+
+
+def get_engine() -> SelfCodingEngine:
+    """Return the lazily initialised :class:`SelfCodingEngine`."""
+
+    _ensure_self_coding_manager()
+    assert _engine is not None
+    return _engine
+
+
+def get_pipeline() -> ModelAutomationPipeline:
+    """Return the shared :class:`ModelAutomationPipeline` instance."""
+
+    _ensure_self_coding_manager()
+    assert _pipeline is not None
+    return _pipeline
+
+
+def get_context_builder() -> ContextBuilder:
+    """Return the shared :class:`ContextBuilder` instance."""
+
+    _ensure_self_coding_manager()
+    assert _context_builder is not None
+    return _context_builder
+
+
+def __getattr__(name: str) -> Any:
+    if name == "engine":
+        return get_engine()
+    if name == "pipeline":
+        return get_pipeline()
+    if name == "context_builder":
+        return get_context_builder()
+    if name == "manager":
+        return get_manager()
+    raise AttributeError(name)
 
 
 @self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
