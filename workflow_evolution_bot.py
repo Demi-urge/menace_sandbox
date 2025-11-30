@@ -32,6 +32,7 @@ if _HAS_PACKAGE:
     from .coding_bot_interface import (
         _bootstrap_dependency_broker,
         _current_bootstrap_context,
+        claim_bootstrap_dependency_entry,
         get_active_bootstrap_pipeline,
         prepare_pipeline_for_bootstrap,
         self_coding_managed,
@@ -40,6 +41,7 @@ else:  # pragma: no cover - execution as a script
     _coding_bot_interface = _flat_import("coding_bot_interface")
     _bootstrap_dependency_broker = _coding_bot_interface._bootstrap_dependency_broker  # type: ignore[attr-defined]
     _current_bootstrap_context = _coding_bot_interface._current_bootstrap_context  # type: ignore[attr-defined]
+    claim_bootstrap_dependency_entry = _coding_bot_interface.claim_bootstrap_dependency_entry  # type: ignore[attr-defined]
     get_active_bootstrap_pipeline = _coding_bot_interface.get_active_bootstrap_pipeline  # type: ignore[attr-defined]
     prepare_pipeline_for_bootstrap = _coding_bot_interface.prepare_pipeline_for_bootstrap  # type: ignore[attr-defined]
     self_coding_managed = _coding_bot_interface.self_coding_managed  # type: ignore[attr-defined]
@@ -363,6 +365,8 @@ def _ensure_runtime_dependencies() -> dict[str, Any]:
     active_manager: Any | None = None
     dependency_broker: Any | None = None
     bootstrap_context: Any | None = None
+    prepared_pipeline = False
+    promote_from_claim = False
     if context_builder is not None and engine is not None:
         try:
             dependency_broker = _bootstrap_dependency_broker()
@@ -412,12 +416,26 @@ def _ensure_runtime_dependencies() -> dict[str, Any]:
             )
         elif pipeline is None and active_manager is None:
             try:
-                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                (
+                    pipeline,
+                    promote_pipeline,
+                    active_manager,
+                    prepared_pipeline,
+                ) = claim_bootstrap_dependency_entry(
+                    dependency_broker=dependency_broker,
+                    pipeline=pipeline,
+                    manager=active_manager,
                     pipeline_cls=pipeline_cls,
                     context_builder=context_builder,
                     bot_registry=registry_local,
                     data_bot=data_bot_local,
                 )
+                promote_from_claim = promote_pipeline is not None
+                if dependency_broker is None:
+                    try:
+                        dependency_broker = _bootstrap_dependency_broker()
+                    except Exception:  # pragma: no cover - degraded broker reuse
+                        dependency_broker = None
             except Exception as exc:  # pragma: no cover - degraded bootstrap
                 logger.warning(
                     "Failed to bootstrap ModelAutomationPipeline for WorkflowEvolutionBot: %s",
@@ -428,6 +446,23 @@ def _ensure_runtime_dependencies() -> dict[str, Any]:
 
         if promote_pipeline is None and pipeline is not None:
             promote_pipeline = getattr(pipeline, "_pipeline_promoter", None)
+
+        if promote_from_claim and promote_pipeline is not None and dependency_broker is not None:
+            original_promote = promote_pipeline
+
+            def promote_pipeline(real_manager: Any) -> None:  # type: ignore[assignment]
+                nonlocal active_manager
+
+                original_promote(real_manager)
+                if real_manager is not None:
+                    active_manager = real_manager
+                try:
+                    dependency_broker.advertise(
+                        pipeline=pipeline,
+                        sentinel=real_manager or active_manager,
+                    )
+                except Exception:  # pragma: no cover - best effort publish
+                    logger.debug("failed to advertise promoted manager", exc_info=True)
 
         if active_manager is None and pipeline is not None:
             try:
