@@ -639,6 +639,72 @@ class MenaceOrchestrator:
             placeholder_manager = getattr(
                 placeholder_pipeline, "manager", placeholder_sentinel
             ) or placeholder_sentinel
+
+            broker_owner_active = bool(
+                getattr(dependency_broker, "active_owner", broker_owner_active)
+            )
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            broker_pipeline = _strip_placeholder(broker_pipeline)
+
+            single_flight_promise = getattr(
+                _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+            )()
+            single_flight_active = single_flight_promise is not None and not getattr(
+                single_flight_promise, "done", True
+            )
+
+            if (
+                broker_owner_active
+                or broker_pipeline is not None
+                or broker_sentinel is not None
+                or single_flight_active
+            ):
+                pipeline_promoter = bootstrap_promoter
+
+                if single_flight_active:
+                    event = getattr(single_flight_promise, "_event", None)
+                    if event is not None:
+                        event.wait(timeout=reuse_wait_timeout)
+                    if getattr(single_flight_promise, "done", False):
+                        try:
+                            promised_pipeline, promised_promoter = (
+                                single_flight_promise.wait()
+                            )
+                            broker_pipeline = promised_pipeline
+                            pipeline_promoter = promised_promoter
+                            broker_sentinel = getattr(
+                                promised_pipeline, "manager", broker_sentinel
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed waiting on bootstrap promise before pipeline creation"
+                            )
+
+                bootstrap_pipeline = broker_pipeline or SimpleNamespace(
+                    manager=broker_sentinel or placeholder_manager
+                )
+                dependency_broker.advertise(
+                    pipeline=bootstrap_pipeline,
+                    sentinel=broker_sentinel or placeholder_manager,
+                    owner=broker_owner_active,
+                )
+                self.pipeline = bootstrap_pipeline
+                self.logger.info(
+                    "menace orchestrator reusing broker bootstrap placeholder",
+                    extra={
+                        "event": "menace-orchestrator-bootstrap-placeholder-reuse",
+                        "broker_owner": broker_owner_active,
+                        "single_flight": single_flight_active,
+                    },
+                )
+                return (
+                    self.pipeline,
+                    pipeline_promoter,
+                    broker_sentinel or placeholder_manager,
+                    bootstrap_heartbeat,
+                    bootstrap_context,
+                )
+
             self.logger.info(
                 "menace orchestrator advertising bootstrap placeholder",
                 extra={
