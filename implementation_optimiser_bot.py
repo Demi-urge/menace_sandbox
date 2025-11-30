@@ -34,8 +34,10 @@ from vector_service.context_builder import ContextBuilder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
 from menace_sandbox.coding_bot_interface import (
+    _GLOBAL_BOOTSTRAP_COORDINATOR,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
+    advertise_bootstrap_placeholder,
     get_active_bootstrap_pipeline,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
@@ -92,10 +94,16 @@ def _resolve_pipeline_cls() -> type["ModelAutomationPipeline"] | None:
     return None
 
 
-def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPipeline | None"]:
-    """Build a factory that lazily instantiates the automation pipeline."""
+def _bootstrap_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPipeline | None"]:
+    """Build a factory that lazily instantiates the automation pipeline.
+
+    The bootstrap dependency broker is updated before and after calling
+    ``prepare_pipeline_for_bootstrap`` so late imports reuse the active
+    placeholder/promise instead of spawning additional bootstraps.
+    """
 
     pipeline_cls = _resolve_pipeline_cls()
+    dependency_broker = _bootstrap_dependency_broker()
 
     def factory(context_builder: ContextBuilder) -> "ModelAutomationPipeline | None":
         global _pipeline_promoter
@@ -105,7 +113,7 @@ def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPip
         promoter: Callable[[SelfCodingManager], None] | None = _pipeline_promoter
         bootstrap_manager: SelfCodingManager | None = None
         try:
-            broker_pipeline, broker_manager = _bootstrap_dependency_broker().resolve()
+            broker_pipeline, broker_manager = dependency_broker.resolve()
         except Exception:  # pragma: no cover - best effort reuse
             broker_pipeline, broker_manager = None, None
         try:
@@ -150,9 +158,70 @@ def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPip
                     promoter = maybe_promoter
                     break
 
+        def _advertise_dependency_state(
+            pipeline_candidate: Any | None = None,
+            manager_candidate: Any | None = None,
+            *,
+            owner: bool | None = None,
+        ) -> None:
+            try:
+                dependency_broker.advertise(
+                    pipeline=pipeline_candidate, sentinel=manager_candidate, owner=owner
+                )
+            except Exception:  # pragma: no cover - best effort broker update
+                logger.debug(
+                    "Failed to advertise ImplementationOptimiserBot bootstrap dependency state",
+                    exc_info=True,
+                )
+
         if pipeline is not None:
-            _pipeline_promoter = promoter
+            _advertise_dependency_state(pipeline, bootstrap_manager)
+
+            def _promote_with_broker(real_manager: Any | None) -> None:
+                try:
+                    if promoter is not None:
+                        promoter(real_manager)
+                finally:
+                    _advertise_dependency_state(pipeline, real_manager, owner=True)
+
+            _pipeline_promoter = _promote_with_broker
             return pipeline
+
+        advertised_pipeline, advertised_manager = advertise_bootstrap_placeholder(
+            dependency_broker=dependency_broker,
+            pipeline=pipeline,
+            manager=bootstrap_manager,
+            owner=True,
+        )
+        pipeline = pipeline or advertised_pipeline
+        bootstrap_manager = bootstrap_manager or advertised_manager
+        _advertise_dependency_state(pipeline, bootstrap_manager, owner=True)
+
+        try:
+            active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+        except Exception:  # pragma: no cover - best effort reuse
+            active_promise = None
+        if active_promise is not None:
+            try:
+                pipeline, promote = active_promise.wait()
+            except Exception as exc:  # pragma: no cover - fallback to new bootstrap
+                logger.warning(
+                    "ImplementationOptimiserBot failed to reuse active bootstrap promise: %s",
+                    exc,
+                )
+            else:
+                def _promote_with_broker(real_manager: Any | None) -> None:
+                    try:
+                        for candidate in (promoter, promote):
+                            if candidate is not None:
+                                candidate(real_manager)
+                    finally:
+                        _advertise_dependency_state(pipeline, real_manager, owner=True)
+
+                _advertise_dependency_state(pipeline, getattr(pipeline, "manager", None))
+                _pipeline_promoter = _promote_with_broker
+                return pipeline
+
         try:
             pipeline, promote = prepare_pipeline_for_bootstrap(
                 pipeline_cls=pipeline_cls,
@@ -168,7 +237,18 @@ def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPip
             _pipeline_promoter = None
             return None
         else:
-            _pipeline_promoter = promote or promoter
+            def _promote_with_broker(real_manager: Any | None) -> None:
+                try:
+                    for candidate in (promoter, promote):
+                        if candidate is not None:
+                            candidate(real_manager)
+                finally:
+                    _advertise_dependency_state(pipeline, real_manager, owner=True)
+
+            _advertise_dependency_state(
+                pipeline, getattr(pipeline, "manager", None), owner=True
+            )
+            _pipeline_promoter = _promote_with_broker
             return pipeline
 
     return factory
@@ -220,7 +300,7 @@ def _get_thresholds() -> Any:
 @lru_cache(maxsize=1)
 def _build_manager() -> SelfCodingManager | None:
     global _pipeline_promoter
-    pipeline_factory = _create_pipeline_factory()
+    pipeline_factory = _bootstrap_pipeline_factory()
     pipeline = pipeline_factory(_get_context_builder())
     if pipeline is None:
         logger.warning(

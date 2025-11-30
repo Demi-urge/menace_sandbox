@@ -30,3 +30,48 @@ def test_refresh_db_weights_failure():
 
     with pytest.raises(RuntimeError):
         iob.ImplementationOptimiserBot(context_builder=BadBuilder())
+
+
+def test_reuses_active_bootstrap_promise(monkeypatch):
+    dependency_broker = iob._bootstrap_dependency_broker()
+    dependency_broker.clear()
+    iob._pipeline_promoter = None
+
+    sentinel_manager = types.SimpleNamespace()
+    promise_pipeline = types.SimpleNamespace(manager=sentinel_manager)
+    promote_calls: list[types.SimpleNamespace | None] = []
+    prepare_called: list[str] = []
+
+    def _promote(manager):
+        promote_calls.append(manager)
+
+    class _Promise:
+        waiters = 1
+
+        def wait(self):
+            return promise_pipeline, _promote
+
+    def _prepare(**_kwargs):  # pragma: no cover - should not be invoked
+        prepare_called.append("prepare")
+        return None, lambda *_args, **_kwargs: None
+
+    monkeypatch.setattr(iob, "prepare_pipeline_for_bootstrap", _prepare)
+    monkeypatch.setattr(
+        iob,
+        "_GLOBAL_BOOTSTRAP_COORDINATOR",
+        types.SimpleNamespace(peek_active=lambda: _Promise()),
+    )
+    monkeypatch.setattr(iob, "_resolve_pipeline_cls", lambda: type("Dummy", (), {}))
+    monkeypatch.setattr(iob, "get_active_bootstrap_pipeline", lambda: (None, None))
+    monkeypatch.setattr(iob, "_current_bootstrap_context", lambda: None)
+
+    pipeline_factory = iob._bootstrap_pipeline_factory()
+    pipeline = pipeline_factory(types.SimpleNamespace())
+
+    assert pipeline is promise_pipeline
+    assert not prepare_called
+    assert dependency_broker.resolve()[0] is pipeline
+    assert iob._pipeline_promoter is not None
+
+    iob._pipeline_promoter(sentinel_manager)
+    assert promote_calls == [sentinel_manager]
