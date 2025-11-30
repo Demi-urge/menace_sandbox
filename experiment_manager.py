@@ -10,9 +10,14 @@ import math
 import logging
 from scipy import stats
 
+from .bootstrap_placeholder import advertise_broker_placeholder
 from .mutation_lineage import MutationLineage
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
-from .coding_bot_interface import prepare_pipeline_for_bootstrap
+from .coding_bot_interface import (
+    _is_bootstrap_placeholder,
+    claim_bootstrap_dependency_entry,
+    prepare_pipeline_for_bootstrap,
+)
 try:  # pragma: no cover - fallback for light imports in tests
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - best effort
@@ -23,6 +28,11 @@ from .prediction_manager_bot import PredictionManager
 from .experiment_history_db import ExperimentHistoryDB, ExperimentLog, TestLog
 
 logger = logging.getLogger(__name__)
+
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+    advertise_broker_placeholder()
+)
 
 
 @dataclass
@@ -59,22 +69,73 @@ class ExperimentManager:
         self.pipeline_promoter: Callable[[object], None] | None = None
         if pipeline is None:
             bootstrap_registry = SimpleNamespace(__name__="experiment_manager.registry")
-            pipeline, promote = prepare_pipeline_for_bootstrap(
+            (
+                pipeline_candidate,
+                promote_pipeline,
+                manager_candidate,
+                prepared_pipeline,
+            ) = claim_bootstrap_dependency_entry(
+                dependency_broker=_BOOTSTRAP_BROKER,
+                pipeline=_BOOTSTRAP_PLACEHOLDER,
+                manager=_BOOTSTRAP_SENTINEL,
+                owner=True,
                 pipeline_cls=ModelAutomationPipeline,
                 context_builder=self.context_builder,
                 bot_registry=bootstrap_registry,
                 data_bot=self.data_bot,
                 capital_manager=self.capital_bot,
             )
-            self.pipeline = pipeline
-            self.pipeline_promoter = promote
+            if _is_bootstrap_placeholder(pipeline_candidate):
+                pipeline_candidate, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=ModelAutomationPipeline,
+                    context_builder=self.context_builder,
+                    bot_registry=bootstrap_registry,
+                    data_bot=self.data_bot,
+                    capital_manager=self.capital_bot,
+                    manager_override=manager_candidate,
+                )
+                prepared_pipeline = True
+                try:
+                    manager_candidate = getattr(pipeline_candidate, "manager", manager_candidate)
+                except Exception:  # pragma: no cover - best effort attribute fetch
+                    manager_candidate = manager_candidate
+                try:
+                    _BOOTSTRAP_BROKER.advertise(
+                        pipeline=pipeline_candidate,
+                        sentinel=manager_candidate,
+                        owner=True,
+                    )
+                except Exception:  # pragma: no cover - defensive broker update
+                    logger.debug("failed to advertise prepared pipeline", exc_info=True)
+            self.pipeline = pipeline_candidate
+            self.pipeline_manager = manager_candidate
+
+            if callable(promote_pipeline):
+                def _promote(manager: object) -> None:
+                    try:
+                        promote_pipeline(manager)
+                    finally:
+                        try:
+                            _BOOTSTRAP_BROKER.advertise(
+                                pipeline=self.pipeline,
+                                sentinel=manager,
+                                owner=True,
+                            )
+                        except Exception:  # pragma: no cover - broker promotion best effort
+                            logger.debug(
+                                "failed to advertise promoted pipeline manager", exc_info=True
+                            )
+
+                self.pipeline_promoter = _promote
         else:
             if not hasattr(pipeline, "context_builder"):
                 raise ValueError("pipeline must expose a context_builder")
             if pipeline.context_builder is not self.context_builder:
                 raise ValueError("pipeline and context_builder must match")
             self.pipeline = pipeline
-        self.pipeline_manager = getattr(self.pipeline, "manager", None)
+            self.pipeline_manager = getattr(self.pipeline, "manager", None)
+        if getattr(self, "pipeline_manager", None) is None:
+            self.pipeline_manager = getattr(self.pipeline, "manager", None)
         self.prediction_manager = prediction_manager
         self.experiment_db = experiment_db or ExperimentHistoryDB()
         self.p_threshold = p_threshold
