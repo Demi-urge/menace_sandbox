@@ -283,6 +283,7 @@ def _ensure_runtime_dependencies(
     dependency_broker = _bootstrap_dependency_broker()
     broker_active_pipeline = getattr(dependency_broker, "active_pipeline", None)
     broker_active_sentinel = getattr(dependency_broker, "active_sentinel", None)
+    broker_active_owner = bool(getattr(dependency_broker, "active_owner", False))
     placeholder_pipeline: object | None = None
     placeholder_manager: object | None = None
     if _runtime_state is None:
@@ -374,6 +375,9 @@ def _ensure_runtime_dependencies(
             or guard_promise is not None
             or _current_bootstrap_context() is not None
             or heartbeat
+            or broker_active_owner
+            or broker_active_pipeline is not None
+            or broker_active_sentinel is not None
         )
 
     try:
@@ -382,10 +386,12 @@ def _ensure_runtime_dependencies(
         owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
         guard_promise = _peek_owner_promise(owner_guard) if owner_guard is not None else None
         broker_pipeline, broker_manager = dependency_broker.resolve()
-        if manager_override is None and manager is None and broker_manager is not None:
-            manager_override = broker_manager
         if pipeline_hint is None and _looks_like_pipeline_candidate(broker_pipeline):
             pipeline_hint = broker_pipeline
+            if manager_override is None and manager is None:
+                manager_override = broker_manager
+        if manager_override is None and manager is None and broker_manager is not None:
+            manager_override = broker_manager
 
         prepared_pipeline = False
 
@@ -513,15 +519,23 @@ def _ensure_runtime_dependencies(
                     )
                     logger.error(message)
                     raise RuntimeError(message)
-
             if pipe is None:
+                broker_pipeline, broker_manager = dependency_broker.resolve()
+                if _is_bootstrap_active() and not _looks_like_pipeline_candidate(
+                    broker_pipeline
+                ):
+                    raise RuntimeError(
+                        "Bootstrap is active but no dependency broker pipeline or promise is available"
+                    )
                 try:
                     placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
                         dependency_broker=dependency_broker,
-                        pipeline=pipeline_override,
+                        pipeline=pipeline_override or broker_pipeline,
                         manager=(
                             manager_override
                             if manager_override is not None
+                            else broker_manager
+                            if broker_manager is not None
                             else manager
                             if manager is not None
                             else placeholder_manager
@@ -541,6 +555,8 @@ def _ensure_runtime_dependencies(
                     data_bot=dbot,
                     bootstrap_runtime_manager=manager_override
                     if manager_override is not None
+                    else broker_manager
+                    if broker_manager is not None
                     else manager,
                     manager_override=manager_override,
                 )

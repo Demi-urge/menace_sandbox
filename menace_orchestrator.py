@@ -200,6 +200,7 @@ class MenaceOrchestrator:
         dependency_broker = _bootstrap_dependency_broker()
         self.dependency_broker = dependency_broker
         broker_pipeline, broker_sentinel = dependency_broker.resolve()
+        broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
         if broker_pipeline is not None or broker_sentinel is not None:
             dependency_broker.advertise(
                 pipeline=broker_pipeline, sentinel=broker_sentinel, owner=False
@@ -241,6 +242,8 @@ class MenaceOrchestrator:
                 or bool(bootstrap_heartbeat)
                 or guard_promise is not None
                 or broker_sentinel is not None
+                or broker_pipeline is not None
+                or broker_owner_active
                 or (single_flight_promise is not None
                     and not getattr(single_flight_promise, "done", True))
             )
@@ -419,6 +422,11 @@ class MenaceOrchestrator:
         single_flight_active = single_flight_promise is not None and not getattr(
             single_flight_promise, "done", True
         )
+
+        if bootstrap_pipeline is None and _bootstrap_signals_active():
+            raise RuntimeError(
+                "bootstrap signals active but no dependency broker pipeline or manager promise available"
+            )
 
         if bootstrap_pipeline is None and (broker_sentinel is not None or single_flight_active):
             if single_flight_active:
