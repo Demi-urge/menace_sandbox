@@ -66,6 +66,31 @@ def test_creates_pipeline_with_builder(monkeypatch):
             return types.SimpleNamespace(roi=None)
 
     monkeypatch.setattr(exp_mod, "ModelAutomationPipeline", DummyPipeline)
+    placeholder = types.SimpleNamespace(
+        bootstrap_placeholder=True,
+        _self_coding_bootstrap_placeholder=True,
+        manager=types.SimpleNamespace(
+            bootstrap_placeholder=True, _self_coding_bootstrap_placeholder=True
+        ),
+    )
+
+    def _claim(**_kwargs):
+        return placeholder, None, placeholder.manager, False
+
+    monkeypatch.setattr(exp_mod, "claim_bootstrap_dependency_entry", _claim, raising=False)
+    monkeypatch.setattr(
+        exp_mod,
+        "prepare_pipeline_for_bootstrap",
+        lambda **kwargs: (
+            DummyPipeline(
+                kwargs["data_bot"],
+                kwargs["capital_manager"],
+                kwargs["context_builder"],
+            ),
+            lambda _manager: None,
+        ),
+        raising=False,
+    )
 
     builder = DummyBuilder()
     mgr = ExperimentManager(DummyDataBot(), DummyCapitalBot(), context_builder=builder)
@@ -166,6 +191,19 @@ def test_pipeline_bootstrap_promotion(monkeypatch, caplog):
     builder = DummyBuilder()
     pipeline = types.SimpleNamespace(manager="sentinel", context_builder=builder)
     promote_calls: list[object] = []
+
+    placeholder = types.SimpleNamespace(
+        bootstrap_placeholder=True,
+        _self_coding_bootstrap_placeholder=True,
+        manager=types.SimpleNamespace(
+            bootstrap_placeholder=True, _self_coding_bootstrap_placeholder=True
+        ),
+    )
+
+    def _claim(**_kwargs):
+        return placeholder, None, placeholder.manager, False
+
+    monkeypatch.setattr(exp_mod, "claim_bootstrap_dependency_entry", _claim, raising=False)
 
     def _fake_prepare(**kwargs):
         def _promote(manager):
