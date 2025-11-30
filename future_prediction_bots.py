@@ -207,22 +207,91 @@ def _bootstrap_self_coding() -> tuple[
             memory_mod.GPTMemoryManager(),
             context_builder=context_builder,
         )
-        pipeline_cls = _resolve_model_automation_pipeline()
-        if not hasattr(interface_mod, "prepare_pipeline_for_bootstrap"):
-            raise AttributeError("prepare_pipeline_for_bootstrap unavailable")
-        pipeline, promote_pipeline = interface_mod.prepare_pipeline_for_bootstrap(
-            pipeline_cls=pipeline_cls,
-            context_builder=context_builder,
-            bot_registry=registry_local,
-            data_bot=data_bot_local,
+
+        dependency_broker = None
+        advertise_placeholder = getattr(
+            interface_mod, "advertise_bootstrap_placeholder", None
         )
-        manager_local = manager_mod.SelfCodingManager(
-            engine,
-            pipeline,
-            data_bot=data_bot_local,
-            bot_registry=registry_local,
+        try:
+            dependency_broker = interface_mod._bootstrap_dependency_broker()
+        except Exception:  # pragma: no cover - optional dependency broker
+            dependency_broker = None
+
+        active_pipeline = None
+        active_manager = None
+        get_active = getattr(interface_mod, "get_active_bootstrap_pipeline", None)
+        if callable(get_active):
+            try:
+                active_pipeline, active_manager = get_active()
+            except Exception:  # pragma: no cover - bootstrap probe best effort
+                active_pipeline = active_manager = None
+
+        if callable(advertise_placeholder):
+            try:
+                active_pipeline, active_manager = advertise_placeholder(
+                    dependency_broker=dependency_broker,
+                    pipeline=active_pipeline,
+                    manager=active_manager,
+                    owner=True,
+                )
+            except Exception as exc:  # pragma: no cover - bootstrap seed best effort
+                logger.debug(
+                    "failed to advertise bootstrap placeholder for future prediction bots",
+                    exc_info=_exc_info(exc),
+                )
+
+        broker_pipeline = None
+        broker_manager = None
+        resolver = getattr(dependency_broker, "resolve", None)
+        if callable(resolver):
+            try:
+                broker_pipeline, broker_manager = resolver()
+            except Exception as exc:  # pragma: no cover - broker resolution best effort
+                logger.debug(
+                    "dependency broker resolution failed during future prediction bootstrap",
+                    exc_info=_exc_info(exc),
+                )
+
+        pipeline = broker_pipeline or active_pipeline
+        promote_pipeline = None
+        if pipeline is None:
+            pipeline_cls = _resolve_model_automation_pipeline()
+            prepare_pipeline = getattr(interface_mod, "prepare_pipeline_for_bootstrap", None)
+            if not callable(prepare_pipeline):
+                raise AttributeError("prepare_pipeline_for_bootstrap unavailable")
+            pipeline, promote_pipeline = prepare_pipeline(
+                pipeline_cls=pipeline_cls,
+                context_builder=context_builder,
+                bot_registry=registry_local,
+                data_bot=data_bot_local,
+            )
+
+        manager_local = broker_manager or active_manager or getattr(
+            pipeline, "manager", None
         )
-        promote_pipeline(manager_local)
+        if manager_local is None:
+            manager_local = manager_mod.SelfCodingManager(
+                engine,
+                pipeline,
+                data_bot=data_bot_local,
+                bot_registry=registry_local,
+            )
+        if callable(promote_pipeline):
+            promote_pipeline(manager_local)
+
+        if callable(advertise_placeholder):
+            try:
+                advertise_placeholder(
+                    dependency_broker=dependency_broker,
+                    pipeline=pipeline,
+                    manager=manager_local,
+                    owner=True,
+                )
+            except Exception:  # pragma: no cover - advisory only
+                logger.debug(
+                    "failed to publish promoted manager for future prediction bots",
+                    exc_info=True,
+                )
     except (ModuleNotFoundError, AttributeError) as exc:
         logger.warning(
             "ModelAutomationPipeline unavailable; future prediction bots will run without autonomous updates: %s",
