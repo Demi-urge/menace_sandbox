@@ -154,7 +154,12 @@ from menace.bot_registry import BotRegistry  # noqa: E402
 from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.retry_utils import retry  # noqa: E402
 from menace.disaster_recovery import DisasterRecovery  # noqa: E402
-from coding_bot_interface import prepare_pipeline_for_bootstrap  # noqa: E402
+from coding_bot_interface import (  # noqa: E402
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    _resolve_bootstrap_pipeline_candidate,
+    prepare_pipeline_for_bootstrap,
+)
 try:
     import sandbox_runner  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
@@ -639,17 +644,42 @@ def deploy_patch(
     bus = UnifiedEventBus()
     registry = BotRegistry(event_bus=bus)
     data_bot = DataBot()
+    dependency_broker = _bootstrap_dependency_broker()
+    broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    bootstrap_context = _current_bootstrap_context()
+    bootstrap_pipeline = _resolve_bootstrap_pipeline_candidate(
+        getattr(bootstrap_context, "pipeline", None) if bootstrap_context else None
+    )
+    bootstrap_sentinel = None
+    if bootstrap_context is not None:
+        bootstrap_sentinel = getattr(bootstrap_context, "sentinel", None) or getattr(
+            bootstrap_context, "manager", None
+        )
+    pipeline = (
+        _resolve_bootstrap_pipeline_candidate(broker_pipeline)
+        or bootstrap_pipeline
+        or None
+    )
+    promote_pipeline = lambda *_a, **_k: None
+    if pipeline is None:
+        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
+            context_builder=builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+            event_bus=bus,
+        )
+    else:
+        sentinel = broker_sentinel or bootstrap_sentinel
+        if sentinel is not None:
+            try:
+                pipeline.manager = sentinel
+            except Exception:
+                logger.debug("failed to bind bootstrap sentinel", exc_info=True)
     capital_bot = CapitalManagementBot()
     evolution_manager = SystemEvolutionManager(bots=["MenaceMaster"])
     orchestrator = EvolutionOrchestrator(
         data_bot, capital_bot, engine, evolution_manager
-    )
-    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-        pipeline_cls=ModelAutomationPipeline,
-        context_builder=builder,
-        bot_registry=registry,
-        data_bot=data_bot,
-        event_bus=bus,
     )
     _th = get_thresholds("MenaceMaster")
     persist_sc_thresholds(
