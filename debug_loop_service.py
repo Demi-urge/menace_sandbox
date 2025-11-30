@@ -29,8 +29,7 @@ from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_thresholds import get_thresholds
 from .coding_bot_interface import (
     get_active_bootstrap_pipeline,
-    prepare_pipeline_for_bootstrap,
-    advertise_bootstrap_placeholder,
+    claim_bootstrap_dependency_entry,
     _bootstrap_dependency_broker,
 )
 
@@ -84,46 +83,36 @@ class DebugLoopService:
             sentinel = sentinel or broker_sentinel
             bootstrap_inflight = getattr(dependency_broker, "active_owner", False)
 
+            promote_pipeline = None
             if pipeline is None:
-                placeholder_pipeline, placeholder_sentinel = advertise_bootstrap_placeholder(
-                    dependency_broker=dependency_broker,
-                    pipeline=pipeline,
-                    manager=sentinel,
-                    owner=bootstrap_inflight,
-                )
-                pipeline = placeholder_pipeline
-                sentinel = placeholder_sentinel
-                bootstrap_inflight = bootstrap_inflight or getattr(
-                    dependency_broker, "active_owner", False
-                )
                 cached_pipeline = self._BOOTSTRAP_PIPELINE
                 if cached_pipeline is not None:
                     pipeline, promote_pipeline = cached_pipeline
-                elif not bootstrap_inflight:
-                    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                        pipeline_cls=ModelAutomationPipeline,
-                        context_builder=context_builder,
-                        bot_registry=registry,
-                        data_bot=data_bot,
-                        event_bus=bus,
-                    )
-                    self._BOOTSTRAP_PIPELINE = (pipeline, promote_pipeline)
                 else:
-                    def promote_pipeline(real_manager: Any) -> None:
-                        if real_manager is None:
-                            return
-                        try:
-                            setattr(pipeline, "manager", real_manager)
-                        except Exception:
-                            pass
-                        dependency_broker.advertise(
-                            pipeline=pipeline, sentinel=real_manager, owner=False
+                    pipeline, promote_pipeline, sentinel, prepared = (
+                        claim_bootstrap_dependency_entry(
+                            dependency_broker=dependency_broker,
+                            pipeline=pipeline,
+                            manager=sentinel,
+                            owner=bootstrap_inflight,
+                            pipeline_cls=ModelAutomationPipeline,
+                            context_builder=context_builder,
+                            bot_registry=registry,
+                            data_bot=data_bot,
+                            event_bus=bus,
                         )
+                    )
+                    bootstrap_inflight = bootstrap_inflight or getattr(
+                        dependency_broker, "active_owner", False
+                    )
+                    if prepared:
+                        self._BOOTSTRAP_PIPELINE = (pipeline, promote_pipeline)
+                sentinel = sentinel or getattr(pipeline, "manager", None)
                 dependency_broker.advertise(
                     pipeline=pipeline,
-                    sentinel=sentinel or getattr(pipeline, "manager", None),
+                    sentinel=sentinel,
                 )
-            else:
+            if promote_pipeline is None:
                 def promote_pipeline(real_manager: Any) -> None:
                     if real_manager is None:
                         return
