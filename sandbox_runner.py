@@ -23,6 +23,24 @@ import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Mapping
 
+from coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+    get_active_bootstrap_pipeline,
+    get_prepare_pipeline_coordinator,
+)
+
+_DEPENDENCY_BROKER = _bootstrap_dependency_broker()
+_ACTIVE_PIPELINE, _ACTIVE_MANAGER = get_active_bootstrap_pipeline()
+(
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+    _BOOTSTRAP_PLACEHOLDER_MANAGER,
+) = advertise_bootstrap_placeholder(
+    dependency_broker=_DEPENDENCY_BROKER,
+    pipeline=_ACTIVE_PIPELINE,
+    manager=_ACTIVE_MANAGER,
+)
+
 from bootstrap_metrics import (
     calibrate_overall_timeout,
     calibrate_step_budgets,
@@ -51,12 +69,6 @@ from bootstrap_timeout_policy import (
     load_escalated_timeout_floors,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
-from coding_bot_interface import (
-    _bootstrap_dependency_broker,
-    advertise_bootstrap_placeholder,
-    get_active_bootstrap_pipeline,
-    get_prepare_pipeline_coordinator,
-)
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
@@ -64,18 +76,6 @@ from dependency_hints import format_system_package_instructions
 
 
 shutdown_event = threading.Event()
-
-
-_DEPENDENCY_BROKER = _bootstrap_dependency_broker()
-_ACTIVE_PIPELINE, _ACTIVE_MANAGER = get_active_bootstrap_pipeline()
-(
-    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
-    _BOOTSTRAP_PLACEHOLDER_MANAGER,
-) = advertise_bootstrap_placeholder(
-    dependency_broker=_DEPENDENCY_BROKER,
-    pipeline=_ACTIVE_PIPELINE,
-    manager=_ACTIVE_MANAGER,
-)
 
 
 def kill_handler(sig, frame):
