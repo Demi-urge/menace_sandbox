@@ -29,6 +29,7 @@ import sys
 import logging
 from logging_utils import log_record
 from dynamic_path_router import resolve_path
+from coding_bot_interface import advertise_bootstrap_placeholder
 from bootstrap_timeout_policy import (
     BOOTSTRAP_COMPONENT_HINTS_ENV,
     BOOTSTRAP_COMPLEXITY_SCALE_ENV,
@@ -46,6 +47,8 @@ logger = logging.getLogger(__name__)
 ROOT = resolve_path(".")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+_BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder()
 
 
 def _load_component_inventory_hints() -> dict[str, object]:
