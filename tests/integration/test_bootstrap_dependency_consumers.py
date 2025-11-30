@@ -3,8 +3,12 @@ from __future__ import annotations
 import contextlib
 import importlib
 import sys
+import threading
+import time
 from types import ModuleType, SimpleNamespace
 from unittest import mock
+
+import pytest
 
 import coding_bot_interface as cbi
 
@@ -23,6 +27,9 @@ def _reset_cbi_state() -> None:
     ):
         if hasattr(cbi._BOOTSTRAP_STATE, attr):
             delattr(cbi._BOOTSTRAP_STATE, attr)
+    coordinator = getattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", None)
+    if coordinator is not None and getattr(coordinator, "_active", None):
+        coordinator._active = None
 
 
 @contextlib.contextmanager
@@ -314,3 +321,172 @@ def test_research_aggregator_respects_guarded_pipeline(monkeypatch):
         assert state.manager is manager
         assert module.prepare_pipeline_for_bootstrap.call_count == 0
         assert promotions == [manager]
+
+
+@pytest.mark.integration
+def test_research_aggregator_waits_for_active_prepare(monkeypatch):
+    _reset_cbi_state()
+    sys.modules.pop("menace_sandbox.research_aggregator_bot", None)
+
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+
+    guard = object()
+    cbi._BOOTSTRAP_STATE.active_bootstrap_guard = guard  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.owner_depths = {guard: 1}  # type: ignore[attr-defined]
+    cbi._ensure_owner_promise(guard)
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+    cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+    cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+
+    def _advertise_later() -> None:
+        time.sleep(0.05)
+        broker.advertise(pipeline=pipeline_placeholder, sentinel=sentinel_placeholder)
+
+    advertiser = threading.Thread(target=_advertise_later, daemon=True)
+    advertiser.start()
+
+    module = importlib.import_module("menace_sandbox.research_aggregator_bot")
+    module.pipeline = None
+    module.manager = None
+    module.registry = None
+    module.data_bot = None
+    module._context_builder = None
+    module.engine = None
+    module._PipelineCls = None
+    module._runtime_state = None
+    module._runtime_placeholder = None
+    module._runtime_initializing = False
+    module._self_coding_configured = False
+
+    module.create_context_builder = mock.Mock(return_value=SimpleNamespace())
+    module.BotRegistry = lambda *_, **__: SimpleNamespace()
+    module.DataBot = lambda *_, **__: SimpleNamespace()
+    module.SelfCodingEngine = lambda *_, **__: SimpleNamespace()
+    module.CodeDB = lambda *_, **__: SimpleNamespace()
+    module.GPTMemoryManager = lambda *_, **__: SimpleNamespace()
+    module._resolve_pipeline_cls = mock.Mock(return_value=type("_Pipeline", (), {}))
+    module.get_orchestrator = mock.Mock(return_value=SimpleNamespace())
+    module.get_thresholds = mock.Mock(
+        return_value=SimpleNamespace(
+            roi_drop=1.0, error_increase=2.0, test_failure_increase=3.0
+        )
+    )
+    module.persist_sc_thresholds = mock.Mock()
+    module.internalize_coding_bot = mock.Mock(
+        side_effect=AssertionError("internalize_coding_bot should not run")
+    )
+    module.ThresholdService = mock.Mock(return_value=SimpleNamespace())
+    module.self_coding_managed = lambda **_: (lambda cls: cls)
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+
+    promotions: list[object] = []
+
+    state = module._ensure_runtime_dependencies(
+        promote_pipeline=promotions.append,
+        manager_override=sentinel_placeholder,
+    )
+
+    advertiser.join(timeout=2)
+
+    assert state.pipeline is pipeline_placeholder
+    assert state.manager is sentinel_placeholder
+    assert promotions == [sentinel_placeholder]
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+    module.internalize_coding_bot.assert_not_called()
+
+
+@pytest.mark.integration
+def test_prediction_manager_guard_opt_out_reuses_promise(monkeypatch):
+    _reset_cbi_state()
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+
+    promise = cbi._BootstrapPipelinePromise()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = promise
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+    cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+    cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+
+    def _resolve_promise() -> None:
+        time.sleep(0.05)
+        broker.advertise(pipeline=pipeline_placeholder, sentinel=sentinel_placeholder)
+        promise.resolve((pipeline_placeholder, lambda *_: None))
+
+    resolver = threading.Thread(target=_resolve_promise, daemon=True)
+    resolver.start()
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP_GUARD_OPTOUT", "1")
+
+    class _Unreachable:
+        def __init__(self, **_: object) -> None:  # pragma: no cover - must not run
+            raise AssertionError("pipeline constructor should be bypassed")
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Unreachable,
+        context_builder=object(),
+        bot_registry=object(),
+        data_bot=object(),
+        bootstrap_guard=True,
+        bootstrap_wait_timeout=0.5,
+    )
+
+    resolver.join(timeout=2)
+
+    assert pipeline is pipeline_placeholder
+    assert getattr(pipeline, "manager", None) is sentinel_placeholder
+    assert callable(promote)
+    assert broker.resolve()[0] is pipeline_placeholder
+
+
+@pytest.mark.integration
+def test_watchdog_health_checks_reuse_advertised_pipeline(monkeypatch):
+    _reset_cbi_state()
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+    cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+    cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+
+    def _advertise():
+        time.sleep(0.05)
+        broker.advertise(pipeline=pipeline_placeholder, sentinel=sentinel_placeholder)
+
+    threading.Thread(target=_advertise, daemon=True).start()
+
+    sys.modules.pop("menace_sandbox.watchdog", None)
+    module = importlib.import_module("menace_sandbox.watchdog")
+
+    monkeypatch.setattr(module, "prepare_pipeline_for_bootstrap", mock.Mock())
+    monkeypatch.setattr(module, "_bootstrap_dependency_broker", lambda: broker)
+
+    class _ContextBuilder:
+        def refresh_db_weights(self) -> None:
+            return None
+
+    checker = module.Watchdog(context_builder=_ContextBuilder(), router=None, enable_health_checks=True)
+    pipeline, manager = checker._bootstrap_dependency_broker.resolve()
+
+    assert pipeline is pipeline_placeholder
+    assert manager is sentinel_placeholder
+    checker.prepare_pipeline_for_bootstrap.assert_not_called()
