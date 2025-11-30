@@ -47,6 +47,7 @@ from .coding_bot_interface import (
     _current_bootstrap_context,
     _peek_owner_promise,
     _resolve_bootstrap_wait_timeout,
+    _resolve_caller_module_name,
     prepare_pipeline_for_bootstrap,
 )
 from bootstrap_timeout_policy import (
@@ -156,10 +157,10 @@ class BotNode:
     dependencies: List[str] = field(default_factory=list)
 
 
-def _bootstrap_helper_stub(name: str) -> SimpleNamespace:
+def _bootstrap_helper_stub(name: str, *, manager: Any | None = None) -> SimpleNamespace:
     """Return a lightweight placeholder used during bootstrap."""
 
-    return SimpleNamespace(__name__=name)
+    return SimpleNamespace(__name__=name, manager=manager)
 
 
 class MenaceOrchestrator:
@@ -629,10 +630,28 @@ class MenaceOrchestrator:
             placeholder_pipeline, placeholder_sentinel = advertise_bootstrap_placeholder(
                 dependency_broker=dependency_broker, owner=True
             )
+            placeholder_manager = getattr(
+                placeholder_pipeline, "manager", placeholder_sentinel
+            ) or placeholder_sentinel
+            self.logger.info(
+                "menace orchestrator advertising bootstrap placeholder",
+                extra={
+                    "event": "menace-orchestrator-bootstrap-placeholder",
+                    "caller": _resolve_caller_module_name(),
+                    "broker_pipeline": bool(broker_pipeline),
+                    "broker_sentinel": bool(broker_sentinel),
+                    "broker_owner": broker_owner_active,
+                    "dependency_broker_owner": getattr(
+                        dependency_broker, "active_owner", False
+                    ),
+                },
+            )
             try:
-                placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
+                placeholder_registry = _bootstrap_helper_stub(
+                    "menace_orchestrator.registry", manager=placeholder_manager
+                )
                 placeholder_data_bot = _bootstrap_helper_stub(
-                    "menace_orchestrator.data_bot"
+                    "menace_orchestrator.data_bot", manager=placeholder_manager
                 )
                 component_budgets = compute_prepare_pipeline_component_budgets()
                 pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
@@ -643,44 +662,46 @@ class MenaceOrchestrator:
                     pathway_db=pathway_db,
                     myelination_threshold=myelination_threshold,
                     component_timeouts=component_budgets,
+                    manager_override=placeholder_manager,
+                    manager_sentinel=placeholder_manager,
+                    bootstrap_manager=placeholder_manager,
+                )
+                self.pipeline = pipeline
+
+                def _promote_manager(manager: Any) -> None:
+                    try:
+                        dependency_broker.advertise(
+                            pipeline=self.pipeline,
+                            sentinel=(
+                                manager
+                                or getattr(self.pipeline, "manager", placeholder_manager)
+                            ),
+                            owner=True,
+                        )
+                        if callable(promote_pipeline):
+                            promote_pipeline(manager)
+                    finally:
+                        dependency_broker.advertise(owner=False)
+
+                pipeline_promoter = _promote_manager
+                dependency_broker.advertise(
+                    pipeline=self.pipeline,
+                    sentinel=getattr(self.pipeline, "manager", placeholder_manager),
+                    owner=True,
+                )
+                bootstrap_pipeline = self.pipeline
+                bootstrap_promoter = pipeline_promoter
+                self.logger.info(
+                    "menace orchestrator starting new bootstrap pipeline",
+                    extra={
+                        "event": "menace-orchestrator-bootstrap-new",
+                        "bootstrap_context": bool(bootstrap_context),
+                        "bootstrap_heartbeat": bool(bootstrap_heartbeat),
+                    },
                 )
             except Exception:
                 dependency_broker.advertise(owner=False)
                 raise
-
-            self.pipeline = pipeline
-
-            def _promote_manager(manager: Any) -> None:
-                try:
-                    dependency_broker.advertise(
-                        pipeline=self.pipeline,
-                        sentinel=(
-                            manager
-                            or getattr(self.pipeline, "manager", placeholder_sentinel)
-                        ),
-                        owner=True,
-                    )
-                    if callable(promote_pipeline):
-                        promote_pipeline(manager)
-                finally:
-                    dependency_broker.advertise(owner=False)
-
-            pipeline_promoter = _promote_manager
-            dependency_broker.advertise(
-                pipeline=self.pipeline,
-                sentinel=getattr(self.pipeline, "manager", placeholder_sentinel),
-                owner=True,
-            )
-            bootstrap_pipeline = self.pipeline
-            bootstrap_promoter = pipeline_promoter
-            self.logger.info(
-                "menace orchestrator starting new bootstrap pipeline",
-                extra={
-                    "event": "menace-orchestrator-bootstrap-new",
-                    "bootstrap_context": bool(bootstrap_context),
-                    "bootstrap_heartbeat": bool(bootstrap_heartbeat),
-                },
-            )
         else:
             if bootstrap_pipeline is None:
                 bootstrap_pipeline = broker_pipeline or SimpleNamespace(
