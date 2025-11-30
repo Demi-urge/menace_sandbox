@@ -41,5 +41,7 @@ When introducing a new module that constructs or depends on `ModelAutomationPipe
 3. Pass the promoted manager back into helpers (for example via the `manager` kwarg) once `prepare_pipeline_for_bootstrap` returns so subsequent imports skip sentinel creation entirely.
 4. Add a regression note in the module's docstring or README linking to this troubleshooting section, making it clear that future imports must reuse the brokered sentinel instead of constructing their own pipeline.
 
+Entry modules that orchestrate a series of imports should centralise this guardrail by importing `bootstrap_placeholder.advertise_broker_placeholder` first, then invoking it before pulling in the pipeline-heavy modules. That ensures the dependency broker is seeded with `owner=True` while the rest of the import graph loads and makes the placeholder available to downstream helpers without duplicating the bootstrap wiring.
+
 Following this pattern keeps the guardrails intact and prevents new helpers from triggering the cascade failure mode during bootstrap.
 

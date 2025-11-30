@@ -18,6 +18,12 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Iterator, TYPE_CHECKING, Any
 
+from .bootstrap_placeholder import advertise_broker_placeholder
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+    advertise_broker_placeholder()
+)
+
 if TYPE_CHECKING:  # pragma: no cover - typing only import
     from .data_bot import DataBot
     from .self_coding_engine import SelfCodingEngine

@@ -8,6 +8,12 @@ to maintain the broker-first loading pattern. Troubleshooting steps live in
 
 from __future__ import annotations
 
+from .bootstrap_placeholder import advertise_broker_placeholder
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+    advertise_broker_placeholder()
+)
+
 from .bot_registry import BotRegistry
 from .coding_bot_interface import (
     _bootstrap_dependency_broker,
