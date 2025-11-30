@@ -39,6 +39,10 @@ from .models_repo import (
     ensure_models_repo,
 )
 from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    advertise_bootstrap_placeholder,
+    get_active_bootstrap_pipeline,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -62,49 +66,133 @@ from .threshold_service import ThresholdService
 from .self_coding_thresholds import get_thresholds
 from .shared_evolution_orchestrator import get_orchestrator
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
 
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
-pipeline, _pipeline_promoter = prepare_pipeline_for_bootstrap(
-    pipeline_cls=ModelAutomationPipeline,
-    context_builder=_context_builder,
-    bot_registry=registry,
-    data_bot=data_bot,
+class _Runtime:
+    def __init__(
+        self,
+        registry: BotRegistry,
+        data_bot: DataBot,
+        context_builder: ContextBuilder,
+        engine: SelfCodingEngine,
+        pipeline: ModelAutomationPipeline,
+        promoter: Callable[[SelfCodingManager | None], None] | None,
+        evolution_orchestrator,
+        manager: SelfCodingManager,
+    ) -> None:
+        self.registry = registry
+        self.data_bot = data_bot
+        self.context_builder = context_builder
+        self.engine = engine
+        self.pipeline = pipeline
+        self.promoter = promoter
+        self.evolution_orchestrator = evolution_orchestrator
+        self.manager = manager
+
+
+_runtime: _Runtime | None = None
+
+_active_pipeline, _active_manager = get_active_bootstrap_pipeline()
+_BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder(
+    dependency_broker=_bootstrap_dependency_broker(),
+    pipeline=_active_pipeline,
+    manager=_active_manager,
 )
-evolution_orchestrator = get_orchestrator("BotDevelopmentBot", data_bot, engine)
-_th = get_thresholds("BotDevelopmentBot")
-persist_sc_thresholds(
-    "BotDevelopmentBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "BotDevelopmentBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
-    threshold_service=ThresholdService(),
-)
 
 
-def _promote_pipeline_manager(manager: SelfCodingManager | None) -> None:
-    global _pipeline_promoter
-    promoter = _pipeline_promoter
-    if promoter is None or manager is None:
-        return
-    promoter(manager)
-    _pipeline_promoter = None
+def _build_runtime() -> _Runtime:
+    global _runtime
+    if _runtime is not None:
+        return _runtime
+
+    dependency_broker = _bootstrap_dependency_broker()
+    broker_pipeline = getattr(dependency_broker, "active_pipeline", None)
+    broker_manager = getattr(dependency_broker, "active_sentinel", None)
+    bootstrap_pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
+    bootstrap_context = _current_bootstrap_context()
+
+    pipeline_candidate = bootstrap_pipeline or broker_pipeline
+    manager_candidate = bootstrap_manager or broker_manager
+
+    if pipeline_candidate is None and bootstrap_context is not None:
+        pipeline_candidate = getattr(bootstrap_context, "pipeline", None)
+        manager_candidate = manager_candidate or getattr(bootstrap_context, "manager", None)
+
+    registry = BotRegistry()
+    data_bot = DataBot(start_server=False)
+    context_builder = create_context_builder()
+    engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=context_builder)
+
+    pipeline_promoter: Callable[[SelfCodingManager | None], None] | None = None
+    if pipeline_candidate is None:
+        pipeline_candidate, pipeline_promoter = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
+            context_builder=context_builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+
+    evolution_orchestrator = get_orchestrator("BotDevelopmentBot", data_bot, engine)
+    thresholds = get_thresholds("BotDevelopmentBot")
+    persist_sc_thresholds(
+        "BotDevelopmentBot",
+        roi_drop=thresholds.roi_drop,
+        error_increase=thresholds.error_increase,
+        test_failure_increase=thresholds.test_failure_increase,
+    )
+
+    manager: SelfCodingManager | None = manager_candidate
+    if manager is None:
+        manager = internalize_coding_bot(
+            "BotDevelopmentBot",
+            engine,
+            pipeline_candidate,
+            data_bot=data_bot,
+            bot_registry=registry,
+            evolution_orchestrator=evolution_orchestrator,
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+            threshold_service=ThresholdService(),
+        )
+
+    if pipeline_promoter is not None:
+        pipeline_promoter(manager)
+
+    _runtime = _Runtime(
+        registry=registry,
+        data_bot=data_bot,
+        context_builder=context_builder,
+        engine=engine,
+        pipeline=pipeline_candidate,
+        promoter=pipeline_promoter,
+        evolution_orchestrator=evolution_orchestrator,
+        manager=manager,
+    )
+    return _runtime
 
 
-_promote_pipeline_manager(manager)
+def _lazy(func: Callable[[], Any]) -> Callable[[], Any]:
+    setattr(func, "__self_coding_lazy__", True)
+    return func
+
+
+def get_runtime() -> _Runtime:
+    return _build_runtime()
+
+
+@_lazy
+def _get_registry() -> BotRegistry:
+    return _build_runtime().registry
+
+
+@_lazy
+def _get_data_bot() -> DataBot:
+    return _build_runtime().data_bot
+
+
+@_lazy
+def _get_manager() -> SelfCodingManager:
+    return _build_runtime().manager
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
@@ -284,7 +372,7 @@ class PromptTemplateEngine:
         return rendered
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
+@self_coding_managed(bot_registry=_get_registry, data_bot=_get_data_bot, manager=_get_manager)
 class BotDevelopmentBot:
     """Receive bot specs and generate starter code repositories."""
 
@@ -296,10 +384,14 @@ class BotDevelopmentBot:
         watchdog: "Watchdog" | None = None,
         *,
         config: BotDevConfig | None = None,
-        context_builder: ContextBuilder,
+        context_builder: ContextBuilder | None = None,
         manager: SelfCodingManager | None = None,
         engine: SelfCodingEngine | None = None,
     ) -> None:
+        runtime = get_runtime()
+        context_builder = context_builder or runtime.context_builder
+        manager = manager or runtime.manager
+        engine = engine or runtime.engine
         self.config = config or BotDevConfig()
         if repo_base is not None:
             self.config.repo_base = Path(repo_base)
@@ -360,6 +452,7 @@ class BotDevelopmentBot:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
         self.engine = getattr(manager, "engine", engine)
+        self.manager = manager
         # warn about missing optional dependencies
         for dep_name, mod in {
             "yaml": yaml,
