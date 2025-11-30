@@ -34,6 +34,9 @@ from vector_service.context_builder import ContextBuilder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
 from menace_sandbox.coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    get_active_bootstrap_pipeline,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -98,6 +101,58 @@ def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPip
         global _pipeline_promoter
         if pipeline_cls is None:
             return None
+        pipeline: "ModelAutomationPipeline | None" = None
+        promoter: Callable[[SelfCodingManager], None] | None = _pipeline_promoter
+        bootstrap_manager: SelfCodingManager | None = None
+        try:
+            broker_pipeline, broker_manager = _bootstrap_dependency_broker().resolve()
+        except Exception:  # pragma: no cover - best effort reuse
+            broker_pipeline, broker_manager = None, None
+        try:
+            active_pipeline, active_manager = get_active_bootstrap_pipeline()
+        except Exception:  # pragma: no cover - best effort reuse
+            active_pipeline, active_manager = None, None
+        try:
+            bootstrap_context = _current_bootstrap_context()
+        except Exception:  # pragma: no cover - best effort reuse
+            bootstrap_context = None
+
+        pipeline = active_pipeline or broker_pipeline
+        bootstrap_manager = active_manager or broker_manager
+
+        if pipeline is None and bootstrap_context is not None:
+            pipeline = getattr(bootstrap_context, "pipeline", None)
+        if bootstrap_manager is None and bootstrap_context is not None:
+            bootstrap_manager = getattr(bootstrap_context, "manager", None)
+
+        if pipeline is None and bootstrap_manager is not None:
+            try:
+                pipeline = getattr(bootstrap_manager, "pipeline", None)
+            except Exception:  # pragma: no cover - best effort reuse
+                pipeline = None
+
+        if promoter is None:
+            candidates = [
+                pipeline,
+                bootstrap_manager,
+                getattr(bootstrap_context, "pipeline", None)
+                if bootstrap_context is not None
+                else None,
+                getattr(bootstrap_context, "manager", None)
+                if bootstrap_context is not None
+                else None,
+            ]
+            for candidate in candidates:
+                if candidate is None:
+                    continue
+                maybe_promoter = getattr(candidate, "_pipeline_promoter", None)
+                if callable(maybe_promoter):
+                    promoter = maybe_promoter
+                    break
+
+        if pipeline is not None:
+            _pipeline_promoter = promoter
+            return pipeline
         try:
             pipeline, promote = prepare_pipeline_for_bootstrap(
                 pipeline_cls=pipeline_cls,
@@ -113,7 +168,7 @@ def _create_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomationPip
             _pipeline_promoter = None
             return None
         else:
-            _pipeline_promoter = promote
+            _pipeline_promoter = promote or promoter
             return pipeline
 
     return factory
