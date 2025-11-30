@@ -2010,6 +2010,7 @@ def _maybe_raise_reentry_cap(
         "reentry_cap_exceeded": True,
         "reentry_reason": reason,
     })
+    _emit_reentry_cap_alert(caller_module, telemetry)
     logger.error(
         "prepare_pipeline.bootstrap.reentry_cap_exceeded",
         extra=telemetry,
@@ -2019,6 +2020,29 @@ def _maybe_raise_reentry_cap(
         "seed advertise_bootstrap_placeholder(owner=True) before importing dependent modules "
         "so helpers can reuse the brokered bootstrap promise."
     )
+
+
+def _emit_reentry_cap_alert(caller_module: str, telemetry: Mapping[str, Any]) -> None:
+    """Publish a structured alert when recursion guard attempts exceed the cap."""
+
+    payload = {
+        **telemetry,
+        "caller_module": caller_module,
+        "event": "prepare-pipeline-bootstrap-reentry-cap-exceeded",
+    }
+
+    if _SHARED_EVENT_BUS is not None:
+        try:
+            _SHARED_EVENT_BUS.publish(
+                "prepare_pipeline.bootstrap.reentry_cap_exceeded", payload
+            )
+        except Exception:  # pragma: no cover - best effort alert publish
+            logger.debug("reentry cap alert publish failed", exc_info=True)
+
+    try:
+        emit_bootstrap_heartbeat(payload)
+    except Exception:  # pragma: no cover - heartbeat failure should not block
+        logger.debug("reentry cap heartbeat emission failed", exc_info=True)
 
 
 def claim_bootstrap_dependency_entry(
@@ -5626,7 +5650,9 @@ def prepare_pipeline_for_bootstrap(
         broker_sentinel
     )
     active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
-    caller_module = _resolve_caller_module_name()
+    caller_details = _resolve_caller_details()
+    caller_module = caller_details["module"] or _resolve_caller_module_name()
+    caller_stack_signature = caller_details.get("stack_signature")
     reentry_cap = _resolve_bootstrap_reentry_cap()
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     broker_placeholder_without_owner = broker_placeholder_active and not broker_owner_active
@@ -5646,6 +5672,8 @@ def prepare_pipeline_for_bootstrap(
             "broker_placeholder": broker_placeholder_active,
             "broker_owner_active": broker_owner_active,
             "caller_module": caller_module,
+            "caller_module_path": caller_details.get("path"),
+            "caller_stack_signature": caller_stack_signature,
             "active_depth": active_depth,
             "bootstrap_guard": bootstrap_guard,
             "reentry_cap": reentry_cap,
@@ -6240,19 +6268,53 @@ def _prepare_pipeline_for_bootstrap_impl(
             dependency_broker.advertise(owner=False)
 
 
+def _resolve_caller_details(
+    *, max_stack_frames: int = 8, signature_char_cap: int = 512
+) -> dict[str, str | None]:
+    """Return caller metadata including a capped stack signature."""
+
+    frame = inspect.currentframe()
+    caller_module = __name__
+    caller_path: str | None = None
+    signature_parts: list[str] = []
+
+    try:
+        depth = 0
+        current = frame.f_back if frame is not None else None
+        while current and depth < max_stack_frames:
+            module = inspect.getmodule(current)
+            module_name = module.__name__ if module else None
+            module_path = getattr(module, "__file__", None) if module else None
+
+            if module_name and caller_module == __name__ and module_name != __name__:
+                caller_module = module_name
+                caller_path = module_path
+
+            label = module_path or module_name or current.f_code.co_filename
+            label_name = PurePosixPath(label).name if label else current.f_code.co_name
+            signature_parts.append(
+                f"{label_name}:{current.f_code.co_name}:{current.f_lineno}"
+            )
+            current = current.f_back  # pragma: no cover - defensive walkback
+            depth += 1
+    finally:
+        del frame
+
+    stack_signature = "|".join(signature_parts)
+    if len(stack_signature) > signature_char_cap:
+        stack_signature = stack_signature[: signature_char_cap - 3] + "..."
+
+    return {
+        "module": caller_module,
+        "path": caller_path,
+        "stack_signature": stack_signature,
+    }
+
+
 def _resolve_caller_module_name() -> str:
     """Return the first caller module outside this helper."""
 
-    frame = inspect.currentframe()
-    try:
-        while frame:
-            module = inspect.getmodule(frame)
-            if module and module.__name__ != __name__:
-                return module.__name__
-            frame = frame.f_back  # pragma: no cover - defensive walkback
-    finally:
-        del frame
-    return __name__
+    return _resolve_caller_details()["module"] or __name__
 
 
 def _build_bootstrap_placeholder_pipeline(manager: Any) -> Any:
