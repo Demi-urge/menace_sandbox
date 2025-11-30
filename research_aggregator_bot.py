@@ -515,6 +515,25 @@ def _ensure_runtime_dependencies(
                     raise RuntimeError(message)
 
             if pipe is None:
+                try:
+                    placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
+                        dependency_broker=dependency_broker,
+                        pipeline=pipeline_override,
+                        manager=(
+                            manager_override
+                            if manager_override is not None
+                            else manager
+                            if manager is not None
+                            else placeholder_manager
+                        ),
+                        owner=owner is not False,
+                    )
+                except Exception:  # pragma: no cover - best effort placeholder
+                    logger.debug(
+                        "Failed to advertise dependency broker placeholder before bootstrap",
+                        exc_info=True,
+                    )
+
                 pipe, promoted = prepare_pipeline_for_bootstrap(
                     pipeline_cls=pipeline_cls,
                     context_builder=ctx_builder,
