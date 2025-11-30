@@ -54,6 +54,21 @@ def _advertise_stub(*, pipeline=None, sentinel=None):
         _dummy_broker._manager = sentinel
 
 
+def _advertise_placeholder_stub(*, dependency_broker=None, pipeline=None, manager=None, owner=True):
+    broker = dependency_broker or _dummy_broker
+    manager = manager or types.SimpleNamespace()
+    pipeline = pipeline or types.SimpleNamespace(
+        manager=manager,
+        context_builder=None,
+        _bot_attribute_order=(),
+    )
+    setattr(manager, "_self_coding_bootstrap_placeholder", True)
+    setattr(pipeline, "_self_coding_bootstrap_placeholder", True)
+    broker._pipeline = pipeline
+    broker._manager = manager
+    return pipeline, manager
+
+
 _dummy_broker = types.SimpleNamespace(
     _pipeline=None,
     _manager=None,
@@ -71,6 +86,7 @@ coding_iface._is_bootstrap_placeholder = (
     )
 )
 coding_iface._using_bootstrap_sentinel = lambda candidate=None: False
+coding_iface.advertise_bootstrap_placeholder = _advertise_placeholder_stub
 sys.modules.setdefault("menace.coding_bot_interface", coding_iface)
 sys.modules.setdefault("menace_sandbox.coding_bot_interface", coding_iface)
 sys.modules.setdefault("coding_bot_interface", coding_iface)
@@ -352,6 +368,95 @@ def test_reuses_bootstrap_placeholder(monkeypatch, caplog):
     assert prepare_calls == []
     assert isinstance(mgr.manager.pipeline, DummyPipeline)
     assert "auto_escalation.bootstrap.reuse_placeholder" in caplog.text
+
+
+def test_broker_placeholder_prevents_prepare(monkeypatch):
+    import importlib
+    import menace.auto_escalation_manager as aem
+    aem = importlib.reload(aem)
+    from pathlib import Path
+
+    class DummyPipeline:
+        def __init__(self, manager=None):
+            self.manager = manager
+            self.context_builder = None
+            self._bot_attribute_order = ()
+
+    placeholder_manager = types.SimpleNamespace(
+        _self_coding_bootstrap_placeholder=True
+    )
+    placeholder_pipeline = DummyPipeline(placeholder_manager)
+    placeholder_pipeline._self_coding_bootstrap_placeholder = True
+
+    broker = types.SimpleNamespace(
+        _pipeline=placeholder_pipeline,
+        _manager=placeholder_manager,
+        resolve=lambda: (placeholder_pipeline, placeholder_manager),
+        advertise=lambda **kwargs: None,
+    )
+
+    prepare_calls = []
+
+    def _fake_prepare(**kwargs):
+        prepare_calls.append(kwargs)
+        return DummyPipeline(kwargs.get("manager_override")), (lambda *_: None)
+
+    monkeypatch.setattr(aem, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(aem, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(aem, "_looks_like_pipeline_candidate", lambda *_: True)
+    monkeypatch.setattr(
+        aem,
+        "_is_bootstrap_placeholder",
+        lambda candidate: bool(
+            getattr(candidate, "_self_coding_bootstrap_placeholder", False)
+        ),
+    )
+    monkeypatch.setattr(aem, "_using_bootstrap_sentinel", lambda candidate=None: False)
+    monkeypatch.setattr(aem, "prepare_pipeline_for_bootstrap", _fake_prepare)
+
+    class DummyManager:
+        def __init__(self, engine, pipeline, **_k):
+            self.pipeline = pipeline
+
+        def register_bot(self, *a, **k):
+            pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.self_coding_manager",
+        types.SimpleNamespace(SelfCodingManager=DummyManager),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.model_automation_pipeline",
+        types.SimpleNamespace(ModelAutomationPipeline=DummyPipeline),
+    )
+    monkeypatch.setattr(aem, "SelfCodingEngine", lambda *a, **k: object())
+    monkeypatch.setattr(aem, "CodeDB", lambda: object())
+    monkeypatch.setattr(aem, "ErrorDB", lambda: object())
+    monkeypatch.setattr(
+        aem,
+        "AutomatedDebugger",
+        lambda *a, **k: types.SimpleNamespace(analyse_and_fix=lambda: None),
+    )
+    monkeypatch.setattr(aem, "resolve_path", lambda name: Path(name))
+    monkeypatch.setattr(
+        aem, "init_local_knowledge", lambda *a, **k: types.SimpleNamespace(memory=None)
+    )
+    monkeypatch.setattr(aem, "registry", types.SimpleNamespace())
+    monkeypatch.setattr(aem, "data_bot", types.SimpleNamespace())
+
+    class StubContextBuilder:
+        def __init__(self, *a, **k):
+            pass
+
+        def refresh_db_weights(self):
+            pass
+
+    mgr = aem.AutoEscalationManager(context_builder=StubContextBuilder())
+
+    assert prepare_calls == []
+    assert mgr.manager.pipeline is placeholder_pipeline
 
 
 def test_bootstrap_runs_once(monkeypatch):
