@@ -730,6 +730,60 @@ def test_prepare_pipeline_guardless_reuses_dependency_broker(monkeypatch, caplog
     assert promote_a is promote_b
 
 
+def test_prepare_pipeline_heartbeat_reentrancy_reuses_active(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    dependency_broker = cbi._bootstrap_dependency_broker()
+    dependency_broker.clear()
+
+    active_pipeline = SimpleNamespace(manager=SimpleNamespace())
+    dependency_broker.advertise(
+        pipeline=active_pipeline, sentinel=active_pipeline.manager, owner=True
+    )
+
+    owner, active_promise = cbi._GLOBAL_BOOTSTRAP_COORDINATOR.claim()
+    assert owner
+
+    settled = threading.Event()
+
+    def _settle_promise() -> None:
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.settle(
+            active_promise, result=(active_pipeline, lambda *_a, **_k: None)
+        )
+        settled.set()
+
+    threading.Thread(target=_settle_promise, daemon=True).start()
+
+    init_count = 0
+
+    class _Pipeline:
+        def __init__(self, *_a, **_k) -> None:
+            nonlocal init_count
+            init_count += 1
+
+    monkeypatch.setattr(cbi, "read_bootstrap_heartbeat", lambda: {"active": True})
+
+    try:
+        pipeline, _promote = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=_Pipeline,
+            context_builder=SimpleNamespace(),
+            bot_registry=DummyRegistry(),
+            data_bot=DummyDataBot(),
+        )
+    finally:
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+        dependency_broker.clear()
+
+    assert settled.wait(timeout=1)
+    assert pipeline is active_pipeline
+    assert init_count == 0
+    assert any(
+        record.message == "prepare_pipeline.bootstrap.heartbeat_reuse_promise"
+        for record in caplog.records
+    )
+
+
 def test_prepare_pipeline_enforces_minimum_timeout(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=cbi.logger.name)
     cbi._PREPARE_PIPELINE_WATCHDOG["stages"].clear()
