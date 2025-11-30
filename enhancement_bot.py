@@ -12,10 +12,14 @@ from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    _current_bootstrap_context,
+    advertise_bootstrap_placeholder,
+    get_active_bootstrap_pipeline,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
-from typing import TYPE_CHECKING, Dict, Any
+from typing import TYPE_CHECKING, Callable, Dict, Any
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
 from context_builder import handle_failure, PromptBuildError
@@ -23,49 +27,122 @@ from context_builder import handle_failure, PromptBuildError
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
-_context_builder = create_context_builder()
-engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
-pipeline, _pipeline_promoter = prepare_pipeline_for_bootstrap(
-    pipeline_cls=ModelAutomationPipeline,
-    context_builder=_context_builder,
-    bot_registry=registry,
-    data_bot=data_bot,
-)
-evolution_orchestrator = get_orchestrator("EnhancementBot", data_bot, engine)
-_th = get_thresholds("EnhancementBot")
-persist_sc_thresholds(
-    "EnhancementBot",
-    roi_drop=_th.roi_drop,
-    error_increase=_th.error_increase,
-    test_failure_increase=_th.test_failure_increase,
-)
-manager = internalize_coding_bot(
-    "EnhancementBot",
-    engine,
-    pipeline,
-    data_bot=data_bot,
-    bot_registry=registry,
-    evolution_orchestrator=evolution_orchestrator,
-    threshold_service=ThresholdService(),
-    roi_threshold=_th.roi_drop,
-    error_threshold=_th.error_increase,
-    test_failure_threshold=_th.test_failure_increase,
+_active_pipeline, _active_manager = get_active_bootstrap_pipeline()
+_BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder(
+    dependency_broker=_bootstrap_dependency_broker(),
+    pipeline=_active_pipeline,
+    manager=_active_manager,
 )
 
 
-def _promote_pipeline_manager(manager: SelfCodingManager | None) -> None:
-    global _pipeline_promoter
-    promoter = _pipeline_promoter
-    if promoter is None or manager is None:
-        return
-    promoter(manager)
-    _pipeline_promoter = None
+class _Runtime:
+    def __init__(
+        self,
+        registry: BotRegistry,
+        data_bot: DataBot,
+        context_builder: ContextBuilder,
+        engine: SelfCodingEngine,
+        pipeline: ModelAutomationPipeline,
+        promoter: Callable[[SelfCodingManager | None], None] | None,
+        evolution_orchestrator: "EvolutionOrchestrator",
+        manager: SelfCodingManager,
+    ) -> None:
+        self.registry = registry
+        self.data_bot = data_bot
+        self.context_builder = context_builder
+        self.engine = engine
+        self.pipeline = pipeline
+        self.promoter = promoter
+        self.evolution_orchestrator = evolution_orchestrator
+        self.manager = manager
 
 
-_promote_pipeline_manager(manager)
+_runtime: _Runtime | None = None
+
+
+def _build_runtime() -> _Runtime:
+    global _runtime
+    if _runtime is not None:
+        return _runtime
+
+    dependency_broker = _bootstrap_dependency_broker()
+    broker_pipeline = getattr(dependency_broker, "active_pipeline", None)
+    broker_manager = getattr(dependency_broker, "active_sentinel", None)
+    bootstrap_pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
+    bootstrap_context = _current_bootstrap_context()
+
+    pipeline_candidate = bootstrap_pipeline or broker_pipeline
+    manager_candidate = bootstrap_manager or broker_manager
+
+    if pipeline_candidate is None and bootstrap_context is not None:
+        pipeline_candidate = getattr(bootstrap_context, "pipeline", None)
+        manager_candidate = manager_candidate or getattr(bootstrap_context, "manager", None)
+
+    registry = BotRegistry()
+    data_bot = DataBot(start_server=False)
+    context_builder = create_context_builder()
+    engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=context_builder)
+
+    pipeline_promoter: Callable[[SelfCodingManager | None], None] | None = None
+    if pipeline_candidate is None:
+        pipeline_candidate, pipeline_promoter = prepare_pipeline_for_bootstrap(
+            pipeline_cls=ModelAutomationPipeline,
+            context_builder=context_builder,
+            bot_registry=registry,
+            data_bot=data_bot,
+        )
+
+    evolution_orchestrator = get_orchestrator("EnhancementBot", data_bot, engine)
+    thresholds = get_thresholds("EnhancementBot")
+    persist_sc_thresholds(
+        "EnhancementBot",
+        roi_drop=thresholds.roi_drop,
+        error_increase=thresholds.error_increase,
+        test_failure_increase=thresholds.test_failure_increase,
+    )
+    manager: SelfCodingManager | None = manager_candidate
+    if manager is None:
+        manager = internalize_coding_bot(
+            "EnhancementBot",
+            engine,
+            pipeline_candidate,
+            data_bot=data_bot,
+            bot_registry=registry,
+            evolution_orchestrator=evolution_orchestrator,
+            threshold_service=ThresholdService(),
+            roi_threshold=thresholds.roi_drop,
+            error_threshold=thresholds.error_increase,
+            test_failure_threshold=thresholds.test_failure_increase,
+        )
+
+    if pipeline_promoter is not None:
+        pipeline_promoter(manager)
+
+    _runtime = _Runtime(
+        registry=registry,
+        data_bot=data_bot,
+        context_builder=context_builder,
+        engine=engine,
+        pipeline=pipeline_candidate,
+        promoter=pipeline_promoter,
+        evolution_orchestrator=evolution_orchestrator,
+        manager=manager,
+    )
+    return _runtime
+
+
+def get_runtime() -> _Runtime:
+    return _build_runtime()
+
+
+runtime = get_runtime()
+registry = runtime.registry
+data_bot = runtime.data_bot
+_context_builder = runtime.context_builder
+engine = runtime.engine
+pipeline = runtime.pipeline
+evolution_orchestrator = runtime.evolution_orchestrator
+manager = runtime.manager
 
 """Automatically validate and merge Codex refactors.
 
