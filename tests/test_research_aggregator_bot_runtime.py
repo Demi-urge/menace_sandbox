@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import time
 from types import ModuleType, SimpleNamespace
 from unittest import mock
 
@@ -718,10 +719,11 @@ def test_bootstrap_depth_blocks_new_pipeline(monkeypatch):
         mock_data_bot.return_value = mock.Mock(name="data_bot")
         module = _import_fresh()
 
-    module._BOOTSTRAP_STATE = SimpleNamespace(depth=1)
+    module._BOOTSTRAP_STATE = SimpleNamespace(depth=1, helper_promotion_callbacks=[mock.Mock()])
     module._bootstrap_dependency_broker = lambda: SimpleNamespace(resolve=lambda: (None, None))
     module._current_bootstrap_context = lambda: None
     module._peek_owner_promise = lambda *_a, **_k: None
+    module.read_bootstrap_heartbeat = lambda: {"ts": time.time()}
     module.prepare_pipeline_for_bootstrap = mock.Mock(
         side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
     )
@@ -732,5 +734,124 @@ def test_bootstrap_depth_blocks_new_pipeline(monkeypatch):
     monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
     monkeypatch.setattr(module, "_resolve_pipeline_cls", lambda: object)
 
-    with pytest.raises(RuntimeError, match="bootstrap pipeline unavailable"):
-        module._ensure_runtime_dependencies()
+    state = module._ensure_runtime_dependencies()
+
+    assert getattr(state.pipeline, "bootstrap_placeholder", False)
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
+def test_active_heartbeat_uses_broker_pipeline(monkeypatch):
+    """A heartbeat with advertised dependencies should reuse the broker pipeline."""
+
+    broker_manager = mock.Mock(name="broker_manager")
+
+    class FakeModelAutomationPipeline:
+        def __init__(self) -> None:
+            self.context_builder = mock.Mock(name="builder")
+            self.manager = broker_manager
+            self._bot_attribute_order: tuple[str, ...] = ()
+
+    broker_pipeline = FakeModelAutomationPipeline()
+    broker_promote = mock.Mock(name="broker_promote")
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(helper_promotion_callbacks=[broker_promote])
+    module._bootstrap_dependency_broker = lambda: SimpleNamespace(
+        resolve=lambda: (broker_pipeline, broker_manager)
+    )
+    module._current_bootstrap_context = lambda: None
+    module._peek_owner_promise = lambda *_a, **_k: None
+    module._using_bootstrap_sentinel = lambda *_a, **_k: False
+    module.read_bootstrap_heartbeat = lambda: {"ts": time.time()}
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=FakeModelAutomationPipeline))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=broker_manager))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies()
+
+    assert state.pipeline is broker_pipeline
+    broker_promote.assert_called_once_with(broker_manager)
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
+def test_active_heartbeat_returns_placeholder(monkeypatch):
+    """Heartbeat activity returns a placeholder instead of building a pipeline."""
+
+    broker_manager = mock.Mock(name="broker_manager")
+    broker_promote = mock.Mock(name="broker_promote")
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(helper_promotion_callbacks=[broker_promote])
+    module._bootstrap_dependency_broker = lambda: SimpleNamespace(
+        resolve=lambda: (None, broker_manager)
+    )
+    module._current_bootstrap_context = lambda: None
+    module._peek_owner_promise = lambda *_a, **_k: None
+    module._using_bootstrap_sentinel = lambda *_a, **_k: False
+    module.read_bootstrap_heartbeat = lambda: {"ts": time.time()}
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=broker_manager))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies()
+
+    assert getattr(state.pipeline, "bootstrap_placeholder", False)
+    assert state.manager is broker_manager
+    broker_promote.assert_called_once_with(broker_manager)
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
