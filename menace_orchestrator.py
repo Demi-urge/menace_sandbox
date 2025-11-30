@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-"""Central orchestrator coordinating all Menace stages and oversight bots."""
+"""Central orchestrator coordinating all Menace stages and oversight bots.
+
+The orchestrator is bootstrap-sensitive: it should expose and reuse the
+dependency broker's bootstrap placeholder before constructing pipelines so the
+broker-first load order remains intact. Consult
+``docs/bootstrap_troubleshooting.md`` when changing the startup sequence.
+"""
 
 from dataclasses import dataclass, field
 from pathlib import Path

@@ -1,4 +1,10 @@
-"""Prediction Manager Bot orchestrates prediction bots."""
+"""Prediction Manager Bot orchestrates prediction bots.
+
+Like the other bootstrap-sensitive managers, it should advertise or reuse the
+bootstrap placeholder from the dependency broker before pipeline construction
+to maintain the broker-first loading pattern. Troubleshooting steps live in
+``docs/bootstrap_troubleshooting.md`` for future maintainers.
+"""
 
 from __future__ import annotations
 
