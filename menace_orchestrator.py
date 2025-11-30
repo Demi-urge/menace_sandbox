@@ -202,23 +202,39 @@ class MenaceOrchestrator:
         except Exception:
             bootstrap_heartbeat = None
 
+        if bootstrap_context is not None:
+            dependency_broker.advertise(
+                pipeline=getattr(bootstrap_context, "pipeline", None),
+                sentinel=getattr(bootstrap_context, "manager", None),
+            )
+            broker_pipeline, _broker_manager = dependency_broker.resolve()
+
         self.pipeline_promoter: Callable[[Any], None] | None = None
-        if broker_pipeline is None and (
-            bootstrap_context is not None
-            or bootstrap_heartbeat
-            or guard_promise is not None
-        ):
+        def _bootstrap_signals_active() -> bool:
+            return (
+                bootstrap_context is not None
+                or bool(bootstrap_heartbeat)
+                or guard_promise is not None
+            )
+
+        if broker_pipeline is None and _bootstrap_signals_active():
             wait_timeout = _resolve_bootstrap_wait_timeout()
             wait_start = time.perf_counter()
-            while broker_pipeline is None:
+            backoff = 0.05
+            while broker_pipeline is None and _bootstrap_signals_active():
                 broker_pipeline, _broker_manager = dependency_broker.resolve()
                 if broker_pipeline is None and bootstrap_context is not None:
                     broker_pipeline = getattr(bootstrap_context, "pipeline", None)
                 if broker_pipeline is not None:
                     break
+                try:
+                    bootstrap_heartbeat = read_bootstrap_heartbeat()
+                except Exception:
+                    bootstrap_heartbeat = bootstrap_heartbeat
                 if wait_timeout is not None and (time.perf_counter() - wait_start) >= wait_timeout:
                     break
-                time.sleep(0.05)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 0.5)
 
         bootstrap_pipeline = broker_pipeline
         bootstrap_promoter: Callable[[Any], None] | None = _latest_bootstrap_promoter()
