@@ -16,6 +16,7 @@ from .coding_bot_interface import (
     _GLOBAL_BOOTSTRAP_COORDINATOR,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
+    advertise_bootstrap_placeholder,
     get_active_bootstrap_pipeline,
     normalise_manager_arg,
     _resolve_bootstrap_wait_timeout,
@@ -76,10 +77,27 @@ _pipeline_promoter: Callable[[SelfCodingManager], None] | None = None
 _evolution_orchestrator = None
 _thresholds = None
 _manager_instance: SelfCodingManager | None = None
+_dependency_broker = _bootstrap_dependency_broker()
+try:
+    _bootstrap_pipeline, _bootstrap_manager = get_active_bootstrap_pipeline()
+except Exception:
+    _bootstrap_pipeline, _bootstrap_manager = None, None
+(
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+    _BOOTSTRAP_PLACEHOLDER_MANAGER,
+) = advertise_bootstrap_placeholder(
+    dependency_broker=_dependency_broker,
+    pipeline=_bootstrap_pipeline,
+    manager=_bootstrap_manager,
+)
 
 
 def _ensure_self_coding_manager() -> SelfCodingManager:
-    """Initialise shared self-coding infrastructure lazily."""
+    """Initialise shared self-coding infrastructure lazily.
+
+    See ``docs/bootstrap_troubleshooting.md`` for the broker-first bootstrap
+    contract that keeps placeholders visible during import.
+    """
 
     global _context_builder, _engine, _pipeline_promoter, _pipeline
     global _evolution_orchestrator, _thresholds, _manager_instance
@@ -93,7 +111,7 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
                 CodeDB(), MenaceMemoryManager(), context_builder=_context_builder
             )
 
-        dependency_broker = _bootstrap_dependency_broker()
+        dependency_broker = _dependency_broker
 
         bootstrap_pipeline: ModelAutomationPipeline | None = None
         bootstrap_manager: SelfCodingManager | None = None
@@ -106,6 +124,11 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
             bootstrap_pipeline, bootstrap_manager = dependency_broker.resolve()
         except Exception:
             bootstrap_pipeline, bootstrap_manager = None, None
+
+        if bootstrap_pipeline is None:
+            bootstrap_pipeline = _BOOTSTRAP_PLACEHOLDER_PIPELINE
+        if bootstrap_manager is None:
+            bootstrap_manager = _BOOTSTRAP_PLACEHOLDER_MANAGER
 
         if _pipeline is None or _manager_instance is None:
             try:
@@ -155,6 +178,8 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
                 bootstrap_heartbeat
                 or getattr(_BOOTSTRAP_STATE, "depth", 0)
                 or _current_bootstrap_context()
+                or bootstrap_pipeline
+                or bootstrap_manager
             )
 
         wait_start = time.perf_counter()
