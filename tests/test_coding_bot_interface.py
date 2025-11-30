@@ -803,6 +803,109 @@ def test_prepare_pipeline_recursion_raises_without_broker_sentinel(monkeypatch):
             delattr(cbi._BOOTSTRAP_STATE, attr)
 
 
+def test_prepare_pipeline_preflight_reuses_broker_placeholder(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    dependency_broker = cbi._bootstrap_dependency_broker()
+    dependency_broker.clear()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+    cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+    cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+    dependency_broker.advertise(
+        pipeline=pipeline_placeholder, sentinel=sentinel_placeholder, owner=True
+    )
+
+    def _fail_impl(**_kwargs):  # pragma: no cover - guard must short circuit
+        raise AssertionError("prepare_pipeline_for_bootstrap_impl should be bypassed")
+
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl", _fail_impl)
+
+    pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=SimpleNamespace,
+        context_builder=SimpleNamespace(),
+        bot_registry=DummyRegistry(),
+        data_bot=DummyDataBot(),
+    )
+
+    assert getattr(pipeline, "bootstrap_placeholder", False) is True
+    assert getattr(pipeline, "manager", None) is sentinel_placeholder
+    assert callable(promote)
+
+    real_manager = SimpleNamespace()
+    promote(real_manager)
+
+    assert getattr(pipeline, "manager", None) is real_manager
+    assert getattr(pipeline, "initial_manager", None) is real_manager
+    assert any(
+        record.message == "prepare_pipeline.bootstrap.preflight_broker_reuse"
+        for record in caplog.records
+    )
+
+    dependency_broker.clear()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+
+def test_prepare_pipeline_preflight_waits_on_broker_promise(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    dependency_broker = cbi._bootstrap_dependency_broker()
+    dependency_broker.clear()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+    cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+    cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+    dependency_broker.advertise(
+        pipeline=pipeline_placeholder, sentinel=sentinel_placeholder, owner=True
+    )
+
+    def _fail_impl(**_kwargs):  # pragma: no cover - guard must short circuit
+        raise AssertionError("prepare_pipeline_for_bootstrap_impl should be bypassed")
+
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl", _fail_impl)
+
+    owner, promise = cbi._GLOBAL_BOOTSTRAP_COORDINATOR.claim()
+    assert promise is not None
+    assert owner is True
+
+    settled_pipeline = SimpleNamespace()
+    settled_promote = lambda *_a, **_k: None
+
+    def _settle() -> None:
+        time.sleep(0.05)
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.settle(
+            promise, result=(settled_pipeline, settled_promote)
+        )
+
+    threading.Thread(target=_settle, daemon=True).start()
+
+    pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=SimpleNamespace,
+        context_builder=SimpleNamespace(),
+        bot_registry=DummyRegistry(),
+        data_bot=DummyDataBot(),
+    )
+
+    assert pipeline is settled_pipeline
+    assert promote is settled_promote
+    assert any(
+        record.message == "prepare_pipeline.bootstrap.preflight_broker_wait"
+        for record in caplog.records
+    )
+
+    dependency_broker.clear()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
 def test_parallel_helpers_share_dependency_broker_placeholder(monkeypatch):
     dependency_broker = cbi._bootstrap_dependency_broker()
     dependency_broker.clear()
