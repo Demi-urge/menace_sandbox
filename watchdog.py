@@ -92,6 +92,7 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
 from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
     _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
     _current_bootstrap_context,
     get_active_bootstrap_pipeline,
     prepare_pipeline_for_bootstrap,
@@ -304,8 +305,9 @@ class Watchdog:
         pipeline: ModelAutomationPipeline | None = None
         manager: object | None = None
         promote_pipeline: Callable[[object], None] | None = None
+        dependency_broker = _bootstrap_dependency_broker()
         try:
-            pipeline, manager = _bootstrap_dependency_broker().resolve()
+            pipeline, manager = dependency_broker.resolve()
         except Exception:
             pipeline, manager = None, None
 
@@ -344,9 +346,27 @@ class Watchdog:
             bootstrap_active = False
         bootstrap_active = bootstrap_active or bootstrap_context is not None
 
+        if bootstrap_active:
+            bootstrap_pipeline = getattr(_BOOTSTRAP_STATE, "pipeline", None)
+            sentinel_manager = getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+            if pipeline is None:
+                pipeline = bootstrap_pipeline
+            if manager is None:
+                manager = sentinel_manager
+            if pipeline is not None or manager is not None:
+                try:
+                    pipeline, manager = advertise_bootstrap_placeholder(
+                        dependency_broker=dependency_broker,
+                        pipeline=pipeline,
+                        manager=manager,
+                        owner=False,
+                    )
+                except Exception:
+                    self.logger.debug(
+                        "failed advertising bootstrap placeholder", exc_info=True
+                    )
+
         if pipeline is None:
-            if bootstrap_active:
-                raise RuntimeError("Watchdog cannot create a pipeline during bootstrap")
             pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
                 pipeline_cls=ModelAutomationPipeline,
                 context_builder=self.context_builder,
