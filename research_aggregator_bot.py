@@ -437,6 +437,33 @@ def _ensure_runtime_dependencies(
         if promote_pipeline is None:
             promote_pipeline = _active_bootstrap_promoter() or (lambda *_args: None)
 
+        def _advertise_dependency_state(real_manager: SelfCodingManager | None = None) -> None:
+            try:
+                dependency_broker.advertise(
+                    pipeline=pipe,
+                    sentinel=(
+                        real_manager
+                        if real_manager is not None
+                        else manager_override if manager_override is not None else mgr
+                    ),
+                )
+            except Exception:  # pragma: no cover - best effort broker update
+                logger.debug(
+                    "Failed to advertise bootstrap dependency broker state", exc_info=True
+                )
+
+        promote_target = promote_pipeline
+
+        def _promote_with_broker(real_manager: SelfCodingManager | None) -> None:
+            try:
+                promote_target(real_manager)
+            finally:
+                _advertise_dependency_state(real_manager)
+
+        promote_pipeline = _promote_with_broker
+
+        _advertise_dependency_state()
+
         if owner is not None and owner not in _bootstrap_pipeline_cache:
             _bootstrap_pipeline_cache[owner] = (pipe, promote_pipeline, manager_override)
 
@@ -501,13 +528,19 @@ def _ensure_runtime_dependencies(
                 except Exception:  # pragma: no cover - best effort attachment
                     continue
 
-        try:
-            dependency_broker.advertise(
-                pipeline=pipe,
-                sentinel=manager_override if manager_override is not None else mgr,
-            )
-        except Exception:  # pragma: no cover - best effort broker update
-            logger.debug("Failed to advertise bootstrap dependency broker state", exc_info=True)
+        _advertise_dependency_state(mgr)
+
+        _runtime_placeholder = _RuntimeDependencies(
+            registry=reg,
+            data_bot=dbot,
+            context_builder=ctx_builder,
+            engine=eng,
+            pipeline=pipe,
+            evolution_orchestrator=orchestrator,
+            manager=mgr,
+            dependency_broker=dependency_broker,
+            pipeline_promoter=promote_pipeline,
+        )
 
         registry = reg
         data_bot = dbot
