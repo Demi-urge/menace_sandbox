@@ -40,7 +40,13 @@ sys.modules["vector_service.context_builder"] = types.SimpleNamespace(
 )
 
 (TMP / "self_coding_manager.py").write_text(
-    "class SelfCodingManager:\n    def __init__(self, engine, pipeline, **k):\n        self.engine = engine\n"
+    "class SelfCodingManager:\n"
+    "    def __init__(self, engine, pipeline, **k):\n"
+    "        self.engine = engine\n"
+    "        self.pipeline = pipeline\n"
+    "\n"
+    "def internalize_coding_bot(name, engine, pipeline, **kwargs):\n"
+    "    return SelfCodingManager(engine, pipeline, **kwargs)\n"
 )
 (TMP / "model_automation_pipeline.py").write_text(
     "class ModelAutomationPipeline:\n    def __init__(self, **k):\n        pass\n"
@@ -52,7 +58,8 @@ sys.modules["vector_service.context_builder"] = types.SimpleNamespace(
     "class BotRegistry:\n    def __init__(self, *a, **k):\n        pass\n"
 )
 (TMP / "data_bot.py").write_text(
-    "class DataBot:\n    pass\n"
+    "class DataBot:\n    pass\n\n"
+    "def persist_sc_thresholds(name, **kwargs):\n    return kwargs\n"
 )
 
 spec = importlib.util.spec_from_file_location(
@@ -63,6 +70,10 @@ spec = importlib.util.spec_from_file_location(
 mod = importlib.util.module_from_spec(spec)
 sys.modules["menace.debug_loop_service"] = mod
 spec.loader.exec_module(mod)
+mod.prepare_pipeline_for_bootstrap = lambda **kwargs: (
+    types.SimpleNamespace(manager=types.SimpleNamespace()),
+    lambda __: None,
+)
 
 
 def test_collect_crash_traces(tmp_path):
@@ -107,3 +118,61 @@ def test_run_continuous_logs_errors(monkeypatch, caplog):
     svc.run_continuous(interval=0.0, stop_event=stop)
     assert svc.failure_count == 1
     assert "collect_crash_traces failed" in caplog.text
+
+
+def test_uses_broker_advertised_pipeline(monkeypatch):
+    class DummyModelAutomationPipeline:
+        def __init__(self) -> None:
+            self.context_builder = None
+            self.manager = types.SimpleNamespace()
+            self._bot_attribute_order = []
+
+    pipeline = DummyModelAutomationPipeline()
+    mod.DebugLoopService._BOOTSTRAP_PIPELINE = None
+    prepare_called = False
+
+    def fake_prepare_pipeline_for_bootstrap(**_: object):
+        nonlocal prepare_called
+        prepare_called = True
+        return object(), lambda __: None
+
+    dummy_broker = types.SimpleNamespace(
+        resolve=lambda: (pipeline, pipeline.manager),
+        advertise=lambda **kwargs: None,
+        clear=lambda: None,
+    )
+
+    monkeypatch.setattr(mod, "_bootstrap_dependency_broker", lambda: dummy_broker)
+    monkeypatch.setattr(mod, "get_active_bootstrap_pipeline", lambda: (pipeline, pipeline.manager))
+    monkeypatch.setattr(mod, "prepare_pipeline_for_bootstrap", fake_prepare_pipeline_for_bootstrap)
+
+    captured: dict[str, object] = {}
+
+    def fake_internalize_coding_bot(name, engine, pipeline_arg, **kwargs):  # type: ignore[override]
+        captured.update({"name": name, "engine": engine, "pipeline": pipeline_arg, "kwargs": kwargs})
+
+        manager = mod.SelfCodingManager(engine, pipeline_arg, **kwargs)
+        captured["manager"] = manager
+        return manager
+
+    monkeypatch.setattr(mod, "internalize_coding_bot", fake_internalize_coding_bot)
+
+    class DummyFeedback:
+        def __init__(self, logger=None, manager=None) -> None:
+            self.logger = logger
+            self.manager = manager
+            self.interval = 0
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(mod, "TelemetryFeedback", DummyFeedback)
+
+    svc = mod.DebugLoopService(context_builder=vs_pkg.ContextBuilder())
+
+    assert captured.get("pipeline") is pipeline
+    assert svc.feedback.manager is captured.get("manager")
+    assert prepare_called is False
