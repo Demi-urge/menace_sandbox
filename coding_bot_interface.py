@@ -5471,6 +5471,66 @@ def prepare_pipeline_for_bootstrap(
     full parameter details.
     """
 
+    dependency_broker = _bootstrap_dependency_broker()
+    broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    broker_placeholder_active = _is_bootstrap_placeholder(broker_pipeline) or _is_bootstrap_placeholder(
+        broker_sentinel
+    )
+    active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+
+    if broker_placeholder_active and (broker_pipeline is not None or broker_sentinel is not None):
+        if active_promise is not None:
+            active_promise.waiters += 1
+            logger.info(
+                "prepare_pipeline.bootstrap.preflight_broker_wait",
+                extra={
+                    "event": "prepare-pipeline-bootstrap-preflight-broker-wait",
+                    "waiters": active_promise.waiters,
+                    "dependency_broker": True,
+                },
+            )
+            return active_promise.wait()
+
+        if broker_pipeline is None:
+            broker_pipeline = _build_bootstrap_placeholder_pipeline(broker_sentinel)
+
+        def _reuse_promote(real_manager: Any) -> None:
+            if real_manager is None:
+                return
+            _assign_bootstrap_manager_placeholder(
+                broker_pipeline,
+                real_manager,
+                propagate_nested=True,
+            )
+
+        dependency_broker.advertise(
+            pipeline=broker_pipeline,
+            sentinel=broker_sentinel,
+            owner=True,
+        )
+        logger.info(
+            "prepare_pipeline.bootstrap.preflight_broker_reuse",
+            extra={
+                "event": "prepare-pipeline-bootstrap-preflight-broker-reuse",
+                "dependency_broker": True,
+                "pipeline_candidate": getattr(
+                    getattr(broker_pipeline, "__class__", None),
+                    "__name__",
+                    str(type(broker_pipeline)),
+                ),
+            },
+        )
+        return broker_pipeline, _reuse_promote
+
+    logger.info(
+        "prepare_pipeline.bootstrap.preflight_new_pipeline",
+        extra={
+            "event": "prepare-pipeline-bootstrap-preflight-new-pipeline",
+            "dependency_broker": bool(broker_pipeline or broker_sentinel),
+            "broker_placeholder": broker_placeholder_active,
+        },
+    )
+
     try:
         from menace_sandbox.relevancy_radar import relevancy_import_hook_guard
     except Exception:  # pragma: no cover - flat layout fallback
