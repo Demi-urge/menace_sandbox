@@ -5630,14 +5630,18 @@ def prepare_pipeline_for_bootstrap(
     reentry_cap = _resolve_bootstrap_reentry_cap()
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     broker_placeholder_without_owner = broker_placeholder_active and not broker_owner_active
-    recursion_short_circuit = active_depth > 0 and (
-        broker_placeholder_active or broker_pipeline is not None or broker_sentinel is not None or active_promise
-    )
+    short_circuit_active = broker_placeholder_active or broker_pipeline is not None or broker_sentinel is not None
+    short_circuit_active = short_circuit_active or active_promise is not None
+    recursion_short_circuit = active_depth > 0 and short_circuit_active
 
-    if recursion_short_circuit:
-        attempts = _increment_reentry_attempt(caller_module)
+    if recursion_short_circuit or (short_circuit_active and active_depth == 0):
+        telemetry_event = (
+            "prepare-pipeline-bootstrap-recursion-guard-short-circuit"
+            if recursion_short_circuit
+            else "prepare-pipeline-bootstrap-preflight-short-circuit"
+        )
         telemetry = {
-            "event": "prepare-pipeline-bootstrap-recursion-guard-short-circuit",
+            "event": telemetry_event,
             "dependency_broker": bool(broker_pipeline or broker_sentinel),
             "broker_placeholder": broker_placeholder_active,
             "broker_owner_active": broker_owner_active,
@@ -5645,13 +5649,23 @@ def prepare_pipeline_for_bootstrap(
             "active_depth": active_depth,
             "bootstrap_guard": bootstrap_guard,
             "reentry_cap": reentry_cap,
-            "reentry_attempts": attempts,
             "broker_placeholder_without_owner": broker_placeholder_without_owner,
+            "recursing": recursion_short_circuit,
         }
-        _maybe_raise_reentry_cap(caller_module, telemetry, cap=reentry_cap, reason="recursion-guard")
+        attempts = 0
+        if recursion_short_circuit:
+            attempts = _increment_reentry_attempt(caller_module)
+            telemetry["reentry_attempts"] = attempts
+            _maybe_raise_reentry_cap(caller_module, telemetry, cap=reentry_cap, reason="recursion-guard")
+        else:
+            telemetry["reentry_attempts"] = attempts
         if broker_placeholder_without_owner:
             logger.error(
-                "prepare_pipeline.bootstrap.recursion_guard_placeholder_block",
+                (
+                    "prepare_pipeline.bootstrap.recursion_guard_placeholder_block"
+                    if recursion_short_circuit
+                    else "prepare_pipeline.bootstrap.preflight_placeholder_block"
+                ),
                 extra=telemetry,
             )
             raise RuntimeError(
@@ -5662,10 +5676,17 @@ def prepare_pipeline_for_bootstrap(
             active_promise.waiters += 1
             telemetry.update({"active_waiters": active_promise.waiters, "active_promise": True})
             logger.info(
-                "prepare_pipeline.bootstrap.recursion_guard_promise_short_circuit",
+                (
+                    "prepare_pipeline.bootstrap.recursion_guard_promise_short_circuit"
+                    if recursion_short_circuit
+                    else "prepare_pipeline.bootstrap.preflight_promise_short_circuit"
+                ),
                 extra=telemetry,
             )
             return active_promise.wait()
+
+        if broker_pipeline is None:
+            broker_pipeline = _build_bootstrap_placeholder_pipeline(broker_sentinel)
 
         def _reuse_promote(real_manager: Any) -> None:
             if real_manager is None or broker_pipeline is None:
@@ -5676,54 +5697,20 @@ def prepare_pipeline_for_bootstrap(
                 propagate_nested=True,
             )
 
+        if broker_placeholder_active and (broker_pipeline is not None or broker_sentinel is not None):
+            dependency_broker.advertise(
+                pipeline=broker_pipeline,
+                sentinel=broker_sentinel,
+                owner=True,
+            )
         logger.info(
-            "prepare_pipeline.bootstrap.recursion_guard_broker_short_circuit",
+            (
+                "prepare_pipeline.bootstrap.recursion_guard_broker_short_circuit"
+                if recursion_short_circuit
+                else "prepare_pipeline.bootstrap.preflight_broker_short_circuit"
+            ),
             extra={
                 **telemetry,
-                "pipeline_candidate": getattr(
-                    getattr(broker_pipeline, "__class__", None),
-                    "__name__",
-                    str(type(broker_pipeline)),
-                ),
-            },
-        )
-        return broker_pipeline, _reuse_promote
-
-    if broker_placeholder_active and (broker_pipeline is not None or broker_sentinel is not None):
-        if active_promise is not None:
-            active_promise.waiters += 1
-            logger.info(
-                "prepare_pipeline.bootstrap.preflight_broker_wait",
-                extra={
-                    "event": "prepare-pipeline-bootstrap-preflight-broker-wait",
-                    "waiters": active_promise.waiters,
-                    "dependency_broker": True,
-                },
-            )
-            return active_promise.wait()
-
-        if broker_pipeline is None:
-            broker_pipeline = _build_bootstrap_placeholder_pipeline(broker_sentinel)
-
-        def _reuse_promote(real_manager: Any) -> None:
-            if real_manager is None:
-                return
-            _assign_bootstrap_manager_placeholder(
-                broker_pipeline,
-                real_manager,
-                propagate_nested=True,
-            )
-
-        dependency_broker.advertise(
-            pipeline=broker_pipeline,
-            sentinel=broker_sentinel,
-            owner=True,
-        )
-        logger.info(
-            "prepare_pipeline.bootstrap.preflight_broker_reuse",
-            extra={
-                "event": "prepare-pipeline-bootstrap-preflight-broker-reuse",
-                "dependency_broker": True,
                 "pipeline_candidate": getattr(
                     getattr(broker_pipeline, "__class__", None),
                     "__name__",
