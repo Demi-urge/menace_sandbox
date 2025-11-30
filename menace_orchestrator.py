@@ -189,7 +189,7 @@ class MenaceOrchestrator:
         bootstrap_context = None
         bootstrap_heartbeat = None
         dependency_broker = _bootstrap_dependency_broker()
-        broker_pipeline, _broker_manager = dependency_broker.resolve()
+        broker_pipeline, broker_sentinel = dependency_broker.resolve()
         owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
         guard_promise = (
             _peek_owner_promise(owner_guard) if owner_guard is not None else None
@@ -211,7 +211,7 @@ class MenaceOrchestrator:
                 pipeline=getattr(bootstrap_context, "pipeline", None),
                 sentinel=getattr(bootstrap_context, "manager", None),
             )
-            broker_pipeline, _broker_manager = dependency_broker.resolve()
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
 
         self.pipeline_promoter: Callable[[Any], None] | None = None
         def _bootstrap_signals_active() -> bool:
@@ -225,7 +225,7 @@ class MenaceOrchestrator:
             wait_start = time.perf_counter()
             backoff = 0.05
             while broker_pipeline is None and _bootstrap_signals_active():
-                broker_pipeline, _broker_manager = dependency_broker.resolve()
+                broker_pipeline, broker_sentinel = dependency_broker.resolve()
                 if broker_pipeline is None and bootstrap_context is not None:
                     broker_pipeline = getattr(bootstrap_context, "pipeline", None)
                 if broker_pipeline is not None:
@@ -276,7 +276,7 @@ class MenaceOrchestrator:
                             break
                         except Exception:
                             self.logger.exception("failed waiting on bootstrap promise")
-                broker_pipeline, _broker_manager = dependency_broker.resolve()
+                broker_pipeline, broker_sentinel = dependency_broker.resolve()
                 if broker_pipeline is not None:
                     bootstrap_pipeline = broker_pipeline
                     break
@@ -309,8 +309,48 @@ class MenaceOrchestrator:
         if bootstrap_pipeline is not None:
             dependency_broker.advertise(
                 pipeline=bootstrap_pipeline,
-                sentinel=_broker_manager or getattr(bootstrap_context, "manager", None),
+                sentinel=broker_sentinel or getattr(bootstrap_context, "manager", None),
             )
+
+        if (
+            bootstrap_pipeline is None
+            and _bootstrap_signals_active()
+            and (bootstrap_context is not None or bootstrap_heartbeat)
+        ):
+            guard_wait_start = time.perf_counter()
+            guard_backoff = 0.05
+            guard_logged = False
+            while bootstrap_pipeline is None and _bootstrap_signals_active():
+                broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                if broker_pipeline is not None:
+                    bootstrap_pipeline = broker_pipeline
+                    break
+                if not guard_logged:
+                    self.logger.info(
+                        "deferring orchestration while bootstrap dependencies publish",
+                        extra={
+                            "event": "menace-orchestrator-bootstrap-guard",
+                            "heartbeat": bool(bootstrap_heartbeat),
+                            "bootstrap_context": bool(bootstrap_context),
+                            "dependency_broker": bool(broker_sentinel),
+                        },
+                    )
+                    guard_logged = True
+                try:
+                    bootstrap_heartbeat = read_bootstrap_heartbeat()
+                except Exception:
+                    bootstrap_heartbeat = bootstrap_heartbeat
+                if reuse_wait_timeout is not None and (
+                    time.perf_counter() - guard_wait_start
+                ) >= reuse_wait_timeout:
+                    break
+                time.sleep(guard_backoff)
+                guard_backoff = min(guard_backoff * 2, 0.5)
+
+            if bootstrap_pipeline is None and _bootstrap_signals_active():
+                raise RuntimeError(
+                    "bootstrap already active; refusing to start new pipeline until dependencies publish"
+                )
 
         if bootstrap_pipeline is None:
             placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
