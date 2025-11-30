@@ -489,6 +489,107 @@ def test_sandbox_skipped_on_run_once_error(monkeypatch, tmp_path, caplog):
     assert "run_once failed" in caplog.text
 
 
+def test_deploy_patch_reuses_broker_pipeline(monkeypatch):
+    _setup_mm_stubs(monkeypatch)
+    _stub_module(
+        monkeypatch,
+        "menace.self_coding_thresholds",
+        get_thresholds=lambda name: types.SimpleNamespace(
+            roi_drop=0.0, error_increase=0.0, test_failure_increase=0.0
+        ),
+    )
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
+    spec = importlib.util.spec_from_file_location("menace_master", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["menace_master"] = module
+    spec.loader.exec_module(module)
+
+    class DummyEngine:
+        pass
+
+    class DummyManager:
+        def __init__(self) -> None:
+            self.bot_name = "MenaceMaster"
+            self.context_builder = None
+            self.engine = DummyEngine()
+            self.summary_payload = {"self_tests": {"failed": 0}}
+
+        def auto_run_patch(self, path, description):
+            return {
+                "summary": self.summary_payload,
+                "patch_id": 1,
+                "commit": "abc123",
+                "result": None,
+            }
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+    pipeline_sentinel = types.SimpleNamespace()
+
+    class DummyModelAutomationPipeline:
+        def __init__(self, manager):
+            self.manager = manager
+            self.initial_manager = manager
+            self.context_builder = None
+            self._bot_attribute_order: list[str] = []
+
+    pipeline = DummyModelAutomationPipeline(pipeline_sentinel)
+    module._bootstrap_dependency_broker().clear()
+    module._bootstrap_dependency_broker().advertise(
+        pipeline=pipeline, sentinel=pipeline_sentinel
+    )
+
+    prepare_called = False
+
+    def _prepare(**kwargs):
+        nonlocal prepare_called
+        prepare_called = True
+        return pipeline, lambda *_a, **_k: None
+
+    manager = DummyManager()
+    monkeypatch.setattr(module, "prepare_pipeline_for_bootstrap", _prepare, raising=False)
+    monkeypatch.setattr(module, "SelfCodingEngine", lambda *a, **k: manager.engine, raising=False)
+    monkeypatch.setattr(module, "DataBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "CapitalManagementBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "SystemEvolutionManager", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "UnifiedEventBus", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "BotRegistry", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(
+        module,
+        "EvolutionOrchestrator",
+        lambda *a, **k: types.SimpleNamespace(provenance_token="token"),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "internalize_coding_bot", lambda *a, **k: manager, raising=False)
+    monkeypatch.setattr(
+        module,
+        "get_thresholds",
+        lambda name: types.SimpleNamespace(
+            roi_drop=0.0, error_increase=0.0, test_failure_increase=0.0
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "persist_sc_thresholds", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(
+        module,
+        "AutomatedRollbackManager",
+        lambda *a, **k: types.SimpleNamespace(auto_rollback=lambda *a, **k: None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sandbox_runner,
+        "try_integrate_into_workflows",
+        lambda *a, **k: None,
+        raising=False,
+    )
+
+    module.deploy_patch(Path("/tmp"), "desc", DummyBuilder())
+
+    assert not prepare_called
+
+
 def test_deploy_patch_requires_self_test_summary(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
     path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
