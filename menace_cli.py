@@ -14,6 +14,15 @@ import uuid
 from pathlib import Path
 import importlib
 
+from coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+)
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
+    dependency_broker=_bootstrap_dependency_broker()
+)
+
 from dynamic_path_router import resolve_path
 from db_router import init_db_router
 from context_builder_util import create_context_builder
