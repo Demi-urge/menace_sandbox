@@ -34,6 +34,7 @@ from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
 from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
     _bootstrap_dependency_broker,
+    _GLOBAL_BOOTSTRAP_COORDINATOR,
     _current_bootstrap_context,
     _peek_owner_promise,
     _resolve_bootstrap_wait_timeout,
@@ -193,6 +194,9 @@ class MenaceOrchestrator:
         guard_promise = (
             _peek_owner_promise(owner_guard) if owner_guard is not None else None
         )
+        reuse_wait_timeout = _resolve_bootstrap_wait_timeout()
+        if reuse_wait_timeout is None:
+            reuse_wait_timeout = 5.0
         try:
             bootstrap_context = _current_bootstrap_context()
         except Exception:
@@ -218,7 +222,6 @@ class MenaceOrchestrator:
             )
 
         if broker_pipeline is None and _bootstrap_signals_active():
-            wait_timeout = _resolve_bootstrap_wait_timeout()
             wait_start = time.perf_counter()
             backoff = 0.05
             while broker_pipeline is None and _bootstrap_signals_active():
@@ -231,13 +234,66 @@ class MenaceOrchestrator:
                     bootstrap_heartbeat = read_bootstrap_heartbeat()
                 except Exception:
                     bootstrap_heartbeat = bootstrap_heartbeat
-                if wait_timeout is not None and (time.perf_counter() - wait_start) >= wait_timeout:
+                if reuse_wait_timeout is not None and (time.perf_counter() - wait_start) >= reuse_wait_timeout:
                     break
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 0.5)
 
         bootstrap_pipeline = broker_pipeline
         bootstrap_promoter: Callable[[Any], None] | None = _latest_bootstrap_promoter()
+
+        if bootstrap_pipeline is None and _bootstrap_signals_active():
+            wait_start = time.perf_counter()
+            backoff = 0.05
+            while bootstrap_pipeline is None and _bootstrap_signals_active():
+                active_promise = getattr(_GLOBAL_BOOTSTRAP_COORDINATOR, "_active", None)
+                if active_promise is not None and not getattr(active_promise, "done", True):
+                    remaining = None
+                    if reuse_wait_timeout is not None:
+                        remaining = max(0.0, reuse_wait_timeout - (time.perf_counter() - wait_start))
+                    event = getattr(active_promise, "_event", None)
+                    if event is not None:
+                        event.wait(timeout=remaining)
+                    if getattr(active_promise, "done", False):
+                        try:
+                            pipeline_promised, promote_promised = active_promise.wait()
+                            bootstrap_pipeline = pipeline_promised
+                            bootstrap_promoter = promote_promised
+                            dependency_broker.advertise(
+                                pipeline=pipeline_promised,
+                                sentinel=getattr(pipeline_promised, "manager", None),
+                            )
+                            self.logger.info(
+                                "menace orchestrator joined bootstrap coordinator promise",
+                                extra={
+                                    "event": "menace-orchestrator-bootstrap-joined",
+                                    "elapsed": round(time.perf_counter() - wait_start, 3),
+                                    "wait_timeout": reuse_wait_timeout,
+                                    "heartbeat": bool(bootstrap_heartbeat),
+                                    "guard_promise": guard_promise is not None,
+                                },
+                            )
+                            break
+                        except Exception:
+                            self.logger.exception("failed waiting on bootstrap promise")
+                broker_pipeline, _broker_manager = dependency_broker.resolve()
+                if broker_pipeline is not None:
+                    bootstrap_pipeline = broker_pipeline
+                    break
+                if reuse_wait_timeout is not None and (time.perf_counter() - wait_start) >= reuse_wait_timeout:
+                    self.logger.warning(
+                        "bootstrap reuse timed out; proceeding to prepare pipeline",
+                        extra={
+                            "event": "menace-orchestrator-bootstrap-wait-timeout",
+                            "elapsed": round(time.perf_counter() - wait_start, 3),
+                            "wait_timeout": reuse_wait_timeout,
+                            "heartbeat": bool(bootstrap_heartbeat),
+                            "guard_promise": guard_promise is not None,
+                        },
+                    )
+                    break
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 0.5)
 
         if bootstrap_pipeline is None and bootstrap_context is not None:
             bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)

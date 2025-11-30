@@ -1,5 +1,7 @@
 import sys
+import time
 import types
+import threading
 import pathlib
 import pytest
 
@@ -313,4 +315,143 @@ def test_orchestrator_reuses_active_bootstrap(monkeypatch):
     assert orchestrator.pipeline is pipeline
     assert broker.advertised, "orchestrator should advertise the reused pipeline"
     assert orchestrator.model_id is None
+    monkeypatch.setattr(builtins, "__import__", _intercept_import)
+
+
+def test_orchestrator_waits_for_bootstrap_promise(monkeypatch):
+    import builtins
+    import relevancy_radar
+    import menace_sandbox.coding_bot_interface as cbi
+
+    monkeypatch.setattr(builtins, "__import__", _intercept_import)
+    setattr(relevancy_radar, "original_import", __import__)
+    setattr(relevancy_radar, "tracked_import", __import__)
+    monkeypatch.setattr(relevancy_radar, "original_import", _intercept_import, raising=False)
+    monkeypatch.setattr(relevancy_radar, "tracked_import", _intercept_import, raising=False)
+
+    try:
+        import menace_sandbox.menace_orchestrator as mo
+    except ImportError as exc:  # pragma: no cover - optional deps missing
+        pytest.skip(f"menace_orchestrator unavailable: {exc}")
+
+    pipeline = object()
+
+    class DummyBroker:
+        def __init__(self) -> None:
+            self.pipeline = None
+            self.sentinel = None
+            self.advertised: list[tuple[object | None, object | None]] = []
+
+        def resolve(self):
+            return self.pipeline, self.sentinel
+
+        def advertise(self, *, pipeline=None, sentinel=None):
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            self.advertised.append((self.pipeline, self.sentinel))
+
+    broker = DummyBroker()
+
+    class DummyBuilder:
+        def refresh_db_weights(self, **_):
+            return None
+
+    monkeypatch.setattr(mo, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(mo, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(mo, "_resolve_bootstrap_wait_timeout", lambda: 0.4)
+
+    promise = cbi._BootstrapPipelinePromise()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = promise
+
+    def _resolve_later():
+        time.sleep(0.05)
+        promise.resolve((pipeline, lambda *_: None))
+
+    threading.Thread(target=_resolve_later, daemon=True).start()
+
+    def _fail_prepare(**_: object) -> None:
+        raise AssertionError("prepare_pipeline_for_bootstrap should not run when waiting on promise")
+
+    monkeypatch.setattr(mo, "prepare_pipeline_for_bootstrap", _fail_prepare)
+    monkeypatch.setattr(mo, "read_bootstrap_heartbeat", lambda max_age=None: {"active": True})
+
+    orchestrator = mo.MenaceOrchestrator(context_builder=DummyBuilder())
+
+    assert orchestrator.pipeline is pipeline
+    assert broker.advertised, "orchestrator should advertise pipeline resolved from promise"
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = None
+    monkeypatch.setattr(builtins, "__import__", _intercept_import)
+
+
+def test_orchestrator_respects_guard_promise(monkeypatch):
+    import builtins
+    import relevancy_radar
+    import menace_sandbox.coding_bot_interface as cbi
+
+    monkeypatch.setattr(builtins, "__import__", _intercept_import)
+    setattr(relevancy_radar, "original_import", __import__)
+    setattr(relevancy_radar, "tracked_import", __import__)
+    monkeypatch.setattr(relevancy_radar, "original_import", _intercept_import, raising=False)
+    monkeypatch.setattr(relevancy_radar, "tracked_import", _intercept_import, raising=False)
+
+    try:
+        import menace_sandbox.menace_orchestrator as mo
+    except ImportError as exc:  # pragma: no cover - optional deps missing
+        pytest.skip(f"menace_orchestrator unavailable: {exc}")
+
+    pipeline = object()
+
+    class DummyBroker:
+        def __init__(self) -> None:
+            self.pipeline = None
+            self.sentinel = None
+            self.advertised: list[tuple[object | None, object | None]] = []
+
+        def resolve(self):
+            return self.pipeline, self.sentinel
+
+        def advertise(self, *, pipeline=None, sentinel=None):
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            self.advertised.append((self.pipeline, self.sentinel))
+
+    broker = DummyBroker()
+
+    class DummyBuilder:
+        def refresh_db_weights(self, **_):
+            return None
+
+    guard = object()
+    cbi._BOOTSTRAP_STATE.active_bootstrap_guard = guard
+    cbi._ensure_owner_promise(guard)
+
+    monkeypatch.setattr(mo, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(mo, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(mo, "_resolve_bootstrap_wait_timeout", lambda: 0.4)
+
+    def _resolve_broker():
+        time.sleep(0.05)
+        broker.advertise(pipeline=pipeline, sentinel=None)
+
+    threading.Thread(target=_resolve_broker, daemon=True).start()
+
+    def _fail_prepare(**_: object) -> None:
+        raise AssertionError("prepare_pipeline_for_bootstrap should not run while guard promise active")
+
+    monkeypatch.setattr(mo, "prepare_pipeline_for_bootstrap", _fail_prepare)
+    monkeypatch.setattr(mo, "read_bootstrap_heartbeat", lambda max_age=None: {"active": True})
+
+    orchestrator = mo.MenaceOrchestrator(context_builder=DummyBuilder())
+
+    assert orchestrator.pipeline is pipeline
+    assert broker.advertised, "orchestrator should advertise pipeline provided during guard wait"
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = None
+    if hasattr(cbi._BOOTSTRAP_STATE, "owner_promises"):
+        cbi._BOOTSTRAP_STATE.owner_promises.clear()
+    if hasattr(cbi._BOOTSTRAP_STATE, "active_bootstrap_guard"):
+        delattr(cbi._BOOTSTRAP_STATE, "active_bootstrap_guard")
     monkeypatch.setattr(builtins, "__import__", _intercept_import)
