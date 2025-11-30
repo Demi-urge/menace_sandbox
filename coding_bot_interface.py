@@ -229,6 +229,10 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
     "extensions": [],
 }
 
+_REENTRY_ATTEMPTS: dict[str, int] = {}
+_REENTRY_CAP_ENV = "MENACE_BOOTSTRAP_REENTRY_CAP"
+_DEFAULT_REENTRY_CAP = 3
+
 _STAGED_READY_TOPIC = "prepare_pipeline.staged_ready"
 MENACE_BOOTSTRAP_WAIT_SECS = "MENACE_BOOTSTRAP_WAIT_SECS"
 
@@ -1961,6 +1965,60 @@ def advertise_bootstrap_placeholder(
     )
     broker.advertise(pipeline=pipeline_candidate, sentinel=sentinel, owner=owner)
     return pipeline_candidate, sentinel
+
+
+def _resolve_bootstrap_reentry_cap() -> int | None:
+    """Return the configured recursion guard reentry cap per caller."""
+
+    raw_cap = os.getenv(_REENTRY_CAP_ENV)
+    if raw_cap is None:
+        return _DEFAULT_REENTRY_CAP
+    try:
+        value = int(str(raw_cap).strip())
+    except (TypeError, ValueError):
+        return _DEFAULT_REENTRY_CAP
+    if value <= 0:
+        return None
+    return value
+
+
+def _increment_reentry_attempt(caller_module: str) -> int:
+    """Track how many recursion guard invocations a caller triggered."""
+
+    attempts = (_REENTRY_ATTEMPTS.get(caller_module) or 0) + 1
+    _REENTRY_ATTEMPTS[caller_module] = attempts
+    return attempts
+
+
+def _maybe_raise_reentry_cap(
+    caller_module: str,
+    telemetry: dict[str, Any],
+    *,
+    cap: int | None,
+    reason: str,
+) -> None:
+    """Emit diagnostics and raise when recursion attempts exceed the cap."""
+
+    if cap is None:
+        return
+    attempts = telemetry.get("reentry_attempts") or _REENTRY_ATTEMPTS.get(caller_module, 0)
+    if attempts <= cap:
+        return
+
+    telemetry = dict(telemetry)
+    telemetry.update({
+        "reentry_cap_exceeded": True,
+        "reentry_reason": reason,
+    })
+    logger.error(
+        "prepare_pipeline.bootstrap.reentry_cap_exceeded",
+        extra=telemetry,
+    )
+    raise RuntimeError(
+        "prepare_pipeline_for_bootstrap recursion guard exceeded the caller re-entry cap; "
+        "seed advertise_bootstrap_placeholder(owner=True) before importing dependent modules "
+        "so helpers can reuse the brokered bootstrap promise."
+    )
 
 
 def claim_bootstrap_dependency_entry(
@@ -5563,25 +5621,43 @@ def prepare_pipeline_for_bootstrap(
 
     dependency_broker = _bootstrap_dependency_broker()
     broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
     broker_placeholder_active = _is_bootstrap_placeholder(broker_pipeline) or _is_bootstrap_placeholder(
         broker_sentinel
     )
     active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
     caller_module = _resolve_caller_module_name()
+    reentry_cap = _resolve_bootstrap_reentry_cap()
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
+    broker_placeholder_without_owner = broker_placeholder_active and not broker_owner_active
     recursion_short_circuit = active_depth > 0 and (
         broker_placeholder_active or broker_pipeline is not None or broker_sentinel is not None or active_promise
     )
 
     if recursion_short_circuit:
+        attempts = _increment_reentry_attempt(caller_module)
         telemetry = {
             "event": "prepare-pipeline-bootstrap-recursion-guard-short-circuit",
             "dependency_broker": bool(broker_pipeline or broker_sentinel),
             "broker_placeholder": broker_placeholder_active,
+            "broker_owner_active": broker_owner_active,
             "caller_module": caller_module,
             "active_depth": active_depth,
             "bootstrap_guard": bootstrap_guard,
+            "reentry_cap": reentry_cap,
+            "reentry_attempts": attempts,
+            "broker_placeholder_without_owner": broker_placeholder_without_owner,
         }
+        _maybe_raise_reentry_cap(caller_module, telemetry, cap=reentry_cap, reason="recursion-guard")
+        if broker_placeholder_without_owner:
+            logger.error(
+                "prepare_pipeline.bootstrap.recursion_guard_placeholder_block",
+                extra=telemetry,
+            )
+            raise RuntimeError(
+                "bootstrap dependency broker placeholder detected without an active owner; "
+                "seed advertise_bootstrap_placeholder(owner=True) before importing dependent modules."
+            )
         if active_promise is not None:
             active_promise.waiters += 1
             telemetry.update({"active_waiters": active_promise.waiters, "active_promise": True})

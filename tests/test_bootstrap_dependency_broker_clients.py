@@ -397,3 +397,52 @@ def test_bootstrap_helpers_share_single_promise(monkeypatch, caplog):
     ]
     assert len(prepare_logs) == 1, "prepare_pipeline_for_bootstrap should log once"
     assert broker_advertises, "dependency broker should be exercised during bootstrap"
+
+
+def test_active_promise_short_circuits_recursion(monkeypatch, caplog):
+    import coding_bot_interface as cbi
+
+    caplog.set_level(logging.INFO)
+    cbi._REENTRY_ATTEMPTS.clear()
+
+    class _Promise:
+        def __init__(self) -> None:
+            self.waiters = 0
+
+        def wait(self):
+            self.waiters += 1
+            return SimpleNamespace(name="pipeline"), lambda *_: None
+
+    promise = _Promise()
+    broker = SimpleNamespace(
+        active_pipeline=SimpleNamespace(manager=SimpleNamespace(name="sentinel")),
+        active_sentinel=SimpleNamespace(name="sentinel"),
+        active_owner=True,
+    )
+    broker.resolve = lambda: (broker.active_pipeline, broker.active_sentinel)
+
+    def _refuse_advertise(*_args, **_kwargs):  # noqa: ANN001
+        raise AssertionError("advertise should not run during recursion guard")
+
+    broker.advertise = _refuse_advertise
+
+    monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", SimpleNamespace(peek_active=lambda: promise))
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+
+    try:
+        result = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=type("Pipeline", (), {}),
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+        )
+    finally:
+        try:
+            delattr(cbi._BOOTSTRAP_STATE, "depth")
+        except AttributeError:
+            pass
+
+    assert result[0].name == "pipeline"
+    assert promise.waiters == 1
+    assert any("caller_module" in getattr(record, "__dict__", {}) for record in caplog.records)
