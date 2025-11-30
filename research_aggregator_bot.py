@@ -12,6 +12,12 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Type, Callable
 
+from .bootstrap_placeholder import advertise_broker_placeholder
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+    advertise_broker_placeholder()
+)
+
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 
