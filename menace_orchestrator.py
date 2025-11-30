@@ -370,6 +370,7 @@ class MenaceOrchestrator:
             dependency_broker.advertise(
                 pipeline=self.pipeline,
                 sentinel=getattr(self.pipeline, "manager", None),
+                owner=True,
             )
             self.logger.info(
                 "menace orchestrator starting new bootstrap pipeline",
