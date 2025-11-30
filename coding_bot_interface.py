@@ -4317,6 +4317,14 @@ class _BootstrapPipelineCoordinator:
             self._active.waiters = 1
             return True, self._active
 
+    def peek_active(self) -> _BootstrapPipelinePromise | None:
+        """Return the active bootstrap promise without mutating state."""
+
+        with self._lock:
+            if self._active is None or self._active.done:
+                return None
+            return self._active
+
     def settle(
         self,
         promise: _BootstrapPipelinePromise | None,
@@ -5496,6 +5504,31 @@ def _prepare_pipeline_for_bootstrap_impl(
         "true",
         "yes",
     )
+    active_owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
+    active_owner_depth = (getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}).get(
+        active_owner_guard, 0
+    )
+    active_owner_sentinel = (
+        manager_override
+        or manager_sentinel
+        or getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+    )
+    if active_owner_guard is not None and active_owner_depth > 0:
+        active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+        if active_owner_sentinel is None:
+            telemetry = {
+                "event": "prepare-pipeline-bootstrap-recursion-refused",
+                "owner_guard": getattr(
+                    getattr(active_owner_guard, "__class__", None), "__name__", str(active_owner_guard)
+                ),
+                "owner_depth": active_owner_depth,
+                "has_active_promise": bool(active_promise),
+                "active_waiters": active_promise.waiters if active_promise else 0,
+            }
+            logger.info("prepare_pipeline.bootstrap.recursion_refused", extra=telemetry)
+            if active_promise is not None:
+                return active_promise.wait()
+            raise RuntimeError("bootstrap recursion refused without reusable sentinel")
     single_flight_owner = True
     single_flight_promise: _BootstrapPipelinePromise | None = None
     if guard_enabled:
