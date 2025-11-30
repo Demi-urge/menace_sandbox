@@ -12,6 +12,7 @@ from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
     _looks_like_pipeline_candidate,
     _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
     read_bootstrap_heartbeat,
     get_active_bootstrap_pipeline,
     _current_bootstrap_context,
@@ -273,6 +274,28 @@ def _ensure_runtime_dependencies(
 
     pipeline_override = pipeline_hint
 
+    dependency_broker = _bootstrap_dependency_broker()
+    placeholder_pipeline: object | None = None
+    placeholder_manager: object | None = None
+    if _runtime_state is None:
+        try:
+            placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker,
+                pipeline=pipeline_override,
+                manager=manager_override
+                if manager_override is not None
+                else getattr(bootstrap_context, "manager", None),
+                owner=owner is not False,
+            )
+        except Exception:  # pragma: no cover - best effort broker seeding
+            logger.debug(
+                "Failed to advertise early bootstrap placeholder for ResearchAggregatorBot",
+                exc_info=True,
+            )
+
+    if dependency_broker is None:
+        dependency_broker = _bootstrap_dependency_broker()
+
     if _runtime_state is not None:
         _ensure_self_coding_decorated(_runtime_state)
         return _runtime_state
@@ -281,7 +304,6 @@ def _ensure_runtime_dependencies(
         if _runtime_placeholder is not None:
             return _runtime_placeholder
 
-        dependency_broker = _bootstrap_dependency_broker()
         reg = registry if registry is not None else BotRegistry()
         dbot = data_bot if data_bot is not None else DataBot(start_server=False)
         ctx_builder = _context_builder
@@ -318,8 +340,6 @@ def _ensure_runtime_dependencies(
         GPTMemoryManager(),
         context_builder=ctx_builder,
     )
-
-    dependency_broker = _bootstrap_dependency_broker()
 
     _runtime_initializing = True
     _runtime_placeholder = _RuntimeDependencies(
@@ -463,13 +483,17 @@ def _ensure_runtime_dependencies(
 
         def _advertise_dependency_state(real_manager: SelfCodingManager | None = None) -> None:
             try:
+                pipeline_candidate = pipe if pipe is not None else placeholder_pipeline
+                sentinel_candidate = (
+                    real_manager
+                    if real_manager is not None
+                    else manager_override if manager_override is not None else mgr
+                )
+                if sentinel_candidate is None:
+                    sentinel_candidate = placeholder_manager
                 dependency_broker.advertise(
-                    pipeline=pipe,
-                    sentinel=(
-                        real_manager
-                        if real_manager is not None
-                        else manager_override if manager_override is not None else mgr
-                    ),
+                    pipeline=pipeline_candidate,
+                    sentinel=sentinel_candidate,
                 )
             except Exception:  # pragma: no cover - best effort broker update
                 logger.debug(
