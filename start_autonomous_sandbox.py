@@ -28,6 +28,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+)
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
+    dependency_broker=_bootstrap_dependency_broker()
+)
+
 from bootstrap_timeout_policy import (
     enforce_bootstrap_timeout_policy,
     compute_prepare_pipeline_component_budgets,
