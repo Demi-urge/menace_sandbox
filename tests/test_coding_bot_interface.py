@@ -3,6 +3,7 @@ import sys
 import contextvars
 import logging
 import threading
+import time
 import types
 from types import SimpleNamespace
 from typing import Any
@@ -550,6 +551,7 @@ def test_prepare_pipeline_timeout_emits_watchdog(monkeypatch, caplog):
 def test_prepare_pipeline_single_flight_reuses_active(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger=cbi.logger.name)
     cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+    monkeypatch.setattr(cbi, "read_bootstrap_heartbeat", lambda: {})
 
     start_event = threading.Event()
     release_event = threading.Event()
@@ -728,6 +730,76 @@ def test_prepare_pipeline_guardless_reuses_dependency_broker(monkeypatch, caplog
     pipeline_b, promote_b = secondary_results[0]
     assert pipeline_a is pipeline_b
     assert promote_a is promote_b
+
+
+def test_prepare_pipeline_reentrancy_without_sentinel_attaches_placeholder(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+    monkeypatch.setattr(cbi, "read_bootstrap_heartbeat", lambda: {})
+
+    dependency_broker = cbi._bootstrap_dependency_broker()
+    dependency_broker.clear()
+
+    owner_guard = object()
+    cbi._BOOTSTRAP_STATE.active_bootstrap_guard = owner_guard
+    cbi._BOOTSTRAP_STATE.owner_depths = {owner_guard: 1}
+    if hasattr(cbi._BOOTSTRAP_STATE, "sentinel_manager"):
+        delattr(cbi._BOOTSTRAP_STATE, "sentinel_manager")
+
+    owner, active_promise = cbi._GLOBAL_BOOTSTRAP_COORDINATOR.claim()
+    assert owner
+    assert cbi._GLOBAL_BOOTSTRAP_COORDINATOR.peek_active() is active_promise
+
+    pipeline = SimpleNamespace(manager=SimpleNamespace())
+
+    def _settle() -> None:
+        time.sleep(1.0)
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.settle(
+            active_promise, result=(pipeline, lambda *_a, **_k: None)
+        )
+
+    threading.Thread(target=_settle, daemon=True).start()
+
+    init_count = 0
+
+    class _Pipeline:
+        def __init__(self, *_a, **_k):
+            nonlocal init_count
+            init_count += 1
+
+    try:
+        resolved_pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+            pipeline_cls=_Pipeline,
+            context_builder=SimpleNamespace(),
+            bot_registry=DummyRegistry(),
+            data_bot=DummyDataBot(),
+        )
+    finally:
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+        if hasattr(cbi._BOOTSTRAP_STATE, "active_bootstrap_guard"):
+            delattr(cbi._BOOTSTRAP_STATE, "active_bootstrap_guard")
+        if hasattr(cbi._BOOTSTRAP_STATE, "owner_depths"):
+            delattr(cbi._BOOTSTRAP_STATE, "owner_depths")
+        if hasattr(cbi._BOOTSTRAP_STATE, "sentinel_manager"):
+            delattr(cbi._BOOTSTRAP_STATE, "sentinel_manager")
+
+    assert resolved_pipeline is pipeline
+    assert init_count == 0
+    assert promote is not None
+    broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    assert broker_pipeline is not None
+    assert broker_sentinel is not None
+    assert getattr(broker_sentinel, "bootstrap_placeholder", False)
+    assert any(
+        record.message
+        in {
+            "prepare_pipeline.bootstrap.recursion_attached_sentinel",
+            "prepare_pipeline.bootstrap.recursion_deferred",
+        }
+        and getattr(record, "caller_module", None) == __name__
+        for record in caplog.records
+    )
+    dependency_broker.clear()
 
 
 def test_prepare_pipeline_heartbeat_reentrancy_reuses_active(monkeypatch, caplog):

@@ -5577,12 +5577,9 @@ def _prepare_pipeline_for_bootstrap_impl(
                     dependency_broker.advertise(owner=False)
         if broker_active:
             if broker_pipeline is None:
-                broker_pipeline = SimpleNamespace(
-                    manager=broker_sentinel,
-                    initial_manager=broker_sentinel,
-                    bootstrap_placeholder=True,
+                broker_pipeline = _build_bootstrap_placeholder_pipeline(
+                    broker_sentinel
                 )
-                _mark_bootstrap_placeholder(broker_pipeline)
 
             def _reuse_promote(real_manager: Any) -> None:
                 if real_manager is None:
@@ -5629,12 +5626,9 @@ def _prepare_pipeline_for_bootstrap_impl(
 
         if broker_pipeline is not None or broker_sentinel is not None:
             if broker_pipeline is None:
-                broker_pipeline = SimpleNamespace(
-                    manager=broker_sentinel,
-                    initial_manager=broker_sentinel,
-                    bootstrap_placeholder=True,
+                broker_pipeline = _build_bootstrap_placeholder_pipeline(
+                    broker_sentinel
                 )
-                _mark_bootstrap_placeholder(broker_pipeline)
 
             def _reuse_promote(real_manager: Any) -> None:
                 if real_manager is None:
@@ -5671,23 +5665,78 @@ def _prepare_pipeline_for_bootstrap_impl(
         manager_override
         or manager_sentinel
         or getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+        or broker_sentinel
     )
+    caller_module = _resolve_caller_module_name()
     if active_owner_guard is not None and active_owner_depth > 0:
         active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
         if active_owner_sentinel is None:
+            active_owner_sentinel = broker_sentinel
+            if active_owner_sentinel is None:
+                active_owner_sentinel = SimpleNamespace(bootstrap_placeholder=True)
+                _mark_bootstrap_placeholder(active_owner_sentinel)
+            if broker_pipeline is None:
+                broker_pipeline = _build_bootstrap_placeholder_pipeline(
+                    active_owner_sentinel
+                )
+            dependency_broker.advertise(
+                pipeline=broker_pipeline, sentinel=active_owner_sentinel, owner=True
+            )
+            if getattr(_BOOTSTRAP_STATE, "sentinel_manager", None) is None:
+                _BOOTSTRAP_STATE.sentinel_manager = active_owner_sentinel
             telemetry = {
-                "event": "prepare-pipeline-bootstrap-recursion-refused",
+                "event": "prepare-pipeline-bootstrap-recursion-attached-sentinel",
                 "owner_guard": getattr(
-                    getattr(active_owner_guard, "__class__", None), "__name__", str(active_owner_guard)
+                    getattr(active_owner_guard, "__class__", None),
+                    "__name__",
+                    str(active_owner_guard),
                 ),
                 "owner_depth": active_owner_depth,
                 "has_active_promise": bool(active_promise),
                 "active_waiters": active_promise.waiters if active_promise else 0,
+                "dependency_broker": True,
+                "caller_module": caller_module,
             }
-            logger.info("prepare_pipeline.bootstrap.recursion_refused", extra=telemetry)
-            if active_promise is not None:
-                return active_promise.wait()
-            raise RuntimeError("bootstrap recursion refused without reusable sentinel")
+            logger.info("prepare_pipeline.bootstrap.recursion_attached_sentinel", extra=telemetry)
+        if active_promise is None and broker_pipeline is not None:
+            def _promote_existing(real_manager: Any) -> None:
+                if real_manager is None:
+                    return
+                _assign_bootstrap_manager_placeholder(
+                    broker_pipeline,
+                    real_manager,
+                    propagate_nested=True,
+                )
+
+            telemetry = {
+                "event": "prepare-pipeline-bootstrap-recursion-short-circuit",
+                "owner_guard": getattr(
+                    getattr(active_owner_guard, "__class__", None),
+                    "__name__",
+                    str(active_owner_guard),
+                ),
+                "owner_depth": active_owner_depth,
+                "has_active_promise": False,
+                "dependency_broker": True,
+                "caller_module": caller_module,
+            }
+            logger.info("prepare_pipeline.bootstrap.recursion_short_circuit", extra=telemetry)
+            return broker_pipeline, _promote_existing
+        if active_promise is not None:
+            telemetry = {
+                "event": "prepare-pipeline-bootstrap-recursion-deferred",
+                "owner_guard": getattr(
+                    getattr(active_owner_guard, "__class__", None), "__name__", str(active_owner_guard)
+                ),
+                "owner_depth": active_owner_depth,
+                "has_active_promise": True,
+                "active_waiters": active_promise.waiters,
+                "dependency_broker": broker_active,
+                "heartbeat": bool(active_heartbeat),
+                "caller_module": caller_module,
+            }
+            logger.info("prepare_pipeline.bootstrap.recursion_deferred", extra=telemetry)
+            return active_promise.wait()
         if active_promise is not None:
             telemetry = {
                 "event": "prepare-pipeline-bootstrap-recursion-deferred",
@@ -5764,6 +5813,40 @@ def _prepare_pipeline_for_bootstrap_impl(
     finally:
         if dependency_owner_reset:
             dependency_broker.advertise(owner=False)
+
+
+def _resolve_caller_module_name() -> str:
+    """Return the first caller module outside this helper."""
+
+    frame = inspect.currentframe()
+    try:
+        while frame:
+            module = inspect.getmodule(frame)
+            if module and module.__name__ != __name__:
+                return module.__name__
+            frame = frame.f_back  # pragma: no cover - defensive walkback
+    finally:
+        del frame
+    return __name__
+
+
+def _build_bootstrap_placeholder_pipeline(manager: Any) -> Any:
+    """Return a pipeline-shaped placeholder compatible with broker checks."""
+
+    placeholder_cls = type(
+        "PlaceholderModelAutomationPipeline",
+        (SimpleNamespace,),
+        {},
+    )
+    placeholder = placeholder_cls(
+        manager=manager,
+        initial_manager=manager,
+        bootstrap_placeholder=True,
+    )
+    placeholder.context_builder = getattr(manager, "context_builder", None)
+    placeholder._bot_attribute_order = ()
+    _mark_bootstrap_placeholder(placeholder)
+    return placeholder
 
 
 def _prepare_pipeline_for_bootstrap_impl_inner(
@@ -5907,12 +5990,9 @@ def _prepare_pipeline_for_bootstrap_impl_inner(
         if sentinel_candidate is None:
             sentinel_candidate = SimpleNamespace(bootstrap_placeholder=True)
         _mark_bootstrap_placeholder(sentinel_candidate)
-        pipeline_candidate = SimpleNamespace(
-            manager=sentinel_candidate,
-            initial_manager=sentinel_candidate,
-            bootstrap_placeholder=True,
+        pipeline_candidate = _build_bootstrap_placeholder_pipeline(
+            sentinel_candidate
         )
-        _mark_bootstrap_placeholder(pipeline_candidate)
         _BOOTSTRAP_STATE.pipeline = pipeline_candidate
         dependency_broker.advertise(
             pipeline=pipeline_candidate, sentinel=sentinel_candidate
@@ -5948,12 +6028,9 @@ def _prepare_pipeline_for_bootstrap_impl_inner(
         and (pipeline_candidate is not None or sentinel_candidate is not None)
     ):
         if pipeline_candidate is None and sentinel_candidate is not None:
-            pipeline_candidate = SimpleNamespace(
-                manager=sentinel_candidate,
-                initial_manager=sentinel_candidate,
-                bootstrap_placeholder=True,
+            pipeline_candidate = _build_bootstrap_placeholder_pipeline(
+                sentinel_candidate
             )
-            _mark_bootstrap_placeholder(pipeline_candidate)
         dependency_broker.advertise(
             pipeline=pipeline_candidate, sentinel=sentinel_candidate
         )
