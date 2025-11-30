@@ -161,7 +161,7 @@ from coding_bot_interface import (  # noqa: E402
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
     _resolve_bootstrap_pipeline_candidate,
-    prepare_pipeline_for_bootstrap,
+    claim_bootstrap_dependency_entry,
 )
 try:
     import sandbox_runner  # noqa: E402
@@ -658,31 +658,54 @@ def deploy_patch(
         bootstrap_sentinel = getattr(bootstrap_context, "sentinel", None) or getattr(
             bootstrap_context, "manager", None
         )
-    pipeline = (
+    pipeline_candidate = (
         _resolve_bootstrap_pipeline_candidate(broker_pipeline)
         or bootstrap_pipeline
         or None
     )
-    promote_pipeline = lambda *_a, **_k: None
-    if pipeline is None:
-        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+    sentinel_candidate = broker_sentinel or bootstrap_sentinel
+    if pipeline_candidate or sentinel_candidate:
+        try:
+            dependency_broker.advertise(
+                pipeline=pipeline_candidate,
+                sentinel=sentinel_candidate or getattr(pipeline_candidate, "manager", None),
+                owner=True,
+            )
+        except Exception:  # pragma: no cover - best effort advertisement
+            logger.debug("failed to preserve bootstrap advertisement", exc_info=True)
+
+    pipeline, promote_pipeline, manager_candidate, prepared_pipeline = (
+        claim_bootstrap_dependency_entry(
+            dependency_broker=dependency_broker,
+            pipeline=pipeline_candidate,
+            manager=sentinel_candidate,
             pipeline_cls=ModelAutomationPipeline,
             context_builder=builder,
             bot_registry=registry,
             data_bot=data_bot,
             event_bus=bus,
         )
-    else:
-        sentinel = broker_sentinel or bootstrap_sentinel
-        if sentinel is not None:
-            try:
-                pipeline.manager = sentinel
-            except Exception:
-                logger.debug("failed to bind bootstrap sentinel", exc_info=True)
+    )
+    if promote_pipeline is None:
+        promote_pipeline = lambda *_a, **_k: None
+    if manager_candidate is not None:
+        try:
+            if pipeline is not None:
+                pipeline.manager = manager_candidate
+        except Exception:  # pragma: no cover - best effort binding
+            logger.debug("failed to bind bootstrap sentinel", exc_info=True)
     dependency_broker.advertise(
         pipeline=pipeline,
-        sentinel=getattr(pipeline, "manager", None) or bootstrap_sentinel or broker_sentinel,
+        sentinel=manager_candidate
+        or getattr(pipeline, "manager", None)
+        or sentinel_candidate
+        or broker_sentinel,
         owner=True,
+    )
+    logger.info(
+        "bootstrap pipeline %s",
+        "prepared" if prepared_pipeline else "reused",
+        extra={"event": "bootstrap-claim", "prepared": prepared_pipeline},
     )
     capital_bot = CapitalManagementBot()
     evolution_manager = SystemEvolutionManager(bots=["MenaceMaster"])
