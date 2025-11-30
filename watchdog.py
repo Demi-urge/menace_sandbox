@@ -366,14 +366,37 @@ class Watchdog:
                         "failed advertising bootstrap placeholder", exc_info=True
                     )
 
+        placeholder_advertised = False
+
         if pipeline is None:
-            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                pipeline_cls=ModelAutomationPipeline,
-                context_builder=self.context_builder,
-                event_bus=bus_local,
-                bot_registry=self.registry,
-                data_bot=DATA_BOT,
-            )
+            try:
+                advertise_bootstrap_placeholder(
+                    dependency_broker=dependency_broker, owner=True
+                )
+                placeholder_advertised = True
+            except Exception:
+                self.logger.debug(
+                    "failed to seed dependency broker placeholder", exc_info=True
+                )
+
+            try:
+                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=ModelAutomationPipeline,
+                    context_builder=self.context_builder,
+                    event_bus=bus_local,
+                    bot_registry=self.registry,
+                    data_bot=DATA_BOT,
+                )
+            except Exception:
+                if placeholder_advertised:
+                    try:
+                        dependency_broker.clear()
+                    except Exception:
+                        self.logger.debug(
+                            "failed clearing dependency broker placeholder after error",
+                            exc_info=True,
+                        )
+                raise
             manager = None
         persist_sc_thresholds(
             self.__class__.__name__,
@@ -393,6 +416,25 @@ class Watchdog:
         )
         if promote_pipeline is not None:
             promote_pipeline(manager)
+
+        if placeholder_advertised:
+            try:
+                dependency_broker.advertise(
+                    pipeline=pipeline,
+                    sentinel=getattr(pipeline, "manager", None) or manager,
+                    owner=True,
+                )
+            except Exception:
+                self.logger.debug(
+                    "failed promoting dependency broker placeholder", exc_info=True
+                )
+            finally:
+                try:
+                    dependency_broker.advertise(owner=False)
+                except Exception:
+                    self.logger.debug(
+                        "failed clearing dependency broker owner flag", exc_info=True
+                    )
         self.manager = manager
         self.evolution_orchestrator = self.manager.evolution_orchestrator
         self.quick_fix = self.manager.quick_fix
