@@ -7,6 +7,9 @@ import logging
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    _is_bootstrap_placeholder,
+    advertise_bootstrap_placeholder,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -89,13 +92,65 @@ def _initialise_self_coding() -> None:
     """Initialise the ModelAutomationPipeline and self-coding manager lazily."""
 
     global pipeline, manager, _pipeline_promoter
+    dependency_broker = _bootstrap_dependency_broker()
+    broker_pipeline, broker_manager = dependency_broker.resolve()
+    broker_placeholder_active = _is_bootstrap_placeholder(broker_pipeline) or _is_bootstrap_placeholder(
+        broker_manager
+    )
+    broker_reused = False
+
+    if pipeline is None and broker_pipeline is not None:
+        pipeline = broker_pipeline
+        broker_reused = True
+        if _pipeline_promoter is None:
+            _pipeline_promoter = getattr(broker_pipeline, "_pipeline_promoter", None)
+    if manager is None and broker_manager is not None:
+        manager = broker_manager
+        broker_reused = True
+
+    if broker_reused:
+        logger.info(
+            "bot_planning.bootstrap.broker_reuse_placeholder"
+            if broker_placeholder_active
+            else "bot_planning.bootstrap.broker_reuse",
+            extra={
+                "event": "bot-planning-bootstrap-placeholder-reuse"
+                if broker_placeholder_active
+                else "bot-planning-bootstrap-reuse",
+                "dependency_broker": True,
+                "placeholder": broker_placeholder_active,
+            },
+        )
+
+    placeholder_advertised = False
     if pipeline is None:
+        try:
+            advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker,
+                pipeline=pipeline,
+                manager=manager,
+                owner=True,
+            )
+            placeholder_advertised = True
+        except Exception:  # pragma: no cover - best effort placeholder advertisement
+            logger.debug(
+                "BotPlanningBot failed to advertise bootstrap placeholder", exc_info=True
+            )
+
         try:
             pipeline, _pipeline_promoter = prepare_pipeline_for_bootstrap(
                 pipeline_cls=ModelAutomationPipeline,
                 context_builder=_context_builder,
                 bot_registry=registry,
                 data_bot=data_bot,
+            )
+            logger.info(
+                "bot_planning.bootstrap.prepare",
+                extra={
+                    "event": "bot-planning-bootstrap-prepare",
+                    "dependency_broker": True,
+                    "placeholder_seeded": placeholder_advertised,
+                },
             )
         except Exception as exc:  # pragma: no cover - degraded bootstrap path
             logger.warning(
@@ -104,6 +159,13 @@ def _initialise_self_coding() -> None:
             )
             pipeline = None
             _pipeline_promoter = None
+            if placeholder_advertised:
+                try:
+                    dependency_broker.clear()
+                except Exception:  # pragma: no cover - best effort cleanup
+                    logger.debug(
+                        "BotPlanningBot failed to clear dependency broker placeholder", exc_info=True
+                    )
 
     if pipeline is None:
         logger.warning(
@@ -134,6 +196,25 @@ def _initialise_self_coding() -> None:
 
     if manager is not None and not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
         raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
+
+    try:
+        dependency_broker.advertise(
+            pipeline=pipeline,
+            sentinel=getattr(pipeline, "manager", None) or manager,
+            owner=placeholder_advertised,
+        )
+    except Exception:  # pragma: no cover - best effort propagation
+        logger.debug(
+            "BotPlanningBot failed to advertise bootstrap promotion", exc_info=True
+        )
+    finally:
+        if placeholder_advertised:
+            try:
+                dependency_broker.advertise(owner=False)
+            except Exception:  # pragma: no cover - best effort owner reset
+                logger.debug(
+                    "BotPlanningBot failed to clear bootstrap owner flag", exc_info=True
+                )
 
     _promote_pipeline_manager(manager)
 
