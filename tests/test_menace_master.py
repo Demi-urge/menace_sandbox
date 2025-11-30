@@ -73,6 +73,13 @@ def _setup_mm_stubs(monkeypatch):
     )
     _stub_module(
         monkeypatch,
+        "menace.self_coding_thresholds",
+        get_thresholds=lambda name: types.SimpleNamespace(
+            roi_drop=0.0, error_increase=0.0, test_failure_increase=0.0
+        ),
+    )
+    _stub_module(
+        monkeypatch,
         "menace.self_coding_engine",
         SelfCodingEngine=DummyBot,
     )
@@ -489,7 +496,7 @@ def test_sandbox_skipped_on_run_once_error(monkeypatch, tmp_path, caplog):
     assert "run_once failed" in caplog.text
 
 
-def test_deploy_patch_reuses_broker_pipeline(monkeypatch):
+def test_deploy_patch_reuses_broker_pipeline(monkeypatch, caplog):
     _setup_mm_stubs(monkeypatch)
     _stub_module(
         monkeypatch,
@@ -541,14 +548,17 @@ def test_deploy_patch_reuses_broker_pipeline(monkeypatch):
         pipeline=pipeline, sentinel=pipeline_sentinel
     )
 
-    prepare_called = False
-
-    def _prepare(**kwargs):
-        nonlocal prepare_called
-        prepare_called = True
-        return pipeline, lambda *_a, **_k: None
-
     manager = DummyManager()
+    claim_calls: list[dict[str, object]] = []
+
+    def _claim(**kwargs):
+        claim_calls.append(kwargs)
+        return pipeline, lambda *_a, **_k: None, pipeline_sentinel, False
+
+    def _prepare(**_kwargs):
+        raise AssertionError("prepare_pipeline_for_bootstrap should not run")
+
+    monkeypatch.setattr(module, "claim_bootstrap_dependency_entry", _claim, raising=False)
     monkeypatch.setattr(module, "prepare_pipeline_for_bootstrap", _prepare, raising=False)
     monkeypatch.setattr(module, "SelfCodingEngine", lambda *a, **k: manager.engine, raising=False)
     monkeypatch.setattr(module, "DataBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
@@ -585,9 +595,11 @@ def test_deploy_patch_reuses_broker_pipeline(monkeypatch):
         raising=False,
     )
 
+    caplog.set_level(logging.INFO)
     module.deploy_patch(Path("/tmp"), "desc", DummyBuilder())
 
-    assert not prepare_called
+    assert claim_calls
+    assert any("reused" in record.getMessage() for record in caplog.records)
 
 
 def test_deploy_patch_requires_self_test_summary(monkeypatch, tmp_path):
@@ -623,8 +635,13 @@ def test_deploy_patch_requires_self_test_summary(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "SelfCodingEngine", lambda *a, **k: manager.engine, raising=False)
     monkeypatch.setattr(
         module,
-        "prepare_pipeline_for_bootstrap",
-        lambda **kwargs: (types.SimpleNamespace(), lambda *_a, **_k: None),
+        "claim_bootstrap_dependency_entry",
+        lambda **kwargs: (
+            types.SimpleNamespace(manager=types.SimpleNamespace()),
+            lambda *_a, **_k: None,
+            types.SimpleNamespace(),
+            True,
+        ),
         raising=False,
     )
     monkeypatch.setattr(module, "DataBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
