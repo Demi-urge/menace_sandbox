@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 from .coding_bot_interface import (
+    _GLOBAL_BOOTSTRAP_COORDINATOR,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
     _is_bootstrap_placeholder,
@@ -141,13 +142,12 @@ class AutoEscalationManager:
 
                     broker_pipeline, broker_manager = dependency_broker.resolve()
 
-                    pipeline_candidate = (
-                        getattr(bootstrap_context, "pipeline", None)
-                        if bootstrap_context is not None
-                        else None
-                    )
+                    pipeline_candidate = None
                     manager_candidate = None
+                    promote_pipeline = None
+
                     if bootstrap_context is not None:
+                        pipeline_candidate = getattr(bootstrap_context, "pipeline", None)
                         manager_candidate = getattr(bootstrap_context, "manager", None)
                         if manager_candidate is None:
                             manager_candidate = getattr(bootstrap_context, "sentinel", None)
@@ -159,19 +159,29 @@ class AutoEscalationManager:
                     if manager_candidate is None:
                         manager_candidate = broker_manager
 
-                    bootstrap_inflight = bool(
-                        bootstrap_context
-                        or broker_pipeline
-                        or broker_manager
-                        or _is_bootstrap_placeholder(manager_candidate)
-                    )
+                    if pipeline_candidate is None:
+                        active_promise = getattr(
+                            _GLOBAL_BOOTSTRAP_COORDINATOR, "_active", None
+                        )
+                        if active_promise is not None and not active_promise.done:
+                            try:
+                                pipeline_candidate, promote_pipeline = active_promise.wait()
+                                dependency_broker.advertise(
+                                    pipeline=pipeline_candidate,
+                                    sentinel=getattr(pipeline_candidate, "manager", None),
+                                )
+                            except Exception as exc:  # pragma: no cover - defensive
+                                raise RuntimeError(
+                                    "AutoEscalationManager bootstrap promise failed"
+                                ) from exc
 
                     pipeline = None
-                    promote_pipeline = lambda *_a: None
 
-                    if bootstrap_inflight and _looks_like_pipeline_candidate(
-                        pipeline_candidate
-                    ):
+                    if pipeline_candidate is not None:
+                        if not _looks_like_pipeline_candidate(pipeline_candidate):
+                            raise RuntimeError(
+                                "AutoEscalationManager received invalid bootstrap pipeline"
+                            )
                         pipeline = pipeline_candidate
                         if manager_candidate is None:
                             manager_candidate = getattr(pipeline_candidate, "manager", None)
@@ -182,10 +192,17 @@ class AutoEscalationManager:
                                     "event": "auto-escalation-bootstrap-placeholder-reuse",
                                 },
                             )
-                    elif not (
-                        bootstrap_inflight
-                        and _using_bootstrap_sentinel(manager_candidate)
+                        if promote_pipeline is None:
+                            promote_pipeline = getattr(
+                                pipeline_candidate, "_pipeline_promoter", lambda *_a: None
+                            )
+                    elif manager_candidate is not None and _using_bootstrap_sentinel(
+                        manager_candidate
                     ):
+                        raise RuntimeError(
+                            "AutoEscalationManager cannot resolve bootstrap pipeline from sentinel"
+                        )
+                    else:
                         from .self_coding_manager import SelfCodingManager
                         from .model_automation_pipeline import ModelAutomationPipeline
 
@@ -197,26 +214,10 @@ class AutoEscalationManager:
                             event_bus=event_bus,
                             manager_override=manager_candidate,
                         )
-                    elif pipeline_candidate is not None:
-                        pipeline = pipeline_candidate
-                        if _is_bootstrap_placeholder(manager_candidate):
-                            self.logger.info(
-                                "auto_escalation.bootstrap.reuse_placeholder",
-                                extra={
-                                    "event": "auto-escalation-bootstrap-placeholder-reuse",
-                                },
-                            )
-                    if pipeline is None:
-                        from .self_coding_manager import SelfCodingManager
-                        from .model_automation_pipeline import ModelAutomationPipeline
 
-                        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                            pipeline_cls=ModelAutomationPipeline,
-                            context_builder=self.context_builder,
-                            bot_registry=registry,
-                            data_bot=data_bot,
-                            event_bus=event_bus,
-                            manager_override=manager_candidate,
+                    if pipeline is None or promote_pipeline is None:
+                        raise RuntimeError(
+                            "AutoEscalationManager failed to resolve bootstrap pipeline"
                         )
 
                     from .self_coding_manager import SelfCodingManager
