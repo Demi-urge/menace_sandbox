@@ -5,6 +5,9 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 
 from .coding_bot_interface import (
+    _GLOBAL_BOOTSTRAP_COORDINATOR,
+    _bootstrap_dependency_broker,
+    get_active_bootstrap_pipeline,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -12,7 +15,7 @@ import random
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
-from typing import List
+from typing import Any, Callable, List
 
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -69,12 +72,67 @@ def _build_manager():
         engine = SelfCodingEngine(
             CodeDB(), GPTMemoryManager(), context_builder=ga_context_builder
         )
-        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-            pipeline_cls=ModelAutomationPipeline,
-            context_builder=ga_context_builder,
-            bot_registry=_get_registry(),
-            data_bot=_get_data_bot(),
-        )
+        dependency_broker = _bootstrap_dependency_broker()
+        pipeline, bootstrap_manager = (None, None)
+        promote_pipeline: Callable[[Any], None] | None = None
+
+        try:  # pragma: no cover - best-effort guard reuse
+            pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
+        except Exception:
+            pipeline, bootstrap_manager = pipeline, bootstrap_manager
+
+        try:  # pragma: no cover - dependency broker reuse
+            broker_pipeline, broker_manager = dependency_broker.resolve()
+            if pipeline is None:
+                pipeline = broker_pipeline
+            if bootstrap_manager is None:
+                bootstrap_manager = broker_manager
+        except Exception:
+            pass
+
+        for candidate in (pipeline, bootstrap_manager):
+            if promote_pipeline is None and candidate is not None:
+                promote_pipeline = getattr(candidate, "_pipeline_promoter", None)
+
+        if pipeline is None:
+            try:  # pragma: no cover - active guard wait
+                active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+            except Exception:
+                active_promise = None
+            if active_promise is not None:
+                try:
+                    pipeline, promote_pipeline = active_promise.wait()
+                except Exception:
+                    pipeline, promote_pipeline = None, promote_pipeline
+
+        if pipeline is None:
+            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                pipeline_cls=ModelAutomationPipeline,
+                context_builder=ga_context_builder,
+                bot_registry=_get_registry(),
+                data_bot=_get_data_bot(),
+            )
+
+        if promote_pipeline is None:
+            def promote_pipeline(real_manager: Any) -> None:
+                if real_manager is None:
+                    return
+                try:
+                    setattr(pipeline, "manager", real_manager)
+                except Exception:
+                    pass
+                dependency_broker.advertise(
+                    pipeline=pipeline, sentinel=real_manager
+                )
+
+        if pipeline is not None:
+            try:
+                dependency_broker.advertise(
+                    pipeline=pipeline,
+                    sentinel=bootstrap_manager or getattr(pipeline, "manager", None),
+                )
+            except Exception:
+                pass
         thresholds = get_thresholds("GeneticAlgorithmBot")
         persist_sc_thresholds(
             "GeneticAlgorithmBot",
