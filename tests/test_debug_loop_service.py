@@ -176,3 +176,61 @@ def test_uses_broker_advertised_pipeline(monkeypatch):
     assert captured.get("pipeline") is pipeline
     assert svc.feedback.manager is captured.get("manager")
     assert prepare_called is False
+
+
+def test_reuses_placeholder_when_bootstrap_inflight(monkeypatch):
+    placeholder_calls: list[dict[str, object]] = []
+
+    class DummyBroker:
+        def __init__(self) -> None:
+            self.active_owner = True
+            self.published: tuple[object | None, object | None] | None = None
+
+        def resolve(self):
+            return self.published or (None, None)
+
+        def advertise(self, **kwargs):
+            self.published = (kwargs.get("pipeline"), kwargs.get("sentinel"))
+
+        def clear(self):
+            self.published = None
+
+    broker = DummyBroker()
+
+    def fake_advertise_bootstrap_placeholder(**kwargs):
+        placeholder_calls.append(kwargs)
+        pipeline = kwargs.get("pipeline") or types.SimpleNamespace()
+        sentinel = kwargs.get("manager") or types.SimpleNamespace()
+        setattr(pipeline, "bootstrap_placeholder", True)
+        setattr(sentinel, "bootstrap_placeholder", True)
+        broker.advertise(pipeline=pipeline, sentinel=sentinel, owner=kwargs.get("owner"))
+        return pipeline, sentinel
+
+    monkeypatch.setattr(mod, "advertise_bootstrap_placeholder", fake_advertise_bootstrap_placeholder)
+    monkeypatch.setattr(mod, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(mod, "get_active_bootstrap_pipeline", lambda: (None, None))
+    monkeypatch.setattr(
+        mod,
+        "prepare_pipeline_for_bootstrap",
+        lambda **_: (_ for _ in ()).throw(AssertionError("should not bootstrap")),
+    )
+
+    class DummyFeedback:
+        def __init__(self, logger=None, manager=None) -> None:
+            self.logger = logger
+            self.manager = manager
+            self.interval = 0
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(mod, "TelemetryFeedback", DummyFeedback)
+
+    svc = mod.DebugLoopService(context_builder=vs_pkg.ContextBuilder())
+
+    assert placeholder_calls, "bootstrap placeholder should be advertised"
+    assert broker.published[0] is svc.feedback.manager.pipeline
+    assert getattr(broker.published[0], "bootstrap_placeholder", False)
