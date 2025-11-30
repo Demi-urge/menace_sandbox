@@ -732,6 +732,77 @@ def test_prepare_pipeline_guardless_reuses_dependency_broker(monkeypatch, caplog
     assert promote_a is promote_b
 
 
+def test_prepare_pipeline_recursion_refused_when_broker_empty(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=cbi.logger.name)
+    dependency_broker = cbi._bootstrap_dependency_broker()
+    dependency_broker.clear()
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = cbi._build_bootstrap_placeholder_pipeline(
+        sentinel_placeholder
+    )
+    cbi._BOOTSTRAP_STATE.depth = 1  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.pipeline = pipeline_placeholder  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.sentinel_manager = sentinel_placeholder  # type: ignore[attr-defined]
+
+    def _stub_inner(**_kwargs):  # pragma: no cover - defensive
+        raise AssertionError("bootstrap inner should not be invoked")
+
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl_inner", _stub_inner)
+
+    class _Pipeline:
+        def __init__(self, *, manager=None, **_kwargs):
+            self.manager = manager
+
+    pipeline, promote = cbi._prepare_pipeline_for_bootstrap_impl(
+        pipeline_cls=_Pipeline,
+        context_builder=SimpleNamespace(),
+        bot_registry=DummyRegistry(),
+        data_bot=DummyDataBot(),
+        bootstrap_guard=False,
+    )
+
+    assert pipeline is pipeline_placeholder
+    promote(SimpleNamespace())
+    assert any("recursion_refused" in record.getMessage() for record in caplog.records)
+
+    dependency_broker.clear()
+    for attr in ("depth", "pipeline", "sentinel_manager"):
+        if hasattr(cbi._BOOTSTRAP_STATE, attr):
+            delattr(cbi._BOOTSTRAP_STATE, attr)
+
+
+def test_prepare_pipeline_recursion_raises_without_broker_sentinel(monkeypatch):
+    dependency_broker = cbi._bootstrap_dependency_broker()
+    dependency_broker.clear()
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = cbi._build_bootstrap_placeholder_pipeline(
+        sentinel_placeholder
+    )
+    cbi._BOOTSTRAP_STATE.depth = 4  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.pipeline = pipeline_placeholder  # type: ignore[attr-defined]
+    cbi._BOOTSTRAP_STATE.sentinel_manager = sentinel_placeholder  # type: ignore[attr-defined]
+
+    class _Pipeline:
+        def __init__(self, *, manager=None, **_kwargs):
+            self.manager = manager
+
+    with pytest.raises(RecursionError):
+        cbi._prepare_pipeline_for_bootstrap_impl(
+            pipeline_cls=_Pipeline,
+            context_builder=SimpleNamespace(),
+            bot_registry=DummyRegistry(),
+            data_bot=DummyDataBot(),
+            bootstrap_guard=False,
+        )
+
+    dependency_broker.clear()
+    for attr in ("depth", "pipeline", "sentinel_manager"):
+        if hasattr(cbi._BOOTSTRAP_STATE, attr):
+            delattr(cbi._BOOTSTRAP_STATE, attr)
+
+
 def test_parallel_helpers_share_dependency_broker_placeholder(monkeypatch):
     dependency_broker = cbi._bootstrap_dependency_broker()
     dependency_broker.clear()

@@ -5555,12 +5555,14 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     dependency_broker = _bootstrap_dependency_broker()
     broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    recursion_guard_threshold = 3
     guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
     guard_enabled = bootstrap_guard and str(guard_env or "").lower() not in (
         "1",
         "true",
         "yes",
     )
+    active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     dependency_owner_reset = False
     if not getattr(dependency_broker, "active_owner", False):
         dependency_broker.advertise(owner=True)
@@ -5762,6 +5764,60 @@ def _prepare_pipeline_for_bootstrap_impl(
             }
             logger.info("prepare_pipeline.bootstrap.recursion_deferred", extra=telemetry)
             return active_promise.wait()
+    if active_depth > 0 and not broker_active:
+        sentinel_candidate = active_owner_sentinel or getattr(
+            _BOOTSTRAP_STATE, "sentinel_manager", None
+        )
+        if sentinel_candidate is None:
+            sentinel_candidate = SimpleNamespace(bootstrap_placeholder=True)
+            _mark_bootstrap_placeholder(sentinel_candidate)
+        pipeline_candidate = (
+            _resolve_bootstrap_pipeline_candidate(
+                getattr(_BOOTSTRAP_STATE, "pipeline", None)
+            )
+            or _resolve_bootstrap_pipeline_candidate(None)
+        )
+        if pipeline_candidate is None:
+            pipeline_candidate = _build_bootstrap_placeholder_pipeline(
+                sentinel_candidate
+            )
+        recursion_limit_exceeded = (
+            active_depth >= recursion_guard_threshold and broker_sentinel is None
+        )
+        telemetry = {
+            "event": "prepare-pipeline-bootstrap-recursion-refused",
+            "active_depth": active_depth,
+            "broker_active": broker_active,
+            "guard_enabled": guard_enabled,
+            "pipeline_candidate": getattr(
+                getattr(pipeline_candidate, "__class__", None),
+                "__name__",
+                str(type(pipeline_candidate)),
+            ),
+            "sentinel_candidate": bool(sentinel_candidate),
+            "recursion_limit_exceeded": recursion_limit_exceeded,
+        }
+        logger.info("prepare_pipeline.bootstrap.recursion_refused", extra=telemetry)
+        if recursion_limit_exceeded:
+            raise RecursionError(
+                "bootstrap recursion exceeded safe depth without broker sentinel"
+            )
+
+        def _reuse_promote(real_manager: Any) -> None:
+            if real_manager is None:
+                return
+            _assign_bootstrap_manager_placeholder(
+                pipeline_candidate,
+                real_manager,
+                propagate_nested=True,
+            )
+
+        dependency_broker.advertise(
+            pipeline=pipeline_candidate, sentinel=sentinel_candidate, owner=True
+        )
+        if getattr(_BOOTSTRAP_STATE, "sentinel_manager", None) is None:
+            _BOOTSTRAP_STATE.sentinel_manager = sentinel_candidate
+        return pipeline_candidate, _reuse_promote
     single_flight_owner = True
     single_flight_promise: _BootstrapPipelinePromise | None = None
     if guard_enabled:
