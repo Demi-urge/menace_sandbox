@@ -51,6 +51,7 @@ from .coding_bot_interface import (
     _bootstrap_dependency_broker,
     _GLOBAL_BOOTSTRAP_COORDINATOR,
     _current_bootstrap_context,
+    claim_bootstrap_dependency_entry,
     _peek_owner_promise,
     _resolve_bootstrap_wait_timeout,
     _resolve_caller_module_name,
@@ -726,7 +727,16 @@ class MenaceOrchestrator:
                     "menace_orchestrator.data_bot", manager=placeholder_manager
                 )
                 component_budgets = compute_prepare_pipeline_component_budgets()
-                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                (
+                    pipeline,
+                    promote_pipeline,
+                    resolved_manager,
+                    _,
+                ) = claim_bootstrap_dependency_entry(
+                    dependency_broker=dependency_broker,
+                    pipeline=placeholder_pipeline,
+                    manager=placeholder_manager,
+                    owner=True,
                     pipeline_cls=ModelAutomationPipeline,
                     context_builder=self.context_builder,
                     bot_registry=placeholder_registry,
@@ -735,8 +745,6 @@ class MenaceOrchestrator:
                     myelination_threshold=myelination_threshold,
                     component_timeouts=component_budgets,
                     manager_override=placeholder_manager,
-                    manager_sentinel=placeholder_manager,
-                    bootstrap_manager=placeholder_manager,
                 )
                 self.pipeline = pipeline
 
@@ -746,6 +754,7 @@ class MenaceOrchestrator:
                             pipeline=self.pipeline,
                             sentinel=(
                                 manager
+                                or resolved_manager
                                 or getattr(self.pipeline, "manager", placeholder_manager)
                             ),
                             owner=True,
@@ -758,7 +767,10 @@ class MenaceOrchestrator:
                 pipeline_promoter = _promote_manager
                 dependency_broker.advertise(
                     pipeline=self.pipeline,
-                    sentinel=getattr(self.pipeline, "manager", placeholder_manager),
+                    sentinel=(
+                        resolved_manager
+                        or getattr(self.pipeline, "manager", placeholder_manager)
+                    ),
                     owner=True,
                 )
                 bootstrap_pipeline = self.pipeline
