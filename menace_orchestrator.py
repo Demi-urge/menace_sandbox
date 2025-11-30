@@ -12,10 +12,15 @@ import time
 import threading
 import asyncio
 import uuid
-from dynamic_path_router import resolve_path, get_project_root
-from .coding_bot_interface import advertise_bootstrap_placeholder
+from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+)
 
-_BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder()
+_BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder(
+    dependency_broker=_bootstrap_dependency_broker()
+)
+from dynamic_path_router import resolve_path, get_project_root
 
 from .knowledge_graph import KnowledgeGraph
 

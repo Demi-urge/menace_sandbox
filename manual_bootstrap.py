@@ -8,13 +8,6 @@ import sys
 from pathlib import Path
 from typing import MutableMapping, Sequence
 
-from bootstrap_timeout_policy import (
-    derive_bootstrap_timeout_env,
-    enforce_bootstrap_timeout_policy,
-    guard_bootstrap_wait_env,
-    _BOOTSTRAP_TIMEOUT_MINIMUMS,
-)
-
 # === BEGIN PATH SETUP ===
 
 def _ensure_package_on_path() -> Path:
@@ -33,6 +26,34 @@ def _ensure_package_on_path() -> Path:
 _REPO_ROOT = _ensure_package_on_path()
 _DEFAULT_DATA_DIR = _REPO_ROOT / "sandbox_data"
 
+
+def _load_coding_bot_interface():
+    try:
+        return importlib.import_module("menace.coding_bot_interface")
+    except ModuleNotFoundError:  # pragma: no cover - sandbox fallback
+        return importlib.import_module("menace_sandbox.coding_bot_interface")
+
+
+def _advertise_entry_placeholder():
+    try:
+        broker = getattr(_coding_bot_interface, "_bootstrap_dependency_broker", None)
+        if callable(broker):
+            broker = broker()
+        advert = getattr(
+            _coding_bot_interface, "advertise_bootstrap_placeholder", None
+        )
+        if callable(advert):
+            return advert(dependency_broker=broker)
+    except Exception:  # pragma: no cover - placeholder advertisement best effort
+        logging.getLogger(__name__).debug(
+            "failed to advertise manual bootstrap placeholder", exc_info=True
+        )
+    return None
+
+
+_coding_bot_interface = _load_coding_bot_interface()
+_BOOTSTRAP_PLACEHOLDER = _advertise_entry_placeholder()
+
 _DYNAMIC_PATH_ROUTER = importlib.import_module("menace_sandbox.dynamic_path_router")
 sys.modules["dynamic_path_router"] = _DYNAMIC_PATH_ROUTER
 
@@ -47,23 +68,16 @@ _menace_pkg = importlib.import_module("menace")
 if not getattr(_menace_pkg, "RAISE_ERRORS", None):
     _menace_pkg = importlib.reload(_menace_pkg)
 
-try:
-    _coding_bot_interface = importlib.import_module("menace.coding_bot_interface")
-except ModuleNotFoundError:  # pragma: no cover - sandbox fallback
-    _coding_bot_interface = importlib.import_module(
-        "menace_sandbox.coding_bot_interface"
-    )
-
-try:
-    _BOOTSTRAP_PLACEHOLDER = _coding_bot_interface.advertise_bootstrap_placeholder()
-except Exception:  # pragma: no cover - placeholder advertisement best effort
-    logging.getLogger(__name__).debug(
-        "failed to advertise manual bootstrap placeholder", exc_info=True
-    )
-
 prepare_pipeline_for_bootstrap = _coding_bot_interface.prepare_pipeline_for_bootstrap
 _DisabledSelfCodingManager = getattr(
     _coding_bot_interface, "_DisabledSelfCodingManager", None
+)
+
+from bootstrap_timeout_policy import (
+    derive_bootstrap_timeout_env,
+    enforce_bootstrap_timeout_policy,
+    guard_bootstrap_wait_env,
+    _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
 
 def _hydrate_bootstrap_timeout_env() -> dict[str, float]:

@@ -27,6 +27,15 @@ from textwrap import shorten
 from types import SimpleNamespace
 from typing import Iterable, Iterator, Mapping, Any, Callable
 
+from menace_sandbox.coding_bot_interface import (
+    _bootstrap_dependency_broker,
+    advertise_bootstrap_placeholder,
+)
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
+    dependency_broker=_bootstrap_dependency_broker()
+)
+
 from bootstrap_metrics import (
     BOOTSTRAP_DURATION_STORE,
     calibrate_overall_timeout,
