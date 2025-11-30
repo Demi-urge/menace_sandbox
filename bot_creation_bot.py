@@ -40,6 +40,8 @@ from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_thresholds import get_thresholds
 from .shared_evolution_orchestrator import get_orchestrator
 from context_builder_util import create_context_builder
+
+
 def _load_model_automation_pipeline() -> "Type[ModelAutomationPipeline] | None":
     """Return the pipeline class without importing it at module load."""
 
@@ -89,6 +91,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from universal_retriever import UniversalRetriever  # type: ignore
 from .coding_bot_interface import (
     _bootstrap_dependency_broker,
+    claim_bootstrap_dependency_entry,
     get_active_bootstrap_pipeline,
     normalise_manager_arg,
     prepare_pipeline_for_bootstrap,
@@ -151,66 +154,40 @@ def _get_pipeline_instance() -> "ModelAutomationPipeline | None":
         except Exception:  # pragma: no cover - best effort broker reuse
             logger.debug("BotCreationBot bootstrap broker resolve failed", exc_info=True)
 
-    pipeline_candidate = active_pipeline or broker_pipeline
-    manager_candidate = active_manager or broker_manager
-
-    promoter_candidate: Callable[[SelfCodingManager], None] | None = None
-    for candidate in (pipeline_candidate, manager_candidate):
-        if candidate is None:
-            continue
-        promoter_candidate = getattr(candidate, "_pipeline_promoter", None)
-        if promoter_candidate is not None:
-            break
-
-    if pipeline_candidate is not None:
-        _pipeline_instance = pipeline_candidate
-        if _pipeline_promoter is None and promoter_candidate is not None:
-            _pipeline_promoter = promoter_candidate
-        if dependency_broker is not None:
-            try:
-                dependency_broker.advertise(
-                    pipeline=_pipeline_instance, sentinel=manager_candidate
-                )
-            except Exception:  # pragma: no cover - best effort advertisement
-                logger.debug("BotCreationBot broker advertisement failed", exc_info=True)
-        logger.info(
-            "bot_creation.bootstrap.reuse",
-            extra={
-                "event": "bot-creation-bootstrap-reuse",
-                "dependency_broker": bool(dependency_broker),
-                "active_pipeline": bool(active_pipeline),
-                "broker_pipeline": bool(broker_pipeline),
-            },
-        )
-        return _pipeline_instance
-
     pipeline_cls = _get_pipeline_cls()
     if pipeline_cls is None:
         return None
 
     try:
-        pipeline, promote = prepare_pipeline_for_bootstrap(
+        pipeline_candidate = broker_pipeline or active_pipeline
+        manager_candidate = broker_manager or active_manager
+
+        pipeline, promote, manager_candidate, prepared = claim_bootstrap_dependency_entry(
+            dependency_broker=dependency_broker,
+            pipeline=pipeline_candidate,
+            manager=manager_candidate,
+            owner=(
+                getattr(dependency_broker, "active_owner", None)
+                if dependency_broker is not None
+                else None
+            ),
             pipeline_cls=pipeline_cls,
             context_builder=_context_builder,
             bot_registry=registry,
             data_bot=data_bot,
         )
         _pipeline_instance = pipeline
-        _pipeline_promoter = promote
+        if _pipeline_promoter is None:
+            _pipeline_promoter = promote
 
-        manager_candidate = manager_candidate or getattr(pipeline, "manager", None)
-        if dependency_broker is not None:
-            try:
-                dependency_broker.advertise(
-                    pipeline=_pipeline_instance, sentinel=manager_candidate
-                )
-            except Exception:  # pragma: no cover - best effort advertisement
-                logger.debug("BotCreationBot broker advertisement failed", exc_info=True)
         logger.info(
-            "bot_creation.bootstrap.prepare",
+            "bot_creation.bootstrap.%s",
+            "prepare" if prepared else "reuse",
             extra={
-                "event": "bot-creation-bootstrap-prepare",
+                "event": "bot-creation-bootstrap-prepare" if prepared else "bot-creation-bootstrap-reuse",
                 "dependency_broker": bool(dependency_broker),
+                "broker_pipeline": bool(broker_pipeline),
+                "active_pipeline": bool(active_pipeline),
             },
         )
     except Exception as exc:  # pragma: no cover - degraded bootstrap path
