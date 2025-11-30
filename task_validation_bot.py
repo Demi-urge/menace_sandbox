@@ -86,6 +86,28 @@ def _resolve_management(
     implementation.
     """
 
+    interface_mod = None
+    dependency_broker = None
+    broker_pipeline = None
+    broker_sentinel = None
+    _placeholder_pipeline = None
+    placeholder_manager = None
+    try:
+        interface_mod = load_internal("coding_bot_interface")
+        dependency_broker = interface_mod._bootstrap_dependency_broker()
+        broker_pipeline, broker_sentinel = dependency_broker.resolve()
+        _placeholder_pipeline, placeholder_manager = interface_mod.advertise_bootstrap_placeholder(
+            dependency_broker=dependency_broker,
+            pipeline=broker_pipeline,
+            manager=broker_sentinel,
+            owner=True,
+        )
+    except Exception:  # pragma: no cover - best effort broker propagation
+        logger.debug(
+            "Failed to advertise bootstrap dependency broker state for TaskValidationBot",
+            exc_info=True,
+        )
+
     ready, missing = ensure_self_coding_ready()
     if not ready:
         logger.warning(
@@ -97,7 +119,7 @@ def _resolve_management(
     try:
         registry_cls = load_internal("bot_registry").BotRegistry
         data_bot_cls = load_internal("data_bot").DataBot
-        interface_mod = load_internal("coding_bot_interface")
+        interface_mod = interface_mod or load_internal("coding_bot_interface")
         decorator = interface_mod.self_coding_managed
         prepare_pipeline_for_bootstrap = interface_mod.prepare_pipeline_for_bootstrap
         manager_mod = load_internal("self_coding_manager")
@@ -173,6 +195,7 @@ def _resolve_management(
             context_builder=context_builder,
             bot_registry=registry,
             data_bot=data_bot,
+            manager_sentinel=placeholder_manager or broker_sentinel,
             validator_factory=_validator_factory,
         )
         manager = manager_mod.SelfCodingManager(
@@ -181,7 +204,25 @@ def _resolve_management(
             data_bot=data_bot,
             bot_registry=registry,
         )
-        promote(manager)
+        promote_target = placeholder_manager or broker_sentinel
+
+        def _promote_with_broker(real_manager: object) -> None:
+            promote(real_manager)
+            sentinel_candidate = promote_target or getattr(pipeline, "manager", None)
+            if dependency_broker is None:
+                return
+            try:
+                dependency_broker.advertise(
+                    pipeline=pipeline,
+                    sentinel=sentinel_candidate or real_manager,
+                    owner=True,
+                )
+            except Exception:  # pragma: no cover - best effort broker propagation
+                logger.debug(
+                    "Failed to advertise bootstrap dependency broker state", exc_info=True
+                )
+
+        _promote_with_broker(manager)
     except Exception as exc:  # pragma: no cover - bootstrap degraded
         logger.warning(
             "Self-coding services unavailable for TaskValidationBot: %s",
