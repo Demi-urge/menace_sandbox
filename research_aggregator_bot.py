@@ -505,12 +505,14 @@ def _ensure_runtime_dependencies(
 
                 if pipe is None:
                     waited = time.perf_counter() - wait_start
-                    raise RuntimeError(
+                    message = (
                         "Active bootstrap requires an injected ModelAutomationPipeline "
                         "or manager; none available to reuse after waiting "
                         f"{wait_timeout if wait_timeout is not None else round(waited, 3)}s "
-                        f"(waited {round(waited, 3)}s)"
+                        f"(waited {round(waited, 3)}s). Recursive bootstrap is blocked."
                     )
+                    logger.error(message)
+                    raise RuntimeError(message)
 
             if pipe is None:
                 pipe, promoted = prepare_pipeline_for_bootstrap(
