@@ -90,25 +90,27 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
                 CodeDB(), MenaceMemoryManager(), context_builder=_context_builder
             )
 
+        dependency_broker = _bootstrap_dependency_broker()
+
         bootstrap_pipeline: ModelAutomationPipeline | None = None
         bootstrap_manager: SelfCodingManager | None = None
         promoter: Callable[[SelfCodingManager], None] | None = None
 
+        try:
+            bootstrap_pipeline, bootstrap_manager = dependency_broker.resolve()
+        except Exception:
+            bootstrap_pipeline, bootstrap_manager = None, None
+
         if _pipeline is None or _manager_instance is None:
             try:
-                bootstrap_pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
+                active_pipeline, active_manager = get_active_bootstrap_pipeline()
             except Exception:
-                bootstrap_pipeline, bootstrap_manager = None, None
-
-            try:
-                broker_pipeline, broker_manager = _bootstrap_dependency_broker().resolve()
-            except Exception:
-                broker_pipeline, broker_manager = None, None
+                active_pipeline, active_manager = None, None
 
             if bootstrap_pipeline is None:
-                bootstrap_pipeline = broker_pipeline
+                bootstrap_pipeline = active_pipeline
             if bootstrap_manager is None:
-                bootstrap_manager = broker_manager
+                bootstrap_manager = active_manager
 
             bootstrap_context = _current_bootstrap_context()
             if bootstrap_context is not None:
@@ -117,7 +119,13 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
                 if bootstrap_manager is None:
                     bootstrap_manager = getattr(bootstrap_context, "manager", None)
 
-            for candidate in (bootstrap_pipeline, bootstrap_manager):
+            for candidate in (
+                bootstrap_pipeline,
+                bootstrap_manager,
+                getattr(bootstrap_context, "sentinel", None)
+                if "bootstrap_context" in locals()
+                else None,
+            ):
                 if promoter is None and candidate is not None:
                     promoter = getattr(candidate, "_pipeline_promoter", None)
 
@@ -153,6 +161,22 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
             )
             _pipeline = pipeline
             _pipeline_promoter = promoter
+
+        sentinel_candidate: SelfCodingManager | None = (
+            _manager_instance or bootstrap_manager
+        )
+        if _pipeline is not None:
+            if sentinel_candidate is None:
+                try:
+                    sentinel_candidate = getattr(_pipeline, "manager", None)
+                except Exception:
+                    sentinel_candidate = None
+            try:
+                dependency_broker.advertise(
+                    pipeline=_pipeline, sentinel=sentinel_candidate
+                )
+            except Exception:
+                pass
 
         if _evolution_orchestrator is None:
             assert _engine is not None
