@@ -276,6 +276,51 @@ class MenaceOrchestrator:
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
 
+    def _initialize_pipeline(
+        self,
+        *,
+        dependency_broker: Any,
+        bootstrap_heartbeat: object | None,
+    ) -> tuple[object | None, object | None, bool, bool]:
+        """Resolve broker state, advertising placeholders when needed."""
+
+        def _strip_placeholder(pipeline: object | None) -> object | None:
+            if pipeline is None:
+                return None
+            if getattr(pipeline, "bootstrap_placeholder", False):
+                return None
+            return pipeline
+
+        broker_pipeline, broker_sentinel = dependency_broker.resolve()
+        broker_pipeline = _strip_placeholder(broker_pipeline)
+        broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
+        placeholder_seeded = False
+
+        if broker_pipeline is None and (broker_owner_active or bootstrap_heartbeat):
+            placeholder_pipeline, placeholder_sentinel = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker,
+                pipeline=broker_pipeline,
+                manager=broker_sentinel,
+                owner=broker_owner_active or False,
+            )
+            placeholder_seeded = True
+            if broker_sentinel is None:
+                broker_sentinel = placeholder_sentinel
+            broker_pipeline = _strip_placeholder(placeholder_pipeline)
+        elif broker_pipeline is not None or broker_sentinel is not None:
+            dependency_broker.advertise(
+                pipeline=broker_pipeline,
+                sentinel=broker_sentinel,
+                owner=broker_owner_active,
+            )
+        else:
+            broker_pipeline, broker_sentinel = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker, owner=False
+            )
+            broker_pipeline = _strip_placeholder(broker_pipeline)
+
+        return broker_pipeline, broker_sentinel, broker_owner_active, placeholder_seeded
+
     def _ensure_pipeline(
         self,
         *,
@@ -287,18 +332,27 @@ class MenaceOrchestrator:
     ) -> tuple[
         object, Callable[[Any], None] | None, object | None, object | None, object | None
     ]:
-        broker_pipeline, broker_sentinel = dependency_broker.resolve()
-        broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
-        if broker_pipeline is not None or broker_sentinel is not None:
-            dependency_broker.advertise(
-                pipeline=broker_pipeline,
-                sentinel=broker_sentinel,
-                owner=broker_owner_active,
-            )
-        else:
-            broker_pipeline, broker_sentinel = advertise_bootstrap_placeholder(
-                dependency_broker=dependency_broker, owner=False
-            )
+        def _strip_placeholder(pipeline: object | None) -> object | None:
+            if pipeline is None:
+                return None
+            if getattr(pipeline, "bootstrap_placeholder", False):
+                return None
+            return pipeline
+
+        try:
+            bootstrap_heartbeat = read_bootstrap_heartbeat()
+        except Exception:
+            bootstrap_heartbeat = None
+
+        (
+            broker_pipeline,
+            broker_sentinel,
+            broker_owner_active,
+            broker_placeholder_seeded,
+        ) = self._initialize_pipeline(
+            dependency_broker=dependency_broker,
+            bootstrap_heartbeat=bootstrap_heartbeat,
+        )
         owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
         guard_promise = (
             _peek_owner_promise(owner_guard) if owner_guard is not None else None
@@ -310,10 +364,6 @@ class MenaceOrchestrator:
             bootstrap_context = _current_bootstrap_context()
         except Exception:
             bootstrap_context = None
-        try:
-            bootstrap_heartbeat = read_bootstrap_heartbeat()
-        except Exception:
-            bootstrap_heartbeat = None
 
         if bootstrap_context is not None:
             dependency_broker.advertise(
@@ -321,6 +371,7 @@ class MenaceOrchestrator:
                 sentinel=getattr(bootstrap_context, "manager", None),
             )
             broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            broker_pipeline = _strip_placeholder(broker_pipeline)
 
         pipeline_promoter: Callable[[Any], None] | None = None
 
@@ -335,6 +386,7 @@ class MenaceOrchestrator:
                 or broker_sentinel is not None
                 or broker_pipeline is not None
                 or broker_owner_active
+                or broker_placeholder_seeded
                 or (single_flight_promise is not None
                     and not getattr(single_flight_promise, "done", True))
             )
@@ -344,8 +396,11 @@ class MenaceOrchestrator:
             backoff = 0.05
             while broker_pipeline is None and _bootstrap_signals_active():
                 broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                broker_pipeline = _strip_placeholder(broker_pipeline)
                 if broker_pipeline is None and bootstrap_context is not None:
-                    broker_pipeline = getattr(bootstrap_context, "pipeline", None)
+                    broker_pipeline = _strip_placeholder(
+                        getattr(bootstrap_context, "pipeline", None)
+                    )
                 if broker_pipeline is not None:
                     break
                 try:
@@ -454,6 +509,7 @@ class MenaceOrchestrator:
             guard_logged = False
             while bootstrap_pipeline is None and _bootstrap_signals_active():
                 broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                broker_pipeline = _strip_placeholder(broker_pipeline)
                 if broker_pipeline is not None:
                     bootstrap_pipeline = broker_pipeline
                     break
@@ -486,6 +542,7 @@ class MenaceOrchestrator:
 
         if bootstrap_pipeline is None and _bootstrap_signals_active():
             broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            broker_pipeline = _strip_placeholder(broker_pipeline)
             if broker_pipeline is not None:
                 bootstrap_pipeline = broker_pipeline
                 dependency_broker.advertise(
