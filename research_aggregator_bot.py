@@ -481,34 +481,51 @@ def _ensure_runtime_dependencies(
                     pipe = placeholder_pipeline
                     if manager_override is None and placeholder_manager is not None:
                         manager_override = placeholder_manager
+
+                if pipe is None:
+                    active_promise = None
+                    try:
+                        active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+                    except Exception:
+                        active_promise = None
+
+                    if active_promise is not None:
+                        event = getattr(active_promise, "_event", None)
+                        if event is not None:
+                            event.wait(timeout=wait_timeout)
+                        if getattr(active_promise, "done", False):
+                            pipe_promised, promote_promised = active_promise.wait()
+                            pipe = pipe_promised
+                            if promote_pipeline is None:
+                                promote_pipeline = promote_promised
+                            if manager_override is None:
+                                manager_override = getattr(
+                                    pipe_promised, "manager", broker_manager
+                                )
+
                 if pipe is None:
                     waited = time.perf_counter() - wait_start
                     raise RuntimeError(
                         "Active bootstrap requires an injected ModelAutomationPipeline "
-                        "or manager; none available after waiting "
+                        "or manager; none available to reuse after waiting "
                         f"{wait_timeout if wait_timeout is not None else round(waited, 3)}s "
                         f"(waited {round(waited, 3)}s)"
                     )
-            if pipe is None:
-                waited = time.perf_counter() - wait_start
-                raise TimeoutError(
-                    "Active bootstrap detected but no dependency broker or active promise advertised a ModelAutomationPipeline "
-                    f"within {wait_timeout if wait_timeout is not None else round(waited, 3)}s (waited {round(waited, 3)}s)"
-                )
 
-            pipe, promoted = prepare_pipeline_for_bootstrap(
-                pipeline_cls=pipeline_cls,
-                context_builder=ctx_builder,
-                bot_registry=reg,
-                data_bot=dbot,
-                bootstrap_runtime_manager=manager_override
-                if manager_override is not None
-                else manager,
-                manager_override=manager_override,
-            )
-            prepared_pipeline = True
-            if promoted is not None and not promote_explicit:
-                promote_pipeline = promoted
+            if pipe is None:
+                pipe, promoted = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=pipeline_cls,
+                    context_builder=ctx_builder,
+                    bot_registry=reg,
+                    data_bot=dbot,
+                    bootstrap_runtime_manager=manager_override
+                    if manager_override is not None
+                    else manager,
+                    manager_override=manager_override,
+                )
+                prepared_pipeline = True
+                if promoted is not None and not promote_explicit:
+                    promote_pipeline = promoted
 
         if pipe is None:
             raise RuntimeError(
