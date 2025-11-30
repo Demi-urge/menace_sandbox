@@ -31,17 +31,24 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, Mapping
 
-from lock_utils import LOCK_TIMEOUT, SandboxLock
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
-from menace_sandbox.bot_registry import BotRegistry
-from menace_sandbox.code_database import CodeDB
-from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.coding_bot_interface import (
+    _bootstrap_dependency_broker,
     _pop_bootstrap_context,
     _push_bootstrap_context,
+    advertise_bootstrap_placeholder,
     fallback_helper_manager,
     prepare_pipeline_for_bootstrap,
 )
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
+    dependency_broker=_bootstrap_dependency_broker()
+)
+
+from lock_utils import LOCK_TIMEOUT, SandboxLock
+from menace_sandbox.bot_registry import BotRegistry
+from menace_sandbox.code_database import CodeDB
+from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.db_router import set_audit_bootstrap_safe_default
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
 from menace_sandbox.menace_memory_manager import MenaceMemoryManager
