@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+import threading
 from unittest import mock
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
@@ -262,3 +263,137 @@ def test_clients_reuse_broker_placeholder(monkeypatch, caplog):
     assert not any(
         "prepare_pipeline_for_bootstrap" in record.getMessage() for record in caplog.records
     )
+
+
+def test_bootstrap_helpers_share_single_promise(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+
+    base = sys.modules.setdefault("menace_sandbox", ModuleType("menace_sandbox"))
+    base.__path__ = [str(Path(__file__).resolve().parents[1])]
+
+    prepare_calls: list[dict[str, object]] = []
+    promote_calls: list[object | None] = []
+
+    class _FakePromise:
+        def __init__(self, pipeline: object, promoter: object):
+            self.pipeline = pipeline
+            self.promoter = promoter
+            self.waiters = 0
+
+        def wait(self):
+            self.waiters += 1
+            return self.pipeline, self.promoter
+
+    broker_advertises: list[tuple[object | None, object | None, bool]] = []
+
+    class _FakeBroker:
+        def __init__(self, pipeline: object):
+            self.pipeline = pipeline
+
+        def resolve(self):
+            return self.pipeline, getattr(self.pipeline, "manager", None)
+
+        def advertise(self, pipeline=None, sentinel=None, owner: bool | None = None):  # noqa: ANN001
+            broker_advertises.append((pipeline, sentinel, bool(owner)))
+            if pipeline is not None:
+                self.pipeline = pipeline
+            return self.pipeline, sentinel
+
+    pipeline = SimpleNamespace(manager=SimpleNamespace(name="sentinel"))
+    promise = _FakePromise(pipeline, lambda manager=None: promote_calls.append(manager))
+    active_promise: _FakePromise | None = None
+
+    logger = logging.getLogger("bootstrap-integration")
+
+    def _prepare_pipeline_for_bootstrap(**kwargs: object):
+        nonlocal active_promise
+        prepare_calls.append(kwargs)
+        logger.info("prepare_pipeline_for_bootstrap invoked")
+        active_promise = promise
+        return promise.pipeline, promise.promoter
+
+    class _Coordinator:
+        def peek_active(self):
+            return active_promise
+
+    broker = _FakeBroker(pipeline)
+
+    cbi = ModuleType("menace_sandbox.coding_bot_interface")
+    cbi.__file__ = str(Path(__file__).resolve())
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR = _Coordinator()
+    cbi._bootstrap_dependency_broker = lambda: broker
+    cbi.advertise_bootstrap_placeholder = (
+        lambda *, dependency_broker=None, pipeline=None, manager=None, owner=True: (
+            pipeline or dependency_broker.resolve()[0],
+            manager or getattr(dependency_broker.resolve()[0], "manager", None),
+        )
+    )
+    cbi.prepare_pipeline_for_bootstrap = _prepare_pipeline_for_bootstrap
+    monkeypatch.setitem(sys.modules, "menace_sandbox.coding_bot_interface", cbi)
+
+    def _install_helper(module_name: str, attr: str) -> ModuleType:
+        module = ModuleType(module_name)
+
+        def _bootstrap_helper():
+            barrier.wait()
+            with lock:
+                promise_candidate = cbi._GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+                if promise_candidate is not None:
+                    return promise_candidate.wait()
+                pipeline_candidate, promoter = cbi.prepare_pipeline_for_bootstrap(
+                    helper=module_name
+                )
+            broker.resolve()
+            broker.advertise(
+                pipeline=pipeline_candidate,
+                sentinel=getattr(pipeline_candidate, "manager", None),
+                owner=True,
+            )
+            return pipeline_candidate, promoter
+
+        setattr(module, attr, _bootstrap_helper)
+        monkeypatch.setitem(sys.modules, module_name, module)
+        return module
+
+    # Vector service package stub
+    vector_service_pkg = ModuleType("vector_service")
+    vector_service_pkg.__path__ = [str(Path(__file__).resolve().parent)]
+    monkeypatch.setitem(sys.modules, "vector_service", vector_service_pkg)
+
+    helpers = (
+        ("menace_sandbox.research_aggregator_bot", "bootstrap_runtime"),
+        ("menace_sandbox.prediction_manager_bot", "bootstrap_prediction_manager"),
+        ("vector_service.vector_database_service", "bootstrap_vector_service"),
+        ("startup_health_check", "bootstrap_health_check"),
+    )
+
+    lock = threading.Lock()
+    barrier = threading.Barrier(len(helpers))
+    results: list[tuple[object, object]] = []
+
+    for module_name, attr in helpers:
+        _install_helper(module_name, attr)
+
+    def _run_helper(module_name: str, attr: str) -> None:
+        mod = importlib.import_module(module_name)
+        results.append(getattr(mod, attr)())
+
+    threads = [
+        threading.Thread(target=_run_helper, args=helper, daemon=True) for helper in helpers
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(prepare_calls) == 1, "bootstrap should run only once"
+    assert promise.waiters == len(helpers) - 1, "waiters should attach to active promise"
+    assert all(result[0] is pipeline for result in results)
+    assert not any("recursion_refused" in record.getMessage() for record in caplog.records)
+    prepare_logs = [
+        record
+        for record in caplog.records
+        if "prepare_pipeline_for_bootstrap" in record.getMessage()
+    ]
+    assert len(prepare_logs) == 1, "prepare_pipeline_for_bootstrap should log once"
+    assert broker_advertises, "dependency broker should be exercised during bootstrap"
