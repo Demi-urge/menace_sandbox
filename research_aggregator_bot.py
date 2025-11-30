@@ -562,48 +562,101 @@ def _ensure_runtime_dependencies(
                     raise RuntimeError(message)
             if pipe is None:
                 broker_pipeline, broker_manager = dependency_broker.resolve()
-                if _is_bootstrap_active() and not _looks_like_pipeline_candidate(
-                    broker_pipeline
-                ):
-                    raise RuntimeError(
-                        "Bootstrap is active but no dependency broker pipeline or promise is available"
-                    )
-                try:
-                    placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
-                        dependency_broker=dependency_broker,
-                        pipeline=pipeline_override or broker_pipeline,
-                        manager=(
-                            manager_override
-                            if manager_override is not None
-                            else broker_manager
-                            if broker_manager is not None
-                            else manager
-                            if manager is not None
-                            else placeholder_manager
-                        ),
-                        owner=owner is not False,
-                    )
-                except Exception:  # pragma: no cover - best effort placeholder
-                    logger.debug(
-                        "Failed to advertise dependency broker placeholder before bootstrap",
-                        exc_info=True,
-                    )
 
-                pipe, promoted = prepare_pipeline_for_bootstrap(
-                    pipeline_cls=pipeline_cls,
-                    context_builder=ctx_builder,
-                    bot_registry=reg,
-                    data_bot=dbot,
-                    bootstrap_runtime_manager=manager_override
-                    if manager_override is not None
-                    else broker_manager
-                    if broker_manager is not None
-                    else manager,
-                    manager_override=manager_override,
+                bootstrap_heartbeat = False
+                try:
+                    bootstrap_heartbeat = bool(read_bootstrap_heartbeat())
+                except Exception:  # pragma: no cover - heartbeat best effort
+                    bootstrap_heartbeat = False
+
+                try:
+                    active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+                except Exception:  # pragma: no cover - promise lookup best effort
+                    active_promise = None
+
+                promise_reused = False
+                if active_promise is not None:
+                    if getattr(active_promise, "done", False):
+                        pipe_promised, promote_promised = active_promise.wait()
+                        pipe = pipe_promised
+                        promise_reused = True
+                        if promote_pipeline is None:
+                            promote_pipeline = promote_promised
+                        if manager_override is None:
+                            manager_override = getattr(
+                                pipe_promised, "manager", broker_manager
+                            )
+
+                recursion_detected = bool(
+                    bootstrap_heartbeat
+                    or active_promise is not None
+                    or broker_active_owner
+                    or broker_active_pipeline is not None
+                    or broker_active_sentinel is not None
+                    or placeholder_pipeline is not None
                 )
-                prepared_pipeline = True
-                if promoted is not None and not promote_explicit:
-                    promote_pipeline = promoted
+
+                if recursion_detected and pipe is None:
+                    if _looks_like_pipeline_candidate(broker_active_pipeline):
+                        pipe = broker_active_pipeline
+                        if manager_override is None:
+                            manager_override = broker_active_sentinel
+                    elif _looks_like_pipeline_candidate(broker_pipeline):
+                        pipe = broker_pipeline
+                        if manager_override is None:
+                            manager_override = broker_manager
+                    elif _looks_like_pipeline_candidate(placeholder_pipeline):
+                        pipe = placeholder_pipeline
+                        if manager_override is None:
+                            manager_override = placeholder_manager
+
+                if recursion_detected and pipe is None and not promise_reused:
+                    waited = time.perf_counter() - wait_start
+                    message = (
+                        "Recursive bootstrap detected while waiting for broker state; "
+                        "refusing to start a new pipeline after "
+                        f"{round(waited, 3)}s"
+                    )
+                    logger.error(message)
+                    raise RuntimeError(message)
+
+                if pipe is None:
+                    try:
+                        placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
+                            dependency_broker=dependency_broker,
+                            pipeline=pipeline_override or broker_pipeline,
+                            manager=(
+                                manager_override
+                                if manager_override is not None
+                                else broker_manager
+                                if broker_manager is not None
+                                else manager
+                                if manager is not None
+                                else placeholder_manager
+                            ),
+                            owner=owner is not False,
+                        )
+                    except Exception:  # pragma: no cover - best effort placeholder
+                        logger.debug(
+                            "Failed to advertise dependency broker placeholder before bootstrap",
+                            exc_info=True,
+                        )
+
+                    pipe, promoted = prepare_pipeline_for_bootstrap(
+                        pipeline_cls=pipeline_cls,
+                        context_builder=ctx_builder,
+                        bot_registry=reg,
+                        data_bot=dbot,
+                        bootstrap_runtime_manager=manager_override
+                        if manager_override is not None
+                        else broker_manager
+                        if broker_manager is not None
+                        else manager,
+                        manager_override=manager_override,
+                    )
+                    prepared_pipeline = True
+                    if promoted is not None and not promote_explicit:
+                        promote_pipeline = promoted
 
         if pipe is None:
             raise RuntimeError(
@@ -751,6 +804,23 @@ def _ensure_runtime_dependencies(
         if not success:
             _runtime_placeholder = None
         _runtime_initializing = False
+
+
+def _initialize_runtime(
+    *,
+    bootstrap_owner: object | None = None,
+    pipeline_override: "ModelAutomationPipeline | None" = None,
+    manager_override: SelfCodingManager | None = None,
+    promote_pipeline: Callable[[SelfCodingManager | None], None] | None = None,
+) -> _RuntimeDependencies:
+    """Public wrapper for lazy runtime initialisation."""
+
+    return _ensure_runtime_dependencies(
+        bootstrap_owner=bootstrap_owner,
+        pipeline_override=pipeline_override,
+        manager_override=manager_override,
+        promote_pipeline=promote_pipeline,
+    )
 
 @dataclass
 class ResearchItem:
