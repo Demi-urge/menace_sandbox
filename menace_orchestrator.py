@@ -199,335 +199,19 @@ class MenaceOrchestrator:
         bootstrap_heartbeat = None
         dependency_broker = _bootstrap_dependency_broker()
         self.dependency_broker = dependency_broker
-        broker_pipeline, broker_sentinel = dependency_broker.resolve()
-        broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
-        if broker_pipeline is not None or broker_sentinel is not None:
-            dependency_broker.advertise(
-                pipeline=broker_pipeline, sentinel=broker_sentinel, owner=False
-            )
-        else:
-            broker_pipeline, broker_sentinel = advertise_bootstrap_placeholder(
-                dependency_broker=dependency_broker, owner=False
-            )
-        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
-        guard_promise = (
-            _peek_owner_promise(owner_guard) if owner_guard is not None else None
+        (
+            self.pipeline,
+            self.pipeline_promoter,
+            broker_sentinel,
+            bootstrap_heartbeat,
+            bootstrap_context,
+        ) = self._ensure_pipeline(
+            dependency_broker=dependency_broker,
+            pathway_db=pathway_db,
+            myelination_threshold=myelination_threshold,
+            bootstrap_context=bootstrap_context,
+            bootstrap_heartbeat=bootstrap_heartbeat,
         )
-        reuse_wait_timeout = _resolve_bootstrap_wait_timeout()
-        if reuse_wait_timeout is None:
-            reuse_wait_timeout = 5.0
-        try:
-            bootstrap_context = _current_bootstrap_context()
-        except Exception:
-            bootstrap_context = None
-        try:
-            bootstrap_heartbeat = read_bootstrap_heartbeat()
-        except Exception:
-            bootstrap_heartbeat = None
-
-        if bootstrap_context is not None:
-            dependency_broker.advertise(
-                pipeline=getattr(bootstrap_context, "pipeline", None),
-                sentinel=getattr(bootstrap_context, "manager", None),
-            )
-            broker_pipeline, broker_sentinel = dependency_broker.resolve()
-
-        self.pipeline_promoter: Callable[[Any], None] | None = None
-        def _bootstrap_signals_active() -> bool:
-            single_flight_promise = getattr(
-                _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
-            )()
-            return (
-                bootstrap_context is not None
-                or bool(bootstrap_heartbeat)
-                or guard_promise is not None
-                or broker_sentinel is not None
-                or broker_pipeline is not None
-                or broker_owner_active
-                or (single_flight_promise is not None
-                    and not getattr(single_flight_promise, "done", True))
-            )
-
-        if broker_pipeline is None and _bootstrap_signals_active():
-            wait_start = time.perf_counter()
-            backoff = 0.05
-            while broker_pipeline is None and _bootstrap_signals_active():
-                broker_pipeline, broker_sentinel = dependency_broker.resolve()
-                if broker_pipeline is None and bootstrap_context is not None:
-                    broker_pipeline = getattr(bootstrap_context, "pipeline", None)
-                if broker_pipeline is not None:
-                    break
-                try:
-                    bootstrap_heartbeat = read_bootstrap_heartbeat()
-                except Exception:
-                    bootstrap_heartbeat = bootstrap_heartbeat
-                if reuse_wait_timeout is not None and (time.perf_counter() - wait_start) >= reuse_wait_timeout:
-                    break
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 0.5)
-
-        bootstrap_pipeline = broker_pipeline
-        bootstrap_promoter: Callable[[Any], None] | None = _latest_bootstrap_promoter()
-
-        if bootstrap_pipeline is None and _bootstrap_signals_active():
-            wait_start = time.perf_counter()
-            backoff = 0.05
-            while bootstrap_pipeline is None and _bootstrap_signals_active():
-                active_promise = getattr(
-                    _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
-                )()
-                if active_promise is not None and not getattr(active_promise, "done", True):
-                    remaining = None
-                    if reuse_wait_timeout is not None:
-                        remaining = max(0.0, reuse_wait_timeout - (time.perf_counter() - wait_start))
-                    event = getattr(active_promise, "_event", None)
-                    if event is not None:
-                        event.wait(timeout=remaining)
-                    if getattr(active_promise, "done", False):
-                        try:
-                            pipeline_promised, promote_promised = active_promise.wait()
-                            bootstrap_pipeline = pipeline_promised
-                            bootstrap_promoter = promote_promised
-                            dependency_broker.advertise(
-                                pipeline=pipeline_promised,
-                                sentinel=getattr(pipeline_promised, "manager", None),
-                            )
-                            self.logger.info(
-                                "menace orchestrator joined bootstrap coordinator promise",
-                                extra={
-                                    "event": "menace-orchestrator-bootstrap-joined",
-                                    "elapsed": round(time.perf_counter() - wait_start, 3),
-                                    "wait_timeout": reuse_wait_timeout,
-                                    "heartbeat": bool(bootstrap_heartbeat),
-                                    "guard_promise": guard_promise is not None,
-                                },
-                            )
-                            break
-                        except Exception:
-                            self.logger.exception("failed waiting on bootstrap promise")
-                broker_pipeline, broker_sentinel = dependency_broker.resolve()
-                if broker_pipeline is not None:
-                    bootstrap_pipeline = broker_pipeline
-                    break
-                if reuse_wait_timeout is not None and (time.perf_counter() - wait_start) >= reuse_wait_timeout:
-                    self.logger.warning(
-                        "bootstrap reuse timed out; proceeding to prepare pipeline",
-                        extra={
-                            "event": "menace-orchestrator-bootstrap-wait-timeout",
-                            "elapsed": round(time.perf_counter() - wait_start, 3),
-                            "wait_timeout": reuse_wait_timeout,
-                            "heartbeat": bool(bootstrap_heartbeat),
-                            "guard_promise": guard_promise is not None,
-                        },
-                    )
-                    break
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 0.5)
-
-        if bootstrap_pipeline is None and bootstrap_context is not None:
-            bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
-            if bootstrap_promoter is None:
-                bootstrap_promoter = _latest_bootstrap_promoter()
-            if bootstrap_pipeline is None and bootstrap_promoter is not None:
-                for _ in range(20):
-                    bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
-                    if bootstrap_pipeline is not None:
-                        break
-                    time.sleep(0.05)
-
-        if bootstrap_pipeline is not None:
-            dependency_broker.advertise(
-                pipeline=bootstrap_pipeline,
-                sentinel=broker_sentinel or getattr(bootstrap_context, "manager", None),
-            )
-
-        if (
-            bootstrap_pipeline is None
-            and _bootstrap_signals_active()
-            and (bootstrap_context is not None or bootstrap_heartbeat)
-        ):
-            guard_wait_start = time.perf_counter()
-            guard_backoff = 0.05
-            guard_logged = False
-            while bootstrap_pipeline is None and _bootstrap_signals_active():
-                broker_pipeline, broker_sentinel = dependency_broker.resolve()
-                if broker_pipeline is not None:
-                    bootstrap_pipeline = broker_pipeline
-                    break
-                if not guard_logged:
-                    self.logger.info(
-                        "deferring orchestration while bootstrap dependencies publish",
-                        extra={
-                            "event": "menace-orchestrator-bootstrap-guard",
-                            "heartbeat": bool(bootstrap_heartbeat),
-                            "bootstrap_context": bool(bootstrap_context),
-                            "dependency_broker": bool(broker_sentinel),
-                        },
-                    )
-                    guard_logged = True
-                try:
-                    bootstrap_heartbeat = read_bootstrap_heartbeat()
-                except Exception:
-                    bootstrap_heartbeat = bootstrap_heartbeat
-                if reuse_wait_timeout is not None and (
-                    time.perf_counter() - guard_wait_start
-                ) >= reuse_wait_timeout:
-                    break
-                time.sleep(guard_backoff)
-                guard_backoff = min(guard_backoff * 2, 0.5)
-
-            if bootstrap_pipeline is None and _bootstrap_signals_active():
-                raise RuntimeError(
-                    "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
-                )
-
-        if bootstrap_pipeline is None and _bootstrap_signals_active():
-            broker_pipeline, broker_sentinel = dependency_broker.resolve()
-            if broker_pipeline is not None:
-                bootstrap_pipeline = broker_pipeline
-                dependency_broker.advertise(
-                    pipeline=bootstrap_pipeline,
-                    sentinel=broker_sentinel,
-                )
-            else:
-                active_promise = getattr(
-                    _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
-                )()
-                if active_promise is not None and not getattr(active_promise, "done", True):
-                    remaining = reuse_wait_timeout
-                    event = getattr(active_promise, "_event", None)
-                    if event is not None:
-                        event.wait(timeout=remaining)
-                    if getattr(active_promise, "done", False):
-                        try:
-                            pipeline_promised, promote_promised = active_promise.wait()
-                            bootstrap_pipeline = pipeline_promised
-                            bootstrap_promoter = promote_promised
-                            dependency_broker.advertise(
-                                pipeline=pipeline_promised,
-                                sentinel=getattr(pipeline_promised, "manager", None),
-                            )
-                        except Exception:
-                            self.logger.exception(
-                                "failed waiting on bootstrap promise before pipeline creation"
-                            )
-                if bootstrap_pipeline is None:
-                    raise RuntimeError(
-                        "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
-                    )
-
-        single_flight_promise = getattr(
-            _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
-        )()
-        single_flight_active = single_flight_promise is not None and not getattr(
-            single_flight_promise, "done", True
-        )
-
-        if bootstrap_pipeline is None and _bootstrap_signals_active():
-            raise RuntimeError(
-                "bootstrap signals active but no dependency broker pipeline or manager promise available"
-            )
-
-        if bootstrap_pipeline is None and (broker_sentinel is not None or single_flight_active):
-            if single_flight_active:
-                event = getattr(single_flight_promise, "_event", None)
-                if event is not None:
-                    event.wait(timeout=reuse_wait_timeout)
-                if getattr(single_flight_promise, "done", False):
-                    try:
-                        promised_pipeline, promised_promoter = single_flight_promise.wait()
-                        bootstrap_pipeline = promised_pipeline
-                        bootstrap_promoter = promised_promoter
-                        broker_sentinel = getattr(bootstrap_pipeline, "manager", broker_sentinel)
-                    except Exception:
-                        self.logger.exception(
-                            "failed waiting on bootstrap promise before pipeline creation"
-                        )
-
-            if bootstrap_pipeline is None:
-                bootstrap_pipeline = broker_pipeline or SimpleNamespace(
-                    manager=broker_sentinel
-                )
-            dependency_broker.advertise(
-                pipeline=bootstrap_pipeline,
-                sentinel=broker_sentinel,
-                owner=False,
-            )
-
-        if (
-            bootstrap_pipeline is None
-            and not single_flight_active
-            and (
-                broker_pipeline is None
-                or getattr(broker_pipeline, "bootstrap_placeholder", False)
-            )
-        ):
-            placeholder_pipeline, placeholder_sentinel = advertise_bootstrap_placeholder(
-                dependency_broker=dependency_broker, owner=True
-            )
-            try:
-                placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
-                placeholder_data_bot = _bootstrap_helper_stub(
-                    "menace_orchestrator.data_bot"
-                )
-                component_budgets = compute_prepare_pipeline_component_budgets()
-                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                    pipeline_cls=ModelAutomationPipeline,
-                    context_builder=self.context_builder,
-                    bot_registry=placeholder_registry,
-                    data_bot=placeholder_data_bot,
-                    pathway_db=pathway_db,
-                    myelination_threshold=myelination_threshold,
-                    component_timeouts=component_budgets,
-                )
-            except Exception:
-                dependency_broker.advertise(owner=False)
-                raise
-
-            self.pipeline = pipeline
-
-            def _promote_manager(manager: Any) -> None:
-                try:
-                    dependency_broker.advertise(
-                        pipeline=self.pipeline,
-                        sentinel=(
-                            manager
-                            or getattr(self.pipeline, "manager", placeholder_sentinel)
-                        ),
-                        owner=True,
-                    )
-                    if callable(promote_pipeline):
-                        promote_pipeline(manager)
-                finally:
-                    dependency_broker.advertise(owner=False)
-
-            self.pipeline_promoter = _promote_manager
-            dependency_broker.advertise(
-                pipeline=self.pipeline,
-                sentinel=getattr(self.pipeline, "manager", placeholder_sentinel),
-                owner=True,
-            )
-            bootstrap_pipeline = self.pipeline
-            bootstrap_promoter = self.pipeline_promoter
-            self.logger.info(
-                "menace orchestrator starting new bootstrap pipeline",
-                extra={
-                    "event": "menace-orchestrator-bootstrap-new",
-                    "bootstrap_context": bool(bootstrap_context),
-                    "bootstrap_heartbeat": bool(bootstrap_heartbeat),
-                },
-            )
-        else:
-            self.pipeline = bootstrap_pipeline
-            self.pipeline_promoter = bootstrap_promoter
-            self.logger.info(
-                "menace orchestrator reusing bootstrap pipeline",
-                extra={
-                    "event": "menace-orchestrator-bootstrap-reuse",
-                    "bootstrap_context": bool(bootstrap_context),
-                    "bootstrap_heartbeat": bool(bootstrap_heartbeat),
-                },
-            )
         self.pipeline_manager = getattr(self.pipeline, "manager", None) or broker_sentinel
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
@@ -591,6 +275,378 @@ class MenaceOrchestrator:
         self.last_plan: str | None = None
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
+
+    def _ensure_pipeline(
+        self,
+        *,
+        dependency_broker: Any,
+        pathway_db: PathwayDB | None,
+        myelination_threshold: float,
+        bootstrap_context: object | None,
+        bootstrap_heartbeat: object | None,
+    ) -> tuple[
+        object, Callable[[Any], None] | None, object | None, object | None, object | None
+    ]:
+        broker_pipeline, broker_sentinel = dependency_broker.resolve()
+        broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
+        if broker_pipeline is not None or broker_sentinel is not None:
+            dependency_broker.advertise(
+                pipeline=broker_pipeline,
+                sentinel=broker_sentinel,
+                owner=broker_owner_active,
+            )
+        else:
+            broker_pipeline, broker_sentinel = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker, owner=False
+            )
+        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
+        guard_promise = (
+            _peek_owner_promise(owner_guard) if owner_guard is not None else None
+        )
+        reuse_wait_timeout = _resolve_bootstrap_wait_timeout()
+        if reuse_wait_timeout is None:
+            reuse_wait_timeout = 5.0
+        try:
+            bootstrap_context = _current_bootstrap_context()
+        except Exception:
+            bootstrap_context = None
+        try:
+            bootstrap_heartbeat = read_bootstrap_heartbeat()
+        except Exception:
+            bootstrap_heartbeat = None
+
+        if bootstrap_context is not None:
+            dependency_broker.advertise(
+                pipeline=getattr(bootstrap_context, "pipeline", None),
+                sentinel=getattr(bootstrap_context, "manager", None),
+            )
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+
+        pipeline_promoter: Callable[[Any], None] | None = None
+
+        def _bootstrap_signals_active() -> bool:
+            single_flight_promise = getattr(
+                _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+            )()
+            return (
+                bootstrap_context is not None
+                or bool(bootstrap_heartbeat)
+                or guard_promise is not None
+                or broker_sentinel is not None
+                or broker_pipeline is not None
+                or broker_owner_active
+                or (single_flight_promise is not None
+                    and not getattr(single_flight_promise, "done", True))
+            )
+
+        if broker_pipeline is None and _bootstrap_signals_active():
+            wait_start = time.perf_counter()
+            backoff = 0.05
+            while broker_pipeline is None and _bootstrap_signals_active():
+                broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                if broker_pipeline is None and bootstrap_context is not None:
+                    broker_pipeline = getattr(bootstrap_context, "pipeline", None)
+                if broker_pipeline is not None:
+                    break
+                try:
+                    bootstrap_heartbeat = read_bootstrap_heartbeat()
+                except Exception:
+                    bootstrap_heartbeat = bootstrap_heartbeat
+                if reuse_wait_timeout is not None and (
+                    time.perf_counter() - wait_start
+                ) >= reuse_wait_timeout:
+                    break
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 0.5)
+
+        bootstrap_pipeline = broker_pipeline
+        bootstrap_promoter: Callable[[Any], None] | None = _latest_bootstrap_promoter()
+
+        if bootstrap_pipeline is None and _bootstrap_signals_active():
+            wait_start = time.perf_counter()
+            backoff = 0.05
+            while bootstrap_pipeline is None and _bootstrap_signals_active():
+                active_promise = getattr(
+                    _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+                )()
+                if active_promise is not None and not getattr(
+                    active_promise, "done", True
+                ):
+                    remaining = None
+                    if reuse_wait_timeout is not None:
+                        remaining = max(
+                            0.0, reuse_wait_timeout - (time.perf_counter() - wait_start)
+                        )
+                    event = getattr(active_promise, "_event", None)
+                    if event is not None:
+                        event.wait(timeout=remaining)
+                    if getattr(active_promise, "done", False):
+                        try:
+                            pipeline_promised, promote_promised = active_promise.wait()
+                            bootstrap_pipeline = pipeline_promised
+                            bootstrap_promoter = promote_promised
+                            dependency_broker.advertise(
+                                pipeline=pipeline_promised,
+                                sentinel=getattr(pipeline_promised, "manager", None),
+                                owner=broker_owner_active,
+                            )
+                            self.logger.info(
+                                "menace orchestrator joined bootstrap coordinator promise",
+                                extra={
+                                    "event": "menace-orchestrator-bootstrap-joined",
+                                    "elapsed": round(
+                                        time.perf_counter() - wait_start, 3
+                                    ),
+                                    "wait_timeout": reuse_wait_timeout,
+                                    "heartbeat": bool(bootstrap_heartbeat),
+                                    "guard_promise": guard_promise is not None,
+                                },
+                            )
+                            break
+                        except Exception:
+                            self.logger.exception("failed waiting on bootstrap promise")
+                broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                if broker_pipeline is not None:
+                    bootstrap_pipeline = broker_pipeline
+                    break
+                if reuse_wait_timeout is not None and (
+                    time.perf_counter() - wait_start
+                ) >= reuse_wait_timeout:
+                    self.logger.warning(
+                        "bootstrap reuse timed out; proceeding to prepare pipeline",
+                        extra={
+                            "event": "menace-orchestrator-bootstrap-wait-timeout",
+                            "elapsed": round(time.perf_counter() - wait_start, 3),
+                            "wait_timeout": reuse_wait_timeout,
+                            "heartbeat": bool(bootstrap_heartbeat),
+                            "guard_promise": guard_promise is not None,
+                        },
+                    )
+                    break
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 0.5)
+
+        if bootstrap_pipeline is None and bootstrap_context is not None:
+            bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
+            if bootstrap_promoter is None:
+                bootstrap_promoter = _latest_bootstrap_promoter()
+            if bootstrap_pipeline is None and bootstrap_promoter is not None:
+                for _ in range(20):
+                    bootstrap_pipeline = getattr(bootstrap_context, "pipeline", None)
+                    if bootstrap_pipeline is not None:
+                        break
+                    time.sleep(0.05)
+
+        if bootstrap_pipeline is not None:
+            dependency_broker.advertise(
+                pipeline=bootstrap_pipeline,
+                sentinel=broker_sentinel or getattr(bootstrap_context, "manager", None),
+                owner=broker_owner_active,
+            )
+
+        if (
+            bootstrap_pipeline is None
+            and _bootstrap_signals_active()
+            and (bootstrap_context is not None or bootstrap_heartbeat)
+        ):
+            guard_wait_start = time.perf_counter()
+            guard_backoff = 0.05
+            guard_logged = False
+            while bootstrap_pipeline is None and _bootstrap_signals_active():
+                broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                if broker_pipeline is not None:
+                    bootstrap_pipeline = broker_pipeline
+                    break
+                if not guard_logged:
+                    self.logger.info(
+                        "deferring orchestration while bootstrap dependencies publish",
+                        extra={
+                            "event": "menace-orchestrator-bootstrap-guard",
+                            "heartbeat": bool(bootstrap_heartbeat),
+                            "bootstrap_context": bool(bootstrap_context),
+                            "dependency_broker": bool(broker_sentinel),
+                        },
+                    )
+                    guard_logged = True
+                try:
+                    bootstrap_heartbeat = read_bootstrap_heartbeat()
+                except Exception:
+                    bootstrap_heartbeat = bootstrap_heartbeat
+                if reuse_wait_timeout is not None and (
+                    time.perf_counter() - guard_wait_start
+                ) >= reuse_wait_timeout:
+                    break
+                time.sleep(guard_backoff)
+                guard_backoff = min(guard_backoff * 2, 0.5)
+
+            if bootstrap_pipeline is None and _bootstrap_signals_active():
+                raise RuntimeError(
+                    "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
+                )
+
+        if bootstrap_pipeline is None and _bootstrap_signals_active():
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            if broker_pipeline is not None:
+                bootstrap_pipeline = broker_pipeline
+                dependency_broker.advertise(
+                    pipeline=bootstrap_pipeline,
+                    sentinel=broker_sentinel,
+                    owner=broker_owner_active,
+                )
+            else:
+                active_promise = getattr(
+                    _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+                )()
+                if active_promise is not None and not getattr(
+                    active_promise, "done", True
+                ):
+                    remaining = reuse_wait_timeout
+                    event = getattr(active_promise, "_event", None)
+                    if event is not None:
+                        event.wait(timeout=remaining)
+                    if getattr(active_promise, "done", False):
+                        try:
+                            pipeline_promised, promote_promised = active_promise.wait()
+                            bootstrap_pipeline = pipeline_promised
+                            bootstrap_promoter = promote_promised
+                            dependency_broker.advertise(
+                                pipeline=pipeline_promised,
+                                sentinel=getattr(pipeline_promised, "manager", None),
+                                owner=broker_owner_active,
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed waiting on bootstrap promise before pipeline creation"
+                            )
+                if bootstrap_pipeline is None:
+                    raise RuntimeError(
+                        "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
+                    )
+
+        single_flight_promise = getattr(
+            _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+        )()
+        single_flight_active = single_flight_promise is not None and not getattr(
+            single_flight_promise, "done", True
+        )
+
+        if bootstrap_pipeline is None and _bootstrap_signals_active():
+            raise RuntimeError(
+                "bootstrap signals active but no dependency broker pipeline or manager promise available"
+            )
+
+        if bootstrap_pipeline is None and (broker_sentinel is not None or single_flight_active):
+            if single_flight_active:
+                event = getattr(single_flight_promise, "_event", None)
+                if event is not None:
+                    event.wait(timeout=reuse_wait_timeout)
+                if getattr(single_flight_promise, "done", False):
+                    try:
+                        promised_pipeline, promised_promoter = single_flight_promise.wait()
+                        bootstrap_pipeline = promised_pipeline
+                        bootstrap_promoter = promised_promoter
+                        broker_sentinel = getattr(
+                            bootstrap_pipeline, "manager", broker_sentinel
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed waiting on bootstrap promise before pipeline creation"
+                        )
+
+            if bootstrap_pipeline is None:
+                bootstrap_pipeline = broker_pipeline or SimpleNamespace(
+                    manager=broker_sentinel
+                )
+            dependency_broker.advertise(
+                pipeline=bootstrap_pipeline,
+                sentinel=broker_sentinel,
+                owner=broker_owner_active,
+            )
+
+        if (
+            bootstrap_pipeline is None
+            and broker_pipeline is None
+            and broker_sentinel is None
+            and not single_flight_active
+        ):
+            placeholder_pipeline, placeholder_sentinel = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker, owner=True
+            )
+            try:
+                placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
+                placeholder_data_bot = _bootstrap_helper_stub(
+                    "menace_orchestrator.data_bot"
+                )
+                component_budgets = compute_prepare_pipeline_component_budgets()
+                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=ModelAutomationPipeline,
+                    context_builder=self.context_builder,
+                    bot_registry=placeholder_registry,
+                    data_bot=placeholder_data_bot,
+                    pathway_db=pathway_db,
+                    myelination_threshold=myelination_threshold,
+                    component_timeouts=component_budgets,
+                )
+            except Exception:
+                dependency_broker.advertise(owner=False)
+                raise
+
+            self.pipeline = pipeline
+
+            def _promote_manager(manager: Any) -> None:
+                try:
+                    dependency_broker.advertise(
+                        pipeline=self.pipeline,
+                        sentinel=(
+                            manager
+                            or getattr(self.pipeline, "manager", placeholder_sentinel)
+                        ),
+                        owner=True,
+                    )
+                    if callable(promote_pipeline):
+                        promote_pipeline(manager)
+                finally:
+                    dependency_broker.advertise(owner=False)
+
+            pipeline_promoter = _promote_manager
+            dependency_broker.advertise(
+                pipeline=self.pipeline,
+                sentinel=getattr(self.pipeline, "manager", placeholder_sentinel),
+                owner=True,
+            )
+            bootstrap_pipeline = self.pipeline
+            bootstrap_promoter = pipeline_promoter
+            self.logger.info(
+                "menace orchestrator starting new bootstrap pipeline",
+                extra={
+                    "event": "menace-orchestrator-bootstrap-new",
+                    "bootstrap_context": bool(bootstrap_context),
+                    "bootstrap_heartbeat": bool(bootstrap_heartbeat),
+                },
+            )
+        else:
+            if bootstrap_pipeline is None:
+                bootstrap_pipeline = broker_pipeline or SimpleNamespace(
+                    manager=broker_sentinel
+                )
+            self.pipeline = bootstrap_pipeline
+            pipeline_promoter = bootstrap_promoter
+            self.logger.info(
+                "menace orchestrator reusing bootstrap pipeline",
+                extra={
+                    "event": "menace-orchestrator-bootstrap-reuse",
+                    "bootstrap_context": bool(bootstrap_context),
+                    "bootstrap_heartbeat": bool(bootstrap_heartbeat),
+                },
+            )
+
+        return (
+            self.pipeline,
+            pipeline_promoter,
+            broker_sentinel,
+            bootstrap_heartbeat,
+            bootstrap_context,
+        )
 
     def promote_pipeline_manager(self, manager: Any) -> None:
         """Promote the bootstrap pipeline helpers to *manager* when ready."""
