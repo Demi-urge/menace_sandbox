@@ -182,24 +182,69 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
         bootstrap_manager: "SelfCodingManager" | None = None
         promoter: Callable[["SelfCodingManager"], None] | None = None
 
+        dependency_broker = None
+        broker_pipeline: "ModelAutomationPipeline" | None = None
+        broker_manager: "SelfCodingManager" | None = None
+
+        try:
+            from .coding_bot_interface import _bootstrap_dependency_broker
+
+            dependency_broker = _bootstrap_dependency_broker()
+            broker_pipeline, broker_manager = dependency_broker.resolve()
+        except Exception:  # pragma: no cover - best effort broker resolve
+            dependency_broker, broker_pipeline, broker_manager = None, None, None
+
         if _pipeline is None or _manager_instance is None:
             try:
                 bootstrap_pipeline, bootstrap_manager = get_active_bootstrap_pipeline()
             except Exception:
                 bootstrap_pipeline, bootstrap_manager = None, None
 
-            if bootstrap_pipeline is None or bootstrap_manager is None:
-                try:
-                    from .coding_bot_interface import _bootstrap_dependency_broker
+            if bootstrap_pipeline is None and broker_pipeline is not None:
+                bootstrap_pipeline = broker_pipeline
+            if bootstrap_manager is None and broker_manager is not None:
+                bootstrap_manager = broker_manager
 
-                    broker = _bootstrap_dependency_broker()
-                    broker_pipeline, broker_manager = broker.resolve()
-                    if bootstrap_pipeline is None:
-                        bootstrap_pipeline = broker_pipeline
-                    if bootstrap_manager is None:
-                        bootstrap_manager = broker_manager
-                except Exception:
-                    bootstrap_pipeline, bootstrap_manager = bootstrap_pipeline, bootstrap_manager
+            bootstrap_inflight = bool(
+                getattr(dependency_broker, "active_owner", False)
+            )
+
+            if dependency_broker is not None and (bootstrap_pipeline or bootstrap_manager):
+                dependency_broker.advertise(
+                    pipeline=bootstrap_pipeline,
+                    sentinel=bootstrap_manager
+                    or getattr(bootstrap_pipeline, "manager", None),
+                )
+                logger.info(
+                    "error bot bootstrap reusing broker pipeline",
+                    extra={
+                        "event": "error-bot-bootstrap-reuse",
+                        "broker_pipeline": broker_pipeline is not None,
+                        "broker_manager": broker_manager is not None,
+                        "bootstrap_inflight": bootstrap_inflight,
+                    },
+                )
+
+            if dependency_broker is not None and bootstrap_pipeline is None:
+                try:
+                    from .coding_bot_interface import advertise_bootstrap_placeholder
+
+                    bootstrap_pipeline, bootstrap_manager = advertise_bootstrap_placeholder(
+                        dependency_broker=dependency_broker,
+                        pipeline=bootstrap_pipeline,
+                        manager=bootstrap_manager,
+                        owner=bootstrap_inflight,
+                    )
+                    logger.info(
+                        "error bot bootstrap advertising placeholder",
+                        extra={
+                            "event": "error-bot-bootstrap-placeholder",
+                            "broker_active": True,
+                            "bootstrap_inflight": bootstrap_inflight,
+                        },
+                    )
+                except Exception:  # pragma: no cover - placeholder best effort
+                    logger.debug("error bot bootstrap placeholder failed", exc_info=True)
 
             for candidate in (bootstrap_pipeline, bootstrap_manager):
                 if promoter is None and candidate is not None:
@@ -212,7 +257,13 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
             if _manager_instance is None and bootstrap_manager is not None:
                 _manager_instance = bootstrap_manager
 
-        bootstrap_active = bool(bootstrap_pipeline or bootstrap_manager)
+        bootstrap_active = bool(
+            bootstrap_pipeline
+            or bootstrap_manager
+            or broker_pipeline
+            or broker_manager
+            or getattr(dependency_broker, "active_owner", False)
+        )
         try:
             from .coding_bot_interface import _BOOTSTRAP_STATE, _current_bootstrap_context
 
@@ -224,6 +275,17 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
 
         if _pipeline is None and not bootstrap_active:
             from .model_automation_pipeline import ModelAutomationPipeline
+
+            logger.info(
+                "error bot bootstrap constructing pipeline",
+                extra={
+                    "event": "error-bot-bootstrap-prepare",
+                    "bootstrap_inflight": getattr(
+                        dependency_broker, "active_owner", False
+                    ),
+                    "broker_present": dependency_broker is not None,
+                },
+            )
 
             pipeline, promoter = prepare_pipeline_for_bootstrap(
                 pipeline_cls=ModelAutomationPipeline,
