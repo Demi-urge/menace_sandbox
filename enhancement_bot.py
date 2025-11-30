@@ -17,6 +17,7 @@ from .coding_bot_interface import (
     advertise_bootstrap_placeholder,
     get_active_bootstrap_pipeline,
     prepare_pipeline_for_bootstrap,
+    read_bootstrap_heartbeat,
     self_coding_managed,
 )
 from typing import TYPE_CHECKING, Callable, Dict, Any
@@ -73,6 +74,32 @@ def _build_runtime() -> _Runtime:
 
     pipeline_candidate = bootstrap_pipeline or broker_pipeline
     manager_candidate = bootstrap_manager or broker_manager
+
+    placeholder_pipeline: object | None = None
+    placeholder_manager: object | None = None
+    sentinel_fallback = manager_candidate or getattr(bootstrap_context, "manager", None)
+    try:
+        placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
+            dependency_broker=dependency_broker,
+            pipeline=pipeline_candidate,
+            manager=sentinel_fallback,
+        )
+    except Exception:  # pragma: no cover - best effort placeholder
+        placeholder_pipeline = pipeline_candidate
+        placeholder_manager = sentinel_fallback
+
+    if pipeline_candidate is None and read_bootstrap_heartbeat():
+        pipeline_candidate = placeholder_pipeline
+        manager_candidate = manager_candidate or placeholder_manager
+
+    sentinel_candidate = manager_candidate or placeholder_manager
+    try:
+        dependency_broker.advertise(
+            pipeline=pipeline_candidate or placeholder_pipeline,
+            sentinel=sentinel_candidate,
+        )
+    except Exception:  # pragma: no cover - best effort broker advertisement
+        sentinel_candidate = sentinel_candidate
 
     if pipeline_candidate is None and bootstrap_context is not None:
         pipeline_candidate = getattr(bootstrap_context, "pipeline", None)
