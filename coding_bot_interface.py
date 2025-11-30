@@ -5569,38 +5569,30 @@ def prepare_pipeline_for_bootstrap(
     active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
     caller_module = _resolve_caller_module_name()
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
-    recursion_detected = active_depth > 0 and (broker_placeholder_active or broker_pipeline or broker_sentinel)
+    recursion_short_circuit = active_depth > 0 and (
+        broker_placeholder_active or broker_pipeline is not None or broker_sentinel is not None or active_promise
+    )
 
-    if recursion_detected:
-        clamped_timeout = 0.0 if timeout is None or timeout > 0 else timeout
-        clamped_bootstrap_wait_timeout = (
-            0.0
-            if bootstrap_wait_timeout is None or bootstrap_wait_timeout > 0
-            else bootstrap_wait_timeout
-        )
-        timeout = clamped_timeout
-        bootstrap_wait_timeout = clamped_bootstrap_wait_timeout
+    if recursion_short_circuit:
         telemetry = {
-            "event": "prepare-pipeline-bootstrap-recursion-guard",
-            "dependency_broker": True,
+            "event": "prepare-pipeline-bootstrap-recursion-guard-short-circuit",
+            "dependency_broker": bool(broker_pipeline or broker_sentinel),
             "broker_placeholder": broker_placeholder_active,
             "caller_module": caller_module,
             "active_depth": active_depth,
-            "timeout_clamped": clamped_timeout is not None,
-            "timeout": clamped_timeout,
-            "bootstrap_wait_timeout": clamped_bootstrap_wait_timeout,
+            "bootstrap_guard": bootstrap_guard,
         }
         if active_promise is not None:
             active_promise.waiters += 1
             telemetry.update({"active_waiters": active_promise.waiters, "active_promise": True})
-            logger.info("prepare_pipeline.bootstrap.recursion_guard_promise", extra=telemetry)
+            logger.info(
+                "prepare_pipeline.bootstrap.recursion_guard_promise_short_circuit",
+                extra=telemetry,
+            )
             return active_promise.wait()
 
-        if broker_pipeline is None:
-            broker_pipeline = _build_bootstrap_placeholder_pipeline(broker_sentinel)
-
         def _reuse_promote(real_manager: Any) -> None:
-            if real_manager is None:
+            if real_manager is None or broker_pipeline is None:
                 return
             _assign_bootstrap_manager_placeholder(
                 broker_pipeline,
@@ -5608,13 +5600,8 @@ def prepare_pipeline_for_bootstrap(
                 propagate_nested=True,
             )
 
-        dependency_broker.advertise(
-            pipeline=broker_pipeline,
-            sentinel=broker_sentinel,
-            owner=True,
-        )
         logger.info(
-            "prepare_pipeline.bootstrap.recursion_guard_reuse",
+            "prepare_pipeline.bootstrap.recursion_guard_broker_short_circuit",
             extra={
                 **telemetry,
                 "pipeline_candidate": getattr(
