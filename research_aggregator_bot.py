@@ -20,6 +20,7 @@ from .coding_bot_interface import (
     _peek_owner_promise,
     _GLOBAL_BOOTSTRAP_COORDINATOR,
     _resolve_bootstrap_wait_timeout,
+    claim_bootstrap_dependency_entry,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -621,40 +622,30 @@ def _ensure_runtime_dependencies(
                     raise RuntimeError(message)
 
                 if pipe is None:
-                    try:
-                        placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
-                            dependency_broker=dependency_broker,
-                            pipeline=pipeline_override or broker_pipeline,
-                            manager=(
-                                manager_override
-                                if manager_override is not None
-                                else broker_manager
-                                if broker_manager is not None
-                                else manager
-                                if manager is not None
-                                else placeholder_manager
-                            ),
-                            owner=owner is not False,
-                        )
-                    except Exception:  # pragma: no cover - best effort placeholder
-                        logger.debug(
-                            "Failed to advertise dependency broker placeholder before bootstrap",
-                            exc_info=True,
-                        )
-
-                    pipe, promoted = prepare_pipeline_for_bootstrap(
+                    pipeline_manager_hint = (
+                        manager_override
+                        if manager_override is not None
+                        else broker_manager
+                        if broker_manager is not None
+                        else manager
+                        if manager is not None
+                        else placeholder_manager
+                    )
+                    pipe, promoted, resolved_manager, prepared = claim_bootstrap_dependency_entry(
+                        dependency_broker=dependency_broker,
+                        pipeline=pipeline_override or broker_pipeline,
+                        manager=pipeline_manager_hint,
+                        owner=owner is not False,
                         pipeline_cls=pipeline_cls,
                         context_builder=ctx_builder,
                         bot_registry=reg,
                         data_bot=dbot,
-                        bootstrap_runtime_manager=manager_override
-                        if manager_override is not None
-                        else broker_manager
-                        if broker_manager is not None
-                        else manager,
                         manager_override=manager_override,
                     )
-                    prepared_pipeline = True
+                    manager_override = resolved_manager or manager_override
+                    prepared_pipeline = prepared_pipeline or prepared
+                    placeholder_pipeline = placeholder_pipeline or pipe
+                    placeholder_manager = placeholder_manager or resolved_manager
                     if promoted is not None and not promote_explicit:
                         promote_pipeline = promoted
 

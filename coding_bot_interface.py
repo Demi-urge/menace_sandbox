@@ -1958,6 +1958,91 @@ def advertise_bootstrap_placeholder(
     return pipeline_candidate, sentinel
 
 
+def claim_bootstrap_dependency_entry(
+    *,
+    dependency_broker: _BootstrapDependencyBroker | None = None,
+    pipeline: Any | None = None,
+    manager: Any | None = None,
+    owner: bool | None = None,
+    pipeline_cls: type[Any] | None = None,
+    context_builder: Any | None = None,
+    bot_registry: Any | None = None,
+    data_bot: Any | None = None,
+    event_bus: Any | None = None,
+    manager_override: Any | None = None,
+    **prepare_kwargs: Any,
+) -> tuple[Any | None, Callable[[Any], None] | None, Any | None, bool]:
+    """Ensure bootstrap entry points reuse the shared promise.
+
+    The dependency broker is seeded with a placeholder immediately so late imports
+    observe the in-flight bootstrap.  If a global bootstrap promise exists it is
+    reused instead of creating a fresh ``prepare_pipeline_for_bootstrap`` call,
+    with the promoted manager threaded back to the caller for advertisement.
+    """
+
+    broker = dependency_broker or _bootstrap_dependency_broker()
+    owner_flag = True if owner is None else bool(owner)
+    placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
+        dependency_broker=broker,
+        pipeline=pipeline,
+        manager=manager,
+        owner=owner_flag,
+    )
+
+    manager_candidate = manager_override or manager or placeholder_manager
+    pipeline_candidate = pipeline or placeholder_pipeline
+    promote_pipeline: Callable[[Any], None] | None = None
+    prepared_pipeline = False
+
+    try:
+        active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+    except Exception:  # pragma: no cover - defensive
+        active_promise = None
+
+    if active_promise is not None:
+        try:
+            pipeline_candidate, promote_pipeline = active_promise.wait()
+        except Exception:  # pragma: no cover - promise wait best effort
+            logger.debug(
+                "bootstrap dependency claim failed to reuse active promise", exc_info=True
+            )
+        else:
+            if manager_override is None:
+                try:
+                    manager_candidate = getattr(pipeline_candidate, "manager", manager_candidate)
+                except Exception:  # pragma: no cover - best effort manager extraction
+                    manager_candidate = manager_candidate
+            broker.advertise(
+                pipeline=pipeline_candidate,
+                sentinel=manager_candidate,
+                owner=owner_flag,
+            )
+            return pipeline_candidate, promote_pipeline, manager_candidate, prepared_pipeline
+
+    if pipeline_candidate is None and pipeline_cls is not None:
+        pipeline_candidate, promote_pipeline = prepare_pipeline_for_bootstrap(
+            pipeline_cls=pipeline_cls,
+            context_builder=context_builder,
+            bot_registry=bot_registry,
+            data_bot=data_bot,
+            event_bus=event_bus,
+            manager_override=manager_candidate,
+            **prepare_kwargs,
+        )
+        prepared_pipeline = True
+        manager_candidate = manager_override or manager_candidate
+    elif promote_pipeline is None:
+        promote_pipeline = getattr(pipeline_candidate, "_pipeline_promoter", None)
+
+    broker.advertise(
+        pipeline=pipeline_candidate,
+        sentinel=manager_candidate,
+        owner=owner_flag,
+    )
+
+    return pipeline_candidate, promote_pipeline, manager_candidate, prepared_pipeline
+
+
 def _push_bootstrap_context(
     *,
     registry: Any,

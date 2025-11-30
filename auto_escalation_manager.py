@@ -21,14 +21,12 @@ except Exception:  # pragma: no cover - fallback for flat layout
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 from .coding_bot_interface import (
-    _GLOBAL_BOOTSTRAP_COORDINATOR,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
     _is_bootstrap_placeholder,
     _looks_like_pipeline_candidate,
-    advertise_bootstrap_placeholder,
+    claim_bootstrap_dependency_entry,
     _using_bootstrap_sentinel,
-    prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
 
@@ -171,22 +169,6 @@ class AutoEscalationManager:
                         if manager_candidate is None:
                             manager_candidate = getattr(bootstrap_context, "sentinel", None)
 
-                    if pipeline_candidate is None:
-                        active_promise = getattr(
-                            _GLOBAL_BOOTSTRAP_COORDINATOR, "_active", None
-                        )
-                        if active_promise is not None and not active_promise.done:
-                            try:
-                                pipeline_candidate, promote_pipeline = active_promise.wait()
-                                dependency_broker.advertise(
-                                    pipeline=pipeline_candidate,
-                                    sentinel=getattr(pipeline_candidate, "manager", None),
-                                )
-                            except Exception as exc:  # pragma: no cover - defensive
-                                raise RuntimeError(
-                                    "AutoEscalationManager bootstrap promise failed"
-                                ) from exc
-
                     pipeline = None
                     placeholder_present = any(
                         _is_bootstrap_placeholder(candidate)
@@ -236,35 +218,18 @@ class AutoEscalationManager:
                         from .self_coding_manager import SelfCodingManager
                         from .model_automation_pipeline import ModelAutomationPipeline
 
-                        if dependency_broker is not None and not placeholder_present:
-                            try:
-                                pipeline_candidate, manager_candidate = (
-                                    advertise_bootstrap_placeholder(
-                                        dependency_broker=dependency_broker,
-                                        pipeline=pipeline_candidate,
-                                        manager=manager_candidate,
-                                    )
-                                )
-                                self.logger.info(
-                                    "auto_escalation.bootstrap.advertise_placeholder",
-                                    extra={
-                                        "event": "auto-escalation-bootstrap-placeholder-advertise",
-                                        "dependency_broker": bool(dependency_broker),
-                                    },
-                                )
-                            except Exception:  # pragma: no cover - best effort
-                                self.logger.debug(
-                                    "auto-escalation failed to advertise bootstrap placeholder",
-                                    exc_info=True,
-                                )
-
-                        pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                            pipeline_cls=ModelAutomationPipeline,
-                            context_builder=self.context_builder,
-                            bot_registry=registry,
-                            data_bot=data_bot,
-                            event_bus=event_bus,
-                            manager_override=manager_candidate,
+                        pipeline, promote_pipeline, manager_candidate, _ = (
+                            claim_bootstrap_dependency_entry(
+                                dependency_broker=dependency_broker,
+                                pipeline=pipeline_candidate,
+                                manager=manager_candidate,
+                                owner=bool(bootstrap_inflight),
+                                pipeline_cls=ModelAutomationPipeline,
+                                context_builder=self.context_builder,
+                                bot_registry=registry,
+                                data_bot=data_bot,
+                                event_bus=event_bus,
+                            )
                         )
 
                         self.logger.info(
