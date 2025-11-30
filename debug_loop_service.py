@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,11 @@ from .knowledge_graph import KnowledgeGraph
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_thresholds import get_thresholds
-from .coding_bot_interface import prepare_pipeline_for_bootstrap
+from .coding_bot_interface import (
+    get_active_bootstrap_pipeline,
+    prepare_pipeline_for_bootstrap,
+    _bootstrap_dependency_broker,
+)
 
 try:  # pragma: no cover - optional vector service dependency
     from vector_service.context_builder import ContextBuilder
@@ -37,6 +41,8 @@ except Exception:  # pragma: no cover - fallback when dependency missing
 
 class DebugLoopService:
     """Run :class:`TelemetryFeedback` continuously and archive crash logs."""
+
+    _BOOTSTRAP_PIPELINE: tuple[Any, Callable[[Any], None]] | None = None
 
     def __init__(
         self,
@@ -70,13 +76,40 @@ class DebugLoopService:
             bus = UnifiedEventBus()
             registry = bot_registry or BotRegistry(event_bus=bus)
             data_bot = data_bot or DataBot()
-            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                pipeline_cls=ModelAutomationPipeline,
-                context_builder=context_builder,
-                bot_registry=registry,
-                data_bot=data_bot,
-                event_bus=bus,
-            )
+            dependency_broker = _bootstrap_dependency_broker()
+            pipeline, sentinel = get_active_bootstrap_pipeline()
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            pipeline = pipeline or broker_pipeline
+            sentinel = sentinel or broker_sentinel
+
+            if pipeline is None:
+                cached_pipeline = self._BOOTSTRAP_PIPELINE
+                if cached_pipeline is not None:
+                    pipeline, promote_pipeline = cached_pipeline
+                else:
+                    pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                        pipeline_cls=ModelAutomationPipeline,
+                        context_builder=context_builder,
+                        bot_registry=registry,
+                        data_bot=data_bot,
+                        event_bus=bus,
+                    )
+                    self._BOOTSTRAP_PIPELINE = (pipeline, promote_pipeline)
+                dependency_broker.advertise(
+                    pipeline=pipeline,
+                    sentinel=sentinel or getattr(pipeline, "manager", None),
+                )
+            else:
+                def promote_pipeline(real_manager: Any) -> None:
+                    if real_manager is None:
+                        return
+                    try:
+                        setattr(pipeline, "manager", real_manager)
+                    except Exception:
+                        pass
+                    dependency_broker.advertise(
+                        pipeline=pipeline, sentinel=real_manager
+                    )
             _th = get_thresholds("DebugLoopService")
             persist_sc_thresholds(
                 "DebugLoopService",
