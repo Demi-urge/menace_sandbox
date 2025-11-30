@@ -5627,6 +5627,13 @@ def _prepare_pipeline_for_bootstrap_impl(
     )
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     dependency_owner_reset = False
+
+    def _reset_dependency_owner() -> None:
+        nonlocal dependency_owner_reset
+        if dependency_owner_reset:
+            dependency_broker.advertise(owner=False)
+            dependency_owner_reset = False
+
     if not getattr(dependency_broker, "active_owner", False):
         dependency_broker.advertise(owner=True)
         dependency_owner_reset = True
@@ -5643,6 +5650,18 @@ def _prepare_pipeline_for_bootstrap_impl(
     active_heartbeat = read_bootstrap_heartbeat()
     heartbeat_bootstrap_active = bool(active_heartbeat)
     broker_active = bool(broker_pipeline or broker_sentinel)
+    active_owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
+    active_owner_depth = (getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}).get(
+        active_owner_guard, 0
+    )
+    active_owner_sentinel = (
+        manager_override
+        or manager_sentinel
+        or getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
+        or broker_sentinel
+    )
+    caller_module = _resolve_caller_module_name()
+    recursion_limit_exceeded = active_depth >= recursion_guard_threshold
     if guard_enabled and heartbeat_bootstrap_active:
         if active_promise is not None:
             active_promise.waiters += 1
@@ -5694,6 +5713,67 @@ def _prepare_pipeline_for_bootstrap_impl(
                 },
             )
             return broker_pipeline, _reuse_promote
+
+    if recursion_limit_exceeded:
+        telemetry = {
+            "event": "prepare-pipeline-bootstrap-recursion-limit",
+            "active_depth": active_depth,
+            "owner_depth": active_owner_depth,
+            "owner_guard": getattr(
+                getattr(active_owner_guard, "__class__", None), "__name__", str(active_owner_guard)
+            ),
+            "dependency_broker": broker_active,
+            "has_active_promise": bool(active_promise),
+            "caller_module": caller_module,
+        }
+        if active_promise is not None:
+            logger.info(
+                "prepare_pipeline.bootstrap.recursion_limit_promise_reuse",
+                extra=telemetry,
+            )
+            try:
+                return active_promise.wait()
+            finally:
+                _reset_dependency_owner()
+        if broker_active:
+            if broker_pipeline is None:
+                broker_pipeline = _build_bootstrap_placeholder_pipeline(
+                    broker_sentinel
+                )
+
+            def _reuse_promote(real_manager: Any) -> None:
+                if real_manager is None:
+                    return
+                _assign_bootstrap_manager_placeholder(
+                    broker_pipeline,
+                    real_manager,
+                    propagate_nested=True,
+                )
+
+            dependency_broker.advertise(
+                pipeline=broker_pipeline,
+                sentinel=broker_sentinel,
+                owner=True,
+            )
+            dependency_owner_reset = False
+            if getattr(_BOOTSTRAP_STATE, "sentinel_manager", None) is None:
+                _BOOTSTRAP_STATE.sentinel_manager = broker_sentinel
+            logger.info(
+                "prepare_pipeline.bootstrap.recursion_limit_broker_reuse",
+                extra={
+                    **telemetry,
+                    "pipeline_candidate": getattr(
+                        getattr(broker_pipeline, "__class__", None),
+                        "__name__",
+                        str(type(broker_pipeline)),
+                    ),
+                },
+            )
+            return broker_pipeline, _reuse_promote
+        _reset_dependency_owner()
+        raise RecursionError(
+            "bootstrap recursion exceeded safe depth without reusable promise"
+        )
     if not guard_enabled:
         if active_promise is not None:
             logger.info(
@@ -5742,17 +5822,6 @@ def _prepare_pipeline_for_bootstrap_impl(
                 },
             )
             return broker_pipeline, _reuse_promote
-    active_owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
-    active_owner_depth = (getattr(_BOOTSTRAP_STATE, "owner_depths", {}) or {}).get(
-        active_owner_guard, 0
-    )
-    active_owner_sentinel = (
-        manager_override
-        or manager_sentinel
-        or getattr(_BOOTSTRAP_STATE, "sentinel_manager", None)
-        or broker_sentinel
-    )
-    caller_module = _resolve_caller_module_name()
     if active_owner_guard is not None and active_owner_depth > 0:
         active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
         if active_owner_sentinel is None:
