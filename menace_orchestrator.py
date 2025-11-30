@@ -198,6 +198,7 @@ class MenaceOrchestrator:
         bootstrap_context = None
         bootstrap_heartbeat = None
         dependency_broker = _bootstrap_dependency_broker()
+        self.dependency_broker = dependency_broker
         broker_pipeline, broker_sentinel = dependency_broker.resolve()
         if broker_pipeline is not None or broker_sentinel is not None:
             dependency_broker.advertise(
@@ -445,26 +446,61 @@ class MenaceOrchestrator:
                 owner=False,
             )
 
-        if bootstrap_pipeline is None and broker_sentinel is None and not single_flight_active:
-            placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
-            placeholder_data_bot = _bootstrap_helper_stub("menace_orchestrator.data_bot")
-            component_budgets = compute_prepare_pipeline_component_budgets()
-            pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
-                pipeline_cls=ModelAutomationPipeline,
-                context_builder=self.context_builder,
-                bot_registry=placeholder_registry,
-                data_bot=placeholder_data_bot,
-                pathway_db=pathway_db,
-                myelination_threshold=myelination_threshold,
-                component_timeouts=component_budgets,
+        if (
+            bootstrap_pipeline is None
+            and not single_flight_active
+            and (
+                broker_pipeline is None
+                or getattr(broker_pipeline, "bootstrap_placeholder", False)
             )
+        ):
+            placeholder_pipeline, placeholder_sentinel = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker, owner=True
+            )
+            try:
+                placeholder_registry = _bootstrap_helper_stub("menace_orchestrator.registry")
+                placeholder_data_bot = _bootstrap_helper_stub(
+                    "menace_orchestrator.data_bot"
+                )
+                component_budgets = compute_prepare_pipeline_component_budgets()
+                pipeline, promote_pipeline = prepare_pipeline_for_bootstrap(
+                    pipeline_cls=ModelAutomationPipeline,
+                    context_builder=self.context_builder,
+                    bot_registry=placeholder_registry,
+                    data_bot=placeholder_data_bot,
+                    pathway_db=pathway_db,
+                    myelination_threshold=myelination_threshold,
+                    component_timeouts=component_budgets,
+                )
+            except Exception:
+                dependency_broker.advertise(owner=False)
+                raise
+
             self.pipeline = pipeline
-            self.pipeline_promoter = promote_pipeline
+
+            def _promote_manager(manager: Any) -> None:
+                try:
+                    dependency_broker.advertise(
+                        pipeline=self.pipeline,
+                        sentinel=(
+                            manager
+                            or getattr(self.pipeline, "manager", placeholder_sentinel)
+                        ),
+                        owner=True,
+                    )
+                    if callable(promote_pipeline):
+                        promote_pipeline(manager)
+                finally:
+                    dependency_broker.advertise(owner=False)
+
+            self.pipeline_promoter = _promote_manager
             dependency_broker.advertise(
                 pipeline=self.pipeline,
-                sentinel=getattr(self.pipeline, "manager", None),
+                sentinel=getattr(self.pipeline, "manager", placeholder_sentinel),
                 owner=True,
             )
+            bootstrap_pipeline = self.pipeline
+            bootstrap_promoter = self.pipeline_promoter
             self.logger.info(
                 "menace orchestrator starting new bootstrap pipeline",
                 extra={
@@ -557,6 +593,16 @@ class MenaceOrchestrator:
                 promoter(manager)
             finally:
                 self.pipeline_promoter = None
+        broker = getattr(self, "dependency_broker", None)
+        if broker is not None:
+            try:
+                broker.advertise(
+                    pipeline=self.pipeline,
+                    sentinel=manager or getattr(self.pipeline, "manager", None),
+                    owner=True,
+                )
+            except Exception:
+                self.logger.debug("dependency broker advertise failed", exc_info=True)
         self.pipeline_manager = getattr(self.pipeline, "manager", None)
 
     # ------------------------------------------------------------------

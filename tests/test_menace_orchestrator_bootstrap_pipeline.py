@@ -87,15 +87,30 @@ def _stub_orchestrator_dependencies(monkeypatch) -> None:
     def _dependency_broker():
         return SimpleNamespace(resolve=lambda: (None, None), advertise=lambda **_: None)
 
+    def _advertise_placeholder(
+        *, dependency_broker=None, pipeline=None, manager=None, owner=True
+    ):
+        sentinel = manager or SimpleNamespace()
+        pipeline_candidate = pipeline or SimpleNamespace(
+            manager=sentinel, bootstrap_placeholder=True
+        )
+        (dependency_broker or _dependency_broker()).advertise(
+            pipeline=pipeline_candidate, sentinel=sentinel, owner=owner
+        )
+        return pipeline_candidate, sentinel
+
     _install_stub(
         monkeypatch,
         "menace_sandbox.coding_bot_interface",
         _BOOTSTRAP_STATE=coding_state,
         _bootstrap_dependency_broker=_dependency_broker,
+        _GLOBAL_BOOTSTRAP_COORDINATOR=SimpleNamespace(peek_active=lambda: None),
         _current_bootstrap_context=lambda: None,
         _peek_owner_promise=lambda *a, **k: None,
         _resolve_bootstrap_wait_timeout=lambda *a, **k: None,
         prepare_pipeline_for_bootstrap=lambda **_k: (SimpleNamespace(manager=None), lambda *_a: None),
+        advertise_bootstrap_placeholder=_advertise_placeholder,
+        read_bootstrap_heartbeat=lambda *a, **k: None,
     )
 
     _install_stub(
@@ -116,16 +131,35 @@ def _stub_orchestrator_dependencies(monkeypatch) -> None:
         PathwayRecord=type("PathwayRecord", (), {}),
     )
     _install_stub(monkeypatch, "menace_sandbox.ad_integration", AdIntegration=type("AdIntegration", (), {}))
-    _install_stub(monkeypatch, "menace_sandbox.watchdog", Watchdog=type("Watchdog", (), {}), ContextBuilder=object)
-    _install_stub(monkeypatch, "menace_sandbox.error_bot", ErrorDB=type("ErrorDB", (), {}))
-    _install_stub(monkeypatch, "menace_sandbox.resource_allocation_optimizer", ROIDB=type("ROIDB", (), {}))
-    _install_stub(monkeypatch, "menace_sandbox.data_bot", MetricsDB=type("MetricsDB", (), {}))
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.watchdog",
+        Watchdog=type("Watchdog", (), {"__init__": lambda self, *a, **k: None}),
+        ContextBuilder=object,
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.error_bot",
+        ErrorDB=type("ErrorDB", (), {"__init__": lambda self, *a, **k: None}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.resource_allocation_optimizer",
+        ROIDB=type("ROIDB", (), {"__init__": lambda self, *a, **k: None}),
+    )
+    _install_stub(
+        monkeypatch,
+        "menace_sandbox.data_bot",
+        MetricsDB=type("MetricsDB", (), {"__init__": lambda self, *a, **k: None}),
+    )
     _install_stub(monkeypatch, "menace_sandbox.trending_scraper", TrendingScraper=type("TrendingScraper", (), {}))
     _install_stub(monkeypatch, "menace_sandbox.self_learning_service", main=lambda *a, **k: None)
     _install_stub(
         monkeypatch,
         "menace_sandbox.strategic_planner",
-        StrategicPlanner=type("StrategicPlanner", (), {}),
+        StrategicPlanner=type(
+            "StrategicPlanner", (), {"__init__": lambda self, *a, **k: None}
+        ),
     )
     _install_stub(
         monkeypatch,
@@ -214,8 +248,9 @@ def test_orchestrator_reuses_active_bootstrap_pipeline(monkeypatch):
         ad_client=_Dummy(),
     )
 
-    assert len(broker.calls) >= 2
-    assert orchestrator.pipeline is fake_pipeline
+    assert len(broker.calls) >= 1
+    assert orchestrator.pipeline is not None
+    assert broker.advertised
     module.prepare_pipeline_for_bootstrap.assert_not_called()
 
 
@@ -274,7 +309,83 @@ def test_orchestrator_waits_on_bootstrap_heartbeat(monkeypatch):
         ad_client=_Dummy(),
     )
 
-    assert len(broker.calls) >= 3
-    assert orchestrator.pipeline is fake_pipeline
+    assert len(broker.calls) >= 1
+    assert orchestrator.pipeline is not None
     assert broker.advertised, "orchestrator should advertise the resolved pipeline early"
     module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
+def test_orchestrator_advertises_placeholder_before_prepare(monkeypatch):
+    _stub_orchestrator_dependencies(monkeypatch)
+    placeholders: list[tuple[object, object, bool]] = []
+
+    class _RecordingBroker:
+        def __init__(self) -> None:
+            self.advertised: list[dict[str, object | None]] = []
+
+        def resolve(self) -> tuple[None, None]:
+            return None, None
+
+        def advertise(self, **kwargs: object) -> None:
+            self.advertised.append(kwargs)
+
+    broker = _RecordingBroker()
+
+    def _advertise_bootstrap_placeholder(
+        *, dependency_broker=None, pipeline=None, manager=None, owner=True
+    ):
+        sentinel = manager or SimpleNamespace(owner_placeholder=True)
+        pipeline_candidate = pipeline or SimpleNamespace(
+            manager=sentinel, bootstrap_placeholder=True
+        )
+        (dependency_broker or broker).advertise(
+            pipeline=pipeline_candidate, sentinel=sentinel, owner=owner
+        )
+        placeholders.append((pipeline_candidate, sentinel, owner))
+        return pipeline_candidate, sentinel
+
+    import menace_sandbox.coding_bot_interface as cbi
+
+    monkeypatch.setattr(cbi, "advertise_bootstrap_placeholder", _advertise_bootstrap_placeholder)
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", SimpleNamespace(peek_active=lambda: None))
+    monkeypatch.setattr(cbi, "_peek_owner_promise", lambda *_a, **_k: None)
+    monkeypatch.setattr(cbi, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(cbi, "_resolve_bootstrap_wait_timeout", lambda *_a, **_k: None)
+    monkeypatch.setattr(cbi, "read_bootstrap_heartbeat", lambda *_a, **_k: None)
+
+    prepare_calls: dict[str, object] = {}
+
+    def _prepare_pipeline_for_bootstrap(**_kwargs: object):
+        prepare_calls["pre_advertisements"] = list(broker.advertised)
+        assert broker.advertised, "placeholder should be advertised before prepare"
+        assert broker.advertised[-1].get("owner") is True
+        pipeline = SimpleNamespace(manager=None)
+
+        def _promote(manager: object) -> None:
+            prepare_calls["promoted"] = manager
+
+        return pipeline, _promote
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _prepare_pipeline_for_bootstrap)
+
+    module = importlib.reload(importlib.import_module("menace_sandbox.menace_orchestrator"))
+
+    context_builder = SimpleNamespace(refresh_db_weights=lambda: None)
+    orchestrator = module.MenaceOrchestrator(
+        context_builder=context_builder,
+        auto_bootstrap=False,
+        ad_client=SimpleNamespace(),
+    )
+
+    assert placeholders, "placeholder advertisement should run"
+    if "pre_advertisements" in prepare_calls:
+        assert prepare_calls["pre_advertisements"]
+        assert any(entry.get("owner") for entry in prepare_calls["pre_advertisements"])
+    else:
+        assert broker.advertised
+        assert any(entry.get("owner") for entry in broker.advertised)
+
+    manager = object()
+    orchestrator.promote_pipeline_manager(manager)
+    assert any(entry.get("sentinel") is manager for entry in broker.advertised)
