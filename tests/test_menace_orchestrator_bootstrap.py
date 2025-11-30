@@ -457,6 +457,78 @@ def test_orchestrator_respects_guard_promise(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", _intercept_import)
 
 
+def test_orchestrator_reuses_active_owner_placeholder(monkeypatch):
+    import builtins
+    import relevancy_radar
+    import menace_sandbox.coding_bot_interface as cbi
+
+    monkeypatch.setattr(builtins, "__import__", _intercept_import)
+    setattr(relevancy_radar, "original_import", __import__)
+    setattr(relevancy_radar, "tracked_import", __import__)
+    monkeypatch.setattr(relevancy_radar, "original_import", _intercept_import, raising=False)
+    monkeypatch.setattr(relevancy_radar, "tracked_import", _intercept_import, raising=False)
+
+    try:
+        import menace_sandbox.menace_orchestrator as mo
+    except ImportError as exc:  # pragma: no cover - optional deps missing
+        pytest.skip(f"menace_orchestrator unavailable: {exc}")
+
+    pipeline = object()
+
+    class DummyBroker:
+        def __init__(self) -> None:
+            self.pipeline = None
+            self.sentinel = None
+            self.active_owner = True
+            self.advertised: list[tuple[object | None, object | None, object | None]] = []
+
+        def resolve(self):
+            return self.pipeline, self.sentinel
+
+        def advertise(self, *, pipeline=None, sentinel=None, owner=None):
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            if owner is True:
+                self.active_owner = True
+            elif owner is False:
+                self.active_owner = False
+            self.advertised.append((self.pipeline, self.sentinel, owner))
+
+    broker = DummyBroker()
+
+    class DummyBuilder:
+        def refresh_db_weights(self, **_):
+            return None
+
+    promise = cbi._BootstrapPipelinePromise()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = promise
+
+    def _resolve_later():
+        time.sleep(0.05)
+        promise.resolve((pipeline, lambda *_: None))
+
+    threading.Thread(target=_resolve_later, daemon=True).start()
+
+    monkeypatch.setattr(mo, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(mo, "_current_bootstrap_context", lambda: None)
+    monkeypatch.setattr(mo, "_resolve_bootstrap_wait_timeout", lambda: 0.4)
+
+    def _fail_prepare(**_: object) -> None:
+        raise AssertionError("prepare_pipeline_for_bootstrap should not run when owner active")
+
+    monkeypatch.setattr(mo, "prepare_pipeline_for_bootstrap", _fail_prepare)
+    monkeypatch.setattr(mo, "read_bootstrap_heartbeat", lambda max_age=None: {"active": True})
+
+    orchestrator = mo.MenaceOrchestrator(context_builder=DummyBuilder())
+
+    assert orchestrator.pipeline is pipeline
+    assert any(getattr(entry[0], "bootstrap_placeholder", False) for entry in broker.advertised)
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = None
+    monkeypatch.setattr(builtins, "__import__", _intercept_import)
+
+
 def test_orchestrator_fails_when_signals_without_placeholder(monkeypatch):
     import builtins
     import relevancy_radar
