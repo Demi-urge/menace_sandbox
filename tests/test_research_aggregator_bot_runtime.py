@@ -871,6 +871,73 @@ def test_active_heartbeat_uses_broker_pipeline(monkeypatch):
     module.prepare_pipeline_for_bootstrap.assert_not_called()
 
 
+def test_delayed_broker_advertisement_is_reused(monkeypatch):
+    """Modules wait for broker advertisement instead of rebuilding during bootstrap."""
+
+    broker_manager = mock.Mock(name="broker_manager")
+    broker_pipeline = mock.Mock(name="broker_pipeline")
+    broker_promote = mock.Mock(name="broker_promote")
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        registry_instance = mock.Mock(name="registry")
+        data_bot_instance = mock.Mock(name="data_bot")
+        mock_registry.return_value = registry_instance
+        mock_data_bot.return_value = data_bot_instance
+        module = _import_fresh()
+
+    resolve_calls = {"count": 0}
+
+    def _delayed_resolve():
+        resolve_calls["count"] += 1
+        if resolve_calls["count"] < 3:
+            return None, None
+        return broker_pipeline, broker_manager
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(
+        helper_promotion_callbacks=[broker_promote], depth=1, active_bootstrap_guard=None
+    )
+    module._bootstrap_dependency_broker = lambda: SimpleNamespace(resolve=_delayed_resolve)
+    module._current_bootstrap_context = lambda: None
+    module._peek_owner_promise = lambda *_a, **_k: None
+    module.get_active_bootstrap_pipeline = lambda: (None, None)
+    module._looks_like_pipeline_candidate = lambda value: bool(value)
+    module._using_bootstrap_sentinel = lambda *_a, **_k: False
+    module.read_bootstrap_heartbeat = lambda: {"ts": time.time()}
+    module._resolve_bootstrap_wait_timeout = lambda *_a, **_k: 0.2
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_orchestrator = mock.Mock(name="orchestrator")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_orchestrator", mock.Mock(return_value=fake_orchestrator))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=broker_manager))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies()
+
+    assert state.pipeline is broker_pipeline
+    assert resolve_calls["count"] >= 3
+    broker_promote.assert_called_once_with(broker_manager)
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
 def test_active_heartbeat_returns_placeholder(monkeypatch):
     """Heartbeat activity returns a placeholder instead of building a pipeline."""
 

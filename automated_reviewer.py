@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import threading
+import time
 import uuid
 from typing import Optional
 
@@ -12,10 +13,12 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
+    _GLOBAL_BOOTSTRAP_COORDINATOR,
     _bootstrap_dependency_broker,
     _current_bootstrap_context,
     get_active_bootstrap_pipeline,
     normalise_manager_arg,
+    _resolve_bootstrap_wait_timeout,
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
@@ -95,6 +98,9 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
         bootstrap_pipeline: ModelAutomationPipeline | None = None
         bootstrap_manager: SelfCodingManager | None = None
         promoter: Callable[[SelfCodingManager], None] | None = None
+        bootstrap_wait_timeout = _resolve_bootstrap_wait_timeout()
+        if bootstrap_wait_timeout is None:
+            bootstrap_wait_timeout = 5.0
 
         try:
             bootstrap_pipeline, bootstrap_manager = dependency_broker.resolve()
@@ -144,12 +150,67 @@ def _ensure_self_coding_manager() -> SelfCodingManager:
         except Exception:
             bootstrap_heartbeat = False
 
-        bootstrap_inflight = bool(
-            bootstrap_heartbeat
-            or getattr(_BOOTSTRAP_STATE, "depth", 0)
-            or _current_bootstrap_context()
-        )
+        def _bootstrap_signals_active() -> bool:
+            return bool(
+                bootstrap_heartbeat
+                or getattr(_BOOTSTRAP_STATE, "depth", 0)
+                or _current_bootstrap_context()
+            )
 
+        wait_start = time.perf_counter()
+        backoff = 0.01
+        while (
+            _pipeline is None
+            and _bootstrap_signals_active()
+            and (_manager_instance is None or bool(_pipeline or _manager_instance))
+        ):
+            try:
+                bootstrap_pipeline, bootstrap_manager = dependency_broker.resolve()
+            except Exception:
+                bootstrap_pipeline, bootstrap_manager = None, None
+
+            if _pipeline is None and bootstrap_pipeline is not None:
+                _pipeline = bootstrap_pipeline
+            if _pipeline_promoter is None and promoter is not None:
+                _pipeline_promoter = promoter
+            if _manager_instance is None and bootstrap_manager is not None:
+                _manager_instance = bootstrap_manager
+
+            try:
+                active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
+            except Exception:
+                active_promise = None
+            if (
+                _pipeline is None
+                and active_promise is not None
+                and getattr(active_promise, "done", False)
+            ):
+                promised_pipeline, promised_promoter = active_promise.wait()
+                _pipeline = promised_pipeline
+                if _pipeline_promoter is None:
+                    _pipeline_promoter = promised_promoter
+                if _manager_instance is None:
+                    _manager_instance = getattr(promised_pipeline, "manager", None)
+
+            if _pipeline is not None:
+                break
+
+            if bootstrap_wait_timeout is not None and (
+                time.perf_counter() - wait_start
+            ) >= bootstrap_wait_timeout:
+                raise TimeoutError(
+                    "AutomatedReviewer bootstrap dependency broker failed to advertise a pipeline "
+                    f"within {bootstrap_wait_timeout}s"
+                )
+
+            try:
+                bootstrap_heartbeat = bool(read_bootstrap_heartbeat())
+            except Exception:
+                bootstrap_heartbeat = bootstrap_heartbeat
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 0.25)
+
+        bootstrap_inflight = _bootstrap_signals_active()
         skip_prepare = bootstrap_inflight and bool(_pipeline or _manager_instance)
         advertise_owner = not skip_prepare
 
