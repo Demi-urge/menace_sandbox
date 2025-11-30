@@ -5555,6 +5555,9 @@ def _prepare_pipeline_for_bootstrap_impl(
 
     dependency_broker = _bootstrap_dependency_broker()
     broker_pipeline, broker_sentinel = dependency_broker.resolve()
+    dependency_placeholder_seeded = False
+    dependency_placeholder_pipeline: Any | None = None
+    dependency_placeholder_sentinel: Any | None = None
     recursion_guard_threshold = 3
     guard_env = os.getenv("MENACE_BOOTSTRAP_GUARD_OPTOUT")
     guard_enabled = bootstrap_guard and str(guard_env or "").lower() not in (
@@ -5567,6 +5570,15 @@ def _prepare_pipeline_for_bootstrap_impl(
     if not getattr(dependency_broker, "active_owner", False):
         dependency_broker.advertise(owner=True)
         dependency_owner_reset = True
+        if broker_pipeline is None and broker_sentinel is None:
+            (
+                dependency_placeholder_pipeline,
+                dependency_placeholder_sentinel,
+            ) = advertise_bootstrap_placeholder(
+                dependency_broker=dependency_broker, owner=True
+            )
+            broker_pipeline, broker_sentinel = dependency_placeholder_pipeline, dependency_placeholder_sentinel
+            dependency_placeholder_seeded = True
     active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
     active_heartbeat = read_bootstrap_heartbeat()
     heartbeat_bootstrap_active = bool(active_heartbeat)
@@ -5839,6 +5851,7 @@ def _prepare_pipeline_for_bootstrap_impl(
             },
         )
 
+    result_pipeline: Any | None = None
     try:
         result = _prepare_pipeline_for_bootstrap_impl_inner(
             pipeline_cls=pipeline_cls,
@@ -5869,15 +5882,33 @@ def _prepare_pipeline_for_bootstrap_impl(
             deferred_readiness_gates=deferred_readiness_gates,
             **pipeline_kwargs,
         )
+        if isinstance(result, tuple) and result:
+            result_pipeline = result[0]
     except Exception as exc:
         if single_flight_owner and single_flight_promise is not None:
             _GLOBAL_BOOTSTRAP_COORDINATOR.settle(single_flight_promise, error=exc)
         raise
     else:
+        if dependency_placeholder_seeded:
+            try:
+                resolved_sentinel = getattr(result_pipeline, "manager", None)
+            except Exception:  # pragma: no cover - best effort promotion
+                resolved_sentinel = None
+            dependency_broker.advertise(
+                pipeline=result_pipeline,
+                sentinel=resolved_sentinel,
+                owner=True,
+            )
+            dependency_placeholder_seeded = False
         if single_flight_owner and single_flight_promise is not None:
             _GLOBAL_BOOTSTRAP_COORDINATOR.settle(single_flight_promise, result=result)
         return result
     finally:
+        if dependency_placeholder_seeded:
+            try:
+                dependency_broker.clear()
+            except Exception:  # pragma: no cover - defensive clear
+                logger.debug("failed to clear dependency broker placeholder", exc_info=True)
         if dependency_owner_reset:
             dependency_broker.advertise(owner=False)
 
