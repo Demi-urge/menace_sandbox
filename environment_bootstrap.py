@@ -1955,7 +1955,7 @@ class EnvironmentBootstrapper:
             try:
                 from .vector_metrics_db import VectorMetricsDB
 
-                vdb = VectorMetricsDB("vector_metrics.db")
+                vdb = VectorMetricsDB("vector_metrics.db", warmup=True)
                 if not vdb.get_db_weights():
                     vdb.set_db_weights({n: 1.0 for n in names})
                 vdb.conn.close()
