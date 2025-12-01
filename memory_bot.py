@@ -6,7 +6,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
-from .bootstrap_helpers import ensure_environment_bootstrapped
+from .bootstrap_helpers import ensure_bootstrapped
 import gzip
 import json
 from dataclasses import dataclass
@@ -95,7 +95,9 @@ class VectorMemoryStorage(MemoryStorage):
         mongo_url: str | None = None,
         embedder: SentenceTransformer | None = None,
     ) -> None:
-        ensure_environment_bootstrapped()
+        # Guard against recursive bootstrap from memory storage initializers;
+        # rely on the shared readiness snapshot instead.
+        ensure_bootstrapped()
         super().__init__(path, mongo_url)
         if embedder is not None:
             self.embedder = embedder
