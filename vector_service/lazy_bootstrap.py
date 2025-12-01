@@ -28,6 +28,7 @@ _MODEL_LOCK = threading.Lock()
 _MODEL_READY = False
 _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
+_WARMUP_STAGE_MEMO: dict[str, str] = {}
 
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
     _metrics,
@@ -235,13 +236,24 @@ def warmup_vector_service(
 
     summary: dict[str, str] = {"bootstrap": summary_flag}
     deferred = set(deferred_stages or ()) | deferred_bootstrap
+    memoised_results = dict(_WARMUP_STAGE_MEMO)
 
     def _record(stage: str, status: str) -> None:
         summary[stage] = status
+        _WARMUP_STAGE_MEMO[stage] = status
         try:
             VECTOR_WARMUP_STAGE_TOTAL.labels(stage, status).inc()
         except Exception:  # pragma: no cover - metrics best effort
             log.debug("failed emitting vector warmup metric", exc_info=True)
+
+    def _reuse(stage: str) -> bool:
+        status = memoised_results.get(stage)
+        if status is None:
+            return False
+        if force_heavy and status.startswith("deferred"):
+            return False
+        summary[stage] = status
+        return True
 
     budget_exhausted = False
 
@@ -417,6 +429,44 @@ def warmup_vector_service(
 
     resolved_timeouts = _apply_budget_caps(resolved_timeouts, provided_budget)
 
+    def _stage_budget_cap() -> float | None:
+        if isinstance(stage_timeouts, Mapping):
+            return _coerce_timeout(stage_timeouts.get("budget"))
+        return _coerce_timeout(stage_timeouts)
+
+    stage_budget_cap = _stage_budget_cap()
+    base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
+    heavy_budget_needed = 0.0
+    if download_model:
+        heavy_budget_needed += base_stage_cost["model"]
+    if hydrate_handlers:
+        heavy_budget_needed += base_stage_cost["handlers"]
+    if run_vectorise:
+        heavy_budget_needed += base_stage_cost["vectorise"]
+
+    if stage_budget_cap is not None and heavy_budget_needed > stage_budget_cap and not force_heavy:
+        deferred.update(
+            {
+                stage
+                for stage, enabled in (
+                    ("model", download_model),
+                    ("handlers", hydrate_handlers),
+                    ("vectorise", run_vectorise),
+                )
+                if enabled
+            }
+        )
+        warmup_lite = True
+        probe_model = True
+        download_model = False
+        hydrate_handlers = False
+        run_vectorise = False
+        log.info(
+            "Vector warmup budget capped at %.2fs; deferring heavy stages requiring %.2fs",
+            stage_budget_cap,
+            heavy_budget_needed,
+        )
+
     def _effective_timeout(stage: str) -> float | None:
         remaining = _remaining_budget()
         stage_timeout = resolved_timeouts.get(stage)
@@ -432,7 +482,9 @@ def warmup_vector_service(
     if not _guard("init"):
         log.info("Vector warmup aborted before start: insufficient bootstrap budget")
         return
-    if not _guard("model"):
+    if _reuse("model"):
+        pass
+    elif not _guard("model"):
         if _should_abort("model"):
             return
     else:
@@ -480,7 +532,9 @@ def warmup_vector_service(
             _record("model", status)
 
     svc = None
-    if not _guard("handlers"):
+    if _reuse("handlers"):
+        pass
+    elif not _guard("handlers"):
         if _should_abort("handlers"):
             return
     else:
@@ -523,7 +577,9 @@ def warmup_vector_service(
                 log.info("Vector handler hydration skipped")
             _record("handlers", status)
 
-    if _guard("scheduler"):
+    if _reuse("scheduler"):
+        pass
+    elif _guard("scheduler"):
         if start_scheduler:
             ensure_scheduler_started(logger=log)
             _record("scheduler", "started")
@@ -533,7 +589,9 @@ def warmup_vector_service(
             _record("scheduler", status)
 
     should_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
-    if _guard("vectorise"):
+    if _reuse("vectorise"):
+        pass
+    elif _guard("vectorise"):
         vectorise_timeout = _effective_timeout("vectorise")
         if should_vectorise and svc is not None:
             if vectorise_timeout is not None and vectorise_timeout <= 0:
