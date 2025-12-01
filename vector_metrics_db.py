@@ -204,8 +204,10 @@ class VectorMetricsDB:
     environment flags).  In this mode the database connection is replaced with
     a stub that never resolves the on-disk path or initialises the router
     until callers explicitly opt-in by invoking :meth:`activate_persistence`.
-    This keeps bootstrap flows lightweight while still allowing metrics calls
-    to be wired up.  Once bootstrap completes and real metrics need to be
+    The warmup stub is also auto-enabled whenever bootstrap environment flags
+    (``MENACE_BOOTSTRAP*``, ``VECTOR_WARMUP``, etc.) are present so that
+    bootstrap-time callers get a no-op connection without touching the
+    filesystem.  Once bootstrap completes and real metrics need to be
     recorded, callers should call :meth:`activate_persistence` to transition
     into the normal SQLite-backed flow.
     """
@@ -237,14 +239,13 @@ class VectorMetricsDB:
             "VECTOR_METRICS_WARMUP", False
         )
         warmup = bool(warmup or vector_warmup_env or bootstrap_env)
-        self.bootstrap_fast = bool(
-            bootstrap_fast
-            or vector_bootstrap_env
+        env_bootstrap = bool(
+            vector_bootstrap_env
             or patch_bootstrap_env
             or vector_warmup_env
-            or warmup
             or bootstrap_env
         )
+        self.bootstrap_fast = bool(bootstrap_fast or warmup or env_bootstrap)
         self._warmup_mode = bool(warmup or vector_warmup_env or bootstrap_env)
         self._lazy_mode = True
         self._boot_stub_active = bool(self.bootstrap_fast or self._warmup_mode)
