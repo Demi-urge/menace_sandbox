@@ -205,22 +205,67 @@ def warmup_vector_service(
             log.warning("Vector warmup deadline reached before %s: %s", stage, exc)
             return False
 
+    def _record_timeout(stage: str) -> None:
+        try:
+            VECTOR_WARMUP_STAGE_TOTAL.labels(stage, "timeout").inc()
+        except Exception:  # pragma: no cover - metrics best effort
+            log.debug("failed emitting vector warmup timeout metric", exc_info=True)
+
+    def _run_with_budget(stage: str, func: Callable[[], Any]) -> tuple[bool, Any | None]:
+        nonlocal budget_exhausted
+        if check_budget is None:
+            return True, func()
+
+        result: list[Any | None] = []
+        error: list[BaseException] = []
+        done = threading.Event()
+
+        def _runner() -> None:
+            try:
+                result.append(func())
+            except BaseException as exc:  # pragma: no cover - propagated to caller
+                error.append(exc)
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+
+        while not done.wait(timeout=0.05):
+            try:
+                check_budget()
+            except TimeoutError as exc:
+                budget_exhausted = True
+                _record_timeout(stage)
+                _record(stage, "skipped-budget")
+                log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
+                return False, None
+
+        if error:
+            raise error[0]
+
+        return True, result[0] if result else None
+
     _guard("init")
     if _guard("model"):
         if download_model:
-            path = ensure_embedding_model(logger=log, warmup=True)
-            if path:
-                _record("model", f"ready:{path}" if path.exists() else "ready")
-            else:
-                _record("model", "missing")
+            completed, path = _run_with_budget(
+                "model", lambda: ensure_embedding_model(logger=log, warmup=True)
+            )
+            if completed:
+                if path:
+                    _record("model", f"ready:{path}" if path.exists() else "ready")
+                else:
+                    _record("model", "missing")
         elif probe_model:
-            dest = _model_bundle_path()
-            if dest.exists():
-                log.info("embedding model already present at %s (probe only)", dest)
-                _record("model", "present")
-            else:
-                log.info("embedding model probe: archive missing; will fetch on demand")
-                _record("model", "absent-probe")
+            completed, dest = _run_with_budget("model", _model_bundle_path)
+            if completed and dest:
+                if dest.exists():
+                    log.info("embedding model already present at %s (probe only)", dest)
+                    _record("model", "present")
+                else:
+                    log.info("embedding model probe: archive missing; will fetch on demand")
+                    _record("model", "absent-probe")
         else:
             log.info("Skipping embedding model download (disabled)")
             _record("model", "skipped")
@@ -231,11 +276,15 @@ def warmup_vector_service(
             try:
                 from .vectorizer import SharedVectorService
 
-                svc = SharedVectorService(
-                    bootstrap_fast=bootstrap_fast,
-                    warmup_lite=warmup_lite,
+                completed, svc = _run_with_budget(
+                    "handlers",
+                    lambda: SharedVectorService(
+                        bootstrap_fast=bootstrap_fast,
+                        warmup_lite=warmup_lite,
+                    ),
                 )
-                _record("handlers", "hydrated")
+                if completed:
+                    _record("handlers", "hydrated")
             except Exception as exc:  # pragma: no cover - best effort logging
                 log.warning("SharedVectorService warmup failed: %s", exc)
                 _record("handlers", "failed")
@@ -255,8 +304,11 @@ def warmup_vector_service(
     if _guard("vectorise"):
         if should_vectorise and svc is not None:
             try:
-                svc.vectorise("text", {"text": "warmup"})
-                _record("vectorise", "ok")
+                completed, _ = _run_with_budget(
+                    "vectorise", lambda: svc.vectorise("text", {"text": "warmup"})
+                )
+                if completed:
+                    _record("vectorise", "ok")
             except Exception:  # pragma: no cover - allow partial warmup
                 log.debug("vector warmup transform failed; continuing", exc_info=True)
                 _record("vectorise", "failed")
