@@ -1,5 +1,4 @@
 """Helpers for persisting bootstrap timing metrics and calibrating budgets."""
-
 from __future__ import annotations
 
 import json
@@ -14,6 +13,16 @@ from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
 import metrics_exporter as _metrics
+
+
+def _normalize_label(label: object | None) -> str:
+    if label is None:
+        return "unknown"
+    try:
+        normalized = str(label)
+    except Exception:
+        return "unknown"
+    return normalized or "unknown"
 
 BOOTSTRAP_ATTEMPTS_TOTAL = getattr(
     _metrics,
@@ -79,7 +88,7 @@ BOOTSTRAP_ENTRY_TOTAL = getattr(
     _metrics.Gauge(
         "bootstrap_entry_total",
         "Bootstrap entrypoint invocations by status",
-        ["status"],
+        ["status", "module", "step"],
     ),
 )
 _metrics.bootstrap_entry_total = BOOTSTRAP_ENTRY_TOTAL
@@ -101,10 +110,54 @@ BOOTSTRAP_SKIP_TOTAL = getattr(
     _metrics.Gauge(
         "bootstrap_skip_total",
         "Bootstrap invocations skipped before executing",
-        ["reason"],
+        ["reason", "module", "step"],
     ),
 )
 _metrics.bootstrap_skip_total = BOOTSTRAP_SKIP_TOTAL
+
+BOOTSTRAP_GUARD_TOTAL = getattr(
+    _metrics,
+    "bootstrap_guard_total",
+    _metrics.Gauge(
+        "bootstrap_guard_total",
+        "Bootstrap guard interceptions by reason",
+        ["reason", "module", "step"],
+    ),
+)
+_metrics.bootstrap_guard_total = BOOTSTRAP_GUARD_TOTAL
+
+BOOTSTRAP_LIFECYCLE_TOTAL = getattr(
+    _metrics,
+    "bootstrap_lifecycle_total",
+    _metrics.Gauge(
+        "bootstrap_lifecycle_total",
+        "Bootstrap lifecycle transitions by event",
+        ["event", "module", "step"],
+    ),
+)
+_metrics.bootstrap_lifecycle_total = BOOTSTRAP_LIFECYCLE_TOTAL
+
+BOOTSTRAP_RECURSION_TOTAL = getattr(
+    _metrics,
+    "bootstrap_recursion_total",
+    _metrics.Gauge(
+        "bootstrap_recursion_total",
+        "Recursive bootstrap attempts detected",
+        ["module", "step"],
+    ),
+)
+_metrics.bootstrap_recursion_total = BOOTSTRAP_RECURSION_TOTAL
+
+BOOTSTRAP_DENSITY_TOTAL = getattr(
+    _metrics,
+    "bootstrap_attempt_density_total",
+    _metrics.Gauge(
+        "bootstrap_attempt_density_total",
+        "Bootstrap attempts observed within the active density window",
+        ["module", "step"],
+    ),
+)
+_metrics.bootstrap_attempt_density_total = BOOTSTRAP_DENSITY_TOTAL
 
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT_COUNT = 0
@@ -196,21 +249,38 @@ def bootstrap_attempt(*, logger: logging.Logger | None = None) -> BootstrapAttem
 
 
 def record_bootstrap_entry(
-    status: str, *, logger: logging.Logger | None = None, **context: object
+    status: str,
+    *,
+    module: str | None = None,
+    step: str | None = None,
+    logger: logging.Logger | None = None,
+    **context: object,
 ) -> None:
     """Record a bootstrap entrypoint attempt with the provided status."""
 
     label = status.replace(" ", "-")
-    BOOTSTRAP_ENTRY_TOTAL.labels(status=label).inc()
+    BOOTSTRAP_ENTRY_TOTAL.labels(
+        status=label, module=_normalize_label(module), step=_normalize_label(step)
+    ).inc()
     if logger:
-        extra = {"event": "bootstrap-entry", "status": status}
+        extra = {
+            "event": "bootstrap-entry",
+            "status": status,
+            "module": module,
+            "step": step,
+        }
         if context:
             extra.update({f"context.{k}": v for k, v in context.items()})
         logger.info("bootstrap entry recorded", extra=extra)
 
 
 def record_bootstrap_skip(
-    reason: str, *, logger: logging.Logger | None = None, **context: object
+    reason: str,
+    *,
+    module: str | None = None,
+    step: str | None = None,
+    logger: logging.Logger | None = None,
+    **context: object,
 ) -> None:
     """Record that a bootstrap invocation was skipped.
 
@@ -226,12 +296,121 @@ def record_bootstrap_skip(
     """
 
     label = reason.replace(" ", "-")
-    BOOTSTRAP_SKIP_TOTAL.labels(reason=label).inc()
+    BOOTSTRAP_SKIP_TOTAL.labels(
+        reason=label, module=_normalize_label(module), step=_normalize_label(step)
+    ).inc()
     if logger:
-        extra = {"event": "bootstrap-skip", "reason": reason}
+        extra = {
+            "event": "bootstrap-skip",
+            "reason": reason,
+            "module": module,
+            "step": step,
+        }
         if context:
             extra.update({f"context.{k}": v for k, v in context.items()})
         logger.info("bootstrap invocation skipped", extra=extra)
+
+
+def record_bootstrap_guard(
+    reason: str,
+    *,
+    module: str | None = None,
+    step: str | None = None,
+    logger: logging.Logger | None = None,
+    **context: object,
+) -> None:
+    """Record a guard interception (skip/queued) with structured metadata."""
+
+    label = reason.replace(" ", "-")
+    BOOTSTRAP_GUARD_TOTAL.labels(
+        reason=label, module=_normalize_label(module), step=_normalize_label(step)
+    ).inc()
+    if logger:
+        extra = {
+            "event": "bootstrap-guard",
+            "reason": reason,
+            "module": module,
+            "step": step,
+        }
+        if context:
+            extra.update({f"context.{k}": v for k, v in context.items()})
+        logger.info("bootstrap guard interception", extra=extra)
+
+
+def record_bootstrap_lifecycle(
+    event: str,
+    *,
+    module: str | None = None,
+    step: str | None = None,
+    logger: logging.Logger | None = None,
+    **context: object,
+) -> None:
+    """Record structured lifecycle transitions for bootstrap helpers."""
+
+    label = event.replace(" ", "-")
+    BOOTSTRAP_LIFECYCLE_TOTAL.labels(
+        event=label, module=_normalize_label(module), step=_normalize_label(step)
+    ).inc()
+    if logger:
+        extra = {
+            "event": "bootstrap-lifecycle",
+            "lifecycle": event,
+            "module": module,
+            "step": step,
+        }
+        if context:
+            extra.update({f"context.{k}": v for k, v in context.items()})
+        logger.info("bootstrap lifecycle event", extra=extra)
+
+
+def record_bootstrap_recursion(
+    *,
+    module: str | None = None,
+    step: str | None = None,
+    logger: logging.Logger | None = None,
+    **context: object,
+) -> None:
+    """Record a recursive bootstrap invocation that was intercepted."""
+
+    BOOTSTRAP_RECURSION_TOTAL.labels(
+        module=_normalize_label(module), step=_normalize_label(step)
+    ).inc()
+    if logger:
+        extra = {
+            "event": "bootstrap-recursion",
+            "module": module,
+            "step": step,
+        }
+        if context:
+            extra.update({f"context.{k}": v for k, v in context.items()})
+        logger.error("recursive bootstrap attempt detected", extra=extra)
+
+
+def record_attempt_density(
+    *,
+    module: str | None = None,
+    step: str | None = None,
+    attempts_in_window: int,
+    window_seconds: float,
+    logger: logging.Logger | None = None,
+    **context: object,
+) -> None:
+    """Record the number of attempts observed within the recent window."""
+
+    BOOTSTRAP_DENSITY_TOTAL.labels(
+        module=_normalize_label(module), step=_normalize_label(step)
+    ).set(float(attempts_in_window))
+    if logger:
+        extra = {
+            "event": "bootstrap-density",
+            "module": module,
+            "step": step,
+            "attempts_in_window": attempts_in_window,
+            "window_seconds": window_seconds,
+        }
+        if context:
+            extra.update({f"context.{k}": v for k, v in context.items()})
+        logger.warning("bootstrap attempt density updated", extra=extra)
 
 BOOTSTRAP_DURATION_STORE = Path(__file__).resolve().parent / "sandbox_data" / "bootstrap_durations.json"
 DURATION_HISTORY_LIMIT = int(os.getenv("BOOTSTRAP_DURATION_HISTORY_LIMIT", "40"))
