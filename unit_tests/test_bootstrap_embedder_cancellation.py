@@ -58,6 +58,9 @@ def test_embedder_thread_cancelled_when_budget_missing():
     assert calls.get("worker_unblocked") is not None
     assert calls.get("worker_unblocked") - start < 0.5
     assert calls.get("stop_event_state") is True
+    job = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert job.get("thread") is None
+    assert job.get("result") == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
 
 
 def test_embedder_cancellation_signals_budget_and_fallback():
@@ -124,5 +127,8 @@ def test_embedder_cancellation_signals_budget_and_fallback():
     assert calls.get("component_state") == ("vector_seeding", "blocked")
     assert calls.get("budget_progress", (None, None, None, {}))[0] == "vector_seeding"
     assert calls.get("budget_progress", (None, None, None, {}))[2] == 0.0
+    job = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert job.get("thread") is None
+    assert job.get("result") == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
     assert elapsed < 0.5
 

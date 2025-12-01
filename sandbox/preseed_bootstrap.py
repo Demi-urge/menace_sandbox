@@ -1620,6 +1620,26 @@ def _bootstrap_embedder(
         LOGGER.debug("signalling embedder stop (%s)", reason)
         embedder_stop_event.set()
 
+    def _finalize_embedder_job(
+        embedder_obj: Any,
+        *,
+        placeholder_reason: str | None = None,
+        aborted: bool = False,
+    ) -> None:
+        global _BOOTSTRAP_EMBEDDER_JOB, _BOOTSTRAP_EMBEDDER_STARTED
+
+        job = _BOOTSTRAP_EMBEDDER_JOB or {}
+        job["result"] = embedder_obj
+        job["placeholder"] = job.get("placeholder", placeholder)
+        if placeholder_reason:
+            job["placeholder_reason"] = placeholder_reason
+        if aborted:
+            job["aborted"] = True
+        job.pop("thread", None)
+        job.pop("stop_event", None)
+        _BOOTSTRAP_EMBEDDER_JOB = job
+        _BOOTSTRAP_EMBEDDER_STARTED = False
+
     def _record_abort(reason: str) -> None:
         nonlocal placeholder
         result["aborted"] = True
@@ -1660,9 +1680,21 @@ def _bootstrap_embedder(
             reason=reason,
             join_timeout=0.25,
         )
+        joined = False
+        still_running = False
+        if thread is not None:
+            try:
+                thread.join(0.1)
+                joined = True
+                still_running = thread.is_alive()
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("embedder warmup thread join failed", exc_info=True)
+        abort_metadata["thread_joined"] = joined
+        abort_metadata["thread_alive"] = still_running
         LOGGER.warning(
             "background embedder warmup aborted", extra=abort_metadata
         )
+        _finalize_embedder_job(placeholder, placeholder_reason=reason, aborted=True)
 
     def _worker() -> None:
         try:
@@ -1682,8 +1714,14 @@ def _bootstrap_embedder(
             )
             if not placeholder_reason and result.get("aborted"):
                 placeholder_reason = "aborted"
+            if result.get("error") and not placeholder_reason:
+                placeholder_reason = "error"
             if embedder is None and placeholder_reason:
                 embedder = placeholder
+                result["embedder"] = embedder
+            elif embedder is None:
+                embedder = placeholder
+                placeholder_reason = placeholder_reason or "missing"
                 result["embedder"] = embedder
 
             if embedder and not placeholder_reason:
@@ -1735,7 +1773,11 @@ def _bootstrap_embedder(
                     "background_loops", reason="embedder_warmup_empty"
                 )
             _signal_stop("completed")
-            _BOOTSTRAP_EMBEDDER_STARTED = False
+            _finalize_embedder_job(
+                embedder,
+                placeholder_reason=placeholder_reason,
+                aborted=result.get("aborted", False),
+            )
 
     thread = threading.Thread(target=_worker, name="bootstrap-embedder", daemon=True)
     thread.start()
