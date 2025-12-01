@@ -373,7 +373,11 @@ class VectorMetricsDB:
 
     def ready_probe(self) -> str:
         """Return the resolved database path without any I/O."""
-
+        if self._resolved_path is None or self._default_path is None:
+            self._resolved_path, self._default_path = self._resolve_requested_path(
+                self._configured_path,
+                ensure_exists=False,
+            )
         return str(self._resolved_path)
 
     def _resolve_requested_path(

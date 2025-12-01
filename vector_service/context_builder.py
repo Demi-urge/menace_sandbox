@@ -565,6 +565,17 @@ class ContextBuilder:
         # Respect the centralized bootstrap readiness snapshot rather than
         # triggering bootstrap from context builder construction.
         self._bootstrap_state = ensure_bootstrapped()
+        self._bootstrap_fast = bool(
+            _VECTOR_SERVICE_WARMUP
+            or _env_flag("MENACE_BOOTSTRAP_FAST", False)
+            or _env_flag("MENACE_BOOTSTRAP_MODE", False)
+            or _env_flag("MENACE_BOOTSTRAP", False)
+            or bool(
+                getattr(self._bootstrap_state, "get", lambda *_a, **_k: False)(
+                    "bootstrap_fast", False
+                )
+            )
+        )
         self._vector_metrics: "VectorMetricsDB | None" = None
         if _VEC_METRICS is not None:
             self._vector_metrics = _VEC_METRICS
@@ -633,7 +644,7 @@ class ContextBuilder:
         self.db_weights = db_weights or {}
         if not self.db_weights:
             try:
-                self.refresh_db_weights()
+                self.refresh_db_weights(bootstrap_fast=self._bootstrap_fast)
             except Exception:
                 logger.exception("refresh_db_weights failed")
         self.max_tokens = max_tokens
@@ -882,6 +893,11 @@ class ContextBuilder:
             bootstrap_flag = bool(bootstrap_fast or _VECTOR_SERVICE_WARMUP)
             warmup_flag = bool(warmup or _VECTOR_SERVICE_WARMUP)
             vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
+            if warmup_flag:
+                try:
+                    vm.ready_probe()
+                except Exception:  # pragma: no cover - best effort probe
+                    logger.debug("vector metrics warmup probe failed", exc_info=True)
             self._vector_metrics = vm
             ContextBuilder._shared_vector_metrics = vm
             globals()["_VEC_METRICS"] = vm
@@ -901,6 +917,7 @@ class ContextBuilder:
         vector_metrics: "VectorMetricsDB" | None = None,
         bootstrap: bool | None = None,
         bootstrap_fast: bool | None = None,
+        warmup: bool | None = None,
     ) -> None:
         """Refresh ranking weights for origin databases.
 
@@ -913,21 +930,24 @@ class ContextBuilder:
         vector_metrics:
             Database from which weights are loaded when ``weights`` is ``None``.
             The argument defaults to the module-level instance when available.
+        warmup:
+            When ``True`` the helper short-circuits to cached/default weights
+            and avoids touching :class:`VectorMetricsDB` during warmup/bootstraps.
         """
-        fast_bootstrap = bool(bootstrap_fast or bootstrap)
+        fast_bootstrap = bool(bootstrap_fast or bootstrap or warmup or _VECTOR_SERVICE_WARMUP)
         if weights is None:
             if vector_metrics is not None:
                 self._vector_metrics = vector_metrics
                 ContextBuilder._shared_vector_metrics = vector_metrics
                 globals()["_VEC_METRICS"] = vector_metrics
+            if fast_bootstrap:
+                return dict(self.db_weights)
             vm = vector_metrics or self._get_vector_metrics(
                 bootstrap_fast=bootstrap_fast,
-                warmup=bootstrap,
+                warmup=warmup,
             )
             if vm is None:
                 return
-            if fast_bootstrap:
-                return dict(self.db_weights)
             try:
                 weights = vm.get_db_weights(bootstrap=fast_bootstrap)
             except Exception:
