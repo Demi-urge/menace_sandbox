@@ -1352,6 +1352,12 @@ def _initialise_embedder_with_timeout(
         _EMBEDDER_INIT_EVENT.set()
         return None
 
+    if _embedder_stop_requested(stop_event):
+        _cancel_embedder_initialisation(stop_event, reason="stop_requested")
+        placeholder = _build_stub_embedder()
+        setattr(placeholder, "_placeholder_reason", "stop_requested")
+        return placeholder
+
     if _EMBEDDER_TIMEOUT_REACHED and not event.is_set():
         thread = _EMBEDDER_INIT_THREAD
         alive = thread.is_alive() if thread is not None else False
@@ -1487,6 +1493,9 @@ def _initialise_embedder_with_timeout(
                     finished = True
                     break
                 elapsed = time.perf_counter() - start_slice
+                if _embedder_stop_requested(stop_event):
+                    finished = False
+                    break
                 remaining = max(0.0, deadline - time.perf_counter())
                 waited = wait_time - max(0.0, remaining)
                 remaining_wait = max(0.0, remaining)

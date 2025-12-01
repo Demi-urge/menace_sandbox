@@ -1643,6 +1643,7 @@ def _bootstrap_embedder(
                 placeholder = _BOOTSTRAP_EMBEDDER_JOB.get("placeholder", placeholder)
         except Exception:  # pragma: no cover - advisory only
             LOGGER.debug("failed to promote fallback embedder", exc_info=True)
+        result.setdefault("embedder", placeholder)
         cancel_embedder_initialisation(
             embedder_stop_event,
             reason=reason,
@@ -1664,7 +1665,12 @@ def _bootstrap_embedder(
             result["error"] = exc
         finally:
             elapsed = perf_counter() - start_time
-            if result.get("embedder"):
+            embedder = result.get("embedder")
+            placeholder_reason = getattr(embedder, "_placeholder_reason", None)
+            if not placeholder_reason and result.get("aborted"):
+                placeholder_reason = "aborted"
+
+            if embedder and not placeholder_reason:
                 LOGGER.info(
                     "background embedder warmup completed",
                     extra={
@@ -1675,6 +1681,19 @@ def _bootstrap_embedder(
                 )
                 _BOOTSTRAP_SCHEDULER.mark_ready(
                     "background_loops", reason="embedder_warmup_complete"
+                )
+            elif placeholder_reason:
+                LOGGER.info(
+                    "background embedder warmup completed with placeholder",
+                    extra={
+                        "elapsed": round(elapsed, 3),
+                        "stage_budget": stage_budget,
+                        "max_wait": _MAX_EMBEDDER_WAIT,
+                        "placeholder_reason": placeholder_reason,
+                    },
+                )
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "background_loops", reason=f"embedder_placeholder:{placeholder_reason}"
                 )
             elif result.get("aborted"):
                 _BOOTSTRAP_SCHEDULER.mark_partial(
