@@ -5796,6 +5796,67 @@ def prepare_pipeline_for_bootstrap(
         normalized_caller_module=caller_module_normalized,
     )
 
+    placeholder_needs_owner = broker_placeholder_without_owner and (
+        caller_matches_priority or active_depth > 0
+    )
+    if placeholder_needs_owner:
+        broker_seeded = False
+        if broker_pipeline is None:
+            broker_pipeline = _build_bootstrap_placeholder_pipeline(broker_sentinel)
+            broker_seeded = True
+
+        def _reuse_promote(real_manager: Any) -> None:
+            if real_manager is None or broker_pipeline is None:
+                return
+            _assign_bootstrap_manager_placeholder(
+                broker_pipeline,
+                real_manager,
+                propagate_nested=True,
+            )
+
+        dependency_broker.advertise(
+            pipeline=broker_pipeline, sentinel=broker_sentinel, owner=True
+        )
+        telemetry = {
+            "event": "prepare-pipeline-bootstrap-priority-placeholder-seeded",
+            "dependency_broker": bool(broker_pipeline or broker_sentinel),
+            "broker_placeholder": broker_placeholder_active,
+            "broker_owner_active": broker_owner_active,
+            "caller_module": caller_module,
+            "caller_module_normalized": caller_module_normalized,
+            "caller_module_path": caller_details.get("path"),
+            "caller_stack_signature": caller_stack_signature,
+            "active_depth": active_depth,
+            "bootstrap_guard": bootstrap_guard,
+            "reentry_cap": reentry_cap,
+            "broker_placeholder_without_owner": broker_placeholder_without_owner,
+            "recursing": active_depth > 0,
+            "priority_caller": caller_matches_priority,
+            "broker_seeded": broker_seeded,
+        }
+        if active_promise is not None:
+            active_promise.waiters += 1
+            telemetry["active_waiters"] = active_promise.waiters
+            telemetry["active_promise"] = True
+            logger.info(
+                "prepare_pipeline.bootstrap.placeholder_promise_reuse",
+                extra=telemetry,
+            )
+            return active_promise.wait()
+
+        logger.info(
+            "prepare_pipeline.bootstrap.placeholder_broker_seeded",
+            extra={
+                **telemetry,
+                "pipeline_candidate": getattr(
+                    getattr(broker_pipeline, "__class__", None),
+                    "__name__",
+                    str(type(broker_pipeline)),
+                ),
+            },
+        )
+        return broker_pipeline, _reuse_promote
+
     if caller_matches_priority and (active_depth > 0 or broker_placeholder_active):
         telemetry = {
             "event": "prepare-pipeline-bootstrap-priority-short-circuit",

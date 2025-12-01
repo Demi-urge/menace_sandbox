@@ -1,4 +1,5 @@
 import threading
+from types import SimpleNamespace
 
 import coding_bot_interface as cbi
 import pytest
@@ -50,7 +51,7 @@ def test_recursion_guard_returns_active_promise(monkeypatch, caplog):
 
     monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", DummyCoordinator(promise))
     monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
-    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+    setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
     caplog.set_level("INFO")
 
     try:
@@ -81,7 +82,7 @@ def test_recursion_guard_reuses_broker_without_advertise(monkeypatch, caplog):
 
     monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", DummyCoordinator(None))
     monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
-    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+    setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
     caplog.set_level("INFO")
 
     try:
@@ -148,32 +149,54 @@ def test_recursion_guard_short_circuits_concurrent_callers(monkeypatch):
         pass
 
 
-def test_recursion_guard_blocks_orphaned_broker_placeholder(monkeypatch, caplog):
+def test_recursion_guard_seeds_orphaned_broker_placeholder(monkeypatch, caplog):
     cbi._REENTRY_ATTEMPTS.clear()
-    broker = DummyBroker(owner_active=False)
+
+    class RecordingBroker(DummyBroker):
+        def __init__(self):
+            sentinel = SimpleNamespace()
+            cbi._mark_bootstrap_placeholder(sentinel)
+            pipeline = cbi._build_bootstrap_placeholder_pipeline(sentinel)
+            super().__init__(pipeline=pipeline, sentinel=sentinel, owner_active=False)
+            self.calls: list[tuple[object, object, bool]] = []
+
+        def advertise(self, pipeline=None, sentinel=None, owner=False):
+            self.advertise_calls += 1
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            if owner:
+                self.active_owner = True
+            self.calls.append((pipeline, sentinel, owner))
+            return self.pipeline, self.sentinel
+
+    broker = RecordingBroker()
 
     monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", DummyCoordinator(None))
     monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
-    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+    setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
     caplog.set_level("INFO")
 
     try:
-        with pytest.raises(RuntimeError):
-            cbi.prepare_pipeline_for_bootstrap(
-                pipeline_cls=type("Pipeline", (), {}),
-                context_builder=None,
-                bot_registry=None,
-                data_bot=None,
-            )
+        pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=type("Pipeline", (), {}),
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+        )
     finally:
         try:
             delattr(cbi._BOOTSTRAP_STATE, "depth")
         except AttributeError:
             pass
 
-    assert broker.advertise_calls == 0
+    assert broker.advertise_calls == 1
+    assert broker.calls[-1][2] is True
+    assert pipeline == broker.pipeline
+    promote("real-manager")
     assert any(
-        "recursion_guard_placeholder_block" in record.message for record in caplog.records
+        "placeholder_broker_seeded" in record.message for record in caplog.records
     )
 
 
@@ -186,7 +209,7 @@ def test_recursion_guard_enforces_reentry_cap(monkeypatch, caplog):
     monkeypatch.setenv("MENACE_BOOTSTRAP_REENTRY_CAP", "1")
     monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", DummyCoordinator(promise))
     monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
-    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+    setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
 
     try:
         cbi.prepare_pipeline_for_bootstrap(
@@ -195,21 +218,20 @@ def test_recursion_guard_enforces_reentry_cap(monkeypatch, caplog):
             bot_registry=None,
             data_bot=None,
         )
-
-        with pytest.raises(RuntimeError):
-            cbi.prepare_pipeline_for_bootstrap(
-                pipeline_cls=type("Pipeline", (), {}),
-                context_builder=None,
-                bot_registry=None,
-                data_bot=None,
-            )
+        cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=type("Pipeline", (), {}),
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+        )
     finally:
         try:
             delattr(cbi._BOOTSTRAP_STATE, "depth")
         except AttributeError:
             pass
 
-    assert promise.waiters == 1
+    assert promise.waiters == 2
+    assert any("reentry_cap_exceeded" in record.message for record in caplog.records)
     assert any("reentry_cap_exceeded" in record.message for record in caplog.records)
 
 
@@ -229,7 +251,7 @@ def test_priority_callers_normalized_for_recursion_guard(monkeypatch, caplog, ca
 
     monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", DummyCoordinator(promise))
     monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
-    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+    setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
     caplog.set_level("INFO")
 
     def _caller_details():
@@ -264,3 +286,95 @@ def test_priority_callers_normalized_for_recursion_guard(monkeypatch, caplog, ca
         }
         for record in caplog.records
     )
+
+
+def test_priority_callers_seed_broker_and_reuse_promise(monkeypatch, caplog):
+    cbi._REENTRY_ATTEMPTS.clear()
+    sentinel = SimpleNamespace()
+    cbi._mark_bootstrap_placeholder(sentinel)
+    placeholder_pipeline = cbi._build_bootstrap_placeholder_pipeline(sentinel)
+
+    class PlaceholderBroker:
+        def __init__(self):
+            self.pipeline = placeholder_pipeline
+            self.sentinel = sentinel
+            self.active_owner = False
+            self.calls: list[tuple[object, object, bool]] = []
+
+        def resolve(self):
+            return self.pipeline, self.sentinel
+
+        def advertise(self, pipeline=None, sentinel=None, owner=False):
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            if owner:
+                self.active_owner = True
+            self.calls.append((pipeline, sentinel, owner))
+            return self.pipeline, self.sentinel
+
+    class ActivePromise:
+        def __init__(self, result):
+            self.waiters = 0
+            self._result = result
+            self._event = threading.Event()
+            self._event.set()
+
+        def wait(self):
+            self._event.wait()
+            return self._result
+
+    class ActiveCoordinator:
+        def __init__(self, promise):
+            self._promise = promise
+
+        def peek_active(self):
+            return self._promise
+
+    promise_result = ("running-pipeline", lambda *_args: None)
+    promise = ActivePromise(promise_result)
+    broker = PlaceholderBroker()
+
+    monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", ActiveCoordinator(promise))
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl", lambda **_: (_ for _ in ()).throw(AssertionError("should not run bootstrap impl")))
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_caller_details",
+        lambda: {"module": "menace_orchestrator", "path": None, "stack_signature": "sig"},
+    )
+    monkeypatch.setattr(cbi, "_resolve_caller_module_name", lambda: "menace_orchestrator")
+    caplog.set_level("INFO")
+
+    results: list[tuple[object, object]] = []
+
+    def _invoke():
+        setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+        try:
+            results.append(
+                cbi.prepare_pipeline_for_bootstrap(
+                    pipeline_cls=type("Pipeline", (), {}),
+                    context_builder=None,
+                    bot_registry=None,
+                    data_bot=None,
+                )
+            )
+        finally:
+            try:
+                delattr(cbi._BOOTSTRAP_STATE, "depth")
+            except AttributeError:
+                pass
+
+    threads = [threading.Thread(target=_invoke) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert results == [promise_result, promise_result, promise_result]
+    assert promise.waiters == 3
+    assert broker.calls[0][2] is True
+    assert broker.active_owner is True
+    assert broker.calls.count(broker.calls[0]) == 1
+    assert any("placeholder_promise_reuse" in record.message for record in caplog.records)
