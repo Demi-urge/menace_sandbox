@@ -54,26 +54,49 @@ __all__ = [
 _roi_tracker = ROITracker()
 _BOOTSTRAP_PLACEHOLDER_PIPELINE: object | None = None
 _BOOTSTRAP_PLACEHOLDER_MANAGER: object | None = None
+_BOOTSTRAP_PLACEHOLDER_BROKER: object | None = None
 _BOOTSTRAP_GATE_TIMEOUT = 12.0
 
 
-def _bootstrap_placeholders() -> tuple[object, object]:
+def _bootstrap_placeholders() -> tuple[object, object, object]:
     """Resolve bootstrap placeholders after the readiness gate clears."""
 
-    global _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER
-    if None not in (_BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER):
-        return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER
+    global _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_PLACEHOLDER_BROKER
+    if None not in (
+        _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+        _BOOTSTRAP_PLACEHOLDER_MANAGER,
+        _BOOTSTRAP_PLACEHOLDER_BROKER,
+    ):
+        return (
+            _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+            _BOOTSTRAP_PLACEHOLDER_MANAGER,
+            _BOOTSTRAP_PLACEHOLDER_BROKER,
+        )
 
     pipeline, manager, broker = resolve_bootstrap_placeholders(
         timeout=_BOOTSTRAP_GATE_TIMEOUT,
         description="CognitionLayer bootstrap gate",
     )
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "CognitionLayer dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) "
+            "before building cognition helpers"
+        )
     _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER = advertise_bootstrap_placeholder(
         dependency_broker=broker,
         pipeline=pipeline,
         manager=manager,
     )
-    return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "Failed to advertise CognitionLayer bootstrap placeholder with active owner"
+        )
+    _BOOTSTRAP_PLACEHOLDER_BROKER = broker
+    return (
+        _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+        _BOOTSTRAP_PLACEHOLDER_MANAGER,
+        _BOOTSTRAP_PLACEHOLDER_BROKER,
+    )
 
 
 def _get_layer(
@@ -92,7 +115,15 @@ def _get_layer(
         state = bootstrap_state_snapshot()
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
-    placeholder_pipeline, placeholder_manager = _bootstrap_placeholders()
+    (
+        placeholder_pipeline,
+        placeholder_manager,
+        placeholder_broker,
+    ) = _bootstrap_placeholders()
+    if not getattr(placeholder_broker, "active_owner", False):
+        raise RuntimeError(
+            "CognitionLayer bootstrap dependency broker owner not active; refusing to construct cognition layer"
+        )
     if not placeholder_pipeline and not placeholder_manager:
         placeholder_pipeline, placeholder_manager = get_active_bootstrap_pipeline()
     if getattr(builder, "_bootstrap_placeholders", None) is None:
