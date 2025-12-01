@@ -45,8 +45,14 @@ def _seed_bootstrap_placeholder() -> tuple[object, object]:
         description="MenaceOrchestrator bootstrap gate"
     )
     if not getattr(broker, "active_owner", False):
-        raise RuntimeError(
-            "Bootstrap dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) before orchestrator"
+        logging.getLogger(__name__).error(
+            "Bootstrap dependency broker missing active owner; reusing cached placeholder for MenaceOrchestrator",
+            extra={"event": "menace-orchestrator-broker-owner-missing"},
+        )
+        cached_placeholder = globals().get("_BOOTSTRAP_PLACEHOLDER")
+        return (
+            cached_placeholder if cached_placeholder is not None else pipeline,
+            broker,
         )
     placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
         dependency_broker=broker,

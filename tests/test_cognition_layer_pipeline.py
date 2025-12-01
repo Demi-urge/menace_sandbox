@@ -1,7 +1,15 @@
 import sys
+import types
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+_readiness_stub = types.SimpleNamespace(
+    await_ready=lambda timeout=None: None, describe=lambda: "stubbed"
+)
+sys.modules["bootstrap_readiness"] = types.SimpleNamespace(
+    readiness_signal=lambda: _readiness_stub
+)
 
 import menace_sandbox.roi_tracker as roi_tracker_module
 sys.modules["roi_tracker"] = roi_tracker_module
@@ -86,3 +94,38 @@ def test_cognition_layer_pipeline_feedback_updates_weights_and_roi():
 
     roi_deltas = tracker.origin_db_deltas()
     assert roi_deltas.get("db1", 0.0) > 0.0
+
+def test_cognition_layer_reuses_placeholder_when_broker_inactive(monkeypatch):
+    import importlib
+
+    placeholder_pipeline = object()
+    placeholder_manager = object()
+    broker = types.SimpleNamespace(
+        active_owner=False,
+        active_pipeline=placeholder_pipeline,
+        active_sentinel=placeholder_manager,
+    )
+
+    readiness_stub = types.SimpleNamespace(
+        await_ready=lambda timeout=None: None,
+        describe=lambda: "stubbed",
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "bootstrap_readiness",
+        types.SimpleNamespace(readiness_signal=lambda: readiness_stub),
+    )
+
+    module = importlib.reload(importlib.import_module("menace_sandbox.cognition_layer"))
+
+    monkeypatch.setattr(
+        module,
+        "resolve_bootstrap_placeholders",
+        lambda **_: (placeholder_pipeline, placeholder_manager, broker),
+    )
+
+    pipeline, manager, resolved_broker = module._bootstrap_placeholders()
+
+    assert pipeline is placeholder_pipeline
+    assert manager is placeholder_manager
+    assert resolved_broker is broker

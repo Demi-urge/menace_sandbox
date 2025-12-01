@@ -33,3 +33,28 @@ def test_standard_bootstrap_populates_registry(tmp_path):
     )
     registered_metrics = {metric for entry in manager.registry.values() for metric in entry.profile.get("metric", [])}
     assert registered_metrics, "default bots should register metrics when not bootstrapping fast"
+
+def test_prediction_manager_reuses_placeholder_when_broker_inactive(monkeypatch):
+    import importlib
+
+    module = importlib.reload(importlib.import_module("menace_sandbox.prediction_manager_bot"))
+
+    placeholder_pipeline = object()
+    placeholder_manager = object()
+    broker = types.SimpleNamespace(
+        active_owner=False,
+        active_pipeline=placeholder_pipeline,
+        active_sentinel=placeholder_manager,
+    )
+
+    monkeypatch.setattr(
+        module,
+        "resolve_bootstrap_placeholders",
+        lambda **_: (placeholder_pipeline, placeholder_manager, broker),
+    )
+
+    pipeline, manager, resolved_broker = module._bootstrap_placeholders()
+
+    assert pipeline is placeholder_pipeline
+    assert manager is placeholder_manager
+    assert resolved_broker is broker

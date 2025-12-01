@@ -3,6 +3,7 @@ import time
 import types
 import threading
 import pathlib
+from unittest import mock
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -630,3 +631,25 @@ def test_orchestrator_reuses_broker_pipeline_when_heartbeat_active(monkeypatch):
 
     assert orchestrator.pipeline is pipeline
     monkeypatch.setattr(builtins, "__import__", _intercept_import)
+
+def test_menace_orchestrator_placeholder_reused_when_broker_inactive(monkeypatch):
+    import importlib
+
+    module = importlib.reload(importlib.import_module("menace_sandbox.menace_orchestrator"))
+
+    placeholder_pipeline = object()
+    broker = types.SimpleNamespace(active_owner=False)
+
+    monkeypatch.setattr(
+        module,
+        "resolve_bootstrap_placeholders",
+        lambda **_: (placeholder_pipeline, object(), broker),
+    )
+    advertise = mock.Mock(side_effect=AssertionError("advertise_bootstrap_placeholder should not run"))
+    monkeypatch.setattr(module, "advertise_bootstrap_placeholder", advertise)
+
+    pipeline, resolved_broker = module._seed_bootstrap_placeholder()
+
+    assert pipeline is placeholder_pipeline
+    assert resolved_broker is broker
+    advertise.assert_not_called()

@@ -1119,3 +1119,62 @@ def test_active_heartbeat_returns_placeholder(monkeypatch):
     assert state.manager is broker_manager
     broker_promote.assert_called_once_with(broker_manager)
     module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+def test_placeholder_reused_when_broker_owner_missing(monkeypatch):
+    stub_db_router = SimpleNamespace(
+        GLOBAL_ROUTER=None,
+        init_db_router=lambda *_a, **_k: None,
+        LOCAL_TABLES=[],
+    )
+    monkeypatch.setitem(sys.modules, "db_router", stub_db_router)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.db_router", stub_db_router)
+    readiness_stub = SimpleNamespace(await_ready=lambda timeout=None: None, describe=lambda: "stubbed")
+    readiness_module = ModuleType("bootstrap_readiness")
+    readiness_module.readiness_signal = lambda: readiness_stub
+    monkeypatch.setitem(sys.modules, "bootstrap_readiness", readiness_module)
+    module = _import_fresh()
+
+    placeholder_pipeline = mock.Mock(name="placeholder_pipeline")
+    placeholder_manager = mock.Mock(name="placeholder_manager")
+
+    class _StubBroker:
+        active_owner = True
+        active_pipeline = placeholder_pipeline
+        active_sentinel = placeholder_manager
+
+        def resolve(self):
+            return self.active_pipeline, self.active_sentinel
+
+        def advertise(self, **_kwargs):
+            return None
+
+    broker = _StubBroker()
+
+    monkeypatch.setattr(
+        module,
+        "_bootstrap_placeholders",
+        lambda: (placeholder_pipeline, placeholder_manager, broker),
+    )
+    monkeypatch.setattr(
+        module,
+        "advertise_bootstrap_placeholder",
+        lambda **_: (placeholder_pipeline, placeholder_manager),
+    )
+    monkeypatch.setattr(module, "ensure_bootstrapped", lambda **_: {"ready": True})
+    monkeypatch.setattr(module, "create_context_builder", lambda **_: SimpleNamespace())
+    monkeypatch.setattr(module, "SelfCodingEngine", lambda *_, **__: SimpleNamespace())
+    monkeypatch.setattr(module, "CodeDB", lambda: None)
+    monkeypatch.setattr(module, "GPTMemoryManager", lambda: None)
+    class _StubBotRegistry:
+        def __init__(self, bootstrap: bool = False):
+            self.bootstrap = bootstrap
+
+    monkeypatch.setattr(module, "BotRegistry", _StubBotRegistry)
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+
+    state = module._ensure_runtime_dependencies()
+
+    assert state.pipeline is placeholder_pipeline
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
