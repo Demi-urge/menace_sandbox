@@ -232,16 +232,17 @@ class VectorMetricsDB:
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
         init_start = time.perf_counter()
-        logger.info(
-            "vector_metrics_db.init.start",
-            extra=_timestamp_payload(
-                init_start,
-                configured_path=str(path),
-                lazy_mode=self._lazy_mode,
-                bootstrap_fast=self.bootstrap_fast,
-                warmup_mode=self._warmup_mode,
-            ),
-        )
+        if not self._warmup_mode:
+            logger.info(
+                "vector_metrics_db.init.start",
+                extra=_timestamp_payload(
+                    init_start,
+                    configured_path=str(path),
+                    lazy_mode=self._lazy_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    warmup_mode=self._warmup_mode,
+                ),
+            )
 
         self._cached_weights: dict[str, float] = {}
         self._schema_cache: dict[str, list[str]] = {}
@@ -293,10 +294,13 @@ class VectorMetricsDB:
         }
         self._bootstrap_safe = bootstrap_safe
         self._configured_path = Path(path)
+        self._resolved_path: Path | None = None
+        self._default_path: Path | None = None
         eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
-        self._resolved_path, self._default_path = self._resolve_requested_path(
-            self._configured_path, ensure_exists=eager_resolve
-        )
+        if eager_resolve:
+            self._resolved_path, self._default_path = self._resolve_requested_path(
+                self._configured_path, ensure_exists=eager_resolve
+            )
         self.router = None
         self._conn = None
 
@@ -383,6 +387,12 @@ class VectorMetricsDB:
             self._commit_required = False
             self._commit_reason = "first_use"
         return conn
+
+    @classmethod
+    def warmup_path_probe(cls, path: Path | str = "vector_metrics.db") -> str:
+        """Report the configured path without touching the filesystem."""
+
+        return str(Path(path).expanduser())
 
     def ready_probe(self) -> str:
         """Return the resolved database path without any I/O."""
