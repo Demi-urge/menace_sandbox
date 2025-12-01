@@ -10,13 +10,28 @@
 - `bootstrap_readiness.READINESS_STAGES` defines step→stage groupings (DB/index load, retriever hydration, vector seeding, orchestrator promotion, background loops) used by phase schedulers, while `build_stage_deadlines()` scales per-stage budgets/floors from component minima and adaptive telemetry before feeding them to the bootstrap manager.【F:bootstrap_readiness.py†L23-L189】【F:bootstrap_readiness.py†L108-L208】
 
 ## Pipeline bootstrap single‑flight entry
-- `coding_bot_interface.prepare_pipeline_for_bootstrap()` is the shared entry that wraps pipeline construction with a bootstrap sentinel manager. It first consults the dependency broker and global bootstrap coordinator, short-circuiting when placeholders or active promises exist and raising if a broker placeholder lacks an owner—preventing recursive bootstrap chains before delegating to the underlying implementation.【F:coding_bot_interface.py†L5608-L5705】
+- `coding_bot_interface.prepare_pipeline_for_bootstrap()` is the shared entry that wraps pipeline construction with a bootstrap sentinel manager. It first consults the dependency broker and global bootstrap coordinator, short-circuiting when placeholders or active promises exist and raising if a broker placeholder lacks an owner—preventing recursive bootstrap chains before delegating to the underlying implementation.【F:coding_bot_interface.py†L5659-L5739】
 
-## Recipients that re-enter bootstrap coordination
-- `research_aggregator_bot._bootstrap_placeholders()` waits on `bootstrap_gate.resolve_bootstrap_placeholders()` and then advertises pipeline/manager placeholders through the dependency broker so downstream helpers reuse the active bootstrap chain instead of creating new ones.【F:research_aggregator_bot.py†L99-L116】
-- `prediction_manager_bot` imports the bootstrap gate and advertises placeholders from either the active pipeline (`get_active_bootstrap_pipeline`) or the resolved gate output before its registry/data bot proxies hydrate, keeping prediction orchestration on the shared bootstrap promise.【F:prediction_manager_bot.py†L11-L33】【F:prediction_manager_bot.py†L197-L200】
-- `cognition_layer` resolves placeholders on import and advertises them before constructing the vector `CognitionLayer`, ensuring cognition warm-ups reuse the broker-published bootstrap sentinel.【F:cognition_layer.py†L22-L46】
-- `orchestrator_loader._bootstrap_placeholders()` checks for active bootstrap pipeline/manager instances and otherwise waits on the bootstrap gate before advertising broker placeholders, keeping orchestrator construction aligned with the single-flight bootstrap state.【F:orchestrator_loader.py†L14-L39】
+### End-to-end bootstrap call graph (entrypoints → re-entrancy sinks)
+```
+environment_bootstrap.ensure_bootstrapped
+  └── bootstrap_helpers.ensure_bootstrapped (import-deferral shim)
+        ├── cognition_layer._get_layer → advertises gate placeholders before constructing CognitionLayer caches【F:cognition_layer.py†L60-L90】
+        ├── prediction_manager_bot._get_registry/_get_data_bot → waits on readiness then advertises placeholders prior to registry hydration【F:prediction_manager_bot.py†L243-L264】
+        ├── research_aggregator_bot._ensure_runtime_dependencies → gates heavy helper creation on readiness and broker placeholders【F:research_aggregator_bot.py†L260-L330】
+        └── orchestrator_loader._bootstrap_placeholders → reuses active bootstrap pipeline/manager or resolves gate placeholders for orchestrator promotion【F:orchestrator_loader.py†L32-L63】
+
+coding_bot_interface.prepare_pipeline_for_bootstrap (single-flight + recursion guard)
+  └── consumers above eventually request pipelines via dependency-broker placeholders rather than direct construction; re-entry is short-circuited when the broker already exposes a placeholder/promise or when active depth exceeds the configured guard cap.【F:coding_bot_interface.py†L5659-L5739】
+```
+
+**Allowed entrypoints (keep calls on the single-flight path)**
+- Use `bootstrap_helpers.ensure_bootstrapped(...)` (or `environment_bootstrap.ensure_bootstrapped(...)`) to initialise readiness once per process; avoid ad-hoc bootstraps from module initialisers.
+- Use `coding_bot_interface.prepare_pipeline_for_bootstrap(...)` with the bootstrap guard enabled to obtain pipelines/managers via the dependency broker.
+
+**Forbidden recursive patterns**
+- Do **not** instantiate pipelines directly inside bootstrap-sensitive modules; always route through the broker-aware placeholder helpers above so repeated imports reuse the active bootstrap promise.
+- Avoid bypassing the broker/guard (e.g., calling `_prepare_pipeline_for_bootstrap_impl` directly or wiring bespoke sentinels) because doing so skips the recursion cap and can deadlock when placeholders lack an owner.
 
 ## High-level call flow
 - External callers invoke `EnvironmentBootstrapper.bootstrap()` → dispatches critical/provisioning/optional tasks and schedules vector services.
