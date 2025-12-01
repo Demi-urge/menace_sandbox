@@ -21,20 +21,40 @@ def _flag(parser: argparse.ArgumentParser, name: str, *, default: bool = False, 
 def cli(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     _flag(parser, "download-model", default=False, help="Download the bundled embedding model if missing")
+    _flag(parser, "probe-model", default=False, help="Log whether the bundled embedding model is present without downloading")
     _flag(parser, "hydrate-handlers", default=False, help="Instantiate SharedVectorService to prime vectorizers")
+    _flag(parser, "run-vectorise", default=False, help="Execute a single vectorise call after handler hydration")
     _flag(parser, "start-scheduler", default=False, help="Start the embedding scheduler using env configuration")
+    _flag(parser, "light", default=False, help="Validate scheduler/model presence without hydrating handlers")
     _flag(parser, "all", default=False, help="Enable every warmup action")
     args = parser.parse_args(argv)
 
-    download = args.all or args.download_model
-    hydrate = args.all or args.hydrate_handlers or args.download_model
-    scheduler = args.all or args.start_scheduler
+    if args.all:
+        download = True
+        probe = False
+        hydrate = True
+        vectorise = True
+        scheduler = True
+    elif args.light:
+        download = False
+        probe = True
+        hydrate = False
+        vectorise = False
+        scheduler = True
+    else:
+        download = args.download_model
+        probe = args.probe_model
+        hydrate = args.hydrate_handlers
+        vectorise = args.run_vectorise
+        scheduler = args.start_scheduler
 
     logger = logging.getLogger(__name__)
     warmup_vector_service(
         download_model=download,
+        probe_model=probe,
         hydrate_handlers=hydrate,
         start_scheduler=scheduler,
+        run_vectorise=vectorise,
         logger=logger,
     )
     return 0

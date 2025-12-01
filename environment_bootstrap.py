@@ -2131,22 +2131,39 @@ class EnvironmentBootstrapper:
     # ------------------------------------------------------------------
     def _optional_tail(self, check_budget: Callable[[], None]) -> None:
         if self.policy.provision_vector_assets:
-            warm_vectors = os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
-            if warm_vectors:
+            check_budget()
+            raw = os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").strip().lower()
+            warm_vectors = raw in {"1", "true", "yes", "on", "full"}
+            light_warmup = raw in {"light", "probe", "check"}
+            if raw in {"defer", "later"}:
+                self.logger.info(
+                    "Vector warmup explicitly deferred; assets will hydrate on first use",
+                )
+                check_budget()
+                return
+
+            if warm_vectors or light_warmup:
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
 
-                    warmup_vector_service(logger=self.logger, start_scheduler=False)
+                    warmup_vector_service(
+                        logger=self.logger,
+                        check_budget=check_budget,
+                        download_model=warm_vectors,
+                        probe_model=light_warmup,
+                        hydrate_handlers=warm_vectors,
+                        start_scheduler=True,
+                        run_vectorise=warm_vectors,
+                    )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)
             else:
                 self.logger.info(
-                    "Vector assets deferred to lazy initialisation; set MENACE_BOOTSTRAP_WARM_VECTOR=1 to pre-warm",
+                    (
+                        "Vector assets deferred to lazy initialisation; set "
+                        "MENACE_BOOTSTRAP_WARM_VECTOR=light for a budgeted probe "
+                        "or 1 for full warmup"
+                    ),
                 )
             check_budget()
 
