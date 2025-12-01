@@ -26,28 +26,63 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when running directly
     import metrics_exporter as _me  # type: ignore
 
-# Prometheus gauges/counters
-_EMBEDDING_TOKENS_TOTAL = _me.Gauge(
-    "embedding_tokens_total",
-    "Total tokens processed for embeddings",
-)
-_RETRIEVAL_HIT_RATE = _me.Gauge(
-    "retrieval_hit_rate",
-    "Fraction of retrieval results included in final prompt",
-)
-_RETRIEVER_WIN_RATE = getattr(_me, "retriever_win_rate", _me.Gauge(
-    "retriever_win_rate",
-    "Win rate of retrieval operations by database",
-    ["db"],
-))
-_RETRIEVER_REGRET_RATE = getattr(_me, "retriever_regret_rate", _me.Gauge(
-    "retriever_regret_rate",
-    "Regret rate of retrieval operations by database",
-    ["db"],
-))
+# Prometheus gauges/counters (instantiated lazily)
+_EMBEDDING_TOKENS_TOTAL = None
+_RETRIEVAL_HIT_RATE = None
+_RETRIEVER_WIN_RATE = None
+_RETRIEVER_REGRET_RATE = None
 
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_prometheus_objects() -> tuple:
+    """Instantiate Prometheus metrics on-demand.
+
+    Gauge registration during process bootstrap can block when the collector
+    registry is initialising, so we defer creation until the first actual
+    metric write.  The gauges are cached globally once constructed.
+    """
+
+    global _EMBEDDING_TOKENS_TOTAL, _RETRIEVAL_HIT_RATE
+    global _RETRIEVER_WIN_RATE, _RETRIEVER_REGRET_RATE
+
+    if _EMBEDDING_TOKENS_TOTAL is None:
+        _EMBEDDING_TOKENS_TOTAL = _me.Gauge(
+            "embedding_tokens_total",
+            "Total tokens processed for embeddings",
+        )
+    if _RETRIEVAL_HIT_RATE is None:
+        _RETRIEVAL_HIT_RATE = _me.Gauge(
+            "retrieval_hit_rate",
+            "Fraction of retrieval results included in final prompt",
+        )
+    if _RETRIEVER_WIN_RATE is None:
+        _RETRIEVER_WIN_RATE = getattr(
+            _me,
+            "retriever_win_rate",
+            _me.Gauge(
+                "retriever_win_rate",
+                "Win rate of retrieval operations by database",
+                ["db"],
+            ),
+        )
+    if _RETRIEVER_REGRET_RATE is None:
+        _RETRIEVER_REGRET_RATE = getattr(
+            _me,
+            "retriever_regret_rate",
+            _me.Gauge(
+                "retriever_regret_rate",
+                "Regret rate of retrieval operations by database",
+                ["db"],
+            ),
+        )
+    return (
+        _EMBEDDING_TOKENS_TOTAL,
+        _RETRIEVAL_HIT_RATE,
+        _RETRIEVER_WIN_RATE,
+        _RETRIEVER_REGRET_RATE,
+    )
 
 
 def _timestamp_payload(start: float | None = None, **extra: Any) -> Dict[str, Any]:
@@ -135,9 +170,16 @@ class VectorMetricsDB:
         )
         vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
         patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
-        self.bootstrap_fast = bool(
-            bootstrap_fast or vector_bootstrap_env or patch_bootstrap_env
+        vector_warmup_env = _env_flag("VECTOR_WARMUP", False) or _env_flag(
+            "VECTOR_SERVICE_WARMUP", False
         )
+        self.bootstrap_fast = bool(
+            bootstrap_fast
+            or vector_bootstrap_env
+            or patch_bootstrap_env
+            or vector_warmup_env
+        )
+        self._lazy_mode = self.bootstrap_fast
         init_start = time.perf_counter()
         logger.info(
             "vector_metrics_db.init.start",
@@ -192,7 +234,15 @@ class VectorMetricsDB:
                 "enhancement_score",
             ],
         }
-        if self.bootstrap_fast:
+        self._bootstrap_safe = bootstrap_safe
+        self._configured_path = Path(path)
+        self._resolved_path, self._default_path = self._resolve_requested_path(
+            self._configured_path, ensure_exists=not self._lazy_mode
+        )
+        self.router = None
+        self._conn = None
+
+        if self._lazy_mode:
             logger.info(
                 "vector_metrics_db.bootstrap.fast_path_short_circuit",
                 extra=_timestamp_payload(
@@ -200,19 +250,33 @@ class VectorMetricsDB:
                     fast_path=True,
                     vector_bootstrap_env=vector_bootstrap_env,
                     patch_bootstrap_env=patch_bootstrap_env,
+                    vector_warmup_env=vector_warmup_env,
+                    resolved_path=str(self._resolved_path),
                 ),
             )
-            self.router = None
-            self.conn = None
-            self._schema_cache.update(self._default_columns)
             return
 
-        LOCAL_TABLES.add("vector_metrics")
+        self._prepare_connection(init_start)
 
-        if bootstrap_safe:
-            set_audit_bootstrap_safe_default(True)
+    @property
+    def conn(self):
+        if self._lazy_mode and self._conn is None:
+            self._prepare_connection()
+        return self._conn
 
-        default_path = default_vector_metrics_path()
+    @conn.setter
+    def conn(self, value):
+        self._conn = value
+
+    def ready_probe(self) -> str:
+        """Return the resolved database path without any I/O."""
+
+        return str(self._resolved_path)
+
+    def _resolve_requested_path(
+        self, path: Path, *, ensure_exists: bool
+    ) -> tuple[Path, Path]:
+        default_path = default_vector_metrics_path(ensure_exists=ensure_exists)
         requested = Path(path).expanduser()
         if str(requested.as_posix()) == "vector_metrics.db":
             p = default_path
@@ -221,32 +285,55 @@ class VectorMetricsDB:
                 requested = (default_path.parent / requested).resolve()
             else:
                 requested = requested.resolve()
-            requested.parent.mkdir(parents=True, exist_ok=True)
+            if ensure_exists:
+                requested.parent.mkdir(parents=True, exist_ok=True)
             p = requested
+        return p, default_path
+
+    def _prepare_connection(self, init_start: float | None = None) -> None:
+        init_start = init_start or time.perf_counter()
+        if self._conn is not None:
+            return
+
+        LOCAL_TABLES.add("vector_metrics")
+
+        if self._bootstrap_safe:
+            set_audit_bootstrap_safe_default(True)
+
+        if self._resolved_path is None or self._default_path is None:
+            self._resolved_path, self._default_path = self._resolve_requested_path(
+                self._configured_path, ensure_exists=True
+            )
+        else:
+            _ = self._resolve_requested_path(  # ensure directory exists lazily
+                self._configured_path, ensure_exists=True
+            )
 
         logger.info(
             "vector_metrics_db.path.resolved",
             extra=_timestamp_payload(
-                init_start, resolved_path=str(p), default_path=str(default_path)
+                init_start,
+                resolved_path=str(self._resolved_path),
+                default_path=str(self._default_path),
             ),
         )
 
-        if GLOBAL_ROUTER is not None and p == default_path:
+        if GLOBAL_ROUTER is not None and self._resolved_path == self._default_path:
             self.router = GLOBAL_ROUTER
             using_global_router = True
-            if bootstrap_safe:
+            if self._bootstrap_safe:
                 self.router.local_conn.audit_bootstrap_safe = True
                 self.router.shared_conn.audit_bootstrap_safe = True
         else:
             self.router = init_db_router(
                 "vector_metrics_db",
-                str(p),
-                str(p),
-                bootstrap_safe=bootstrap_safe,
+                str(self._resolved_path),
+                str(self._resolved_path),
+                bootstrap_safe=self._bootstrap_safe,
             )
             using_global_router = False
-        wal = p.with_suffix(p.suffix + "-wal")
-        shm = p.with_suffix(p.suffix + "-shm")
+        wal = self._resolved_path.with_suffix(self._resolved_path.suffix + "-wal")
+        shm = self._resolved_path.with_suffix(self._resolved_path.suffix + "-shm")
         for sidecar in (wal, shm):
             try:
                 if sidecar.exists():
@@ -261,7 +348,7 @@ class VectorMetricsDB:
             except Exception:  # pragma: no cover - best effort diagnostics
                 logger.exception("vector_metrics_db.sidecar.inspect_failed")
 
-        self.conn = self.router.get_connection("vector_metrics")
+        self._conn = self.router.get_connection("vector_metrics")
         logger.info(
             "vector_metrics_db.connection.ready",
             extra=_timestamp_payload(
@@ -269,7 +356,7 @@ class VectorMetricsDB:
             ),
         )
         schema_start = time.perf_counter()
-        self.conn.execute(
+        self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS vector_metrics(
                 event_type TEXT,
@@ -299,13 +386,13 @@ class VectorMetricsDB:
         )
         migration_start = time.perf_counter()
         if not self.bootstrap_fast:
-            self.conn.execute(
+            self._conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS vector_metrics_event_db_ts
                     ON vector_metrics(event_type, db, ts)
                 """
             )
-            self.conn.execute(
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS patch_ancestry(
                     patch_id TEXT,
@@ -319,7 +406,7 @@ class VectorMetricsDB:
                 )
                 """
             )
-            self.conn.execute(
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS patch_metrics(
                     patch_id TEXT PRIMARY KEY,
@@ -338,7 +425,7 @@ class VectorMetricsDB:
                 """
             )
             # Store adaptive ranking weights so the ranker can learn over time.
-            self.conn.execute(
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ranking_weights(
                     db TEXT PRIMARY KEY,
@@ -346,7 +433,7 @@ class VectorMetricsDB:
                 )
                 """
             )
-            self.conn.execute(
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS vector_weights(
                     vector_id TEXT PRIMARY KEY,
@@ -356,7 +443,7 @@ class VectorMetricsDB:
             )
             # Persist session vector data so retrievals can be reconciled after
             # restarts.  Stored as JSON blobs keyed by ``session_id``.
-            self.conn.execute(
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS pending_sessions(
                     session_id TEXT PRIMARY KEY,
@@ -365,7 +452,7 @@ class VectorMetricsDB:
                 )
                 """
             )
-            self.conn.commit()
+            self._conn.commit()
             cols = self._table_columns("vector_metrics")
             migrations = {
                 "session_id": "ALTER TABLE vector_metrics ADD COLUMN session_id TEXT",
@@ -379,7 +466,7 @@ class VectorMetricsDB:
             applied_columns = []
             for name, stmt in migrations.items():
                 if name not in cols:
-                    self.conn.execute(stmt)
+                    self._conn.execute(stmt)
                     applied_columns.append(name)
             logger.info(
                 "vector_metrics_db.migrations.vector_metrics",
@@ -387,45 +474,57 @@ class VectorMetricsDB:
                     migration_start, applied_columns=applied_columns
                 ),
             )
-            self.conn.commit()
+            self._conn.commit()
             pcols = self._table_columns("patch_ancestry")
             if "license" not in pcols:
-                self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
+                self._conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
             if "semantic_alerts" not in pcols:
-                self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT")
+                self._conn.execute(
+                    "ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT"
+                )
             if "alignment_severity" not in pcols:
-                self.conn.execute(
+                self._conn.execute(
                     "ALTER TABLE patch_ancestry ADD COLUMN alignment_severity REAL"
                 )
             if "risk_score" not in pcols:
-                self.conn.execute(
+                self._conn.execute(
                     "ALTER TABLE patch_ancestry ADD COLUMN risk_score REAL"
                 )
-            self.conn.commit()
+            self._conn.commit()
             mcols = self._table_columns("patch_metrics")
             if "context_tokens" not in mcols:
-                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN context_tokens INTEGER")
+                self._conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN context_tokens INTEGER"
+                )
             if "patch_difficulty" not in mcols:
-                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN patch_difficulty INTEGER")
+                self._conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN patch_difficulty INTEGER"
+                )
             if "start_time" not in mcols:
-                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN start_time REAL")
+                self._conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN start_time REAL"
+                )
             if "time_to_completion" not in mcols:
-                self.conn.execute(
+                self._conn.execute(
                     "ALTER TABLE patch_metrics ADD COLUMN time_to_completion REAL"
                 )
             if "error_trace_count" not in mcols:
-                self.conn.execute(
+                self._conn.execute(
                     "ALTER TABLE patch_metrics ADD COLUMN error_trace_count INTEGER"
                 )
             if "roi_tag" not in mcols:
-                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN roi_tag TEXT")
+                self._conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN roi_tag TEXT"
+                )
             if "effort_estimate" not in mcols:
-                self.conn.execute("ALTER TABLE patch_metrics ADD COLUMN effort_estimate REAL")
+                self._conn.execute(
+                    "ALTER TABLE patch_metrics ADD COLUMN effort_estimate REAL"
+                )
             if "enhancement_score" not in mcols:
-                self.conn.execute(
+                self._conn.execute(
                     "ALTER TABLE patch_metrics ADD COLUMN enhancement_score REAL"
                 )
-            self.conn.commit()
+            self._conn.commit()
             logger.info(
                 "vector_metrics_db.migrations.patch_tables",
                 extra=_timestamp_payload(
@@ -461,11 +560,15 @@ class VectorMetricsDB:
                 "vector_metrics_db.bootstrap.fast_path_enabled",
                 extra=_timestamp_payload(migration_start),
             )
+            self._schema_cache.update(self._default_columns)
+
+        _ensure_prometheus_objects()
+        self._lazy_mode = False
         logger.info(
             "vector_metrics_db.init.complete",
             extra=_timestamp_payload(
                 init_start,
-                resolved_path=str(p),
+                resolved_path=str(self._resolved_path),
                 using_global_router=using_global_router,
             ),
         )
