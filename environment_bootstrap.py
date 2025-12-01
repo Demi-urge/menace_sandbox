@@ -1908,20 +1908,41 @@ class EnvironmentBootstrapper:
         if hosts:
             self.deploy_across_hosts(hosts)
         check_budget()
-        self._queue_background_task(
-            "vector-service-scheduler",
-            start_scheduler_from_env,
-            delay_until_ready=True,
-            ready_gate="provisioning",
-            stage="vector_seeding",
-            budget_hint=self._stage_budget_hint("vector_seeding"),
-            join_inner=False,
-        )
+        if os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").lower() in {"1", "true", "yes", "on"}:
+            self._queue_background_task(
+                "vector-service-scheduler",
+                start_scheduler_from_env,
+                delay_until_ready=True,
+                ready_gate="provisioning",
+                stage="vector_seeding",
+                budget_hint=self._stage_budget_hint("vector_seeding"),
+                join_inner=False,
+            )
+        else:
+            self.logger.info(
+                "Skipping embedding scheduler during bootstrap; it will start on demand or via warmup",
+            )
 
     # ------------------------------------------------------------------
     def _optional_tail(self, check_budget: Callable[[], None]) -> None:
         if self.policy.provision_vector_assets:
-            self.bootstrap_vector_assets()
+            warm_vectors = os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            if warm_vectors:
+                try:
+                    from .vector_service.lazy_bootstrap import warmup_vector_service
+
+                    warmup_vector_service(logger=self.logger, start_scheduler=False)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    self.logger.warning("vector warmup failed: %s", exc)
+            else:
+                self.logger.info(
+                    "Vector assets deferred to lazy initialisation; set MENACE_BOOTSTRAP_WARM_VECTOR=1 to pre-warm",
+                )
             check_budget()
 
     # ------------------------------------------------------------------

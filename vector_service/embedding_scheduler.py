@@ -29,8 +29,24 @@ _SCHED_DURATION = _me.Gauge(
     "Duration of scheduled EmbeddingBackfill runs",
 )
 
-# Database kinds recognised for on-demand backfill events.
-_SUPPORTED_SOURCES = set(_load_registry().keys() or KNOWN_DB_KINDS)
+# Database kinds recognised for on-demand backfill events.  Discovery is deferred
+# to avoid expensive registry imports during process bootstrap.
+_SUPPORTED_SOURCES: set[str] | None = None
+_SOURCE_LOCK = threading.Lock()
+_SCHEDULER_SINGLETON: EmbeddingScheduler | None | bool = None
+_SCHEDULER_SINGLETON_LOCK = threading.Lock()
+
+
+def _supported_sources() -> set[str]:
+    global _SUPPORTED_SOURCES
+    if _SUPPORTED_SOURCES is None:
+        with _SOURCE_LOCK:
+            if _SUPPORTED_SOURCES is None:
+                try:
+                    _SUPPORTED_SOURCES = set(_load_registry().keys() or KNOWN_DB_KINDS)
+                except Exception:
+                    _SUPPORTED_SOURCES = set(KNOWN_DB_KINDS)
+    return set(_SUPPORTED_SOURCES)
 
 
 class EmbeddingScheduler:
@@ -53,7 +69,7 @@ class EmbeddingScheduler:
         self.interval = interval
         self.batch_size = batch_size
         self.backend = backend
-        self.sources = sources or sorted(_SUPPORTED_SOURCES)
+        self.sources = sources or sorted(_supported_sources())
         self.stale_threshold = stale_threshold
         self.event_bus = event_bus or UnifiedEventBus()
         self.event_topic = event_topic
@@ -82,7 +98,7 @@ class EmbeddingScheduler:
         else:
             source = getattr(payload, "source", None)
             meta = getattr(payload, "metadata", getattr(payload, "meta", None))
-        if not source or source not in _SUPPORTED_SOURCES:
+        if not source or source not in _supported_sources():
             return
         if meta is not None and not self.patch_safety.pre_embed_check(meta):
             return
@@ -201,8 +217,14 @@ class EmbeddingScheduler:
 def start_scheduler_from_env() -> EmbeddingScheduler | None:
     """Start :class:`EmbeddingScheduler` based on environment variables."""
 
+    global _SCHEDULER_SINGLETON
+    with _SCHEDULER_SINGLETON_LOCK:
+        if _SCHEDULER_SINGLETON is not None:
+            return None if _SCHEDULER_SINGLETON is False else _SCHEDULER_SINGLETON
+
     interval = float(os.getenv("EMBEDDING_SCHEDULER_INTERVAL", "86400"))
     if interval <= 0:
+        _SCHEDULER_SINGLETON = False
         return None
     batch = os.getenv("EMBEDDING_SCHEDULER_BATCH_SIZE")
     backend = os.getenv("EMBEDDING_SCHEDULER_BACKEND")
@@ -223,6 +245,7 @@ def start_scheduler_from_env() -> EmbeddingScheduler | None:
         event_throttle=float(event_throttle) if event_throttle else 0.0,
     )
     scheduler.start()
+    _SCHEDULER_SINGLETON = scheduler
     return scheduler
 
 

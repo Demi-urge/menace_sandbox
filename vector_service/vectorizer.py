@@ -66,6 +66,8 @@ try:  # pragma: no cover - optional dependency used for text embeddings
 except Exception:  # pragma: no cover - avoid hard dependency
     SentenceTransformer = None  # type: ignore
 
+from .lazy_bootstrap import ensure_embedding_model
+
 
 _BUNDLED_MODEL = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
 _LOCAL_TOKENIZER: AutoTokenizer | None = None
@@ -122,6 +124,7 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     global _LOCAL_TOKENIZER, _LOCAL_MODEL
     if AutoTokenizer is None or AutoModel is None or torch is None:
         raise RuntimeError("local embedding model dependencies unavailable")
+    ensure_embedding_model(logger=logger)
     if _LOCAL_TOKENIZER is None or _LOCAL_MODEL is None:
         if not _BUNDLED_MODEL.exists():
             raise FileNotFoundError(
