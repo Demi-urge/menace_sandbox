@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 import coding_bot_interface as cbi
@@ -104,3 +105,56 @@ def test_prepare_pipeline_nested_reuses_broker_and_suppresses_repeat_log(monkeyp
         if "calling prepare_pipeline_for_bootstrap" in record.message
     ]
     assert len(prepare_invocations) == 1
+
+
+def test_priority_caller_reuses_placeholder_when_bootstrap_inflight(monkeypatch, caplog):
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+    placeholder_pipeline, placeholder_sentinel = cbi.advertise_bootstrap_placeholder(
+        dependency_broker=broker, owner=True
+    )
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+
+    previous_depth = getattr(cbi._BOOTSTRAP_STATE, "depth", None)
+    cbi._BOOTSTRAP_STATE.depth = 1
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(
+        cbi,
+        "_resolve_caller_details",
+        lambda: {
+            "module": "menace_orchestrator",
+            "path": "menace_orchestrator.py",
+            "stack_signature": "sig",
+        },
+    )
+
+    pipeline_cls = type("FakePipeline", (), {})
+    pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=pipeline_cls,
+        context_builder=SimpleNamespace(),
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    try:
+        assert getattr(pipeline, "bootstrap_placeholder", False)
+        assert getattr(pipeline.manager, "bootstrap_placeholder", False)
+
+        promoted_manager = SimpleNamespace()
+        promote(promoted_manager)
+        assert pipeline.manager is promoted_manager
+
+        assert not any(
+            "preflight_new_pipeline" in record.getMessage() for record in caplog.records
+        )
+        assert any(
+            "priority_recursion_guard_short_circuit" in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        broker.clear()
+        cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+        if previous_depth is None:
+            delattr(cbi._BOOTSTRAP_STATE, "depth")
+        else:
+            cbi._BOOTSTRAP_STATE.depth = previous_depth
