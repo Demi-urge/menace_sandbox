@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Mapping
 # returns dictionaries so we reference the type indirectly to avoid tight
 # coupling.
 import logging
+import os
 import asyncio
 import uuid
 import time
@@ -105,7 +106,17 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     VectorMetricsDB = None  # type: ignore
 
-_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+_VECTOR_SERVICE_WARMUP = os.getenv("VECTOR_SERVICE_WARMUP", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_VEC_METRICS = (
+    VectorMetricsDB(bootstrap_fast=_VECTOR_SERVICE_WARMUP, warmup=_VECTOR_SERVICE_WARMUP)
+    if VectorMetricsDB is not None
+    else None
+)
 
 try:  # pragma: no cover - optional dependency
     from .stack_ingestion import (

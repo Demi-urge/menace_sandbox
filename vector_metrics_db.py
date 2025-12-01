@@ -164,6 +164,7 @@ class VectorMetricsDB:
         *,
         bootstrap_safe: bool = False,
         bootstrap_fast: bool = False,
+        warmup: bool | None = None,
     ) -> None:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
@@ -173,13 +174,19 @@ class VectorMetricsDB:
         vector_warmup_env = _env_flag("VECTOR_WARMUP", False) or _env_flag(
             "VECTOR_SERVICE_WARMUP", False
         )
+        warmup = warmup if warmup is not None else _env_flag(
+            "VECTOR_METRICS_WARMUP", False
+        )
         self.bootstrap_fast = bool(
             bootstrap_fast
             or vector_bootstrap_env
             or patch_bootstrap_env
             or vector_warmup_env
+            or warmup
         )
+        self._warmup_mode = bool(warmup or vector_warmup_env)
         self._lazy_mode = self.bootstrap_fast
+        self._lazy_primed = self._lazy_mode
         init_start = time.perf_counter()
         logger.info(
             "vector_metrics_db.init.start",
@@ -251,6 +258,7 @@ class VectorMetricsDB:
                     vector_bootstrap_env=vector_bootstrap_env,
                     patch_bootstrap_env=patch_bootstrap_env,
                     vector_warmup_env=vector_warmup_env,
+                    warmup=warmup,
                     resolved_path=str(self._resolved_path),
                 ),
             )
@@ -258,10 +266,33 @@ class VectorMetricsDB:
 
         self._prepare_connection(init_start)
 
+    def _exit_lazy_mode(self, *, reason: str) -> None:
+        """Upgrade from bootstrap stub to full schema on first meaningful use."""
+
+        init_start = time.perf_counter()
+        logger.info(
+            "vector_metrics_db.bootstrap.lazy_exit.start",
+            extra=_timestamp_payload(
+                init_start,
+                reason=reason,
+                warmup_mode=self._warmup_mode,
+                bootstrap_fast=self.bootstrap_fast,
+            ),
+        )
+        if self._warmup_mode:
+            self.bootstrap_fast = False
+        self._lazy_mode = False
+        self._lazy_primed = False
+        self._prepare_connection(init_start)
+        logger.info(
+            "vector_metrics_db.bootstrap.lazy_exit.complete",
+            extra=_timestamp_payload(init_start, resolved_path=str(self._resolved_path)),
+        )
+
     @property
     def conn(self):
         if self._lazy_mode and self._conn is None:
-            self._prepare_connection()
+            self._exit_lazy_mode(reason="first_use")
         return self._conn
 
     @conn.setter
@@ -294,6 +325,16 @@ class VectorMetricsDB:
         init_start = init_start or time.perf_counter()
         if self._conn is not None:
             return
+
+        logger.info(
+            "vector_metrics_db.initialization.mode",
+            extra=_timestamp_payload(
+                init_start,
+                bootstrap_fast=self.bootstrap_fast,
+                warmup_mode=self._warmup_mode,
+                lazy_primed=self._lazy_primed,
+            ),
+        )
 
         LOCAL_TABLES.add("vector_metrics")
 
