@@ -37,6 +37,9 @@ def test_registry_enables_vectorization_and_backfill(monkeypatch):
     )
 
     svc = SharedVectorService()
+    assert not svc._handlers
+    assert "toy" in svc._known_kinds
+    assert svc.ready()
     assert svc.vectorise("toy", {"x": 3}) == [1.0, 2.0, 3.0]
 
     eb = EmbeddingBackfill(batch_size=5)
@@ -111,3 +114,22 @@ class ToyVectorizer:
 
     asyncio.run(eb.schedule_backfill())
     assert "toy" in processed
+
+
+def test_bootstrap_fast_defers_vector_store(monkeypatch):
+    module = types.ModuleType("toy_plugin_bootstrap")
+
+    class ToyVectorizer:
+        def transform(self, record):
+            return [float(record.get("x", 0))]
+
+    module.ToyVectorizer = ToyVectorizer
+    sys.modules["toy_plugin_bootstrap"] = module
+
+    register_vectorizer("toy-bootstrap", "toy_plugin_bootstrap", "ToyVectorizer")
+
+    svc = SharedVectorService(bootstrap_fast=True)
+    vec = svc.vectorise_and_store("toy-bootstrap", "1", {"x": 2})
+
+    assert vec == [2.0]
+    assert svc.vector_store is None
