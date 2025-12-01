@@ -1554,12 +1554,12 @@ def _bootstrap_embedder(
         LOGGER.debug("embedder preload already started; refusing to create another thread")
         return
 
-    if stage_budget is not None and stage_budget <= 0:
+    budget_exhausted = stage_budget is not None and stage_budget <= 0
+    if budget_exhausted:
         LOGGER.warning(
             "embedder preload skipped because stage budget is exhausted (stage_budget=%.2fs)",
             stage_budget,
         )
-        return
 
     _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
 
@@ -1616,15 +1616,54 @@ def _bootstrap_embedder(
     }
     _BOOTSTRAP_SCHEDULER.mark_partial("background_loops", reason="embedder_warmup_start")
 
+    if budget_exhausted:
+        result["embedder"] = placeholder
+        result["placeholder_reason"] = "stage_budget_exhausted"
+        result["deferred"] = True
+        _BOOTSTRAP_EMBEDDER_JOB.update(
+            {
+                "result": placeholder,
+                "placeholder_reason": "stage_budget_exhausted",
+                "deferred": True,
+            }
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason="embedder_placeholder:stage_budget_exhausted"
+        )
+        _finalize_embedder_job(
+            placeholder,
+            placeholder_reason="stage_budget_exhausted",
+            aborted=True,
+            deferred=True,
+        )
+        return placeholder
+
     def _signal_stop(reason: str) -> None:
         LOGGER.debug("signalling embedder stop (%s)", reason)
         embedder_stop_event.set()
+
+    def _enqueue_background_download() -> None:
+        def _background_worker() -> None:
+            try:
+                get_embedder(
+                    timeout=_MAX_EMBEDDER_WAIT,
+                    stop_event=None,
+                    bootstrap_timeout=None,
+                    bootstrap_mode=True,
+                )
+            except Exception:
+                LOGGER.debug("background embedder download failed", exc_info=True)
+
+        threading.Thread(
+            target=_background_worker, name="embedder-background-download", daemon=True
+        ).start()
 
     def _finalize_embedder_job(
         embedder_obj: Any,
         *,
         placeholder_reason: str | None = None,
         aborted: bool = False,
+        deferred: bool = False,
     ) -> None:
         global _BOOTSTRAP_EMBEDDER_JOB, _BOOTSTRAP_EMBEDDER_STARTED
 
@@ -1635,16 +1674,20 @@ def _bootstrap_embedder(
             job["placeholder_reason"] = placeholder_reason
         if aborted:
             job["aborted"] = True
+        if deferred:
+            job["deferred"] = True
         job.pop("thread", None)
         job.pop("stop_event", None)
         _BOOTSTRAP_EMBEDDER_JOB = job
         _BOOTSTRAP_EMBEDDER_STARTED = False
 
-    def _record_abort(reason: str) -> None:
+    def _record_abort(
+        reason: str, *, deferred: bool = False, schedule_background: bool = False
+    ) -> None:
         nonlocal placeholder
         result["aborted"] = True
+        result["deferred"] = deferred
         _signal_stop(reason)
-        _BOOTSTRAP_EMBEDDER_DISABLED = True
         elapsed = perf_counter() - start_time
         abort_metadata = {
             "elapsed": round(elapsed, 3),
@@ -1672,6 +1715,10 @@ def _bootstrap_embedder(
         result.setdefault("embedder", placeholder)
         result.setdefault("placeholder_reason", reason)
         _BOOTSTRAP_EMBEDDER_JOB["result"] = placeholder
+        if deferred:
+            _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
+            if schedule_background:
+                _enqueue_background_download()
         _BOOTSTRAP_SCHEDULER.mark_partial(
             "background_loops", reason=f"embedder_placeholder:{reason}"
         )
@@ -1694,7 +1741,12 @@ def _bootstrap_embedder(
         LOGGER.warning(
             "background embedder warmup aborted", extra=abort_metadata
         )
-        _finalize_embedder_job(placeholder, placeholder_reason=reason, aborted=True)
+        _finalize_embedder_job(
+            placeholder,
+            placeholder_reason=reason,
+            aborted=True,
+            deferred=deferred,
+        )
 
     def _worker() -> None:
         try:
@@ -1777,6 +1829,7 @@ def _bootstrap_embedder(
                 embedder,
                 placeholder_reason=placeholder_reason,
                 aborted=result.get("aborted", False),
+                deferred=result.get("deferred", False),
             )
 
     thread = threading.Thread(target=_worker, name="bootstrap-embedder", daemon=True)
@@ -1795,22 +1848,39 @@ def _bootstrap_embedder(
         while thread.is_alive():
             now = perf_counter()
             if budget_deadline is not None and now >= budget_deadline:
-                _record_abort("bootstrap_budget_exceeded")
+                _record_abort(
+                    "bootstrap_budget_exceeded",
+                    deferred=True,
+                    schedule_background=True,
+                )
                 return
             if wall_clock_deadline is not None and now >= wall_clock_deadline:
-                _record_abort("bootstrap_wall_clock_exceeded")
+                _record_abort(
+                    "bootstrap_wall_clock_exceeded",
+                    deferred=True,
+                    schedule_background=True,
+                )
                 return
             if max_wait_deadline is not None and now >= max_wait_deadline:
-                _record_abort("max_wait_exceeded")
+                _record_abort(
+                    "max_wait_exceeded", deferred=True, schedule_background=True
+                )
                 return
             time.sleep(0.05)
 
     threading.Thread(target=_budget_watchdog, name="embedder-budget", daemon=True).start()
 
+    join_window = stage_wall_cap if stage_wall_cap is not None else 0.1
     try:
-        thread.join(0.1)
+        thread.join(join_window)
     except Exception:
         LOGGER.debug("embedder warmup join probe failed", exc_info=True)
+
+    if thread.is_alive() and stage_wall_cap is not None:
+        _record_abort(
+            "stage_wall_cap_exceeded", deferred=True, schedule_background=True
+        )
+        return placeholder
 
     return placeholder
 
@@ -2023,12 +2093,19 @@ def initialize_bootstrap_context(
             timeout=embedder_timeout,
             bootstrap_deadline=bootstrap_deadline,
             description="bootstrap_embedder_preload",
+            abort_on_timeout=False,
             heavy_bootstrap=True,
             budget=shared_timeout_coordinator,
             budget_label="vector_seeding",
             stop_event=stop_event,
             stage_budget=embedder_stage_budget,
         )
+        job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+        if job_snapshot.get("deferred"):
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vector_seeding", reason="embedder_preload_deferred"
+            )
+            _set_component_state("vector_seeding", "deferred")
 
     def _task_context_builder(_: dict[str, Any]) -> Any:
         _ensure_not_stopped(stop_event)
