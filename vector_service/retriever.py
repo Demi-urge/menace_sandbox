@@ -623,7 +623,8 @@ class PatchRetriever:
         if self.vector_metrics is None and VectorMetricsDB is not None and not self.service_url:
             try:
                 self.vector_metrics = VectorMetricsDB(
-                    bootstrap_fast=self.bootstrap_fast
+                    bootstrap_fast=self.bootstrap_fast,
+                    warmup=self.bootstrap_fast,
                 )
             except Exception:
                 self.vector_metrics = None

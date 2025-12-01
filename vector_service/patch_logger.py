@@ -266,7 +266,8 @@ class PatchLogger:
         elif VectorMetricsDB is not None:
             try:
                 self.vector_metrics = VectorMetricsDB(
-                    bootstrap_fast=self.bootstrap_fast
+                    bootstrap_fast=self.bootstrap_fast,
+                    warmup=self.bootstrap_fast,
                 )
             except Exception:
                 self.vector_metrics = None
