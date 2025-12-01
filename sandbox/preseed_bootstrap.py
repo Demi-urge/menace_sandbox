@@ -459,6 +459,36 @@ class _StagedBootstrapController:
 
         self._emit_stage_signal(stage, step_name, "ready" if ready else "running")
 
+    def stage_budget(self, *, step_name: str | None = None, stage: str | None = None) -> float | None:
+        target_stage = stage or (stage_for_step(step_name) if step_name else None)
+        if target_stage is None:
+            return None
+
+        window = self._stage_windows.get(target_stage, {}) if self._stage_windows else {}
+        remaining = window.get("remaining")
+        budget = window.get("budget")
+        try:
+            if remaining is not None:
+                return float(remaining)
+        except (TypeError, ValueError):
+            LOGGER.debug("invalid remaining budget for stage", exc_info=True)
+        try:
+            if budget is not None:
+                return float(budget)
+        except (TypeError, ValueError):
+            LOGGER.debug("invalid stage budget", exc_info=True)
+
+        entry = self._stage_policy.get(target_stage, {}) if self._stage_policy else {}
+        if isinstance(entry, Mapping):
+            for key in ("deadline", "scaled_budget", "soft_budget", "budget"):
+                candidate = entry.get(key)
+                try:
+                    if candidate is not None:
+                        return float(candidate)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
 
 
 def _default_step_floor(*, vector_heavy: bool = False) -> float:
@@ -1499,6 +1529,8 @@ def _bootstrap_embedder(
     *,
     stop_event: threading.Event | None = None,
     stage_budget: float | None = None,
+    budget: SharedTimeoutCoordinator | None = None,
+    budget_label: str | None = None,
 ) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
@@ -1582,6 +1614,44 @@ def _bootstrap_embedder(
         LOGGER.debug("signalling embedder stop (%s)", reason)
         embedder_stop_event.set()
 
+    def _record_abort(reason: str) -> None:
+        nonlocal placeholder
+        result["aborted"] = True
+        _signal_stop(reason)
+        _BOOTSTRAP_EMBEDDER_DISABLED = True
+        elapsed = perf_counter() - start_time
+        abort_metadata = {
+            "elapsed": round(elapsed, 3),
+            "stage_budget": stage_budget,
+            "max_wait": _MAX_EMBEDDER_WAIT,
+            "reason": reason,
+        }
+        if budget_label and budget:
+            try:
+                budget.record_progress(
+                    budget_label,
+                    elapsed=elapsed,
+                    remaining=0.0,
+                    metadata={"abort_reason": reason},
+                )
+                budget.mark_component_state(budget_label, "blocked")
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("failed to publish embedder abort to budget", exc_info=True)
+        try:
+            promoted = _activate_bundled_fallback(reason)
+            if promoted:
+                placeholder = _BOOTSTRAP_EMBEDDER_JOB.get("placeholder", placeholder)
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("failed to promote fallback embedder", exc_info=True)
+        cancel_embedder_initialisation(
+            embedder_stop_event,
+            reason=reason,
+            join_timeout=0.25,
+        )
+        LOGGER.warning(
+            "background embedder warmup aborted", extra=abort_metadata
+        )
+
     def _worker() -> None:
         try:
             result["embedder"] = get_embedder(
@@ -1607,14 +1677,6 @@ def _bootstrap_embedder(
                     "background_loops", reason="embedder_warmup_complete"
                 )
             elif result.get("aborted"):
-                LOGGER.warning(
-                    "background embedder warmup aborted",
-                    extra={
-                        "elapsed": round(elapsed, 3),
-                        "stage_budget": stage_budget,
-                        "max_wait": _MAX_EMBEDDER_WAIT,
-                    },
-                )
                 _BOOTSTRAP_SCHEDULER.mark_partial(
                     "background_loops", reason="embedder_warmup_aborted"
                 )
@@ -1646,38 +1708,20 @@ def _bootstrap_embedder(
     budget_deadline = (
         start_time + stage_budget if stage_budget is not None and stage_budget >= 0 else None
     )
+    wall_clock_deadline = start_time + timeout_cap if timeout_cap >= 0 else None
     max_wait_deadline = start_time + _MAX_EMBEDDER_WAIT if _MAX_EMBEDDER_WAIT >= 0 else None
 
     def _budget_watchdog() -> None:
         while thread.is_alive():
             now = perf_counter()
             if budget_deadline is not None and now >= budget_deadline:
-                LOGGER.warning(
-                    "embedder preload exceeded stage budget after %.1fs; cancelling warmup",
-                    stage_budget,
-                )
-                result["aborted"] = True
-                _BOOTSTRAP_EMBEDDER_DISABLED = True
-                _signal_stop("bootstrap_budget_exceeded")
-                cancel_embedder_initialisation(
-                    embedder_stop_event,
-                    reason="bootstrap_budget_exceeded",
-                    join_timeout=0.25,
-                )
+                _record_abort("bootstrap_budget_exceeded")
+                return
+            if wall_clock_deadline is not None and now >= wall_clock_deadline:
+                _record_abort("bootstrap_wall_clock_exceeded")
                 return
             if max_wait_deadline is not None and now >= max_wait_deadline:
-                LOGGER.warning(
-                    "embedder preload exceeded max wait after %.1fs; cancelling warmup",
-                    _MAX_EMBEDDER_WAIT,
-                )
-                result["aborted"] = True
-                _BOOTSTRAP_EMBEDDER_DISABLED = True
-                _signal_stop("max_wait_exceeded")
-                cancel_embedder_initialisation(
-                    embedder_stop_event,
-                    reason="max_wait_exceeded",
-                    join_timeout=0.25,
-                )
+                _record_abort("max_wait_exceeded")
                 return
             time.sleep(0.05)
 
@@ -1893,14 +1937,17 @@ def initialize_bootstrap_context(
             "embedder_preload", vector_heavy=True, heavy=True
         )
         embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
+        embedder_stage_budget = stage_controller.stage_budget(step_name="embedder_preload")
         _run_with_timeout(
             _bootstrap_embedder,
             timeout=embedder_timeout,
             bootstrap_deadline=bootstrap_deadline,
             description="bootstrap_embedder_preload",
             heavy_bootstrap=True,
-            budget=None,
+            budget=shared_timeout_coordinator,
+            budget_label="vector_seeding",
             stop_event=stop_event,
+            stage_budget=embedder_stage_budget,
         )
 
     def _task_context_builder(_: dict[str, Any]) -> Any:
