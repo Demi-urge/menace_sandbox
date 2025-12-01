@@ -369,13 +369,15 @@ class VectorMetricsDB:
         if self._conn is not None:
             return self._conn
         if self._lazy_mode:
-            if self._commit_required or not (self.bootstrap_fast or self._warmup_mode):
-                self._exit_lazy_mode(reason=reason)
-                return self._conn
-            return self._stub_conn
+            if self.bootstrap_fast or self._warmup_mode:
+                return self._stub_conn
+            self._exit_lazy_mode(reason=reason)
+            return self._conn
         return self._conn or self._stub_conn
 
     def _conn_for(self, *, reason: str, commit_required: bool = True):
+        if self.bootstrap_fast or self._warmup_mode:
+            commit_required = False
         conn = self._connection(reason=reason, commit_required=commit_required)
         if commit_required:
             self._commit_required = False

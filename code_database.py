@@ -1626,7 +1626,9 @@ class PatchHistoryDB:
         if VectorMetricsDB is None:
             return None
         try:
-            return VectorMetricsDB(bootstrap_fast=self._bootstrap_fast)
+            return VectorMetricsDB(
+                bootstrap_fast=self._bootstrap_fast, warmup=self._bootstrap_fast
+            )
         except Exception:  # pragma: no cover - defensive best effort
             logger.exception("failed to initialise VectorMetricsDB")
             return None

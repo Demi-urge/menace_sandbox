@@ -891,7 +891,7 @@ class ContextBuilder:
                 return self._vector_metrics
 
             bootstrap_flag = bool(bootstrap_fast or _VECTOR_SERVICE_WARMUP)
-            warmup_flag = bool(warmup or _VECTOR_SERVICE_WARMUP)
+            warmup_flag = bool(warmup or bootstrap_flag)
             vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
             if warmup_flag:
                 try:
