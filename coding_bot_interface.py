@@ -235,6 +235,7 @@ _PREPARE_CALL_INVOCATIONS: dict[str, int] = {}
 _PREPARE_CALL_SUPPRESSIONS: set[str] = set()
 
 _REENTRY_ATTEMPTS: dict[str, int] = {}
+_REENTRY_CAP_ALERTS: set[tuple[str, str]] = set()
 _REENTRY_CAP_ENV = "MENACE_BOOTSTRAP_REENTRY_CAP"
 _DEFAULT_REENTRY_CAP = 3
 
@@ -1995,49 +1996,76 @@ def _increment_reentry_attempt(caller_module: str) -> int:
     return attempts
 
 
-def _record_prepare_call(
+def _log_initial_prepare_invocation(
     caller_module: str | None,
     *,
     broker_placeholder: bool,
     promise_active: bool,
     logger: logging.Logger,
-) -> None:
-    """Log initial prepare invocations and suppress repeats per caller.
-
-    Operators were seeing repeated "calling prepare_pipeline_for_bootstrap" lines when
-    orchestration helpers retried during an active bootstrap.  Track unique caller
-    modules so the informational log lands once per process while repeated attempts
-    increment a gauge and emit a single warning per caller for observability without
-    spamming the logs.
-    """
+    cap: int | None = None,
+    telemetry: Mapping[str, Any] | None = None,
+) -> bool:
+    """Log initial prepare invocations and short-circuit when caps are exceeded."""
 
     caller = caller_module or "<unknown>"
     count = _PREPARE_CALL_INVOCATIONS.get(caller, 0)
+    invocation = count + 1
     telemetry = {
         "event": "prepare-pipeline-invocation",
         "caller_module": caller_module,
         "caller_seen": count,
         "broker_placeholder": broker_placeholder,
         "active_promise": promise_active,
+        "reentry_cap": cap,
+        **(telemetry or {}),
     }
     if count == 0:
-        _PREPARE_CALL_INVOCATIONS[caller] = 1
+        _PREPARE_CALL_INVOCATIONS[caller] = invocation
         logger.info("calling prepare_pipeline_for_bootstrap", extra=telemetry)
-        return
+        return False
 
-    _PREPARE_CALL_INVOCATIONS[caller] = count + 1
+    _PREPARE_CALL_INVOCATIONS[caller] = invocation
     try:
         BOOTSTRAP_PREPARE_REPEAT_TOTAL.labels(caller).inc()
     except Exception:
         logger.debug("failed to publish prepare repeat metric", exc_info=True)
 
+    cap_exceeded = False
+    if cap is not None and invocation > cap:
+        cap_exceeded = _maybe_raise_reentry_cap(
+            caller,
+            telemetry,
+            cap=cap,
+            reason="invocation-reentry",
+            raise_on_exceed=False,
+        )
+        telemetry["reentry_cap_exceeded"] = cap_exceeded
+
     if caller in _PREPARE_CALL_SUPPRESSIONS:
-        return
+        return cap_exceeded
 
     _PREPARE_CALL_SUPPRESSIONS.add(caller)
     logger.warning(
         "suppressing repeated prepare_pipeline_for_bootstrap invocation",
-        extra={**telemetry, "repeat_invocations": count + 1},
+        extra={**telemetry, "repeat_invocations": invocation},
+    )
+    return cap_exceeded
+
+
+def _record_prepare_call(
+    caller_module: str | None,
+    *,
+    broker_placeholder: bool,
+    promise_active: bool,
+    logger: logging.Logger,
+) -> bool:
+    """Backward-compatible wrapper for initial invocation logging."""
+
+    return _log_initial_prepare_invocation(
+        caller_module,
+        broker_placeholder=broker_placeholder,
+        promise_active=promise_active,
+        logger=logger,
     )
 
 
@@ -2047,30 +2075,37 @@ def _maybe_raise_reentry_cap(
     *,
     cap: int | None,
     reason: str,
-) -> None:
-    """Emit diagnostics and raise when recursion attempts exceed the cap."""
+    raise_on_exceed: bool = True,
+) -> bool:
+    """Emit diagnostics and return whether recursion attempts exceed the cap."""
 
     if cap is None:
-        return
+        return False
     attempts = telemetry.get("reentry_attempts") or _REENTRY_ATTEMPTS.get(caller_module, 0)
     if attempts <= cap:
-        return
+        return False
 
     telemetry = dict(telemetry)
     telemetry.update({
         "reentry_cap_exceeded": True,
         "reentry_reason": reason,
+        "reentry_cap": cap,
     })
-    _emit_reentry_cap_alert(caller_module, telemetry)
-    logger.error(
-        "prepare_pipeline.bootstrap.reentry_cap_exceeded",
-        extra=telemetry,
-    )
-    raise RuntimeError(
-        "prepare_pipeline_for_bootstrap recursion guard exceeded the caller re-entry cap; "
-        "seed advertise_bootstrap_placeholder(owner=True) before importing dependent modules "
-        "so helpers can reuse the brokered bootstrap promise."
-    )
+    alert_key = (caller_module, reason)
+    if alert_key not in _REENTRY_CAP_ALERTS:
+        _emit_reentry_cap_alert(caller_module, telemetry)
+        logger.error(
+            "prepare_pipeline.bootstrap.reentry_cap_exceeded",
+            extra=telemetry,
+        )
+        _REENTRY_CAP_ALERTS.add(alert_key)
+    if raise_on_exceed:
+        raise RuntimeError(
+            "prepare_pipeline_for_bootstrap recursion guard exceeded the caller re-entry cap; "
+            "seed advertise_bootstrap_placeholder(owner=True) before importing dependent modules "
+            "so helpers can reuse the brokered bootstrap promise."
+        )
+    return True
 
 
 def _emit_reentry_cap_alert(caller_module: str, telemetry: Mapping[str, Any]) -> None:
@@ -5711,11 +5746,13 @@ def prepare_pipeline_for_bootstrap(
     short_circuit_active = short_circuit_active or active_promise is not None
     recursion_short_circuit = active_depth > 0 and short_circuit_active
 
-    _record_prepare_call(
+    invocation_cap_exceeded = _log_initial_prepare_invocation(
         caller_module,
         broker_placeholder=broker_placeholder_active,
         promise_active=active_promise is not None,
         logger=logger,
+        cap=reentry_cap,
+        telemetry={"active_depth": active_depth},
     )
 
     if recursion_short_circuit or (short_circuit_active and active_depth == 0):
@@ -5742,9 +5779,16 @@ def prepare_pipeline_for_bootstrap(
         if recursion_short_circuit:
             attempts = _increment_reentry_attempt(caller_module)
             telemetry["reentry_attempts"] = attempts
-            _maybe_raise_reentry_cap(caller_module, telemetry, cap=reentry_cap, reason="recursion-guard")
+            telemetry["reentry_cap_exceeded"] = _maybe_raise_reentry_cap(
+                caller_module,
+                telemetry,
+                cap=reentry_cap,
+                reason="recursion-guard",
+                raise_on_exceed=False,
+            )
         else:
             telemetry["reentry_attempts"] = attempts
+        telemetry["invocation_cap_exceeded"] = invocation_cap_exceeded
         if broker_placeholder_without_owner:
             logger.error(
                 (

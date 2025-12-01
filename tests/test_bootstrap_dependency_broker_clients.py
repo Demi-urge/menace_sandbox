@@ -549,13 +549,16 @@ def test_active_promise_short_circuits_recursion(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     cbi._REENTRY_ATTEMPTS.clear()
 
+    pipeline = SimpleNamespace(name="pipeline")
+
     class _Promise:
         def __init__(self) -> None:
             self.waiters = 0
+            self.pipeline = pipeline
 
         def wait(self):
             self.waiters += 1
-            return SimpleNamespace(name="pipeline"), lambda *_: None
+            return self.pipeline, lambda *_: None
 
     promise = _Promise()
     broker = SimpleNamespace(
@@ -572,7 +575,7 @@ def test_active_promise_short_circuits_recursion(monkeypatch, caplog):
 
     monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", SimpleNamespace(peek_active=lambda: promise))
     monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
-    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1, raising=False)
 
     try:
         result = cbi.prepare_pipeline_for_bootstrap(
@@ -590,3 +593,58 @@ def test_active_promise_short_circuits_recursion(monkeypatch, caplog):
     assert result[0].name == "pipeline"
     assert promise.waiters == 1
     assert any("caller_module" in getattr(record, "__dict__", {}) for record in caplog.records)
+
+
+def test_recursion_cap_short_circuits_to_active_promise(monkeypatch, caplog):
+    import coding_bot_interface as cbi
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("MENACE_BOOTSTRAP_REENTRY_CAP", "1")
+    cbi._REENTRY_ATTEMPTS.clear()
+    cbi._PREPARE_CALL_INVOCATIONS.clear()
+    cbi._REENTRY_CAP_ALERTS.clear()
+
+    pipeline = SimpleNamespace(name="pipeline")
+
+    class _Promise:
+        def __init__(self) -> None:
+            self.waiters = 0
+            self.pipeline = pipeline
+
+        def wait(self):
+            self.waiters += 1
+            return self.pipeline, lambda *_: None
+
+    promise = _Promise()
+    broker = SimpleNamespace(
+        active_pipeline=SimpleNamespace(manager=SimpleNamespace(name="sentinel")),
+        active_sentinel=SimpleNamespace(name="sentinel"),
+        active_owner=True,
+    )
+    broker.resolve = lambda: (broker.active_pipeline, broker.active_sentinel)
+
+    def _refuse_advertise(*_args, **_kwargs):  # noqa: ANN001
+        raise AssertionError("advertise should not run during recursion guard")
+
+    broker.advertise = _refuse_advertise
+
+    monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", SimpleNamespace(peek_active=lambda: promise))
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1, raising=False)
+
+    first = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=type("Pipeline", (), {}),
+        context_builder=None,
+        bot_registry=None,
+        data_bot=None,
+    )
+    second = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=type("Pipeline", (), {}),
+        context_builder=None,
+        bot_registry=None,
+        data_bot=None,
+    )
+
+    assert first[0] is second[0] is pipeline
+    assert promise.waiters >= 2
+    assert any(value == 2 for value in cbi._REENTRY_ATTEMPTS.values())
