@@ -103,6 +103,42 @@ def _noop_logging(bootstrap_fast: bool, warmup_mode: bool) -> bool:
     return bool(bootstrap_fast and warmup_mode)
 
 
+class _StubCursor:
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+
+    def fetchall(self):
+        return []
+
+    def fetchone(self):
+        return None
+
+
+class _StubConnection:
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+
+    def execute(self, *args, **kwargs):
+        sql = args[0] if args else ""
+        self.logger.debug(
+            "vector_metrics_db.stub.execute",
+            extra={"sql": str(sql)},
+        )
+        return _StubCursor(self.logger)
+
+    def executemany(self, *args, **kwargs):
+        return self.execute(*args, **kwargs)
+
+    def commit(self):
+        self.logger.debug("vector_metrics_db.stub.commit")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 @dataclass
 class VectorMetric:
     """Single vector operation metric record."""
@@ -191,6 +227,9 @@ class VectorMetricsDB:
         self._warmup_mode = bool(warmup or vector_warmup_env)
         self._lazy_mode = True
         self._lazy_primed = self.bootstrap_fast or self._warmup_mode
+        self._commit_required = False
+        self._commit_reason = "first_use"
+        self._stub_conn = _StubConnection(logger)
         init_start = time.perf_counter()
         logger.info(
             "vector_metrics_db.init.start",
@@ -277,6 +316,8 @@ class VectorMetricsDB:
         self._lazy_mode = False
         self._lazy_primed = False
         self._prepare_connection(init_start)
+        self._commit_required = False
+        self._commit_reason = "first_use"
         logger.info(
             "vector_metrics_db.bootstrap.lazy_exit.complete",
             extra=_timestamp_payload(init_start, resolved_path=str(self._resolved_path)),
@@ -301,13 +342,34 @@ class VectorMetricsDB:
 
     @property
     def conn(self):
-        if self._lazy_mode and self._conn is None:
-            self._exit_lazy_mode(reason="first_use")
-        return self._conn
+        return self._connection(
+            reason=self._commit_reason,
+            commit_required=self._commit_required,
+        )
 
     @conn.setter
     def conn(self, value):
         self._conn = value
+
+    def _connection(self, *, reason: str, commit_required: bool):
+        if commit_required:
+            self._commit_required = True
+            self._commit_reason = reason
+        if self._conn is not None:
+            return self._conn
+        if self._lazy_mode:
+            if self._commit_required or not (self.bootstrap_fast or self._warmup_mode):
+                self._exit_lazy_mode(reason=reason)
+                return self._conn
+            return self._stub_conn
+        return self._conn or self._stub_conn
+
+    def _conn_for(self, *, reason: str, commit_required: bool = True):
+        conn = self._connection(reason=reason, commit_required=commit_required)
+        if commit_required:
+            self._commit_required = False
+            self._commit_reason = "first_use"
+        return conn
 
     def ready_probe(self) -> str:
         """Return the resolved database path without any I/O."""
@@ -644,19 +706,18 @@ class VectorMetricsDB:
             )
             return list(columns)
         timeout_ms: int | None = None
+        conn = self._conn_for(reason="schema.inspect")
         try:
             if self.bootstrap_fast:
                 try:
-                    timeout_ms = int(
-                        self.conn.execute("PRAGMA busy_timeout").fetchone()[0]
-                    )
-                    self.conn.execute("PRAGMA busy_timeout = 0")
+                    timeout_ms = int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
+                    conn.execute("PRAGMA busy_timeout = 0")
                 except Exception:
                     logger.debug(
                         "vector_metrics_db.schema.fast_timeout_unset",
                         exc_info=True,
                     )
-            rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
         except Exception as exc:
             cache = self._schema_cache.get(table) or self._default_columns.get(table, [])
             logger.warning(
@@ -672,7 +733,7 @@ class VectorMetricsDB:
         finally:
             if timeout_ms is not None:
                 try:
-                    self.conn.execute(f"PRAGMA busy_timeout = {timeout_ms}")
+                    conn.execute(f"PRAGMA busy_timeout = {timeout_ms}")
                 except Exception:
                     logger.debug(
                         "vector_metrics_db.schema.restore_timeout_failed",
@@ -700,7 +761,7 @@ class VectorMetricsDB:
             return default_weights
 
         if self.router is None:
-            _ = self.conn
+            _ = self._conn_for(reason="get_db_weights.router")
         if self.router is None:
             return default_weights
 
@@ -713,7 +774,9 @@ class VectorMetricsDB:
         connection_ctx: contextlib.AbstractContextManager = (
             self.router.bootstrap_connection("ranking_weights", timeout_ms=timeout_ms)
             if timeout_ms is not None
-            else contextlib.nullcontext(self.conn)
+            else contextlib.nullcontext(
+                self._conn_for(reason="get_db_weights.read")
+            )
         )
         try:
             with connection_ctx as conn:
@@ -741,16 +804,15 @@ class VectorMetricsDB:
         renormalised so their sum equals 1.0.  The new weight for ``db`` is
         returned (after optional normalisation)."""
 
-        cur = self.conn.execute(
-            "SELECT weight FROM ranking_weights WHERE db=?", (db,)
-        )
+        conn = self._conn_for(reason="update_db_weight")
+        cur = conn.execute("SELECT weight FROM ranking_weights WHERE db=?", (db,))
         row = cur.fetchone()
         weight = float(row[0]) if row and row[0] is not None else 0.0
         weight = max(0.0, min(1.0, weight + delta))
-        self.conn.execute(
+        conn.execute(
             "REPLACE INTO ranking_weights(db, weight) VALUES(?, ?)", (db, weight)
         )
-        self.conn.commit()
+        conn.commit()
         if normalize:
             return self.normalize_db_weights().get(db, weight)
         return weight
@@ -761,17 +823,18 @@ class VectorMetricsDB:
 
         Returns the normalised weight mapping."""
 
-        cur = self.conn.execute("SELECT db, weight FROM ranking_weights")
+        conn = self._conn_for(reason="normalize_db_weights")
+        cur = conn.execute("SELECT db, weight FROM ranking_weights")
         rows = [(str(db), float(w)) for db, w in cur.fetchall()]
         total = sum(w for _db, w in rows)
         if total > 0:
             for db, w in rows:
                 norm = w / total
-                self.conn.execute(
+                conn.execute(
                     "REPLACE INTO ranking_weights(db, weight) VALUES(?, ?)",
                     (db, norm),
                 )
-            self.conn.commit()
+            conn.commit()
             return {db: w / total for db, w in rows}
         return {db: w for db, w in rows}
 
@@ -782,35 +845,34 @@ class VectorMetricsDB:
         rows = [
             (str(db), max(0.0, min(1.0, float(w)))) for db, w in weights.items()
         ]
-        self.conn.executemany(
+        conn = self._conn_for(reason="set_db_weights")
+        conn.executemany(
             "REPLACE INTO ranking_weights(db, weight) VALUES(?, ?)", rows
         )
-        self.conn.commit()
+        conn.commit()
 
     # ------------------------------------------------------------------
     def update_vector_weight(self, vector_id: str, delta: float) -> float:
         """Adjust ranking weight for *vector_id* by ``delta`` and persist it."""
 
-        cur = self.conn.execute(
-            "SELECT weight FROM vector_weights WHERE vector_id=?", (vector_id,)
-        )
+        conn = self._conn_for(reason="update_vector_weight")
+        cur = conn.execute("SELECT weight FROM vector_weights WHERE vector_id=?", (vector_id,))
         row = cur.fetchone()
         weight = float(row[0]) if row and row[0] is not None else 0.0
         weight = max(0.0, min(1.0, weight + delta))
-        self.conn.execute(
+        conn.execute(
             "REPLACE INTO vector_weights(vector_id, weight) VALUES(?, ?)",
             (vector_id, weight),
         )
-        self.conn.commit()
+        conn.commit()
         return weight
 
     # ------------------------------------------------------------------
     def get_vector_weight(self, vector_id: str) -> float:
         """Return ranking weight for *vector_id* (0.0 if unknown)."""
 
-        cur = self.conn.execute(
-            "SELECT weight FROM vector_weights WHERE vector_id=?", (vector_id,)
-        )
+        conn = self._conn_for(reason="get_vector_weight", commit_required=False)
+        cur = conn.execute("SELECT weight FROM vector_weights WHERE vector_id=?", (vector_id,))
         row = cur.fetchone()
         return float(row[0]) if row and row[0] is not None else 0.0
 
@@ -819,17 +881,19 @@ class VectorMetricsDB:
         """Persist absolute weight value for *vector_id*."""
 
         weight = max(0.0, min(1.0, float(weight)))
-        self.conn.execute(
+        conn = self._conn_for(reason="set_vector_weight")
+        conn.execute(
             "REPLACE INTO vector_weights(vector_id, weight) VALUES(?, ?)",
             (vector_id, weight),
         )
-        self.conn.commit()
+        conn.commit()
 
     # ------------------------------------------------------------------
     def recalc_ranking_weights(self) -> Dict[str, float]:
         """Recalculate ranking weights from cumulative ROI and safety data."""
 
-        cur = self.conn.execute(
+        conn = self._conn_for(reason="recalc_ranking_weights")
+        cur = conn.execute(
             """
             SELECT db,
                    COALESCE(SUM(contribution),0) AS roi,
@@ -864,11 +928,12 @@ class VectorMetricsDB:
     ) -> None:
         """Persist session retrieval data for later reconciliation."""
 
-        self.conn.execute(
+        conn = self._conn_for(reason="save_session")
+        conn.execute(
             "REPLACE INTO pending_sessions(session_id, vectors, metadata) VALUES(?,?,?)",
             (session_id, json.dumps(vectors), json.dumps(metadata)),
         )
-        self.conn.commit()
+        conn.commit()
 
     # ------------------------------------------------------------------
     def load_sessions(
@@ -876,7 +941,8 @@ class VectorMetricsDB:
     ) -> Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]]:
         """Return mapping of session_id to stored vectors and metadata."""
 
-        cur = self.conn.execute(
+        conn = self._conn_for(reason="load_sessions", commit_required=False)
+        cur = conn.execute(
             "SELECT session_id, vectors, metadata FROM pending_sessions"
         )
         sessions: Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]] = {}
@@ -900,17 +966,19 @@ class VectorMetricsDB:
     def delete_session(self, session_id: str) -> None:
         """Remove persisted session data once outcome recorded."""
 
-        self.conn.execute(
+        conn = self._conn_for(reason="delete_session")
+        conn.execute(
             "DELETE FROM pending_sessions WHERE session_id=?",
             (session_id,),
         )
-        self.conn.commit()
+        conn.commit()
 
     # ------------------------------------------------------------------
     def add(self, rec: VectorMetric) -> None:
         if self._should_skip_logging():
             return
-        self.conn.execute(
+        conn = self._conn_for(reason="add_metric")
+        conn.execute(
             """
             INSERT INTO vector_metrics(
                 event_type, db, tokens, wall_time_ms, store_time_ms, hit,
@@ -939,7 +1007,7 @@ class VectorMetricsDB:
                 rec.ts,
             ),
         )
-        self.conn.commit()
+        conn.commit()
         if rec.event_type == "embedding":
             try:  # best-effort metrics
                 _EMBEDDING_TOKENS_TOTAL.inc(rec.tokens)
@@ -1058,7 +1126,8 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def embedding_tokens_total(self, db: str | None = None) -> int:
-        cur = self.conn.execute(
+        conn = self._conn_for(reason="embedding_tokens_total", commit_required=False)
+        cur = conn.execute(
             "SELECT COALESCE(SUM(tokens),0) FROM vector_metrics WHERE event_type='embedding'" +
             (" AND db=?" if db else ""),
             (db,) if db else (),
@@ -1068,7 +1137,8 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def retrieval_hit_rate(self, db: str | None = None) -> float:
-        cur = self.conn.execute(
+        conn = self._conn_for(reason="retrieval_hit_rate", commit_required=False)
+        cur = conn.execute(
             "SELECT AVG(hit) FROM vector_metrics WHERE event_type='retrieval'" +
             (" AND db=?" if db else ""),
             (db,) if db else (),
@@ -1078,7 +1148,8 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def retriever_win_rate(self, db: str | None = None) -> float:
-        cur = self.conn.execute(
+        conn = self._conn_for(reason="retriever_win_rate", commit_required=False)
+        cur = conn.execute(
             "SELECT AVG(win) FROM vector_metrics "
             "WHERE event_type='retrieval' AND win IS NOT NULL"
             + (" AND db=?" if db else ""),
@@ -1089,7 +1160,8 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def retriever_regret_rate(self, db: str | None = None) -> float:
-        cur = self.conn.execute(
+        conn = self._conn_for(reason="retriever_regret_rate", commit_required=False)
+        cur = conn.execute(
             "SELECT AVG(regret) FROM vector_metrics "
             "WHERE event_type='retrieval' AND regret IS NOT NULL"
             + (" AND db=?" if db else ""),
@@ -1100,7 +1172,8 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def retriever_win_rate_by_db(self) -> dict[str, float]:
-        cur = self.conn.execute(
+        conn = self._conn_for(reason="retriever_win_rate_by_db", commit_required=False)
+        cur = conn.execute(
             """
             SELECT db, AVG(win)
               FROM vector_metrics
@@ -1119,7 +1192,10 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def retriever_regret_rate_by_db(self) -> dict[str, float]:
-        cur = self.conn.execute(
+        conn = self._conn_for(
+            reason="retriever_regret_rate_by_db", commit_required=False
+        )
+        cur = conn.execute(
             """
             SELECT db, AVG(regret)
               FROM vector_metrics
@@ -1149,8 +1225,9 @@ class VectorMetricsDB:
     ) -> None:
         if self._should_skip_logging():
             return
+        conn = self._conn_for(reason="update_outcome")
         for _, vec_id in vectors:
-            self.conn.execute(
+            conn.execute(
                 """
                 UPDATE vector_metrics
                    SET contribution=?, win=?, regret=?, patch_id=?
@@ -1165,18 +1242,19 @@ class VectorMetricsDB:
                     vec_id,
                 ),
             )
-        self.conn.commit()
+        conn.commit()
 
     def record_patch_ancestry(
         self, patch_id: str, vectors: list[tuple]
     ) -> None:
         if self._should_skip_logging():
             return
+        conn = self._conn_for(reason="record_patch_ancestry")
         for rank, vec in enumerate(vectors):
             vec_id, contrib, lic, alerts, sev, risk = (
                 list(vec) + [None, None, None, None, None]
             )[:6]
-            self.conn.execute(
+            conn.execute(
                 "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution, "
                 "license, semantic_alerts, alignment_severity, risk_score) "
                 "VALUES(?,?,?,?,?,?,?,?)",
@@ -1191,7 +1269,7 @@ class VectorMetricsDB:
                     risk,
                 ),
             )
-        self.conn.commit()
+        conn.commit()
 
     def record_patch_summary(
         self,
@@ -1212,7 +1290,8 @@ class VectorMetricsDB:
         if self._should_skip_logging():
             return
         try:
-            self.conn.execute(
+            conn = self._conn_for(reason="record_patch_summary")
+            conn.execute(
                 "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, "
                 "lines_changed, context_tokens, patch_difficulty, start_time, "
                 "time_to_completion, error_trace_count, roi_tag, "
@@ -1233,7 +1312,7 @@ class VectorMetricsDB:
                     enhancement_score,
                 ),
             )
-            self.conn.commit()
+            conn.commit()
         except Exception:
             logging.getLogger(__name__).exception("failed to record patch summary")
 
