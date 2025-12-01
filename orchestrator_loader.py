@@ -16,12 +16,12 @@ import logging
 import threading
 from dataclasses import dataclass
 from contextlib import contextmanager
-from typing import Iterator, TYPE_CHECKING, Any
+from typing import Iterator, Mapping, TYPE_CHECKING, Any
 
 from bootstrap_gate import resolve_bootstrap_placeholders
 from coding_bot_interface import get_active_bootstrap_pipeline
 from .bootstrap_placeholder import advertise_broker_placeholder
-from .bootstrap_helpers import ensure_bootstrapped
+from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 
 _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
@@ -29,13 +29,17 @@ _BOOTSTRAP_BROKER: object | None = None
 _BOOTSTRAP_GATE_TIMEOUT = 12.0
 
 
-def _bootstrap_placeholders() -> tuple[object, object, object]:
+def _bootstrap_placeholders(
+    *, bootstrap_state: Mapping[str, object] | None = None
+) -> tuple[object, object, object]:
     """Advertise bootstrap placeholders once the readiness gate clears."""
 
     global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
     # Always lean on the global readiness snapshot instead of triggering
     # bootstrap work from orchestrator imports.
-    ensure_bootstrapped()
+    state = bootstrap_state or bootstrap_state_snapshot()
+    if not state.get("ready") and not state.get("in_progress"):
+        ensure_bootstrapped()
     if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
@@ -167,12 +171,16 @@ def _capital_bot_manual_mode(capital_cls: type[Any]) -> Iterator[None]:
 
 
 def get_orchestrator(
-    bot_name: str, data_bot: "DataBot", engine: "SelfCodingEngine"
+    bot_name: str,
+    data_bot: "DataBot",
+    engine: "SelfCodingEngine",
+    *,
+    bootstrap_state: Mapping[str, object] | None = None,
 ) -> "EvolutionOrchestrator":
     """Return a singleton ``EvolutionOrchestrator``."""
 
     print("[debug] get_orchestrator invoked")
-    _bootstrap_placeholders()
+    _bootstrap_placeholders(bootstrap_state=bootstrap_state)
     global _shared_orchestrator
     if _shared_orchestrator is None:
         from .evolution_orchestrator import EvolutionOrchestrator

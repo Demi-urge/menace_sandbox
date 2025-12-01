@@ -29,12 +29,12 @@ Example
 
 from __future__ import annotations
 
-from typing import Any, Tuple
+from typing import Any, Mapping, Tuple
 
 from vector_service.context_builder import ContextBuilder
 from coding_bot_interface import advertise_bootstrap_placeholder, get_active_bootstrap_pipeline
 from bootstrap_gate import resolve_bootstrap_placeholders
-from bootstrap_helpers import ensure_bootstrapped
+from bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from roi_tracker import ROITracker
 
@@ -76,7 +76,9 @@ def _bootstrap_placeholders() -> tuple[object, object]:
     return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER
 
 
-def _get_layer(builder: ContextBuilder) -> _CognitionLayer:
+def _get_layer(
+    builder: ContextBuilder, *, bootstrap_state: Mapping[str, object] | None = None
+) -> _CognitionLayer:
     """Return cognition layer bound to *builder*.
 
     The layer instance is cached on ``builder`` to avoid recreating heavy
@@ -85,7 +87,11 @@ def _get_layer(builder: ContextBuilder) -> _CognitionLayer:
 
     # Guard against recursive bootstrap from cognition entrypoints; rely on the
     # shared readiness snapshot before building the layer cache.
-    ensure_bootstrapped()
+    state = bootstrap_state or getattr(builder, "_bootstrap_state", None)
+    if not state:
+        state = bootstrap_state_snapshot()
+    if not state.get("ready") and not state.get("in_progress"):
+        ensure_bootstrapped()
     _bootstrap_placeholders()
     layer = getattr(builder, "_cognition_layer", None)
     if layer is None:
