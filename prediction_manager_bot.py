@@ -17,13 +17,13 @@ from .coding_bot_interface import (
     self_coding_managed,
 )
 from .data_bot import DataBot, MetricsDB
-from .bootstrap_helpers import ensure_bootstrapped
+from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 
 import importlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, List, Mapping, Optional, TYPE_CHECKING
 from uuid import uuid4
 import os
 import logging
@@ -241,25 +241,31 @@ def _get_data_bot_proxy() -> _LazyDataBot:
 
 
 @lru_cache(maxsize=1)
-def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
+def _get_registry(
+    *, bootstrap: bool = False, bootstrap_state: Mapping[str, object] | None = None
+) -> BotRegistry:
     """Instantiate and return the shared :class:`BotRegistry`."""
 
     # Ensure the global readiness snapshot is initialized once before the
     # registry attaches bootstrap placeholders to avoid recursive bootstrap
     # attempts inside constructor paths.
-    ensure_bootstrapped()
+    state = bootstrap_state or bootstrap_state_snapshot()
+    if not state.get("ready") and not state.get("in_progress"):
+        ensure_bootstrapped()
     _bootstrap_placeholders()
     _REGISTRY_PROXY.set_bootstrap_mode(bootstrap)
     return _REGISTRY_PROXY._hydrate()
 
 
 @lru_cache(maxsize=1)
-def _get_data_bot() -> DataBot:
+def _get_data_bot(*, bootstrap_state: Mapping[str, object] | None = None) -> DataBot:
     """Instantiate and return the shared :class:`DataBot`."""
 
     # Keep registry construction tied to the central bootstrap readiness state
     # instead of spawning a fresh bootstrap cycle from this module.
-    ensure_bootstrapped()
+    state = bootstrap_state or bootstrap_state_snapshot()
+    if not state.get("ready") and not state.get("in_progress"):
+        ensure_bootstrapped()
     _bootstrap_placeholders()
     return _DATA_BOT_PROXY._hydrate()
 

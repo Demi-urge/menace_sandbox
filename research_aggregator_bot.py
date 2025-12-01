@@ -33,7 +33,7 @@ from .coding_bot_interface import (
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
-from .bootstrap_helpers import ensure_bootstrapped
+from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 from bootstrap_readiness import readiness_signal
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
@@ -57,7 +57,7 @@ import time
 from dataclasses import dataclass, field
 import dataclasses
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Iterator, cast
+from typing import Any, Iterable, List, Mapping, Optional, Iterator, cast
 
 from .auto_link import auto_link
 
@@ -260,6 +260,7 @@ def _ensure_runtime_dependencies(
     pipeline_override: "ModelAutomationPipeline | None" = None,
     manager_override: SelfCodingManager | None = None,
     promote_pipeline: Callable[[SelfCodingManager | None], None] | None = None,
+    bootstrap_state: Mapping[str, object] | None = None,
 ) -> _RuntimeDependencies:
     """Instantiate heavy runtime helpers on demand.
 
@@ -271,7 +272,9 @@ def _ensure_runtime_dependencies(
 
     # Guard: bootstrap orchestration must flow through the shared readiness
     # snapshot so module constructors never recurse into bootstrap again.
-    ensure_bootstrapped()
+    state = bootstrap_state or bootstrap_state_snapshot()
+    if not state.get("ready") and not state.get("in_progress"):
+        ensure_bootstrapped()
     _bootstrap_placeholders()
     global registry
     global data_bot
