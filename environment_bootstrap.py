@@ -2133,9 +2133,28 @@ class EnvironmentBootstrapper:
         if self.policy.provision_vector_assets:
             check_budget()
             raw = os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").strip().lower()
-            warm_vectors = raw in {"1", "true", "yes", "on", "full"}
-            light_warmup = raw in {"light", "probe", "check"}
-            warmup_lite = light_warmup
+            tokens = {tok for tok in (t.strip() for t in raw.split(",")) if tok}
+            truthy = {"1", "true", "yes", "on", "full"}
+            warm_vectors = raw in truthy or "full" in tokens
+            light_warmup = raw in {"light", "probe", "check"} or "probe" in tokens
+            warmup_model = warm_vectors or os.getenv(
+                "MENACE_BOOTSTRAP_WARM_VECTOR_MODEL", ""
+            ).strip().lower() in truthy or "model" in tokens
+            warmup_handlers = warm_vectors or os.getenv(
+                "MENACE_BOOTSTRAP_WARM_VECTOR_HANDLERS", ""
+            ).strip().lower() in truthy or "handlers" in tokens or "hydrate" in tokens
+            warmup_probe = (
+                warm_vectors
+                or light_warmup
+                or os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR_PROBE", "").strip().lower()
+                in truthy
+                or "check" in tokens
+                or "probe" in tokens
+            )
+            run_vectorise = warm_vectors or os.getenv(
+                "MENACE_BOOTSTRAP_WARM_VECTOR_VECTORISE", ""
+            ).strip().lower() in truthy or "vectorise" in tokens or "vectorize" in tokens
+            warmup_lite = light_warmup or (warmup_probe and not warmup_handlers)
             if raw in {"defer", "later"}:
                 self.logger.info(
                     "Vector warmup explicitly deferred; assets will hydrate on first use",
@@ -2143,21 +2162,41 @@ class EnvironmentBootstrapper:
                 check_budget()
                 return
 
-            if warm_vectors or light_warmup:
+            warm_requested = (
+                warm_vectors
+                or light_warmup
+                or warmup_model
+                or warmup_handlers
+                or warmup_probe
+                or run_vectorise
+            )
+            if warm_requested:
+                selected_flags = {
+                    "model": warmup_model,
+                    "handlers": warmup_handlers,
+                    "probe": warmup_probe,
+                    "vectorise": run_vectorise,
+                }
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
 
                     warmup_vector_service(
                         logger=self.logger,
                         check_budget=check_budget,
-                        download_model=warm_vectors,
-                        probe_model=light_warmup,
-                        hydrate_handlers=warm_vectors,
+                        download_model=warmup_model,
+                        probe_model=warmup_probe,
+                        hydrate_handlers=warmup_handlers,
                         start_scheduler=True,
-                        run_vectorise=warm_vectors,
+                        run_vectorise=run_vectorise,
                         force_heavy=warm_vectors,
                         bootstrap_fast=True,
                         warmup_lite=warmup_lite,
+                        warmup_model=warmup_model,
+                        warmup_handlers=warmup_handlers,
+                        warmup_probe=warmup_probe,
+                    )
+                    self.logger.info(
+                        "Vector warmup invoked with flags: %s", selected_flags
                     )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)
