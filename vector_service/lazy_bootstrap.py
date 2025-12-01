@@ -12,6 +12,7 @@ import importlib.util
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -114,10 +115,11 @@ def warmup_vector_service(
     logger: logging.Logger | None = None,
     force_heavy: bool = False,
     bootstrap_fast: bool | None = None,
-    warmup_lite: bool = False,
+    warmup_lite: bool = True,
     warmup_model: bool | None = None,
     warmup_handlers: bool | None = None,
     warmup_probe: bool | None = None,
+    stage_timeouts: dict[str, float] | None = None,
 ) -> None:
     """Eagerly initialise vector assets and caches.
 
@@ -125,12 +127,14 @@ def warmup_vector_service(
     configuration and optional model presence without instantiating
     ``SharedVectorService``.  Callers may opt-in to handler hydration and
     vectorisation by setting ``hydrate_handlers=True`` (and optionally
-    ``run_vectorise=True``) when a heavier warmup is desired.
+    ``run_vectorise=True``) when a heavier warmup is desired.  ``warmup_lite``
+    defaults to True so bootstrap flows skip handler hydration and vectorise
+    steps unless explicitly requested.
 
     When ``bootstrap_fast`` is True the vector service keeps the patch handler
-    stubbed during warmup and avoids loading heavy indexes.  Setting
-    ``warmup_lite`` further short-circuits handler hydration and vector store
-    acquisition so readiness checks do not incur heavy startup costs.
+    stubbed during warmup and avoids loading heavy indexes.  Stage timeouts can
+    be provided via ``stage_timeouts`` to cap how long heavyweight tasks are
+    allowed to block before they are deferred to background execution.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -190,8 +194,8 @@ def warmup_vector_service(
     def _guard(stage: str) -> bool:
         nonlocal budget_exhausted
         if budget_exhausted:
-            _record(stage, "skipped-budget")
-            log.info("Vector warmup budget already exhausted; skipping %s", stage)
+            _record(stage, "deferred-budget")
+            log.info("Vector warmup budget already exhausted; deferring %s", stage)
             return False
         if check_budget is None:
             return True
@@ -201,7 +205,7 @@ def warmup_vector_service(
             return True
         except TimeoutError as exc:
             budget_exhausted = True
-            _record(stage, "skipped-budget")
+            _record(stage, "deferred-budget")
             log.warning("Vector warmup deadline reached before %s: %s", stage, exc)
             return False
 
@@ -211,9 +215,14 @@ def warmup_vector_service(
         except Exception:  # pragma: no cover - metrics best effort
             log.debug("failed emitting vector warmup timeout metric", exc_info=True)
 
-    def _run_with_budget(stage: str, func: Callable[[], Any]) -> tuple[bool, Any | None]:
+    def _run_with_budget(
+        stage: str,
+        func: Callable[[], Any],
+        *,
+        timeout: float | None = None,
+    ) -> tuple[bool, Any | None]:
         nonlocal budget_exhausted
-        if check_budget is None:
+        if check_budget is None and timeout is None:
             return True, func()
 
         result: list[Any | None] = []
@@ -231,26 +240,42 @@ def warmup_vector_service(
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
 
+        start = time.monotonic()
         while not done.wait(timeout=0.05):
-            try:
-                check_budget()
-            except TimeoutError as exc:
-                budget_exhausted = True
+            if timeout is not None and time.monotonic() - start >= timeout:
                 _record_timeout(stage)
-                _record(stage, "skipped-budget")
-                log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
+                _record(stage, "deferred-timeout")
+                log.warning("Vector warmup %s timed out after %.2fs; deferring", stage, timeout)
                 return False, None
+
+            if check_budget is not None:
+                try:
+                    check_budget()
+                except TimeoutError as exc:
+                    budget_exhausted = True
+                    _record_timeout(stage)
+                    _record(stage, "deferred-budget")
+                    log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
+                    return False, None
 
         if error:
             raise error[0]
 
         return True, result[0] if result else None
 
+    resolved_timeouts = stage_timeouts or {
+        "model": 20.0,
+        "handlers": 25.0,
+        "vectorise": 8.0,
+    }
+
     _guard("init")
     if _guard("model"):
         if download_model:
             completed, path = _run_with_budget(
-                "model", lambda: ensure_embedding_model(logger=log, warmup=True)
+                "model",
+                lambda: ensure_embedding_model(logger=log, warmup=True),
+                timeout=resolved_timeouts.get("model"),
             )
             if completed:
                 if path:
@@ -282,6 +307,7 @@ def warmup_vector_service(
                         bootstrap_fast=bootstrap_fast,
                         warmup_lite=warmup_lite,
                     ),
+                    timeout=resolved_timeouts.get("handlers"),
                 )
                 if completed:
                     _record("handlers", "hydrated")
@@ -305,7 +331,9 @@ def warmup_vector_service(
         if should_vectorise and svc is not None:
             try:
                 completed, _ = _run_with_budget(
-                    "vectorise", lambda: svc.vectorise("text", {"text": "warmup"})
+                    "vectorise",
+                    lambda: svc.vectorise("text", {"text": "warmup"}),
+                    timeout=resolved_timeouts.get("vectorise"),
                 )
                 if completed:
                     _record("vectorise", "ok")
