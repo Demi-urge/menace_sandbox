@@ -1546,6 +1546,8 @@ def _bootstrap_embedder(
 
     if _BOOTSTRAP_EMBEDDER_ATTEMPTED:
         LOGGER.debug("embedder preload already attempted; refusing to create another thread")
+        if _BOOTSTRAP_EMBEDDER_JOB:
+            return _BOOTSTRAP_EMBEDDER_JOB.get("result", _BOOTSTRAP_PLACEHOLDER)
         return
 
     if _BOOTSTRAP_EMBEDDER_STARTED:
@@ -1584,13 +1586,16 @@ def _bootstrap_embedder(
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     timeout_cap = apply_bootstrap_timeout_caps(stage_budget)
-    hard_cap = min(timeout_cap, 5.0)
+    stage_wall_cap = timeout_cap if timeout_cap >= 0 else None
+    if stage_wall_cap is not None:
+        stage_wall_cap = min(stage_wall_cap, 15.0)
+
     if timeout is None:
-        timeout = hard_cap
+        timeout = timeout_cap
     elif timeout > 0:
-        timeout = min(timeout, hard_cap)
+        timeout = min(timeout, timeout_cap)
     elif stage_budget is not None and stage_budget >= 0:
-        timeout = min(stage_budget, hard_cap)
+        timeout = min(stage_budget, timeout_cap)
     else:
         timeout = 0.0
 
@@ -1607,6 +1612,7 @@ def _bootstrap_embedder(
         "stop_event": embedder_stop_event,
         "placeholder": placeholder,
         "started_at": start_time,
+        "result": None,
     }
     _BOOTSTRAP_SCHEDULER.mark_partial("background_loops", reason="embedder_warmup_start")
 
@@ -1644,6 +1650,11 @@ def _bootstrap_embedder(
         except Exception:  # pragma: no cover - advisory only
             LOGGER.debug("failed to promote fallback embedder", exc_info=True)
         result.setdefault("embedder", placeholder)
+        result.setdefault("placeholder_reason", reason)
+        _BOOTSTRAP_EMBEDDER_JOB["result"] = placeholder
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{reason}"
+        )
         cancel_embedder_initialisation(
             embedder_stop_event,
             reason=reason,
@@ -1666,9 +1677,14 @@ def _bootstrap_embedder(
         finally:
             elapsed = perf_counter() - start_time
             embedder = result.get("embedder")
-            placeholder_reason = getattr(embedder, "_placeholder_reason", None)
+            placeholder_reason = result.get("placeholder_reason") or getattr(
+                embedder, "_placeholder_reason", None
+            )
             if not placeholder_reason and result.get("aborted"):
                 placeholder_reason = "aborted"
+            if embedder is None and placeholder_reason:
+                embedder = placeholder
+                result["embedder"] = embedder
 
             if embedder and not placeholder_reason:
                 LOGGER.info(
@@ -1692,6 +1708,7 @@ def _bootstrap_embedder(
                         "placeholder_reason": placeholder_reason,
                     },
                 )
+                _BOOTSTRAP_EMBEDDER_JOB["result"] = embedder
                 _BOOTSTRAP_SCHEDULER.mark_partial(
                     "background_loops", reason=f"embedder_placeholder:{placeholder_reason}"
                 )
@@ -1727,7 +1744,9 @@ def _bootstrap_embedder(
     budget_deadline = (
         start_time + stage_budget if stage_budget is not None and stage_budget >= 0 else None
     )
-    wall_clock_deadline = start_time + timeout_cap if timeout_cap >= 0 else None
+    wall_clock_deadline = (
+        start_time + stage_wall_cap if stage_wall_cap is not None else None
+    )
     max_wait_deadline = start_time + _MAX_EMBEDDER_WAIT if _MAX_EMBEDDER_WAIT >= 0 else None
 
     def _budget_watchdog() -> None:
