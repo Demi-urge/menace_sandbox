@@ -17,6 +17,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List
 
+from bootstrap_readiness import shared_online_state
+
 logger = logging.getLogger(__name__)
 
 # Default paths for required files and directories that must always be present
@@ -158,8 +160,22 @@ __all__ = [
 ]
 
 
+def _bootstrap_ready_fast_path() -> bool:
+    """Return ``True`` when a shared bootstrap heartbeat reports readiness."""
+
+    state = shared_online_state()
+    ready = bool(state and state.get("ready"))
+    if ready:
+        logger.info("bootstrap heartbeat reports ready; short-circuiting health probe")
+    return ready
+
+
 def main() -> None:
     """Run diagnostics and exit non-zero on failure."""
+    if _bootstrap_ready_fast_path():
+        print("bootstrap already ready; skipping cold start checks")
+        return
+
     report = run_startup_diagnostics()
     halt_on_failure(report)
     print("startup checks passed")
