@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Callable, Tuple
 
@@ -77,8 +78,12 @@ def wait_for_bootstrap_gate(
             except Exception:  # pragma: no cover - best effort parsing
                 queue_depth = 0
 
+            reentrant = heartbeat.get("pid") == os.getpid()
             delay = compute_gate_backoff(
-                queue_depth=queue_depth, attempt=attempts, remaining=remaining
+                queue_depth=queue_depth,
+                attempt=attempts,
+                remaining=remaining,
+                reentrant=reentrant,
             )
             LOGGER.info(
                 "bootstrap gate busy; retrying after backoff",
@@ -88,6 +93,7 @@ def wait_for_bootstrap_gate(
                     "attempt": attempts,
                     "delay": round(delay, 3),
                     "remaining": remaining,
+                    "reentrant": reentrant,
                 },
             )
             time.sleep(delay)

@@ -10,6 +10,8 @@ import threading
 import time
 from typing import Callable, Dict, Generic, Optional, Tuple, TypeVar
 
+import bootstrap_metrics
+
 T = TypeVar("T")
 
 
@@ -54,12 +56,24 @@ class BootstrapManager:
         with self._lock:
             existing = self._steps.get(key)
             if existing and existing.status == "completed":
+                bootstrap_metrics.record_bootstrap_entry(
+                    "already bootstrapped",
+                    logger=log,
+                    step=step,
+                    fingerprint=fingerprint_key,
+                )
                 log.info(
                     "bootstrap helper skipped (cached)",
                     extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "cached"},
                 )
                 return existing.result  # type: ignore[return-value]
             if existing and existing.status == "running":
+                bootstrap_metrics.record_bootstrap_entry(
+                    "skipped (in-flight)",
+                    logger=log,
+                    step=step,
+                    fingerprint=fingerprint_key,
+                )
                 log.info(
                     "bootstrap helper already running",  # avoid log spam while providing context
                     extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "running"},
@@ -77,9 +91,28 @@ class BootstrapManager:
             with self._lock:
                 cached = self._steps.get(key)
                 if cached and cached.status == "completed":
+                    bootstrap_metrics.record_bootstrap_entry(
+                        "already bootstrapped",
+                        logger=log,
+                        step=step,
+                        fingerprint=fingerprint_key,
+                    )
                     return cached.result  # type: ignore[return-value]
+            bootstrap_metrics.record_bootstrap_entry(
+                "fresh start",
+                logger=log,
+                step=step,
+                fingerprint=fingerprint_key,
+                retry=True,
+            )
             return func()  # fall back to executing if the first attempt failed
 
+        bootstrap_metrics.record_bootstrap_entry(
+            "fresh start",
+            logger=log,
+            step=step,
+            fingerprint=fingerprint_key,
+        )
         log.info(
             "bootstrap helper starting",
             extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "starting"},
