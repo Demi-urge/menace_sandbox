@@ -228,6 +228,7 @@ _HF_TIMEOUT_CONFIGURED = False
 _FORCED_LOCK_CLEANUP_GUARD = threading.Lock()
 _STACKTRACE_LOCK = threading.Lock()
 _EMBEDDER_STACK_REPORTED: Set[str] = set()
+_BOOTSTRAP_EMBEDDER_WAIT_DEFAULT = 15.0
 
 
 def _determine_timeout_cap() -> float:
@@ -293,6 +294,47 @@ def _apply_timeout_caps() -> None:
 
 _EMBEDDER_TIMEOUT_CAP = 0.0
 _apply_timeout_caps()
+
+
+def _bootstrap_context_timeout_cap() -> float:
+    """Return the hard cap to apply when running under bootstrap-like flows."""
+
+    configured = os.getenv("EMBEDDER_BOOTSTRAP_WAIT", "").strip()
+    fallback_cap = _BOOTSTRAP_EMBEDDER_WAIT_DEFAULT
+    try:
+        if configured:
+            fallback_cap = max(0.0, float(configured))
+    except Exception:
+        logger.debug(
+            "ignoring invalid EMBEDDER_BOOTSTRAP_WAIT=%r", configured
+        )
+
+    if _SOFT_EMBEDDER_WAIT >= 0:
+        fallback_cap = min(fallback_cap, _SOFT_EMBEDDER_WAIT)
+    return fallback_cap
+
+
+def apply_bootstrap_timeout_caps() -> float:
+    """Clamp embedder waits to a small budget for bootstrap/warmup paths."""
+
+    global _EMBEDDER_INIT_TIMEOUT, _MAX_EMBEDDER_WAIT
+
+    cap = _bootstrap_context_timeout_cap()
+    if _EMBEDDER_INIT_TIMEOUT >= 0 and _EMBEDDER_INIT_TIMEOUT > cap:
+        logger.info(
+            "tightening embedder init timeout to %.1fs for bootstrap/warmup (requested %.1fs)",
+            cap,
+            _EMBEDDER_INIT_TIMEOUT,
+        )
+        _EMBEDDER_INIT_TIMEOUT = cap
+    if _MAX_EMBEDDER_WAIT >= 0 and _MAX_EMBEDDER_WAIT > cap:
+        logger.info(
+            "tightening embedder max wait to %.1fs for bootstrap/warmup (requested %.1fs)",
+            cap,
+            _MAX_EMBEDDER_WAIT,
+        )
+        _MAX_EMBEDDER_WAIT = cap
+    return cap
 
 
 def _stacktrace_enabled() -> bool:
@@ -1499,6 +1541,11 @@ def _initialise_embedder_with_timeout(
         if requester:
             with _EMBEDDER_REQUESTER_LOCK:
                 _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
+        logger.info(
+            "embedder initialisation deferred after %.1fs; using fallback stub",
+            waited or wait_time,
+            extra={"model": _MODEL_NAME, "requester": requester},
+        )
         _trace(
             "wait.fallback",
             requester=requester,

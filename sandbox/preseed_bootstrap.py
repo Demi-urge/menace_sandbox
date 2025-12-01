@@ -1500,6 +1500,7 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
     try:
         from menace_sandbox.governed_embeddings import (
             _activate_bundled_fallback,
+            apply_bootstrap_timeout_caps,
             cancel_embedder_initialisation,
             get_embedder,
         )
@@ -1509,6 +1510,13 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
 
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
+    timeout_cap = apply_bootstrap_timeout_caps()
+    if timeout is None:
+        timeout = timeout_cap
+    elif timeout > 0:
+        timeout = min(timeout, timeout_cap)
+    else:
+        timeout = 0.0
     _BOOTSTRAP_EMBEDDER_STARTED = True
 
     def _worker() -> None:
@@ -1525,33 +1533,26 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
 
     if thread.is_alive():
         LOGGER.warning(
-            "embedding model load exceeded %.1fs during bootstrap; attempting fallback", timeout
+            "embedding model load exceeded %.1fs during bootstrap; deferring to stub",
+            timeout,
         )
         embedder_stop_event.set()
         cancel_embedder_initialisation(
-            embedder_stop_event, reason="bootstrap_timeout", join_timeout=2.0
+            embedder_stop_event, reason="bootstrap_timeout", join_timeout=0.0
         )
 
-        timed_out_embedder = None
-        for join_timeout in (2.0, 5.0):
-            thread.join(join_timeout)
-            if not thread.is_alive():
-                timed_out_embedder = result.get("embedder")
-                break
-
-        if thread.is_alive():
-            LOGGER.warning(
-                "bootstrap embedder preload worker still running after timeout cancellation",
-                extra={"timeout": timeout},
-            )
-        elif timed_out_embedder is not None:
+        timed_out_embedder = result.get("embedder")
+        if timed_out_embedder is not None:
             LOGGER.info(
                 "bootstrap embedder became ready after timeout: %s",
                 type(timed_out_embedder).__name__,
             )
             return timed_out_embedder
-        else:
-            LOGGER.info("bootstrap embedder preload worker cancelled after timeout")
+
+        LOGGER.info(
+            "bootstrap embedder warmup deferred after %.1fs; exposing stub fallback",
+            timeout,
+        )
 
         fallback_used = False
         try:
