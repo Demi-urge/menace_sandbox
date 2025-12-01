@@ -120,33 +120,6 @@ _VECTOR_METRICS_DISABLED = os.getenv("VECTOR_METRICS_DISABLED", "").lower() in {
 }
 _VEC_METRICS: "VectorMetricsDB | None" = None
 
-
-def _get_vector_metrics(
-    *,
-    bootstrap_fast: bool | None = None,
-    warmup: bool | None = None,
-) -> "VectorMetricsDB | None":
-    """Return the cached :class:`VectorMetricsDB`, creating it on-demand.
-
-    The accessor respects the global warmup flags used by the module-level
-    instance while avoiding import-time side effects.  When metrics are
-    disabled (for example via ``VECTOR_METRICS_DISABLED``) the function returns
-    ``None`` immediately to keep the hot path lightweight.
-    """
-
-    if _VECTOR_METRICS_DISABLED or VectorMetricsDB is None:
-        return None
-
-    global _VEC_METRICS
-    if _VEC_METRICS is None:
-        bootstrap_flag = bool(bootstrap_fast or _VECTOR_SERVICE_WARMUP)
-        warmup_flag = bool(warmup or _VECTOR_SERVICE_WARMUP)
-        _VEC_METRICS = VectorMetricsDB(
-            bootstrap_fast=bootstrap_flag,
-            warmup=warmup_flag,
-        )
-    return _VEC_METRICS
-
 try:  # pragma: no cover - optional dependency
     from .stack_ingestion import (
         ensure_background_task as _ensure_stack_background,
@@ -532,6 +505,9 @@ class _StackContextConfig:
 class ContextBuilder:
     """Build compact JSON context blocks from multiple databases."""
 
+    _vector_metrics_lock = threading.Lock()
+    _shared_vector_metrics: "VectorMetricsDB | None" = None
+
     def __init__(
         self,
         *,
@@ -589,6 +565,10 @@ class ContextBuilder:
         # Respect the centralized bootstrap readiness snapshot rather than
         # triggering bootstrap from context builder construction.
         self._bootstrap_state = ensure_bootstrapped()
+        self._vector_metrics: "VectorMetricsDB | None" = None
+        if _VEC_METRICS is not None:
+            self._vector_metrics = _VEC_METRICS
+            ContextBuilder._shared_vector_metrics = _VEC_METRICS
         self.provenance_token = provenance_token or uuid.uuid4().hex
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
@@ -869,6 +849,51 @@ class ContextBuilder:
                 self._excluded_failed_strategies.add(tag)
 
     # ------------------------------------------------------------------
+    def _get_vector_metrics(
+        self,
+        *,
+        bootstrap_fast: bool | None = None,
+        warmup: bool | None = None,
+    ) -> "VectorMetricsDB | None":
+        """Return a shared :class:`VectorMetricsDB` instance.
+
+        The database is opened lazily the first time metrics are requested and
+        cached for subsequent calls.  When metrics logging is disabled or the
+        optional dependency is unavailable the method returns ``None``.  A
+        process-wide/thread-safe lock prevents duplicate initialisation in
+        concurrent environments.
+        """
+
+        if _VECTOR_METRICS_DISABLED or VectorMetricsDB is None:
+            return None
+
+        if self._vector_metrics is not None:
+            return self._vector_metrics
+
+        with ContextBuilder._vector_metrics_lock:
+            if self._vector_metrics is not None:
+                return self._vector_metrics
+
+            if ContextBuilder._shared_vector_metrics is not None:
+                self._vector_metrics = ContextBuilder._shared_vector_metrics
+                globals()["_VEC_METRICS"] = self._vector_metrics
+                return self._vector_metrics
+
+            bootstrap_flag = bool(bootstrap_fast or _VECTOR_SERVICE_WARMUP)
+            warmup_flag = bool(warmup or _VECTOR_SERVICE_WARMUP)
+            vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
+            self._vector_metrics = vm
+            ContextBuilder._shared_vector_metrics = vm
+            globals()["_VEC_METRICS"] = vm
+            return vm
+
+    @property
+    def vector_metrics(self) -> "VectorMetricsDB | None":
+        """Property wrapper around :meth:`_get_vector_metrics`."""
+
+        return self._get_vector_metrics()
+
+    # ------------------------------------------------------------------
     def refresh_db_weights(
         self,
         weights: Dict[str, float] | None = None,
@@ -889,11 +914,13 @@ class ContextBuilder:
             Database from which weights are loaded when ``weights`` is ``None``.
             The argument defaults to the module-level instance when available.
         """
-
-        global _VEC_METRICS
         fast_bootstrap = bool(bootstrap_fast or bootstrap)
         if weights is None:
-            vm = vector_metrics or _get_vector_metrics(
+            if vector_metrics is not None:
+                self._vector_metrics = vector_metrics
+                ContextBuilder._shared_vector_metrics = vector_metrics
+                globals()["_VEC_METRICS"] = vector_metrics
+            vm = vector_metrics or self._get_vector_metrics(
                 bootstrap_fast=bootstrap_fast,
                 warmup=bootstrap,
             )
@@ -905,8 +932,6 @@ class ContextBuilder:
                 weights = vm.get_db_weights(bootstrap=fast_bootstrap)
             except Exception:
                 return
-            if vector_metrics is not None:
-                _VEC_METRICS = vector_metrics
         if not isinstance(weights, dict):  # pragma: no cover - defensive
             return
         # Replace existing mapping so each refresh reflects the latest weights
@@ -999,7 +1024,7 @@ class ContextBuilder:
         """
 
         metric: float | None = None
-        vm = _get_vector_metrics()
+        vm = self._get_vector_metrics()
         try:
             if origin == "error":
                 freq = meta.get("frequency")
@@ -1133,7 +1158,7 @@ class ContextBuilder:
     def _bundle_to_entry(self, bundle: Dict[str, Any], query: str) -> Tuple[str, _ScoredEntry]:
         meta = bundle.get("metadata", {}) or {}
         origin = bundle.get("origin_db", "")
-        vm = _get_vector_metrics()
+        vm = self._get_vector_metrics()
 
         text = bundle.get("text") or ""
         vec_id = str(bundle.get("record_id", ""))
