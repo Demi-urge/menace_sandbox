@@ -1,14 +1,47 @@
+import logging
 import threading
 from types import SimpleNamespace
 
 import coding_bot_interface as cbi
-import research_aggregator_bot as rab
-import watchdog as watchdog_module
+
+try:
+    import menace_sandbox.research_aggregator_bot as rab  # type: ignore
+except ImportError:  # pragma: no cover - flat layout support
+    import research_aggregator_bot as rab  # type: ignore
+
+try:
+    import menace_sandbox.watchdog as watchdog_module  # type: ignore
+except ImportError:  # pragma: no cover - flat layout support
+    import watchdog as watchdog_module  # type: ignore
 
 
 def test_late_consumers_reuse_placeholder_during_single_flight(monkeypatch):
-    broker = cbi._bootstrap_dependency_broker()
-    broker.clear()
+    class _Broker:
+        def __init__(self) -> None:
+            self.pipeline: object | None = None
+            self.sentinel: object | None = None
+            self.active_owner = False
+
+        def resolve(self) -> tuple[object | None, object | None]:
+            return self.pipeline, self.sentinel
+
+        def advertise(
+            self, *, pipeline: object | None = None, sentinel: object | None = None, owner: bool = False
+        ) -> tuple[object | None, object | None]:
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            self.active_owner = owner or self.active_owner
+            return self.pipeline, self.sentinel
+
+        def clear(self) -> None:
+            self.pipeline = None
+            self.sentinel = None
+            self.active_owner = False
+
+    broker = _Broker()
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
     cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
     cbi._PREPARE_PIPELINE_WATCHDOG.clear()
 
@@ -167,4 +200,109 @@ def test_late_consumers_reuse_placeholder_during_single_flight(monkeypatch):
     assert aggregator_state.pipeline is pipeline_placeholder
     assert watchdog_instance.manager.pipeline is pipeline_placeholder
     assert promotions
+
+
+def test_multi_module_bootstrap_logs_once(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+
+    class _Broker:
+        def __init__(self) -> None:
+            self.pipeline: object | None = None
+            self.sentinel: object | None = None
+            self.active_owner = False
+
+        def resolve(self) -> tuple[object | None, object | None]:
+            return self.pipeline, self.sentinel
+
+        def advertise(
+            self, *, pipeline: object | None = None, sentinel: object | None = None, owner: bool = False
+        ) -> tuple[object | None, object | None]:
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            self.active_owner = owner or self.active_owner
+            return self.pipeline, self.sentinel
+
+        def clear(self) -> None:
+            self.pipeline = None
+            self.sentinel = None
+            self.active_owner = False
+
+    broker = _Broker()
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR.reset()
+    cbi._PREPARE_PIPELINE_WATCHDOG.clear()
+    cbi._REENTRY_ATTEMPTS.clear()
+
+    for attr in (
+        "depth",
+        "sentinel_manager",
+        "pipeline",
+        "owner_depths",
+        "active_bootstrap_guard",
+        "active_bootstrap_token",
+    ):
+        if hasattr(cbi._BOOTSTRAP_STATE, attr):
+            delattr(cbi._BOOTSTRAP_STATE, attr)
+
+    start_event = threading.Event()
+    release_event = threading.Event()
+    prepare_calls: list[object] = []
+    promotions: list[object | None] = []
+
+    def _stub_inner(**_kwargs):
+        prepare_calls.append(_kwargs)
+        start_event.set()
+        release_event.wait(timeout=5)
+        return SimpleNamespace(manager="manager"), promotions.append
+
+    monkeypatch.setattr(cbi, "_prepare_pipeline_for_bootstrap_impl_inner", _stub_inner)
+
+    class _Pipeline:
+        def __init__(self, *, manager: object, **_kwargs) -> None:
+            self.manager = manager
+
+    barrier = threading.Barrier(3)
+    results: list[tuple[object, object]] = []
+
+    def _bootstrap_from(module_name: str) -> None:
+        barrier.wait()
+        pipeline, promote = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=_Pipeline,
+            context_builder=SimpleNamespace(),
+            bot_registry=SimpleNamespace(),
+            data_bot=SimpleNamespace(),
+            helper=module_name,
+        )
+        promote(pipeline.manager)
+        results.append((module_name, pipeline))
+
+    threads = [
+        threading.Thread(target=_bootstrap_from, args=(name,))
+        for name in (
+            "menace_sandbox.research_aggregator_bot",
+            "menace_sandbox.watchdog",
+            "menace_sandbox.prediction_manager_bot",
+        )
+    ]
+
+    for thread in threads:
+        thread.start()
+
+    assert start_event.wait(timeout=5)
+    release_event.set()
+
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(prepare_calls) == 1, "bootstrap implementation should run only once"
+    assert len(promotions) == len(threads), "each caller should reuse the single-flight pipeline"
+    assert all(result[1] is results[0][1] for result in results)
+
+    prepare_logs = [
+        record for record in caplog.records if "prepare_pipeline_for_bootstrap" in record.getMessage()
+    ]
+    assert len(prepare_logs) == 1, "prepare_pipeline_for_bootstrap should log once per process"
+    assert not any("recursion_guard" in record.getMessage() for record in caplog.records)
 
