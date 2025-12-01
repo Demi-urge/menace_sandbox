@@ -16,6 +16,12 @@ from collections import deque
 import re
 import time
 
+from .bootstrap_placeholder import advertise_broker_placeholder
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+    advertise_broker_placeholder()
+)
+
 from .data_bot import DataBot, MetricsDB, persist_sc_thresholds
 from .bot_registry import BotRegistry
 from .bot_planning_bot import BotPlanningBot, PlanningTask
@@ -133,9 +139,9 @@ def _get_pipeline_instance() -> "ModelAutomationPipeline | None":
     if _pipeline_instance is not None:
         return _pipeline_instance
 
-    dependency_broker = None
+    dependency_broker = _BOOTSTRAP_BROKER
     try:
-        dependency_broker = _bootstrap_dependency_broker()
+        dependency_broker = dependency_broker or _bootstrap_dependency_broker()
     except Exception:  # pragma: no cover - best effort broker reuse
         logger.debug("BotCreationBot bootstrap broker unavailable", exc_info=True)
 
@@ -154,13 +160,32 @@ def _get_pipeline_instance() -> "ModelAutomationPipeline | None":
         except Exception:  # pragma: no cover - best effort broker reuse
             logger.debug("BotCreationBot bootstrap broker resolve failed", exc_info=True)
 
+    placeholder_reused = any(
+        getattr(candidate, "bootstrap_placeholder", False)
+        for candidate in (broker_pipeline, active_pipeline, broker_manager, active_manager)
+        if candidate is not None
+    )
+
     pipeline_cls = _get_pipeline_cls()
     if pipeline_cls is None:
         return None
 
     try:
         pipeline_candidate = broker_pipeline or active_pipeline
-        manager_candidate = broker_manager or active_manager
+        manager_candidate = broker_manager or active_manager or _BOOTSTRAP_SENTINEL
+
+        if placeholder_reused:
+            pipeline_candidate = pipeline_candidate or _BOOTSTRAP_PLACEHOLDER
+            logger.info(
+                "bot_creation.bootstrap.placeholder_reuse",
+                extra={
+                    "event": "bot-creation-bootstrap-placeholder-reuse",
+                    "dependency_broker": bool(dependency_broker),
+                    "broker_pipeline": bool(broker_pipeline),
+                    "active_pipeline": bool(active_pipeline),
+                    "broker_placeholder": bool(_BOOTSTRAP_PLACEHOLDER),
+                },
+            )
 
         pipeline, promote, manager_candidate, prepared = claim_bootstrap_dependency_entry(
             dependency_broker=dependency_broker,
