@@ -95,6 +95,17 @@ BOOTSTRAP_ATTEMPT_DURATION = getattr(
 )
 _metrics.bootstrap_attempt_duration_seconds = BOOTSTRAP_ATTEMPT_DURATION
 
+BOOTSTRAP_SKIP_TOTAL = getattr(
+    _metrics,
+    "bootstrap_skip_total",
+    _metrics.Gauge(
+        "bootstrap_skip_total",
+        "Bootstrap invocations skipped before executing",
+        ["reason"],
+    ),
+)
+_metrics.bootstrap_skip_total = BOOTSTRAP_SKIP_TOTAL
+
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT_COUNT = 0
 
@@ -196,6 +207,31 @@ def record_bootstrap_entry(
         if context:
             extra.update({f"context.{k}": v for k, v in context.items()})
         logger.info("bootstrap entry recorded", extra=extra)
+
+
+def record_bootstrap_skip(
+    reason: str, *, logger: logging.Logger | None = None, **context: object
+) -> None:
+    """Record that a bootstrap invocation was skipped.
+
+    Parameters
+    ----------
+    reason:
+        Short descriptor for why the call was skipped, e.g. ``"cached"`` or
+        ``"in-flight"``.
+    logger:
+        Optional logger for structured auditing.
+    context:
+        Additional fields to enrich the structured log output.
+    """
+
+    label = reason.replace(" ", "-")
+    BOOTSTRAP_SKIP_TOTAL.labels(reason=label).inc()
+    if logger:
+        extra = {"event": "bootstrap-skip", "reason": reason}
+        if context:
+            extra.update({f"context.{k}": v for k, v in context.items()})
+        logger.info("bootstrap invocation skipped", extra=extra)
 
 BOOTSTRAP_DURATION_STORE = Path(__file__).resolve().parent / "sandbox_data" / "bootstrap_durations.json"
 DURATION_HISTORY_LIMIT = int(os.getenv("BOOTSTRAP_DURATION_HISTORY_LIMIT", "40"))

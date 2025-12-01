@@ -5,10 +5,12 @@ re-entrant callers reuse the prior result instead of re-running heavy setup.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import threading
 import time
-from typing import Callable, Dict, Generic, Optional, Tuple, TypeVar
+from collections import deque
+from typing import Callable, Deque, Dict, Generic, Optional, Tuple, TypeVar
 
 import bootstrap_metrics
 
@@ -31,6 +33,81 @@ class BootstrapManager:
         self._ready_event = threading.Event()
         self._ready_state: Optional[bool] = None
         self._ready_error: Optional[str] = None
+        self._recent_attempts: Dict[Tuple[str, str | None], Deque[float]] = {}
+        self._reentry_window_seconds = 5.0
+
+    @staticmethod
+    def _caller_details() -> Dict[str, object]:
+        frame = inspect.currentframe()
+        caller_frame = frame.f_back if frame else None
+        # Walk one additional level to reach the external caller of run_once
+        caller_frame = caller_frame.f_back if caller_frame else None
+        module = inspect.getmodule(caller_frame) if caller_frame else None
+        caller_info = {
+            "caller_module": module.__name__ if module else None,
+            "caller_function": caller_frame.f_code.co_name if caller_frame else None,
+            "caller_lineno": caller_frame.f_lineno if caller_frame else None,
+        }
+        del frame
+        del caller_frame
+        return caller_info
+
+    def _log_lifecycle(
+        self,
+        logger: logging.Logger,
+        *,
+        step: str,
+        fingerprint: str | None,
+        action: str,
+        state_from: str | None,
+        state_to: str | None,
+        caller: Dict[str, object],
+        message: str,
+        level: int = logging.INFO,
+    ) -> None:
+        extra = {
+            "event": "bootstrap-lifecycle",
+            "bootstrap_step": step,
+            "fingerprint": fingerprint,
+            "action": action,
+            "state_from": state_from,
+            "state_to": state_to,
+        }
+        extra.update(caller)
+        logger.log(level, message, extra=extra)
+
+    def _record_attempt_density(
+        self,
+        *,
+        logger: logging.Logger,
+        key: Tuple[str, str | None],
+        caller: Dict[str, object],
+    ) -> None:
+        now = time.monotonic()
+        attempts = self._recent_attempts.get(key)
+        if attempts is None:
+            attempts = deque()
+            self._recent_attempts[key] = attempts
+
+        while attempts and now - attempts[0] > self._reentry_window_seconds:
+            attempts.popleft()
+
+        attempts.append(now)
+        if len(attempts) > 1:
+            window = round(now - attempts[0], 2)
+            level = logging.WARNING if len(attempts) == 2 else logging.ERROR
+            logger.log(
+                level,
+                "multiple bootstrap attempts detected in short window",
+                extra={
+                    "event": "bootstrap-density",
+                    "bootstrap_step": key[0],
+                    "fingerprint": key[1],
+                    "attempts_in_window": len(attempts),
+                    "window_seconds": window,
+                    **caller,
+                },
+            )
 
     def run_once(
         self,
@@ -50,47 +127,94 @@ class BootstrapManager:
         """
 
         log = logger or logging.getLogger(__name__)
+        caller_info = self._caller_details()
         fingerprint_key = repr(fingerprint) if fingerprint is not None else None
         key = (step, fingerprint_key)
 
         with self._lock:
+            self._record_attempt_density(logger=log, key=key, caller=caller_info)
             existing = self._steps.get(key)
             if existing and existing.status == "completed":
+                bootstrap_metrics.record_bootstrap_skip(
+                    "ready",
+                    logger=log,
+                    step=step,
+                    fingerprint=fingerprint_key,
+                    caller=caller_info,
+                )
                 bootstrap_metrics.record_bootstrap_entry(
                     "already bootstrapped",
                     logger=log,
                     step=step,
                     fingerprint=fingerprint_key,
                 )
-                log.info(
-                    "bootstrap helper skipped (cached)",
-                    extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "cached"},
+                self._log_lifecycle(
+                    log,
+                    step=step,
+                    fingerprint=fingerprint_key,
+                    action="skip",
+                    state_from=existing.status,
+                    state_to=existing.status,
+                    caller=caller_info,
+                    message="bootstrap helper skipped (cached)",
                 )
                 return existing.result  # type: ignore[return-value]
             if existing and existing.status == "running":
+                bootstrap_metrics.record_bootstrap_skip(
+                    "in-flight",
+                    logger=log,
+                    step=step,
+                    fingerprint=fingerprint_key,
+                    caller=caller_info,
+                )
                 bootstrap_metrics.record_bootstrap_entry(
                     "skipped (in-flight)",
                     logger=log,
                     step=step,
                     fingerprint=fingerprint_key,
                 )
-                log.info(
-                    "bootstrap helper already running",  # avoid log spam while providing context
-                    extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "running"},
+                self._log_lifecycle(
+                    log,
+                    step=step,
+                    fingerprint=fingerprint_key,
+                    action="skip",
+                    state_from=existing.status,
+                    state_to=existing.status,
+                    caller=caller_info,
+                    message="bootstrap helper already running",
                 )
                 waiter = existing.event
             else:
                 entry = existing or _BootstrapStep()
+                previous_status = entry.status
                 entry.status = "running"
                 entry.event.clear()
                 self._steps[key] = entry
                 waiter = None
+
+                self._log_lifecycle(
+                    log,
+                    step=step,
+                    fingerprint=fingerprint_key,
+                    action="start",
+                    state_from=previous_status,
+                    state_to=entry.status,
+                    caller=caller_info,
+                    message="bootstrap helper starting",
+                )
 
         if waiter:
             waiter.wait()
             with self._lock:
                 cached = self._steps.get(key)
                 if cached and cached.status == "completed":
+                    bootstrap_metrics.record_bootstrap_skip(
+                        "ready",
+                        logger=log,
+                        step=step,
+                        fingerprint=fingerprint_key,
+                        caller=caller_info,
+                    )
                     bootstrap_metrics.record_bootstrap_entry(
                         "already bootstrapped",
                         logger=log,
@@ -98,12 +222,28 @@ class BootstrapManager:
                         fingerprint=fingerprint_key,
                     )
                     return cached.result  # type: ignore[return-value]
+                if cached:
+                    previous_status = cached.status
+                    cached.status = "running"
+                    cached.event.clear()
+                else:
+                    previous_status = None
             bootstrap_metrics.record_bootstrap_entry(
                 "fresh start",
                 logger=log,
                 step=step,
                 fingerprint=fingerprint_key,
                 retry=True,
+            )
+            self._log_lifecycle(
+                log,
+                step=step,
+                fingerprint=fingerprint_key,
+                action="start",
+                state_from=previous_status,
+                state_to="running",
+                caller=caller_info,
+                message="bootstrap helper restarting after wait",
             )
             return func()  # fall back to executing if the first attempt failed
 
@@ -112,10 +252,6 @@ class BootstrapManager:
             logger=log,
             step=step,
             fingerprint=fingerprint_key,
-        )
-        log.info(
-            "bootstrap helper starting",
-            extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "starting"},
         )
 
         try:
@@ -126,9 +262,25 @@ class BootstrapManager:
                 if failure:
                     failure.status = "pending"
                     failure.event.set()
+            self._log_lifecycle(
+                log,
+                step=step,
+                fingerprint=fingerprint_key,
+                action="fail",
+                state_from="running",
+                state_to="failed",
+                caller=caller_info,
+                message="bootstrap helper failed",
+                level=logging.ERROR,
+            )
             log.exception(
                 "bootstrap helper failed",
-                extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "failed"},
+                extra={
+                    "bootstrap_step": step,
+                    "fingerprint": fingerprint_key,
+                    "status": "failed",
+                    **caller_info,
+                },
             )
             raise
 
@@ -139,9 +291,15 @@ class BootstrapManager:
                 completed.status = "completed"
                 completed.event.set()
 
-        log.info(
-            "bootstrap helper finished",
-            extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "finished"},
+        self._log_lifecycle(
+            log,
+            step=step,
+            fingerprint=fingerprint_key,
+            action="finish",
+            state_from="running",
+            state_to="completed",
+            caller=caller_info,
+            message="bootstrap helper finished",
         )
         return result
 
