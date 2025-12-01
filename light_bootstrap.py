@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 """Lightweight environment bootstrap utilities used when MENACE_LIGHT_IMPORTS is
-set."""
+set.
+
+The full boot process is coordinated via :class:`environment_bootstrap.BootstrapOrchestrator`
+so call sites should rely on the orchestrator entry points instead of invoking
+this module directly.
+"""
 
 import logging
 import os

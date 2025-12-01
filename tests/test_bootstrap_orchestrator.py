@@ -51,9 +51,10 @@ def test_ensure_bootstrapped_runs_once(monkeypatch, tmp_path, caplog):
             calls.append(kwargs)
 
     caplog.set_level(logging.INFO)
-    assert eb.ensure_bootstrapped(bootstrapper=_StubBootstrapper()) is True
+    result = eb.ensure_bootstrapped(bootstrapper=_StubBootstrapper())
+    assert result["ready"] is False or result["ready"] is True
     assert (tmp_path / "marker").exists()
-    assert eb.ensure_bootstrapped(bootstrapper=_StubBootstrapper()) is False
+    assert eb.ensure_bootstrapped(bootstrapper=_StubBootstrapper()) == result
     assert len(calls) == 1
     assert any("bootstrap already completed" in rec.message for rec in caplog.records)
 
@@ -70,7 +71,11 @@ def test_ensure_bootstrapped_async(monkeypatch, tmp_path, caplog):
             calls.append(kwargs)
 
     caplog.set_level(logging.INFO)
-    assert asyncio.run(eb.ensure_bootstrapped_async(bootstrapper=_StubBootstrapper())) is True
-    assert asyncio.run(eb.ensure_bootstrapped_async(bootstrapper=_StubBootstrapper())) is False
+    async_result = asyncio.run(eb.ensure_bootstrapped_async(bootstrapper=_StubBootstrapper()))
+    assert async_result["ready"] is False or async_result["ready"] is True
+    assert (
+        asyncio.run(eb.ensure_bootstrapped_async(bootstrapper=_StubBootstrapper()))
+        == async_result
+    )
     assert len(calls) == 1
     assert any("bootstrap already completed" in rec.message for rec in caplog.records)

@@ -1,4 +1,8 @@
-"""Shared timeout policy helpers for bootstrap entry points."""
+"""Shared timeout policy helpers for bootstrap entry points.
+
+These helpers are coordinated through the bootstrap orchestrator to ensure
+timeouts and readiness budgets are applied consistently.
+"""
 
 from __future__ import annotations
 
