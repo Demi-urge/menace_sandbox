@@ -1354,6 +1354,8 @@ def _initialise_embedder_with_timeout(
 
     if _embedder_stop_requested(stop_event):
         _cancel_embedder_initialisation(stop_event, reason="stop_requested")
+        if _activate_bundled_fallback("bootstrap_cancelled") and _EMBEDDER is not None:
+            return _EMBEDDER
         placeholder = _build_stub_embedder()
         setattr(placeholder, "_placeholder_reason", "stop_requested")
         return placeholder
@@ -1523,6 +1525,13 @@ def _initialise_embedder_with_timeout(
             remaining_wait = max(0.0, remaining)
         if not finished:
             finished = bool(getattr(event, "is_set", lambda: False)())
+    if _embedder_stop_requested(stop_event):
+        _cancel_embedder_initialisation(stop_event, reason="stop_requested")
+        if _activate_bundled_fallback("bootstrap_cancelled") and _EMBEDDER is not None:
+            return _EMBEDDER
+        placeholder = _build_stub_embedder()
+        setattr(placeholder, "_placeholder_reason", "stop_requested")
+        return placeholder
     if finished:
         _EMBEDDER_TIMEOUT_LOGGED = False
         _EMBEDDER_TIMEOUT_REACHED = False
@@ -2007,15 +2016,23 @@ def get_embedder(
 
     requester = _identify_embedder_requester()
     wait_override = timeout
+    bootstrap_wait_cap: float | None = None
     if bootstrap_mode or bootstrap_timeout is not None:
         cap_budget = bootstrap_timeout if bootstrap_timeout is not None else timeout
-        apply_bootstrap_timeout_caps(cap_budget)
-        if timeout is None and cap_budget is not None:
-            wait_override = cap_budget
-        elif cap_budget is not None and timeout is not None:
-            wait_override = min(timeout, cap_budget)
-        elif cap_budget is not None:
-            wait_override = cap_budget
+        bootstrap_wait_cap = apply_bootstrap_timeout_caps(cap_budget)
+        if wait_override is None and bootstrap_wait_cap is not None:
+            wait_override = bootstrap_wait_cap
+        elif bootstrap_wait_cap is not None and wait_override is not None:
+            wait_override = min(wait_override, bootstrap_wait_cap)
+        elif bootstrap_wait_cap is not None:
+            wait_override = bootstrap_wait_cap
+
+    if bootstrap_mode and stop_event is not None and stop_event.is_set():
+        if _activate_bundled_fallback("bootstrap_cancelled") and _EMBEDDER is not None:
+            return _EMBEDDER
+        placeholder = _build_stub_embedder()
+        setattr(placeholder, "_placeholder_reason", "bootstrap_cancelled")
+        return placeholder
     lock = _embedder_lock()
     placeholder_embedder = None
     lock_timeout = LOCK_TIMEOUT
@@ -2052,7 +2069,7 @@ def get_embedder(
             suppress_timeout_log=wait_override is not None,
             requester=requester,
             stop_event=stop_event,
-            fallback_on_timeout=wait_override is not None,
+            fallback_on_timeout=bootstrap_mode or wait_override is not None,
         )
         return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
 
@@ -2065,7 +2082,7 @@ def get_embedder(
                     suppress_timeout_log=wait_override is not None,
                     requester=requester,
                     stop_event=stop_event,
-                    fallback_on_timeout=wait_override is not None,
+                    fallback_on_timeout=bootstrap_mode or wait_override is not None,
                 )
                 break
         except LockTimeout:
