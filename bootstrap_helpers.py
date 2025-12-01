@@ -9,7 +9,7 @@ without forcing heavy imports at module load time.
 from typing import Any
 
 
-def ensure_environment_bootstrapped(**kwargs: Any) -> bool:
+def ensure_environment_bootstrapped(**kwargs: Any) -> dict[str, object]:
     """Ensure environment bootstrap runs once in a process-safe manner.
 
     The import is deferred to avoid circular imports for modules that are

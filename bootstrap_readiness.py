@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Readiness helpers managed by the bootstrap orchestrator."""
+
 from dataclasses import dataclass
 from typing import Iterable, Mapping, MutableMapping
 

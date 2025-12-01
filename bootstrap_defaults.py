@@ -1,5 +1,8 @@
 """Environment bootstrap helpers for seeding configuration defaults.
 
+These routines are invoked by the central bootstrap orchestrator and should not
+be called directly by consumers that only need to guarantee readiness.
+
 The script ``scripts/bootstrap_env.py`` is frequently executed on fresh
 workstations where critical configuration values have not yet been provisioned.
 This module takes care of populating sensible defaults in a cross-platform way

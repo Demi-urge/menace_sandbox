@@ -27,7 +27,7 @@ import urllib.request
 import bootstrap_timeout_policy
 import bootstrap_metrics
 
-from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines
+from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines, shared_online_state
 
 from .config_discovery import ensure_config, ConfigDiscovery
 from .bootstrap_policy import DependencyPolicy, PolicyLoader
@@ -59,6 +59,8 @@ _BOOTSTRAP_MARKER = Path(
 )
 _BOOTSTRAP_LOCK_PATH = os.getenv("MENACE_BOOTSTRAP_LOCK", "/tmp/menace_bootstrap.lock")
 _BOOTSTRAP_LOGGER = logging.getLogger(__name__ + ".orchestrator")
+_BOOTSTRAP_RUNNING = False
+_BOOTSTRAP_STATE: Mapping[str, object] | None = None
 
 
 def _async_lock() -> asyncio.Lock:
@@ -95,49 +97,134 @@ def _mark_bootstrapped() -> None:
         _BOOTSTRAP_LOGGER.warning("failed to persist bootstrap marker: %s", exc)
 
 
+def _readiness_snapshot() -> Mapping[str, object]:
+    """Return the most recent readiness signal available."""
+
+    global _BOOTSTRAP_STATE
+    if _BOOTSTRAP_STATE is not None:
+        return _BOOTSTRAP_STATE
+
+    snapshot = shared_online_state()
+    if snapshot:
+        _BOOTSTRAP_STATE = snapshot
+    else:
+        _BOOTSTRAP_STATE = {"ready": False, "components": {}, "heartbeat": None}
+
+    return _BOOTSTRAP_STATE
+
+
+class BootstrapOrchestrator:
+    """Dedicated orchestrator that owns the bootstrap sequence."""
+
+    def __init__(self, bootstrapper: "EnvironmentBootstrapper | None" = None) -> None:
+        self.bootstrapper = bootstrapper or EnvironmentBootstrapper()
+        self.logger = logging.getLogger(__name__ + ".orchestrator.run")
+
+    def prime_helpers(self) -> None:
+        """Run light-weight helper hooks that are orchestrator managed."""
+
+        for helper in (
+            _prime_readiness_helpers,
+            _prime_default_helpers,
+            _prime_timeout_helpers,
+        ):
+            try:
+                helper()
+            except Exception:
+                self.logger.debug("bootstrap helper %s failed", helper.__name__, exc_info=True)
+
+    def run(self, *, timeout: float | None = None, halt_background: bool | None = None, skip_db_init: bool | None = None) -> Mapping[str, object]:
+        """Execute the full bootstrap workflow and return readiness state."""
+
+        self.prime_helpers()
+        self.bootstrapper.bootstrap(
+            timeout=timeout, halt_background=halt_background, skip_db_init=skip_db_init
+        )
+        state = _readiness_snapshot()
+        _BOOTSTRAP_LOGGER.info(
+            "bootstrap orchestrator recorded readiness", extra=log_record(event="bootstrap-ready")
+        )
+        return state
+
+
+def _prime_readiness_helpers() -> None:
+    """Ensure readiness helpers are invoked via the orchestrator."""
+
+    shared_online_state()
+
+
+def _prime_default_helpers() -> None:
+    """Invoke default seeding helpers through the orchestrator."""
+
+    try:
+        from .bootstrap_defaults import ensure_bootstrap_defaults
+
+        ensure_bootstrap_defaults(())
+    except Exception:
+        _BOOTSTRAP_LOGGER.debug("default helper bootstrap failed", exc_info=True)
+
+
+def _prime_timeout_helpers() -> None:
+    """Connect timeout policy helpers to the orchestrator lifecycle."""
+
+    try:
+        bootstrap_timeout_policy.read_bootstrap_heartbeat()
+    except Exception:
+        _BOOTSTRAP_LOGGER.debug("timeout helper bootstrap failed", exc_info=True)
+
+
 def ensure_bootstrapped(
     *,
     bootstrapper: "EnvironmentBootstrapper | None" = None,
     timeout: float | None = None,
     halt_background: bool | None = None,
     skip_db_init: bool | None = None,
-) -> bool:
+) -> Mapping[str, object]:
     """Run environment bootstrap exactly once per process.
 
-    Returns ``True`` when the current call executed the bootstrapper and
-    ``False`` when bootstrap was skipped because a prior invocation already
-    completed.  Process-wide coordination uses ``SandboxLock`` and a marker file
-    for visibility across concurrent processes, while in-process access is
-    guarded by a mutex.
+    The orchestrator caches readiness state and returns it for repeated callers.
+    Calls that race while another bootstrap is running immediately return the
+    last known readiness snapshot.
     """
+
+    global _BOOTSTRAP_RUNNING, _BOOTSTRAP_STATE
 
     if _already_bootstrapped():
         _log_skip("flag")
-        return False
+        return _readiness_snapshot()
 
     with _BOOTSTRAP_MUTEX:
         if _already_bootstrapped():
             _log_skip("mutex-flag")
-            return False
+            return _readiness_snapshot()
 
-        with SandboxLock(_BOOTSTRAP_LOCK_PATH):
-            if _already_bootstrapped():
-                _log_skip("marker")
-                return False
+        if _BOOTSTRAP_RUNNING:
+            _log_skip("inflight")
+            return _readiness_snapshot()
 
-            boot = bootstrapper or EnvironmentBootstrapper()
-            _BOOTSTRAP_LOGGER.info(
-                "bootstrap orchestrator starting", extra=log_record(event="bootstrap-start")
-            )
-            boot.bootstrap(
-                timeout=timeout, halt_background=halt_background, skip_db_init=skip_db_init
-            )
-            _mark_bootstrapped()
-            _BOOTSTRAP_LOGGER.info(
-                "bootstrap orchestrator finished",
-                extra=log_record(event="bootstrap-complete"),
-            )
-            return True
+        _BOOTSTRAP_RUNNING = True
+        try:
+            with SandboxLock(_BOOTSTRAP_LOCK_PATH):
+                if _already_bootstrapped():
+                    _log_skip("marker")
+                    return _readiness_snapshot()
+
+                boot = BootstrapOrchestrator(bootstrapper)
+                _BOOTSTRAP_LOGGER.info(
+                    "bootstrap orchestrator starting",
+                    extra=log_record(event="bootstrap-start"),
+                )
+                _BOOTSTRAP_STATE = boot.run(
+                    timeout=timeout, halt_background=halt_background, skip_db_init=skip_db_init
+                )
+                _mark_bootstrapped()
+                _BOOTSTRAP_LOGGER.info(
+                    "bootstrap orchestrator finished",
+                    extra=log_record(event="bootstrap-complete"),
+                )
+                return _BOOTSTRAP_STATE
+        finally:
+            _BOOTSTRAP_RUNNING = False
 
 
 async def ensure_bootstrapped_async(
@@ -146,18 +233,18 @@ async def ensure_bootstrapped_async(
     timeout: float | None = None,
     halt_background: bool | None = None,
     skip_db_init: bool | None = None,
-) -> bool:
+) -> Mapping[str, object]:
     """Async-friendly wrapper around :func:`ensure_bootstrapped`."""
 
     if _already_bootstrapped():
         _log_skip("async-flag")
-        return False
+        return _readiness_snapshot()
 
     lock = _async_lock()
     async with lock:
         if _already_bootstrapped():
             _log_skip("async-mutex-flag")
-            return False
+            return _readiness_snapshot()
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -2025,6 +2112,7 @@ class EnvironmentBootstrapper:
 
 
 __all__ = [
+    "BootstrapOrchestrator",
     "EnvironmentBootstrapper",
     "ensure_bootstrapped",
     "ensure_bootstrapped_async",

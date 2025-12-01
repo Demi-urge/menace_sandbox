@@ -1,5 +1,8 @@
 """Bootstrap dependency policy management.
 
+Policies are loaded and applied via the bootstrap orchestrator; callers should
+prefer orchestrator entry points over using this module directly.
+
 This module centralises the configuration that drives environment bootstrapping
 and startup validation.  Historically the bootstrap process always enforced the
 full production dependency surface.  That behaviour is problematic for
