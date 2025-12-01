@@ -32,7 +32,7 @@ from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines, shared
 from .config_discovery import ensure_config, ConfigDiscovery
 from .bootstrap_policy import DependencyPolicy, PolicyLoader
 from .logging_utils import log_record
-from .lock_utils import SandboxLock
+from .lock_utils import SandboxLock, is_lock_stale
 
 if TYPE_CHECKING:  # pragma: no cover - for type hints only
     from .cluster_supervisor import ClusterServiceSupervisor
@@ -63,6 +63,43 @@ _BOOTSTRAP_STATE: Mapping[str, object] | None = None
 _BOOTSTRAP_STATUS = "not_started"
 _BOOTSTRAP_ERROR: str | None = None
 _BOOTSTRAP_EVENT = threading.Event()
+
+
+class _BootstrapGuard:
+    """Shared guard that tracks recursive bootstrap attempts and lock state."""
+
+    def __init__(self, lock_path: str) -> None:
+        self.lock_path = lock_path
+        self._local = threading.local()
+
+    @property
+    def depth(self) -> int:
+        return getattr(self._local, "depth", 0)
+
+    def increment(self) -> None:
+        self._local.depth = self.depth + 1
+
+    def decrement(self) -> None:
+        self._local.depth = max(0, self.depth - 1)
+
+    def in_progress(self) -> bool:
+        if self.depth > 0:
+            return True
+        if _BOOTSTRAP_STATUS == "running":
+            return True
+        if os.path.exists(self.lock_path) and not is_lock_stale(self.lock_path):
+            return True
+        return False
+
+    def short_circuit_snapshot(self) -> Mapping[str, object]:
+        _BOOTSTRAP_LOGGER.debug(
+            "recursive bootstrap detected; short-circuiting nested request",
+            extra=log_record(event="bootstrap-recursive"),
+        )
+        return _readiness_snapshot()
+
+
+_BOOTSTRAP_GUARD = _BootstrapGuard(_BOOTSTRAP_LOCK_PATH)
 
 
 def _async_lock() -> asyncio.Lock:
@@ -160,6 +197,18 @@ def _wait_for_inflight_bootstrap(*, timeout: float | None, description: str) -> 
     )
 
 
+def is_bootstrapped() -> bool:
+    """Return True if bootstrap already completed in this or another process."""
+
+    return _already_bootstrapped()
+
+
+def bootstrap_in_progress() -> bool:
+    """Return True when a bootstrap attempt is currently running."""
+
+    return _BOOTSTRAP_GUARD.in_progress()
+
+
 class BootstrapOrchestrator:
     """Dedicated orchestrator that owns the bootstrap sequence."""
 
@@ -236,11 +285,15 @@ def ensure_bootstrapped(
 
     global _BOOTSTRAP_STATE
 
+    if _BOOTSTRAP_GUARD.depth > 0:
+        return _BOOTSTRAP_GUARD.short_circuit_snapshot()
+
     if _already_bootstrapped():
         _log_skip("flag")
         return _readiness_snapshot()
 
     wait_for_running = False
+    started_bootstrap = False
 
     with _BOOTSTRAP_MUTEX:
         if _already_bootstrapped():
@@ -256,6 +309,8 @@ def ensure_bootstrapped(
             raise RuntimeError(_BOOTSTRAP_ERROR or "bootstrap previously failed")
         else:
             _set_bootstrap_status("running")
+            _BOOTSTRAP_GUARD.increment()
+            started_bootstrap = True
 
     if wait_for_running:
         _log_skip("inflight")
@@ -285,6 +340,9 @@ def ensure_bootstrapped(
         with _BOOTSTRAP_MUTEX:
             _set_bootstrap_status("failed", error=str(exc))
         raise
+    finally:
+        if started_bootstrap:
+            _BOOTSTRAP_GUARD.decrement()
 
 
 async def ensure_bootstrapped_async(
