@@ -7,6 +7,7 @@ via :class:`SecretsManager`.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import os
@@ -31,6 +32,7 @@ from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines
 from .config_discovery import ensure_config, ConfigDiscovery
 from .bootstrap_policy import DependencyPolicy, PolicyLoader
 from .logging_utils import log_record
+from .lock_utils import SandboxLock
 
 if TYPE_CHECKING:  # pragma: no cover - for type hints only
     from .cluster_supervisor import ClusterServiceSupervisor
@@ -47,6 +49,126 @@ try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
+
+
+_BOOTSTRAP_DONE = False
+_BOOTSTRAP_MUTEX = threading.Lock()
+_ASYNC_BOOTSTRAP_LOCK: asyncio.Lock | None = None
+_BOOTSTRAP_MARKER = Path(
+    os.getenv("MENACE_BOOTSTRAP_MARKER", "/tmp/menace_bootstrap_complete")
+)
+_BOOTSTRAP_LOCK_PATH = os.getenv("MENACE_BOOTSTRAP_LOCK", "/tmp/menace_bootstrap.lock")
+_BOOTSTRAP_LOGGER = logging.getLogger(__name__ + ".orchestrator")
+
+
+def _async_lock() -> asyncio.Lock:
+    global _ASYNC_BOOTSTRAP_LOCK
+    if _ASYNC_BOOTSTRAP_LOCK is None:
+        _ASYNC_BOOTSTRAP_LOCK = asyncio.Lock()
+    return _ASYNC_BOOTSTRAP_LOCK
+
+
+def _already_bootstrapped() -> bool:
+    global _BOOTSTRAP_DONE
+    if _BOOTSTRAP_DONE:
+        return True
+    if _BOOTSTRAP_MARKER.exists():
+        _BOOTSTRAP_DONE = True
+        return True
+    return False
+
+
+def _log_skip(reason: str) -> None:
+    _BOOTSTRAP_LOGGER.info(
+        "bootstrap already completed; skipping",
+        extra=log_record(event="bootstrap-skip", reason=reason),
+    )
+
+
+def _mark_bootstrapped() -> None:
+    global _BOOTSTRAP_DONE
+    _BOOTSTRAP_DONE = True
+    try:
+        _BOOTSTRAP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _BOOTSTRAP_MARKER.write_text(f"{os.getpid()},{time.time()}")
+    except Exception as exc:  # pragma: no cover - best effort marker
+        _BOOTSTRAP_LOGGER.warning("failed to persist bootstrap marker: %s", exc)
+
+
+def ensure_bootstrapped(
+    *,
+    bootstrapper: "EnvironmentBootstrapper | None" = None,
+    timeout: float | None = None,
+    halt_background: bool | None = None,
+    skip_db_init: bool | None = None,
+) -> bool:
+    """Run environment bootstrap exactly once per process.
+
+    Returns ``True`` when the current call executed the bootstrapper and
+    ``False`` when bootstrap was skipped because a prior invocation already
+    completed.  Process-wide coordination uses ``SandboxLock`` and a marker file
+    for visibility across concurrent processes, while in-process access is
+    guarded by a mutex.
+    """
+
+    if _already_bootstrapped():
+        _log_skip("flag")
+        return False
+
+    with _BOOTSTRAP_MUTEX:
+        if _already_bootstrapped():
+            _log_skip("mutex-flag")
+            return False
+
+        with SandboxLock(_BOOTSTRAP_LOCK_PATH):
+            if _already_bootstrapped():
+                _log_skip("marker")
+                return False
+
+            boot = bootstrapper or EnvironmentBootstrapper()
+            _BOOTSTRAP_LOGGER.info(
+                "bootstrap orchestrator starting", extra=log_record(event="bootstrap-start")
+            )
+            boot.bootstrap(
+                timeout=timeout, halt_background=halt_background, skip_db_init=skip_db_init
+            )
+            _mark_bootstrapped()
+            _BOOTSTRAP_LOGGER.info(
+                "bootstrap orchestrator finished",
+                extra=log_record(event="bootstrap-complete"),
+            )
+            return True
+
+
+async def ensure_bootstrapped_async(
+    *,
+    bootstrapper: "EnvironmentBootstrapper | None" = None,
+    timeout: float | None = None,
+    halt_background: bool | None = None,
+    skip_db_init: bool | None = None,
+) -> bool:
+    """Async-friendly wrapper around :func:`ensure_bootstrapped`."""
+
+    if _already_bootstrapped():
+        _log_skip("async-flag")
+        return False
+
+    lock = _async_lock()
+    async with lock:
+        if _already_bootstrapped():
+            _log_skip("async-mutex-flag")
+            return False
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: ensure_bootstrapped(
+                bootstrapper=bootstrapper,
+                timeout=timeout,
+                halt_background=halt_background,
+                skip_db_init=skip_db_init,
+            ),
+        )
 
 
 class _PhaseBudgetContext:
@@ -1881,4 +2003,8 @@ class EnvironmentBootstrapper:
         return t
 
 
-__all__ = ["EnvironmentBootstrapper"]
+__all__ = [
+    "EnvironmentBootstrapper",
+    "ensure_bootstrapped",
+    "ensure_bootstrapped_async",
+]
