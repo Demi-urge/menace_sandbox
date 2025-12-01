@@ -106,6 +106,29 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
     if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
+    active_pipeline, active_manager = get_active_bootstrap_pipeline()
+    broker = _bootstrap_dependency_broker()
+    broker_owner = bool(getattr(broker, "active_owner", False))
+    if active_pipeline is not None or active_manager is not None:
+        _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
+            dependency_broker=broker,
+            pipeline=active_pipeline,
+            manager=active_manager,
+            owner=broker_owner,
+        )
+        _BOOTSTRAP_BROKER = broker
+        if not broker_owner:
+            logger.error(
+                "Bootstrap dependency broker missing active owner; reusing active ResearchAggregatorBot placeholder",
+                extra={"event": "research-aggregator-broker-owner-missing"},
+            )
+        return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
+    if not broker_owner:
+        raise RuntimeError(
+            "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot"
+        )
+
     pipeline, manager, broker = resolve_bootstrap_placeholders(
         timeout=_BOOTSTRAP_GATE_TIMEOUT,
         description="ResearchAggregatorBot bootstrap gate",

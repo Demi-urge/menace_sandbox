@@ -213,3 +213,43 @@ def test_bootstrap_reuses_broker_pipeline(monkeypatch):
     assert deps.pipeline == broker.active_pipeline
     assert deps.manager == broker.active_sentinel
     assert prepare_called is False
+
+
+def test_bootstrap_placeholders_advertise_active_when_owner_missing(monkeypatch):
+    module = _load_module_with_stubs(monkeypatch)
+
+    placeholder_pipeline = object()
+    placeholder_manager = object()
+    broker = SimpleNamespace(active_owner=False)
+
+    advertise_calls: list[tuple[object | None, object | None]] = []
+
+    def _advertise(**kwargs):
+        advertise_calls.append((kwargs.get("pipeline"), kwargs.get("manager")))
+        broker.active_pipeline = kwargs.get("pipeline")
+        broker.active_sentinel = kwargs.get("manager")
+        return kwargs.get("pipeline"), kwargs.get("manager")
+
+    module._BOOTSTRAP_PLACEHOLDER = None
+    module._BOOTSTRAP_SENTINEL = None
+    module._BOOTSTRAP_BROKER = None
+
+    module.get_active_bootstrap_pipeline = lambda: (
+        placeholder_pipeline,
+        placeholder_manager,
+    )
+    module._bootstrap_dependency_broker = lambda: broker
+    module.resolve_bootstrap_placeholders = lambda **_: (_ for _ in ()).throw(
+        AssertionError("resolve_bootstrap_placeholders should not run")
+    )
+    module.advertise_bootstrap_placeholder = _advertise
+    module.prepare_pipeline_for_bootstrap = lambda **_: (_ for _ in ()).throw(
+        AssertionError("prepare_pipeline_for_bootstrap should not be used")
+    )
+
+    pipeline, manager, resolved_broker = module._bootstrap_placeholders()
+
+    assert pipeline is placeholder_pipeline
+    assert manager is placeholder_manager
+    assert resolved_broker is broker
+    assert advertise_calls == [(placeholder_pipeline, placeholder_manager)]
