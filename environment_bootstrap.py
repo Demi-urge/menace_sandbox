@@ -2154,6 +2154,7 @@ class EnvironmentBootstrapper:
                         hydrate_handlers=warm_vectors,
                         start_scheduler=True,
                         run_vectorise=warm_vectors,
+                        force_heavy=warm_vectors,
                     )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)

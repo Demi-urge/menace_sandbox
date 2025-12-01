@@ -31,6 +31,7 @@ def _normalise_model_name(model_name: str | None) -> str:
     return name
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -392,6 +393,7 @@ class EmbeddableDBMixin:
         embedding_version: int = 1,
         backend: str = "annoy",
         event_bus: Any | None = None,
+        defer_index_load: bool | None = None,
         **super_kwargs: Any,
     ) -> None:
         """Initialise the mixin while tolerating cooperative super-calls."""
@@ -432,7 +434,21 @@ class EmbeddableDBMixin:
         self._last_embedding_time = 0.0
         self._last_chunk_meta: Dict[str, Any] = {}
 
-        self.load_index()
+        if defer_index_load is None:
+            bootstrap_env = any(
+                str(os.getenv(flag, "")).lower() in {"1", "true", "yes", "on"}
+                for flag in (
+                    "MENACE_BOOTSTRAP_FAST",
+                    "MENACE_BOOTSTRAP_MODE",
+                    "MENACE_BOOTSTRAP",
+                    "VECTOR_SERVICE_WARMUP",
+                )
+            )
+            defer_index_load = bootstrap_env
+        self._defer_index_load = bool(defer_index_load)
+        self._index_loaded = False
+        if not self._defer_index_load:
+            self.load_index()
 
     # ------------------------------------------------------------------
     # model helpers
@@ -463,6 +479,7 @@ class EmbeddableDBMixin:
     def encode_text(self, text: str) -> List[float]:
         """Encode ``text`` using the SentenceTransformer model."""
 
+        self._ensure_index_loaded()
         start = perf_counter()
         vec = governed_embed(text, self.model)
         self._last_embedding_time = perf_counter() - start
@@ -665,6 +682,7 @@ class EmbeddableDBMixin:
     # index persistence
     def load_index(self) -> None:
         """Load the vector index and metadata from disk if available."""
+        self._index_loaded = True
         if self.metadata_path.exists():
             data = json.loads(self.metadata_path.read_text())
             self._id_map = data.get("id_map", [])
@@ -683,6 +701,10 @@ class EmbeddableDBMixin:
                 self._index = faiss.read_index(str(self.index_path))
             elif faiss and self._metadata:
                 self._rebuild_index()
+
+    def _ensure_index_loaded(self) -> None:
+        if not self._index_loaded:
+            self.load_index()
 
     def save_index(self) -> None:
         """Persist vector index and metadata to disk."""
@@ -850,6 +872,7 @@ class EmbeddableDBMixin:
     def get_vector(self, record_id: Any) -> List[float] | None:
         """Return the stored embedding vector for ``record_id`` if present."""
 
+        self._ensure_index_loaded()
         meta = self._metadata.get(str(record_id))
         if meta:
             self._record_staleness(str(record_id), meta.get("created_at"))
@@ -876,6 +899,7 @@ class EmbeddableDBMixin:
     ) -> None:
         """Update ``embedding_version`` metadata for ``record_id``."""
 
+        self._ensure_index_loaded()
         rid = str(record_id)
         if rid not in self._metadata:
             return
@@ -891,6 +915,7 @@ class EmbeddableDBMixin:
     ) -> None:
         """Bulk update ``embedding_version`` for multiple records."""
 
+        self._ensure_index_loaded()
         version = (
             embedding_version if embedding_version is not None else self.embedding_version
         )
@@ -913,6 +938,7 @@ class EmbeddableDBMixin:
         ``record`` is ``None`` the check falls back to version mismatches only.
         """
 
+        self._ensure_index_loaded()
         rid = str(record_id)
         meta = self._metadata.get(rid)
         if not meta:
@@ -954,6 +980,7 @@ class EmbeddableDBMixin:
     ) -> List[Tuple[Any, float]]:
         """Return ``top_k`` records most similar to ``vector``."""
 
+        self._ensure_index_loaded()
         if self._index is None:
             self.load_index()
         if self._index is None:
