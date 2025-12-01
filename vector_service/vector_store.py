@@ -5,7 +5,7 @@ Currently supports FAISS, Annoy, Qdrant and Chroma.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple, Protocol
 
@@ -101,20 +101,24 @@ def _resolve_or_prepare_path(path: Path | str) -> Path:
 class FaissVectorStore:
     dim: int
     path: Path
+    lazy: bool = False
+    _loaded: bool = field(init=False, default=False)
+    _pending_load: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self.path = _resolve_or_prepare_path(self.path)
         self.meta_path = self.path.with_suffix(".meta.json")
-        if self.path.exists():
-            self.load()
+        self.index = None
+        self.ids: List[str] = []
+        self.meta: List[Dict[str, Any]] = []
+        if self.lazy:
+            self._pending_load = self.path.exists()
         else:
-            if faiss is None:
-                raise RuntimeError("faiss backend requested but faiss not available")
-            if np is None:
-                raise RuntimeError("faiss backend requires numpy, which is missing")
-            self.index = faiss.IndexFlatL2(self.dim)
-            self.ids: List[str] = []
-            self.meta: List[Dict[str, Any]] = []
+            self._pending_load = False
+            if self.path.exists():
+                self.load()
+            else:
+                self._initialise_index()
 
     def add(
         self,
@@ -125,6 +129,7 @@ class FaissVectorStore:
         origin_db: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        self._ensure_index()
         if faiss is None:
             raise RuntimeError("faiss not available")
         if np is None:
@@ -143,6 +148,7 @@ class FaissVectorStore:
         self._save()
 
     def query(self, vector: Sequence[float], top_k: int = 5) -> List[Tuple[str, float]]:
+        self._ensure_index()
         if not self.ids:
             return []
         if np is None:
@@ -156,6 +162,7 @@ class FaissVectorStore:
         return result
 
     def load(self) -> None:
+        self._require_dependencies()
         if faiss is None:
             raise RuntimeError("faiss not available")
         self.index = faiss.read_index(str(self.path))
@@ -167,11 +174,36 @@ class FaissVectorStore:
         else:
             self.ids = []
             self.meta = []
+        self._loaded = True
+        self._pending_load = False
 
     def _save(self) -> None:
+        self._ensure_index()
         faiss.write_index(self.index, str(self.path))
         with self.meta_path.open("w", encoding="utf-8") as fh:
             json.dump({"ids": self.ids, "meta": self.meta}, fh)
+
+    def _require_dependencies(self) -> None:
+        if faiss is None:
+            raise RuntimeError("faiss backend requested but faiss not available")
+        if np is None:
+            raise RuntimeError("faiss backend requires numpy, which is missing")
+
+    def _initialise_index(self) -> None:
+        self._require_dependencies()
+        self.index = faiss.IndexFlatL2(self.dim)
+        self.ids = []
+        self.meta = []
+        self._loaded = True
+        self._pending_load = False
+
+    def _ensure_index(self) -> None:
+        if self._loaded:
+            return
+        if self._pending_load and self.path.exists():
+            self.load()
+            return
+        self._initialise_index()
 
 
 # ---------------------------------------------------------------------------
@@ -470,12 +502,13 @@ def create_vector_store(
     *,
     backend: str | None = None,
     metric: str = "angular",
+    lazy: bool = False,
 ) -> VectorStore:
     """Create a ``VectorStore`` instance for the given configuration."""
 
     backend = (backend or "faiss").lower()
     if backend == "faiss" and faiss is not None and np is not None:
-        return FaissVectorStore(dim=dim, path=Path(path))
+        return FaissVectorStore(dim=dim, path=Path(path), lazy=lazy)
     if backend == "qdrant" and QdrantClient is not None:
         return QdrantVectorStore(dim=dim, path=Path(path))
     if backend == "chroma" and chromadb is not None:
@@ -491,7 +524,7 @@ def create_vector_store(
 _default_store: VectorStore | None = None
 
 
-def get_default_vector_store() -> VectorStore | None:
+def get_default_vector_store(*, lazy: bool = False) -> VectorStore | None:
     """Return a cached ``VectorStore`` based on global configuration."""
 
     global _default_store
@@ -522,6 +555,7 @@ def get_default_vector_store() -> VectorStore | None:
             path=cfg.path,
             backend=cfg.backend,
             metric="angular",
+            lazy=lazy,
         )
         _trace(
             "vector_store.default.created",
