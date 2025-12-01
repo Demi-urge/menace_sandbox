@@ -788,6 +788,7 @@ BOOTSTRAP_DEADLINE_BUFFER = 5.0
 _BOOTSTRAP_EMBEDDER_DISABLED = False
 _BOOTSTRAP_EMBEDDER_STARTED = False
 _BOOTSTRAP_EMBEDDER_ATTEMPTED = False
+_BOOTSTRAP_EMBEDDER_JOB: dict[str, Any] | None = None
 
 
 def _resolve_bootstrap_lock_path() -> str:
@@ -1530,6 +1531,7 @@ def _bootstrap_embedder(
 
     try:
         from menace_sandbox.governed_embeddings import (
+            _MAX_EMBEDDER_WAIT,
             _activate_bundled_fallback,
             apply_bootstrap_timeout_caps,
             cancel_embedder_initialisation,
@@ -1539,9 +1541,16 @@ def _bootstrap_embedder(
         LOGGER.debug("governed_embeddings unavailable; skipping embedder bootstrap", exc_info=True)
         return
 
+    global _BOOTSTRAP_EMBEDDER_JOB
+
+    if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("thread"):
+        existing = _BOOTSTRAP_EMBEDDER_JOB["thread"]
+        if existing.is_alive():
+            LOGGER.info("embedder warmup already running; returning placeholder")
+            return _BOOTSTRAP_EMBEDDER_JOB.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
-    combined_stop_event = stop_event or embedder_stop_event
     timeout_cap = apply_bootstrap_timeout_caps(stage_budget)
     hard_cap = min(timeout_cap, 5.0)
     if timeout is None:
@@ -1552,16 +1561,22 @@ def _bootstrap_embedder(
         timeout = min(stage_budget, hard_cap)
     else:
         timeout = 0.0
-    soft_wait = min(timeout, 2.0) if timeout > 0 else 0.0
-    _BOOTSTRAP_EMBEDDER_STARTED = True
 
-    env_bootstrap_fast = os.getenv("MENACE_BOOTSTRAP_FAST", "")
-    bootstrap_fast = env_bootstrap_fast.lower() in {"1", "true", "yes", "fast"}
-    probe_window = 0.5
-    probe_deadline = (
-        perf_counter()
-        + (0.0 if bootstrap_fast else min(probe_window, soft_wait) if soft_wait > 0 else 0.0)
-    )
+    try:
+        placeholder_candidate = _activate_bundled_fallback("bootstrap_placeholder")
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("failed to activate embedder placeholder", exc_info=True)
+        placeholder_candidate = None
+    placeholder = placeholder_candidate or _BOOTSTRAP_PLACEHOLDER
+    _BOOTSTRAP_EMBEDDER_STARTED = True
+    start_time = perf_counter()
+    _BOOTSTRAP_EMBEDDER_JOB = {
+        "thread": None,
+        "stop_event": embedder_stop_event,
+        "placeholder": placeholder,
+        "started_at": start_time,
+    }
+    _BOOTSTRAP_SCHEDULER.mark_partial("background_loops", reason="embedder_warmup_start")
 
     def _signal_stop(reason: str) -> None:
         LOGGER.debug("signalling embedder stop (%s)", reason)
@@ -1578,145 +1593,102 @@ def _bootstrap_embedder(
         except Exception as exc:  # pragma: no cover - diagnostics only
             result["error"] = exc
         finally:
+            elapsed = perf_counter() - start_time
+            if result.get("embedder"):
+                LOGGER.info(
+                    "background embedder warmup completed",
+                    extra={
+                        "elapsed": round(elapsed, 3),
+                        "stage_budget": stage_budget,
+                        "max_wait": _MAX_EMBEDDER_WAIT,
+                    },
+                )
+                _BOOTSTRAP_SCHEDULER.mark_ready(
+                    "background_loops", reason="embedder_warmup_complete"
+                )
+            elif result.get("aborted"):
+                LOGGER.warning(
+                    "background embedder warmup aborted",
+                    extra={
+                        "elapsed": round(elapsed, 3),
+                        "stage_budget": stage_budget,
+                        "max_wait": _MAX_EMBEDDER_WAIT,
+                    },
+                )
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "background_loops", reason="embedder_warmup_aborted"
+                )
+            elif result.get("error"):
+                LOGGER.info(
+                    "embedder preload failed; proceeding without embeddings",
+                    extra={
+                        "elapsed": round(elapsed, 3),
+                        "stage_budget": stage_budget,
+                        "max_wait": _MAX_EMBEDDER_WAIT,
+                    },
+                )
+                LOGGER.debug("embedder preload error", exc_info=result["error"])
+                _BOOTSTRAP_EMBEDDER_DISABLED = True
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "background_loops", reason="embedder_warmup_failed"
+                )
+            else:
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "background_loops", reason="embedder_warmup_empty"
+                )
             _signal_stop("completed")
             _BOOTSTRAP_EMBEDDER_STARTED = False
 
     thread = threading.Thread(target=_worker, name="bootstrap-embedder", daemon=True)
     thread.start()
-    deadline = perf_counter() + soft_wait if soft_wait > 0 else perf_counter()
+    _BOOTSTRAP_EMBEDDER_JOB["thread"] = thread
+
     budget_deadline = (
-        perf_counter() + stage_budget if stage_budget is not None and stage_budget >= 0 else None
+        start_time + stage_budget if stage_budget is not None and stage_budget >= 0 else None
     )
-    next_progress = perf_counter() + 0.5
-    join_min_interval = 0.05
-    fallback_exposed = False
-
-    def _activate_fallback(reason: str) -> Any:
-        fallback_used = False
-        try:
-            fallback_used = _activate_bundled_fallback(reason)
-        except Exception:  # pragma: no cover - diagnostics only
-            LOGGER.warning(
-                "failed to activate bundled fallback embedder (%s)", reason, exc_info=True
-            )
-
-        if not fallback_used:
-            return None
-
-        fallback_embedder = get_embedder(timeout=0, stop_event=combined_stop_event)
-        if fallback_embedder is not None:
-            LOGGER.info(
-                "bootstrap embedder fallback ready while background warmup continues (reason=%s)",
-                reason,
-            )
-        else:
-            LOGGER.info(
-                "bundled embedder fallback requested (%s) but not yet available", reason
-            )
-        return fallback_embedder
+    max_wait_deadline = start_time + _MAX_EMBEDDER_WAIT if _MAX_EMBEDDER_WAIT >= 0 else None
 
     def _budget_watchdog() -> None:
-        nonlocal budget_deadline
-
-        if budget_deadline is None:
-            return
-
         while thread.is_alive():
             now = perf_counter()
-            if now >= budget_deadline:
+            if budget_deadline is not None and now >= budget_deadline:
                 LOGGER.warning(
                     "embedder preload exceeded stage budget after %.1fs; cancelling warmup",
                     stage_budget,
                 )
+                result["aborted"] = True
+                _BOOTSTRAP_EMBEDDER_DISABLED = True
                 _signal_stop("bootstrap_budget_exceeded")
-                if stop_event is not None:
-                    stop_event.set()
                 cancel_embedder_initialisation(
                     embedder_stop_event,
                     reason="bootstrap_budget_exceeded",
-                    join_timeout=1.0,
+                    join_timeout=0.25,
                 )
-                try:
-                    _activate_bundled_fallback("bootstrap_budget")
-                except Exception:  # pragma: no cover - diagnostics only
-                    LOGGER.debug(
-                        "failed to promote bundled embedder after budget cancel", exc_info=True
-                    )
+                return
+            if max_wait_deadline is not None and now >= max_wait_deadline:
+                LOGGER.warning(
+                    "embedder preload exceeded max wait after %.1fs; cancelling warmup",
+                    _MAX_EMBEDDER_WAIT,
+                )
+                result["aborted"] = True
                 _BOOTSTRAP_EMBEDDER_DISABLED = True
-                _BOOTSTRAP_EMBEDDER_STARTED = False
+                _signal_stop("max_wait_exceeded")
+                cancel_embedder_initialisation(
+                    embedder_stop_event,
+                    reason="max_wait_exceeded",
+                    join_timeout=0.25,
+                )
                 return
             time.sleep(0.05)
 
     threading.Thread(target=_budget_watchdog, name="embedder-budget", daemon=True).start()
 
-    def _handle_embedder_timeout() -> Any:
-        LOGGER.warning(
-            "embedding model load exceeded %.1fs during bootstrap; deferring to stub",
-            soft_wait,
-        )
-        LOGGER.info(
-            "bootstrap embedder warmup deferred after %.1fs; exposing stub fallback",
-            soft_wait,
-        )
-        return _activate_fallback("bootstrap_timeout")
+    try:
+        thread.join(0.1)
+    except Exception:
+        LOGGER.debug("embedder warmup join probe failed", exc_info=True)
 
-    while True:
-        if not thread.is_alive():
-            break
-
-        now = perf_counter()
-        if not fallback_exposed and (bootstrap_fast or now >= probe_deadline):
-            reason = "bootstrap_fast" if bootstrap_fast else "bootstrap_probe"
-            fallback_embedder = _activate_fallback(reason)
-            fallback_exposed = True
-            if fallback_embedder is not None:
-                return fallback_embedder
-
-        if now >= deadline:
-            return _handle_embedder_timeout()
-
-        remaining = max(0.0, deadline - now)
-        slice_wait = min(0.25, remaining) if remaining > 0 else join_min_interval
-        slice_wait = max(slice_wait, join_min_interval)
-        thread.join(slice_wait)
-
-        if thread.is_alive() and perf_counter() >= next_progress:
-            remaining_budget = (
-                max(0.0, budget_deadline - perf_counter()) if budget_deadline is not None else None
-            )
-            LOGGER.debug(
-                "embedder preload still warming (remaining_slice=%.2fs, budget_remaining=%s)",
-                remaining or slice_wait,
-                f"{remaining_budget:.2f}s" if remaining_budget is not None else "n/a",
-            )
-            next_progress = perf_counter() + 0.5
-
-    if "error" in result:
-        LOGGER.info("embedder preload failed; bootstrap will proceed without embeddings")
-        LOGGER.debug("embedder preload error", exc_info=result["error"])
-        _BOOTSTRAP_EMBEDDER_DISABLED = True
-        _BOOTSTRAP_EMBEDDER_STARTED = False
-        return
-
-    embedder = result.get("embedder")
-    if embedder is None:
-        LOGGER.info(
-            "embedder unavailable after %.1fs wait; proceeding without embeddings",
-            timeout,
-        )
-        _BOOTSTRAP_EMBEDDER_DISABLED = True
-        _BOOTSTRAP_EMBEDDER_STARTED = False
-    else:
-        placeholder_reason = getattr(embedder, "_placeholder_reason", None)
-        if placeholder_reason:
-            LOGGER.warning(
-                "bootstrap using degraded embedder placeholder (%s); later calls may retry full initialisation",
-                placeholder_reason,
-                extra={"timeout": timeout, "stage_budget": stage_budget},
-            )
-            _BOOTSTRAP_EMBEDDER_STARTED = False
-        LOGGER.info("bootstrap embedder ready: %s", type(embedder).__name__)
-    _BOOTSTRAP_EMBEDDER_STARTED = False
+    return placeholder
 
 
 def initialize_bootstrap_context(
