@@ -85,6 +85,8 @@ _DEFAULT_HEARTBEAT_MAX_AGE = 120.0
 _DEFAULT_LOAD_THRESHOLD = 1.35
 _DEFAULT_GUARD_MAX_DELAY = 90.0
 _DEFAULT_GUARD_INTERVAL = 5.0
+_DEFAULT_GUARD_BACKOFF = 3.0
+_DEFAULT_MAX_CONCURRENT_ATTEMPTS = 3
 _COMPONENT_FLOOR_MAX_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_FLOOR_MAX_SCALE"
 _COMPONENT_STALENESS_PAD_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_STALENESS_PAD"
 _COMPONENT_WINDOW_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_SCALE"
@@ -95,6 +97,8 @@ _DEFAULT_STALENESS_PAD = 0.35
 _BOOTSTRAP_HEARTBEAT_ENV = "MENACE_BOOTSTRAP_WATCHDOG_PATH"
 _BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_MAX_AGE"
 _BOOTSTRAP_LOAD_THRESHOLD_ENV = "MENACE_BOOTSTRAP_LOAD_THRESHOLD"
+_BOOTSTRAP_MAX_CONCURRENCY_ENV = "MENACE_BOOTSTRAP_MAX_CONCURRENT_ATTEMPTS"
+_BOOTSTRAP_GUARD_BACKOFF_ENV = "MENACE_BOOTSTRAP_GUARD_BACKOFF"
 _BOOTSTRAP_HEARTBEAT_PATH = Path(
     os.getenv(_BOOTSTRAP_HEARTBEAT_ENV, "/tmp/menace_bootstrap_watchdog.json")
 )
@@ -329,7 +333,7 @@ def wait_for_bootstrap_quiet_period(
     *,
     max_delay: float | None = None,
     load_threshold: float | None = None,
-    poll_interval: float = _DEFAULT_GUARD_INTERVAL,
+    poll_interval: float | None = None,
     ignore_pid: int | None = None,
     queue_capacity: int | None = None,
     block_when_saturated: bool | None = None,
@@ -352,8 +356,21 @@ def wait_for_bootstrap_quiet_period(
     if threshold is None:
         threshold = _DEFAULT_LOAD_THRESHOLD
     ignore_pid = os.getpid() if ignore_pid is None else ignore_pid
-    queue_capacity = queue_capacity if queue_capacity is not None else int(
-        os.getenv("MENACE_BOOTSTRAP_GUARD_QUEUE_CAPACITY", "0") or 0
+    guard_backoff = poll_interval if poll_interval is not None else _parse_float(
+        os.getenv(_BOOTSTRAP_GUARD_BACKOFF_ENV)
+    )
+    if not guard_backoff:
+        guard_backoff = _DEFAULT_GUARD_BACKOFF
+
+    max_concurrent_attempts = _coerce_int(
+        os.getenv(_BOOTSTRAP_MAX_CONCURRENCY_ENV)
+    )
+    if max_concurrent_attempts <= 0:
+        max_concurrent_attempts = _DEFAULT_MAX_CONCURRENT_ATTEMPTS
+
+    queue_capacity = queue_capacity if queue_capacity is not None else max(
+        int(os.getenv("MENACE_BOOTSTRAP_GUARD_QUEUE_CAPACITY", "0") or 0),
+        max_concurrent_attempts,
     )
     block_when_saturated = (
         block_when_saturated
@@ -400,7 +417,7 @@ def wait_for_bootstrap_quiet_period(
         if remaining_budget <= 0:
             break
 
-        sleep_for = min(poll_interval * max(queue_depth, 1), remaining_budget)
+        sleep_for = min(guard_backoff * max(queue_depth, 1), remaining_budget)
         slept += sleep_for
         if normalized_load and threshold:
             budget_scale = max(
@@ -433,6 +450,8 @@ def wait_for_bootstrap_quiet_period(
     }
     if queue_capacity:
         guard_context["queue_capacity"] = queue_capacity
+    if max_concurrent_attempts:
+        guard_context["max_concurrent_attempts"] = max_concurrent_attempts
     _record_bootstrap_guard(
         slept, budget_scale, source="bootstrap_guard", host_load=normalized_load
     )

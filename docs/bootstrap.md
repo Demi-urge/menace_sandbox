@@ -10,6 +10,16 @@ Bootstrap-sensitive modules share a single entrypoint and readiness contract so 
 
 Following this contract keeps every entrypoint—GUI preflight, CLI launchers, orchestration surfaces, and import-time warmers—on the same single-flight path and ensures each one inherits the shared heartbeats, watchdog budgets, and telemetry.
 
+## Orchestrator entrypoint and guard responsibilities
+
+* **Official entrypoint:** `environment_bootstrap.ensure_bootstrapped()` is the supported way to kick off the orchestrator. It owns the single-flight mutex, persists readiness state, and propagates failures back to callers that raced the active run.
+* **Guard semantics:** `wait_for_bootstrap_quiet_period` enforces a host-level backoff before heavy stages. The guard now exposes two tunable flags with sensible defaults: `MENACE_BOOTSTRAP_MAX_CONCURRENT_ATTEMPTS` (defaults to **3**) controls how many peers can queue before saturation, and `MENACE_BOOTSTRAP_GUARD_BACKOFF` (defaults to **3 seconds**) controls the poll/backoff interval while waiting for load to subside.
+* **Caller expectations:** Callers should respect the guard output (delay and `budget_scale`) when scheduling downstream work so watchdog budgets reflect any enforced pauses. Avoid calling helper bootstraps directly; always route through `ensure_bootstrapped()` to reuse the shared readiness markers.
+
+## Migration: retire legacy bootstrap calls
+
+Module owners that still invoke bespoke bootstrap helpers (for example direct calls into `_bootstrap_manager` or `bootstrap_self_coding.bootstrap()`) should remove those paths in favour of `environment_bootstrap.ensure_bootstrapped()`. The orchestrator publishes readiness snapshots for reuse, so deleting redundant local bootstraps avoids recursion warnings and ensures queueing/backoff telemetry stays consistent across new services.
+
 ## Depending on readiness
 
 Modules that need the bootstrap pipeline should register their dependency on readiness explicitly:
