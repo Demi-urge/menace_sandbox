@@ -27,6 +27,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
     _flag(parser, "start-scheduler", default=False, help="Start the embedding scheduler using env configuration")
     _flag(parser, "light", default=False, help="Validate scheduler/model presence without hydrating handlers")
     _flag(parser, "all", default=False, help="Enable every warmup action")
+    _flag(parser, "force-heavy", default=False, help="Bypass bootstrap guards and run heavy warmup steps")
     args = parser.parse_args(argv)
 
     if args.all:
@@ -35,18 +36,21 @@ def cli(argv: Sequence[str] | None = None) -> int:
         hydrate = True
         vectorise = True
         scheduler = True
+        force = True
     elif args.light:
         download = False
         probe = True
         hydrate = False
         vectorise = False
         scheduler = True
+        force = False
     else:
         download = args.download_model
         probe = args.probe_model
         hydrate = args.hydrate_handlers
         vectorise = args.run_vectorise
         scheduler = args.start_scheduler
+        force = args.force_heavy
 
     logger = logging.getLogger(__name__)
     warmup_vector_service(
@@ -56,6 +60,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
         start_scheduler=scheduler,
         run_vectorise=vectorise,
         logger=logger,
+        force_heavy=force,
     )
     return 0
 

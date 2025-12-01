@@ -168,6 +168,7 @@ class PatchVectorizer(EmbeddableDBMixin):
             metadata_path=metadata_path,
             backend=backend,
             embedding_version=embedding_version,
+            defer_index_load=self.bootstrap_fast,
         )
         logger.info(
             "patch_vectorizer.init.complete duration=%.6fs index=%s",

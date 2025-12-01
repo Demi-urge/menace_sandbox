@@ -12,6 +12,7 @@ using a configurable :class:`~vector_service.vector_store.VectorStore`.
 # ruff: noqa: T201 - module level debug prints are routed via logging
 
 from dataclasses import dataclass, field
+import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, List
 
@@ -47,12 +48,19 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run as ``python 
 from governed_embeddings import governed_embed, get_embedder
 
 try:  # pragma: no cover - prefer package-relative imports
-    from .registry import load_handlers, _resolve_bootstrap_fast
+    from .registry import (
+        _VECTOR_REGISTRY,
+        load_handler,
+        load_handlers,
+        _resolve_bootstrap_fast,
+    )
     from .vector_store import VectorStore, get_default_vector_store
 except ImportError as exc:  # pragma: no cover - fallback when executed as a script
     if "attempted relative import" not in str(exc):
         raise
     from vector_service.registry import (  # type: ignore
+        _VECTOR_REGISTRY,
+        load_handler,
         load_handlers,
         _resolve_bootstrap_fast,
     )
@@ -160,7 +168,11 @@ class SharedVectorService:
     text_embedder: SentenceTransformer | None = None
     vector_store: VectorStore | None = None
     bootstrap_fast: bool | None = None
+    hydrate_handlers: bool | None = None
+    lazy_vector_store: bool | None = None
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
+    _handler_bootstrap_flag: bool = field(init=False, default=False)
+    _known_kinds: set[str] = field(init=False, default_factory=set)
 
     def __post_init__(self) -> None:
         # Handlers are populated dynamically from the registry so newly
@@ -177,6 +189,15 @@ class SharedVectorService:
         )
         if self.bootstrap_fast is None:
             self.bootstrap_fast = resolved_fast
+        if self.hydrate_handlers is None:
+            self.hydrate_handlers = not (bootstrap_context and resolved_fast)
+        if self.lazy_vector_store is None:
+            self.lazy_vector_store = bootstrap_context or resolved_fast
+        self._handler_bootstrap_flag = resolved_fast
+        self._handlers = {}
+        self._handler_lock = threading.RLock()
+        self._vector_store_lock = threading.RLock()
+        self._known_kinds = set()
         if bootstrap_context and resolved_fast:
             logger.info(
                 "shared_vector_service.bootstrap_fast.active",
@@ -186,62 +207,64 @@ class SharedVectorService:
                 },
             )
         handler_bootstrap_flag = resolved_fast
-        self._handlers = load_handlers(bootstrap_fast=handler_bootstrap_flag)
-        logger.info(
-            "shared_vector_service.handlers.loaded",
-            extra=_timestamp_payload(
-                handler_start,
+        if self.hydrate_handlers:
+            self._handlers = load_handlers(bootstrap_fast=handler_bootstrap_flag)
+            self._known_kinds = set(self._handlers.keys())
+            logger.info(
+                "shared_vector_service.handlers.loaded",
+                extra=_timestamp_payload(
+                    handler_start,
+                    handler_count=len(self._handlers),
+                ),
+            )
+            patch_handler = self._handlers.get("patch")
+            patch_handler_deferred = getattr(patch_handler, "is_patch_stub", False)
+            if patch_handler_deferred:
+                logger.info(
+                    "shared_vector_service.bootstrap_fast.patch_handler_deferred",
+                    extra=_timestamp_payload(
+                        handler_start,
+                        handler_count=len(self._handlers),
+                        bootstrap_fast_requested=requested_fast,
+                        bootstrap_fast_resolved=handler_bootstrap_flag,
+                        bootstrap_fast_active=True,
+                        bootstrap_fast_defaulted=defaulted_fast,
+                        deferred_patch=True,
+                    ),
+                )
+            elif resolved_fast and bootstrap_context:
+                logger.info(
+                    "shared_vector_service.bootstrap_fast.patch_handler_stub_missing",
+                    extra=_timestamp_payload(
+                        handler_start,
+                        handler_count=len(self._handlers),
+                        bootstrap_fast_requested=requested_fast,
+                        bootstrap_fast_resolved=handler_bootstrap_flag,
+                        bootstrap_fast_active=True,
+                        bootstrap_fast_defaulted=defaulted_fast,
+                        deferred_patch=False,
+                    ),
+                )
+            _trace(
+                "shared_vector_service.handlers.loaded",
                 handler_count=len(self._handlers),
-            ),
-        )
-        patch_handler = self._handlers.get("patch")
-        patch_handler_deferred = getattr(patch_handler, "is_patch_stub", False)
-        if patch_handler_deferred:
+                handlers=sorted(self._handlers.keys()),
+            )
+        else:
+            self._known_kinds = set(_VECTOR_REGISTRY.keys())
             logger.info(
-                "shared_vector_service.bootstrap_fast.patch_handler_deferred",
+                "shared_vector_service.handlers.deferred",
                 extra=_timestamp_payload(
                     handler_start,
-                    handler_count=len(self._handlers),
-                    bootstrap_fast_requested=requested_fast,
-                    bootstrap_fast_resolved=handler_bootstrap_flag,
-                    bootstrap_fast_active=True,
-                    bootstrap_fast_defaulted=defaulted_fast,
-                    deferred_patch=True,
+                    handler_count=len(self._known_kinds),
+                    bootstrap_fast_active=resolved_fast,
+                    bootstrap_context=bootstrap_context,
                 ),
             )
-        elif resolved_fast and bootstrap_context:
-            logger.info(
-                "shared_vector_service.bootstrap_fast.patch_handler_stub_missing",
-                extra=_timestamp_payload(
-                    handler_start,
-                    handler_count=len(self._handlers),
-                    bootstrap_fast_requested=requested_fast,
-                    bootstrap_fast_resolved=handler_bootstrap_flag,
-                    bootstrap_fast_active=True,
-                    bootstrap_fast_defaulted=defaulted_fast,
-                    deferred_patch=False,
-                ),
-            )
-        _trace(
-            "shared_vector_service.handlers.loaded",
-            handler_count=len(self._handlers),
-            handlers=sorted(self._handlers.keys()),
-        )
-        if self.vector_store is None:
-            _trace("shared_vector_service.vector_store.fetch")
-            store_start = time.perf_counter()
-            try:
-                self.vector_store = get_default_vector_store()
-            except Exception as exc:  # pragma: no cover - defensive logging
-                _trace("shared_vector_service.vector_store.error", error=str(exc))
-                raise
-            logger.info(
-                "shared_vector_service.vector_store.resolved",
-                extra=_timestamp_payload(
-                    store_start,
-                    resolved=bool(self.vector_store),
-                ),
-            )
+        if self.vector_store is not None:
+            self.lazy_vector_store = False
+        if self.vector_store is None and not self.lazy_vector_store:
+            self._initialise_vector_store()
         _trace(
             "shared_vector_service.init.complete",
             has_vector_store=self.vector_store is not None,
@@ -254,6 +277,60 @@ class SharedVectorService:
                 handler_count=len(self._handlers),
             ),
         )
+
+    def _initialise_vector_store(self) -> None:
+        if self.vector_store is not None:
+            return
+        with self._vector_store_lock:
+            if self.vector_store is not None:
+                return
+            _trace("shared_vector_service.vector_store.fetch")
+            store_start = time.perf_counter()
+            try:
+                self.vector_store = get_default_vector_store()
+            except Exception as exc:  # pragma: no cover - defensive logging
+                _trace("shared_vector_service.vector_store.error", error=str(exc))
+                raise
+            logger.info(
+                "shared_vector_service.vector_store.resolved",
+                extra=_timestamp_payload(
+                    store_start,
+                    resolved=bool(self.vector_store),
+                    lazy=bool(self.lazy_vector_store),
+                ),
+            )
+
+    def _get_handler(self, kind: str) -> Callable[[Dict[str, Any]], List[float]] | None:
+        normalised = kind.lower()
+        handler = self._handlers.get(normalised)
+        if handler is not None:
+            return handler
+        if self.hydrate_handlers:
+            return None
+        if normalised not in self._known_kinds:
+            return None
+        with self._handler_lock:
+            handler = self._handlers.get(normalised)
+            if handler is not None:
+                return handler
+            handler_start = time.perf_counter()
+            handler = load_handler(normalised, bootstrap_fast=self._handler_bootstrap_flag)
+            if handler is not None:
+                self._handlers[normalised] = handler
+                logger.info(
+                    "shared_vector_service.handler.lazy_loaded",
+                    extra=_timestamp_payload(
+                        handler_start,
+                        kind=normalised,
+                        bootstrap_fast=self._handler_bootstrap_flag,
+                    ),
+                )
+            else:
+                logger.info(
+                    "shared_vector_service.handler.unavailable",
+                    extra=_timestamp_payload(handler_start, kind=normalised),
+                )
+        return handler
 
     def _ensure_text_embedder(self) -> SentenceTransformer | None:
         """Initialise ``self.text_embedder`` if possible."""
@@ -330,7 +407,7 @@ class SharedVectorService:
                 return vec
 
         kind = kind.lower()
-        handler = self._handlers.get(kind)
+        handler = self._get_handler(kind)
         if handler:
             _trace("shared_vector_service.vectorise.handler", kind=kind)
             return handler(record)
@@ -367,6 +444,8 @@ class SharedVectorService:
         if payload is not None:
             vec = payload.get("vector", vec)
 
+        if self.vector_store is None:
+            self._initialise_vector_store()
         if self.vector_store is None:
             raise RuntimeError("VectorStore not configured")
         self.vector_store.add(

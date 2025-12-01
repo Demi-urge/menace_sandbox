@@ -1511,10 +1511,11 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     timeout_cap = apply_bootstrap_timeout_caps()
+    hard_cap = min(timeout_cap, 5.0)
     if timeout is None:
-        timeout = timeout_cap
+        timeout = hard_cap
     elif timeout > 0:
-        timeout = min(timeout, timeout_cap)
+        timeout = min(timeout, hard_cap)
     else:
         timeout = 0.0
     _BOOTSTRAP_EMBEDDER_STARTED = True
@@ -1562,7 +1563,7 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
                 "failed to activate bundled fallback embedder after timeout", exc_info=True
             )
 
-        _BOOTSTRAP_EMBEDDER_DISABLED = False
+        _BOOTSTRAP_EMBEDDER_DISABLED = True
         _BOOTSTRAP_EMBEDDER_STARTED = False
 
         if fallback_used:

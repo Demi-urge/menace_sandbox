@@ -163,6 +163,46 @@ def load_handlers(
     return handlers
 
 
+def load_handler(
+    kind: str, *, bootstrap_fast: bool | None = None
+) -> Callable[[Dict[str, any]], list[float]] | None:
+    """Instantiate a single handler for ``kind`` using registry metadata."""
+
+    entry = _VECTOR_REGISTRY.get(kind.lower())
+    if entry is None:
+        return None
+
+    bootstrap_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
+        bootstrap_fast
+    )
+    if bootstrap_fast and kind.lower() == "patch":
+        logger.info(
+            "vector_registry.handler.deferred",
+            extra={
+                "kind": kind,
+                "reason": "bootstrap_fast",
+                "bootstrap_context": bootstrap_context,
+                "bootstrap_fast_defaulted": defaulted_fast,
+            },
+        )
+        return _patch_stub_handler
+
+    mod_name, cls_name, _, _ = entry
+    try:
+        mod = importlib.import_module(mod_name)
+        cls = getattr(mod, cls_name)
+        kwargs = {}
+        if _accepts_bootstrap_fast(cls):
+            kwargs["bootstrap_fast"] = bootstrap_fast
+        inst = cls(**kwargs)
+        return inst.transform
+    except Exception:  # pragma: no cover - best effort
+        logger.exception(
+            "vector_registry.handler.error kind=%s", kind, extra={"kind": kind}
+        )
+        return None
+
+
 def get_db_registry() -> Dict[str, Tuple[str, str]]:
     """Return mapping of kind -> (db module, db class) for backfills."""
 

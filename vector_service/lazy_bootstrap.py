@@ -10,6 +10,7 @@ routine to pre-populate caches before the first real request.
 
 import importlib.util
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -92,13 +93,14 @@ def ensure_scheduler_started(*, logger: logging.Logger | None = None) -> Any | N
 
 def warmup_vector_service(
     *,
-    download_model: bool = True,
+    download_model: bool = False,
     probe_model: bool = False,
     hydrate_handlers: bool = False,
     start_scheduler: bool = False,
     run_vectorise: bool | None = None,
     check_budget: Callable[[], None] | None = None,
     logger: logging.Logger | None = None,
+    force_heavy: bool = False,
 ) -> None:
     """Eagerly initialise vector assets and caches.
 
@@ -110,6 +112,21 @@ def warmup_vector_service(
     """
 
     log = logger or logging.getLogger(__name__)
+    bootstrap_context = any(
+        os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
+        for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
+    )
+
+    if bootstrap_context and not force_heavy:
+        if download_model:
+            log.info("Bootstrap context detected; skipping embedding model download")
+            download_model = False
+        if hydrate_handlers:
+            log.info("Bootstrap context detected; deferring handler hydration")
+            hydrate_handlers = False
+        if start_scheduler:
+            log.info("Bootstrap context detected; scheduler start deferred")
+            start_scheduler = False
 
     def _guard(stage: str) -> None:
         if check_budget is None:
