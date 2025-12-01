@@ -112,11 +112,40 @@ _VECTOR_SERVICE_WARMUP = os.getenv("VECTOR_SERVICE_WARMUP", "").lower() in {
     "yes",
     "on",
 }
-_VEC_METRICS = (
-    VectorMetricsDB(bootstrap_fast=_VECTOR_SERVICE_WARMUP, warmup=_VECTOR_SERVICE_WARMUP)
-    if VectorMetricsDB is not None
-    else None
-)
+_VECTOR_METRICS_DISABLED = os.getenv("VECTOR_METRICS_DISABLED", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_VEC_METRICS: "VectorMetricsDB | None" = None
+
+
+def _get_vector_metrics(
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+) -> "VectorMetricsDB | None":
+    """Return the cached :class:`VectorMetricsDB`, creating it on-demand.
+
+    The accessor respects the global warmup flags used by the module-level
+    instance while avoiding import-time side effects.  When metrics are
+    disabled (for example via ``VECTOR_METRICS_DISABLED``) the function returns
+    ``None`` immediately to keep the hot path lightweight.
+    """
+
+    if _VECTOR_METRICS_DISABLED or VectorMetricsDB is None:
+        return None
+
+    global _VEC_METRICS
+    if _VEC_METRICS is None:
+        bootstrap_flag = bool(bootstrap_fast or _VECTOR_SERVICE_WARMUP)
+        warmup_flag = bool(warmup or _VECTOR_SERVICE_WARMUP)
+        _VEC_METRICS = VectorMetricsDB(
+            bootstrap_fast=bootstrap_flag,
+            warmup=warmup_flag,
+        )
+    return _VEC_METRICS
 
 try:  # pragma: no cover - optional dependency
     from .stack_ingestion import (
@@ -864,7 +893,10 @@ class ContextBuilder:
         global _VEC_METRICS
         fast_bootstrap = bool(bootstrap_fast or bootstrap)
         if weights is None:
-            vm = vector_metrics or _VEC_METRICS
+            vm = vector_metrics or _get_vector_metrics(
+                bootstrap_fast=bootstrap_fast,
+                warmup=bootstrap,
+            )
             if vm is None:
                 return
             if fast_bootstrap:
@@ -967,6 +999,7 @@ class ContextBuilder:
         """
 
         metric: float | None = None
+        vm = _get_vector_metrics()
         try:
             if origin == "error":
                 freq = meta.get("frequency")
@@ -1017,10 +1050,10 @@ class ContextBuilder:
         regret_rate = meta.get("regret_rate")
         sev = meta.get("alignment_severity")
 
-        if _VEC_METRICS is not None and vector_id:
+        if vm is not None and vector_id:
             try:  # pragma: no cover - best effort lookup
                 if win_rate is None or regret_rate is None:
-                    cur = _VEC_METRICS.conn.execute(
+                    cur = vm.conn.execute(
                         "SELECT AVG(win), AVG(regret) FROM vector_metrics WHERE vector_id=?",
                         (vector_id,),
                     )
@@ -1032,7 +1065,7 @@ class ContextBuilder:
                         regret_rate = float(row[1])
                         meta["regret_rate"] = regret_rate
                 if sev is None:
-                    cur = _VEC_METRICS.conn.execute(
+                    cur = vm.conn.execute(
                         "SELECT MAX(alignment_severity) FROM patch_ancestry WHERE vector_id=?",
                         (vector_id,),
                     )
@@ -1100,6 +1133,7 @@ class ContextBuilder:
     def _bundle_to_entry(self, bundle: Dict[str, Any], query: str) -> Tuple[str, _ScoredEntry]:
         meta = bundle.get("metadata", {}) or {}
         origin = bundle.get("origin_db", "")
+        vm = _get_vector_metrics()
 
         text = bundle.get("text") or ""
         vec_id = str(bundle.get("record_id", ""))
@@ -1305,13 +1339,13 @@ class ContextBuilder:
         if flags:
             entry["flags"] = flags
 
-        if _VEC_METRICS is not None and origin:
+        if vm is not None and origin:
             try:  # pragma: no cover - best effort metrics lookup
                 entry.setdefault(
-                    "win_rate", _VEC_METRICS.retriever_win_rate(origin)
+                    "win_rate", vm.retriever_win_rate(origin)
                 )
                 entry.setdefault(
-                    "regret_rate", _VEC_METRICS.retriever_regret_rate(origin)
+                    "regret_rate", vm.retriever_regret_rate(origin)
                 )
             except Exception:
                 pass
