@@ -12,6 +12,7 @@ from bootstrap_gate import resolve_bootstrap_placeholders
 
 from .bot_registry import BotRegistry
 from .coding_bot_interface import (
+    _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
     get_active_bootstrap_pipeline,
     self_coding_managed,
@@ -215,6 +216,29 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
     ):
         return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_BROKER
 
+    active_pipeline, active_manager = get_active_bootstrap_pipeline()
+    broker = _bootstrap_dependency_broker()
+    broker_owner = bool(getattr(broker, "active_owner", False))
+    if active_pipeline is not None or active_manager is not None:
+        _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER = advertise_bootstrap_placeholder(
+            dependency_broker=broker,
+            pipeline=active_pipeline,
+            manager=active_manager,
+            owner=broker_owner,
+        )
+        _BOOTSTRAP_BROKER = broker
+        if not broker_owner:
+            logging.getLogger(__name__).error(
+                "PredictionManager dependency broker missing active owner; reusing active placeholder",
+                extra={"event": "prediction-manager-broker-owner-missing"},
+            )
+        return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_BROKER
+
+    if not broker_owner:
+        raise RuntimeError(
+            "PredictionManager bootstrap dependency broker owner not active; refusing to construct placeholders"
+        )
+
     pipeline, manager, broker = resolve_bootstrap_placeholders(
         timeout=_BOOTSTRAP_GATE_TIMEOUT,
         description="PredictionManager bootstrap gate",
@@ -264,12 +288,23 @@ def _get_registry(
     # registry attaches bootstrap placeholders to avoid recursive bootstrap
     # attempts inside constructor paths.
     state = bootstrap_state or bootstrap_state_snapshot()
-    if not state.get("ready") and not state.get("in_progress"):
+    active_pipeline, active_manager = get_active_bootstrap_pipeline()
+    if (
+        not state.get("ready")
+        and not state.get("in_progress")
+        and active_pipeline is None
+        and active_manager is None
+    ):
         ensure_bootstrapped()
     placeholder_pipeline, placeholder_manager, placeholder_broker = _bootstrap_placeholders()
     if not getattr(placeholder_broker, "active_owner", False):
-        raise RuntimeError(
-            "PredictionManager bootstrap dependency broker owner not active; refusing to construct registry"
+        if placeholder_pipeline is None and placeholder_manager is None:
+            raise RuntimeError(
+                "PredictionManager bootstrap dependency broker owner not active; refusing to construct registry"
+            )
+        logging.getLogger(__name__).error(
+            "PredictionManager broker owner inactive; reusing advertised placeholder",
+            extra={"event": "prediction-manager-placeholder-owner-missing"},
         )
     inferred_bootstrap = bootstrap or state.get("in_progress", False)
     if not inferred_bootstrap:
@@ -285,12 +320,23 @@ def _get_data_bot(*, bootstrap_state: Mapping[str, object] | None = None) -> Dat
     # Keep registry construction tied to the central bootstrap readiness state
     # instead of spawning a fresh bootstrap cycle from this module.
     state = bootstrap_state or bootstrap_state_snapshot()
-    if not state.get("ready") and not state.get("in_progress"):
+    active_pipeline, active_manager = get_active_bootstrap_pipeline()
+    if (
+        not state.get("ready")
+        and not state.get("in_progress")
+        and active_pipeline is None
+        and active_manager is None
+    ):
         ensure_bootstrapped()
     _, _, placeholder_broker = _bootstrap_placeholders()
     if not getattr(placeholder_broker, "active_owner", False):
-        raise RuntimeError(
-            "PredictionManager bootstrap dependency broker owner not active; refusing to construct data bot"
+        if active_pipeline is None and active_manager is None:
+            raise RuntimeError(
+                "PredictionManager bootstrap dependency broker owner not active; refusing to construct data bot"
+            )
+        logging.getLogger(__name__).error(
+            "PredictionManager broker owner inactive; reusing advertised placeholder for data bot",
+            extra={"event": "prediction-manager-placeholder-owner-missing"},
         )
     return _DATA_BOT_PROXY._hydrate()
 
