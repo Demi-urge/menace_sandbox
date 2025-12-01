@@ -92,7 +92,18 @@ def _get_layer(
         state = bootstrap_state_snapshot()
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
-    _bootstrap_placeholders()
+    placeholder_pipeline, placeholder_manager = _bootstrap_placeholders()
+    if not placeholder_pipeline and not placeholder_manager:
+        placeholder_pipeline, placeholder_manager = get_active_bootstrap_pipeline()
+    if getattr(builder, "_bootstrap_placeholders", None) is None:
+        try:
+            setattr(
+                builder,
+                "_bootstrap_placeholders",
+                (placeholder_pipeline, placeholder_manager),
+            )
+        except Exception:  # pragma: no cover - builder may be immutable
+            pass
     layer = getattr(builder, "_cognition_layer", None)
     if layer is None:
         layer = _CognitionLayer(context_builder=builder, roi_tracker=_roi_tracker)
