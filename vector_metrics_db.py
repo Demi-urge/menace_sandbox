@@ -100,7 +100,7 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 def _noop_logging(bootstrap_fast: bool, warmup_mode: bool) -> bool:
-    return bool(bootstrap_fast and warmup_mode)
+    return bool(bootstrap_fast or warmup_mode)
 
 
 class _StubCursor:
@@ -197,7 +197,17 @@ def default_vector_metrics_path(*, ensure_exists: bool = True) -> Path:
 
 
 class VectorMetricsDB:
-    """SQLite-backed store for :class:`VectorMetric` records."""
+    """SQLite-backed store for :class:`VectorMetric` records.
+
+    A strict warmup path is available via ``warmup=True`` (or the matching
+    environment flags).  In this mode the database connection is replaced with
+    a stub that never resolves the on-disk path or initialises the router
+    until callers explicitly opt-in by invoking :meth:`activate_persistence`.
+    This keeps bootstrap flows lightweight while still allowing metrics calls
+    to be wired up.  Once bootstrap completes and real metrics need to be
+    recorded, callers should call :meth:`activate_persistence` to transition
+    into the normal SQLite-backed flow.
+    """
 
     def __init__(
         self,
@@ -227,7 +237,8 @@ class VectorMetricsDB:
         )
         self._warmup_mode = bool(warmup or vector_warmup_env)
         self._lazy_mode = True
-        self._lazy_primed = self.bootstrap_fast or self._warmup_mode
+        self._boot_stub_active = bool(self.bootstrap_fast or self._warmup_mode)
+        self._lazy_primed = self._boot_stub_active
         self._commit_required = False
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
@@ -319,6 +330,8 @@ class VectorMetricsDB:
         )
         if self._warmup_mode:
             self.bootstrap_fast = False
+            self._warmup_mode = False
+        self._boot_stub_active = False
         self._lazy_mode = False
         self._lazy_primed = False
         self._prepare_connection(init_start)
@@ -330,6 +343,8 @@ class VectorMetricsDB:
         )
 
     def _should_skip_logging(self) -> bool:
+        if not self._boot_stub_active:
+            return False
         if not _noop_logging(self.bootstrap_fast, self._warmup_mode):
             return False
         if self._lazy_primed:
@@ -346,9 +361,27 @@ class VectorMetricsDB:
             self._lazy_primed = False
         return True
 
+    def activate_persistence(self, *, reason: str = "metrics_ready") -> None:
+        """Exit warmup/bootstrap mode and initialise SQLite lazily."""
+
+        if not self._boot_stub_active:
+            return
+        logger.info(
+            "vector_metrics_db.bootstrap.activate_persistence",
+            extra=_timestamp_payload(
+                None,
+                warmup_mode=self._warmup_mode,
+                bootstrap_fast=self.bootstrap_fast,
+                reason=reason,
+            ),
+        )
+        self._exit_lazy_mode(reason=reason)
+
     def planned_path(self) -> Path:
         """Return the resolved database path without touching the filesystem."""
 
+        if self._boot_stub_active and self._resolved_path is None:
+            return Path(self._configured_path).expanduser()
         if self._resolved_path is None or self._default_path is None:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path, ensure_exists=False
@@ -373,14 +406,14 @@ class VectorMetricsDB:
         if self._conn is not None:
             return self._conn
         if self._lazy_mode:
-            if self.bootstrap_fast or self._warmup_mode:
+            if self._boot_stub_active:
                 return self._stub_conn
             self._exit_lazy_mode(reason=reason)
             return self._conn
         return self._conn or self._stub_conn
 
     def _conn_for(self, *, reason: str, commit_required: bool = True):
-        if self.bootstrap_fast or self._warmup_mode:
+        if self._boot_stub_active:
             commit_required = False
         conn = self._connection(reason=reason, commit_required=commit_required)
         if commit_required:
@@ -396,6 +429,8 @@ class VectorMetricsDB:
 
     def ready_probe(self) -> str:
         """Return the resolved database path without any I/O."""
+        if self._boot_stub_active and self._resolved_path is None:
+            return str(Path(self._configured_path).expanduser())
         if self._resolved_path is None or self._default_path is None:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path,
