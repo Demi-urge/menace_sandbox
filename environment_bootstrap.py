@@ -2129,7 +2129,9 @@ class EnvironmentBootstrapper:
             )
 
     # ------------------------------------------------------------------
-    def _optional_tail(self, check_budget: Callable[[], None]) -> None:
+    def _optional_tail(
+        self, check_budget: Callable[[], None], phase_budget: _PhaseBudgetContext | None = None
+    ) -> None:
         if self.policy.provision_vector_assets:
             check_budget()
             raw = os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").strip().lower()
@@ -2153,6 +2155,18 @@ class EnvironmentBootstrapper:
             warmup_handlers = heavy_requested or handlers_requested
             warmup_probe = True if raw == "" else heavy_requested or light_warmup or probe_requested
             warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
+            vector_budget_hint = self._stage_budget_hint("vector_warmup") or self._stage_budget_hint("vector_seeding")
+            remaining_phase_budget = None
+            if phase_budget is not None:
+                try:
+                    limit = phase_budget.budget.get("limit") if isinstance(phase_budget.budget, Mapping) else None
+                    if limit is not None:
+                        remaining_phase_budget = max(limit - phase_budget.elapsed, 0.0)
+                except Exception:
+                    remaining_phase_budget = None
+            budget_candidates = [hint for hint in (vector_budget_hint, remaining_phase_budget) if hint is not None]
+            warmup_budget = min(budget_candidates) if budget_candidates else None
+            stage_timeouts = {"budget": warmup_budget} if warmup_budget is not None else None
             if raw in {"defer", "later"}:
                 self.logger.info(
                     "Vector warmup explicitly deferred; assets will hydrate on first use",
@@ -2184,6 +2198,32 @@ class EnvironmentBootstrapper:
                     "probe": warmup_probe,
                     "vectorise": run_vectorise,
                 }
+                base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
+                heavy_budget_needed = 0.0
+                if warmup_model:
+                    heavy_budget_needed += base_stage_cost["model"]
+                if warmup_handlers:
+                    heavy_budget_needed += base_stage_cost["handlers"]
+                if run_vectorise:
+                    heavy_budget_needed += base_stage_cost["vectorise"]
+                defer_heavy = bool(
+                    heavy_requested
+                    and warmup_budget is not None
+                    and heavy_budget_needed > warmup_budget
+                )
+                deferred_stages: set[str] = set()
+                if defer_heavy:
+                    if warmup_handlers:
+                        deferred_stages.add("handlers")
+                    if run_vectorise:
+                        deferred_stages.add("vectorise")
+                    if warmup_model and "model" not in deferred_stages:
+                        deferred_stages.add("model")
+                    self.logger.info(
+                        "Vector warmup heavy stages deferred to background (budget %.1fs < expected %.1fs)",
+                        warmup_budget,
+                        heavy_budget_needed,
+                    )
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
 
@@ -2192,19 +2232,45 @@ class EnvironmentBootstrapper:
                         check_budget=check_budget,
                         download_model=warmup_model,
                         probe_model=warmup_probe,
-                        hydrate_handlers=heavy_requested and warmup_handlers,
-                        start_scheduler=heavy_requested,
-                        run_vectorise=run_vectorise and heavy_requested,
-                        force_heavy=heavy_requested,
+                        hydrate_handlers=heavy_requested and warmup_handlers and not defer_heavy,
+                        start_scheduler=heavy_requested and not defer_heavy,
+                        run_vectorise=run_vectorise and heavy_requested and not defer_heavy,
+                        force_heavy=heavy_requested and not defer_heavy,
                         bootstrap_fast=True,
                         warmup_lite=warmup_lite,
                         warmup_model=warmup_model,
                         warmup_handlers=warmup_handlers,
                         warmup_probe=warmup_probe,
+                        stage_timeouts=stage_timeouts,
+                        deferred_stages=deferred_stages,
                     )
                     self.logger.info(
                         "Vector warmup invoked with flags: %s", selected_flags
                     )
+                    if defer_heavy:
+                        self._queue_background_task(
+                            "vector-warmup-heavy",
+                            lambda: warmup_vector_service(
+                                logger=self.logger,
+                                download_model=warmup_model,
+                                probe_model=warmup_probe,
+                                hydrate_handlers=warmup_handlers,
+                                start_scheduler=True,
+                                run_vectorise=run_vectorise,
+                                force_heavy=True,
+                                bootstrap_fast=False,
+                                warmup_lite=False,
+                                warmup_model=warmup_model,
+                                warmup_handlers=warmup_handlers,
+                                warmup_probe=warmup_probe,
+                                stage_timeouts=stage_timeouts,
+                            ),
+                            delay_until_ready=True,
+                            join_inner=False,
+                            ready_gate="provisioning",
+                            stage="vector_seeding",
+                            budget_hint=self._stage_budget_hint("vector_seeding"),
+                        )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)
             else:
@@ -2260,7 +2326,7 @@ class EnvironmentBootstrapper:
                     self._run_phase(
                         "optional",
                         budgets.get("optional"),
-                        lambda guard, state=None: self._optional_tail(guard),
+                        lambda guard, state=None: self._optional_tail(guard, state),
                         strict=False,
                     )
 

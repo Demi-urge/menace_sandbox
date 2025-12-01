@@ -14,7 +14,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import metrics_exporter as _metrics
 
@@ -137,7 +137,8 @@ def warmup_vector_service(
     warmup_model: bool | None = None,
     warmup_handlers: bool | None = None,
     warmup_probe: bool | None = None,
-    stage_timeouts: dict[str, float] | None = None,
+    stage_timeouts: dict[str, float] | float | None = None,
+    deferred_stages: set[str] | None = None,
 ) -> None:
     """Eagerly initialise vector assets and caches.
 
@@ -152,10 +153,15 @@ def warmup_vector_service(
     When ``bootstrap_fast`` is True the vector service keeps the patch handler
     stubbed during warmup and avoids loading heavy indexes.  Stage timeouts can
     be provided via ``stage_timeouts`` to cap how long heavyweight tasks are
-    allowed to block before they are deferred to background execution.  A
-    ``budget_remaining`` callback can be supplied to shorten those per-stage
-    limits (or skip stages entirely) when the caller's remaining bootstrap time
-    falls below the configured thresholds.
+    allowed to block before they are deferred to background execution.
+    ``stage_timeouts`` may be a mapping of per-stage ceilings or a numeric
+    budget that is split across the stages, allowing callers without
+    ``check_budget`` hooks to bound the work.  A ``budget_remaining`` callback
+    can be supplied to shorten those per-stage limits (or skip stages entirely)
+    when the caller's remaining bootstrap time falls below the configured
+    thresholds.  Callers that intentionally defer stages can supply
+    ``deferred_stages`` so the warmup summary reflects the deferral rather than
+    a silent skip.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -208,6 +214,7 @@ def warmup_vector_service(
             start_scheduler = False
 
     summary: dict[str, str] = {}
+    deferred = set(deferred_stages or ())
 
     def _record(stage: str, status: str) -> None:
         summary[stage] = status
@@ -333,15 +340,65 @@ def warmup_vector_service(
         "handlers": 25.0,
         "vectorise": 8.0,
     }
-    resolved_timeouts = {**base_timeouts, **(stage_timeouts or {})}
+
+    def _coerce_timeout(value: object) -> float | None:
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    provided_budget = _coerce_timeout(stage_timeouts) if not isinstance(stage_timeouts, Mapping) else None
+    resolved_timeouts: dict[str, float | None] = dict(base_timeouts)
+    explicit_timeouts: set[str] = set()
+
+    if isinstance(stage_timeouts, Mapping):
+        for name, timeout in stage_timeouts.items():
+            if name == "budget":
+                provided_budget = _coerce_timeout(timeout)
+                continue
+            coerced = _coerce_timeout(timeout)
+            if coerced is None:
+                continue
+            resolved_timeouts[name] = coerced
+            explicit_timeouts.add(name)
+
+    def _apply_budget_caps(timeouts: dict[str, float | None], budget: float | None) -> dict[str, float | None]:
+        if budget is None:
+            return timeouts
+
+        explicit_total = sum(
+            value for key, value in timeouts.items() if key in explicit_timeouts and value is not None
+        )
+        remaining_budget = budget - explicit_total
+        flexible = [key for key in timeouts if key not in explicit_timeouts and timeouts.get(key) is not None]
+
+        if remaining_budget <= 0:
+            for stage in flexible:
+                timeouts[stage] = 0.0
+            return timeouts
+
+        flexible_default = sum(base_timeouts.get(stage, timeouts.get(stage, 0.0)) or 0.0 for stage in flexible)
+        if flexible_default <= 0:
+            return timeouts
+
+        scale = min(1.0, remaining_budget / flexible_default)
+        for stage in flexible:
+            base_default = base_timeouts.get(stage, timeouts.get(stage) or 0.0) or 0.0
+            timeouts[stage] = max(0.0, min(timeouts[stage] or base_default, base_default * scale))
+        return timeouts
+
+    resolved_timeouts = _apply_budget_caps(resolved_timeouts, provided_budget)
 
     def _effective_timeout(stage: str) -> float | None:
         remaining = _remaining_budget()
         stage_timeout = resolved_timeouts.get(stage)
+        fallback_budget = provided_budget if provided_budget is not None else None
         if remaining is None:
-            return stage_timeout
+            return stage_timeout if stage_timeout is not None else fallback_budget
         if stage_timeout is None:
-            return remaining
+            if fallback_budget is None:
+                return remaining
+            return max(0.0, min(remaining, fallback_budget))
         return max(0.0, min(stage_timeout, remaining))
 
     _guard("init")
@@ -384,8 +441,9 @@ def warmup_vector_service(
                     log.info("embedding model probe: archive missing; will fetch on demand")
                     _record("model", "absent-probe")
         else:
+            status = "deferred" if ("model" in deferred or warmup_model) else "skipped"
             log.info("Skipping embedding model download (disabled)")
-            _record("model", "skipped")
+            _record("model", status)
 
     svc = None
     if not _guard("handlers"):
@@ -423,8 +481,9 @@ def warmup_vector_service(
                 log.warning("SharedVectorService warmup failed: %s", exc)
                 _record("handlers", "failed")
         else:
+            status = "deferred" if ("handlers" in deferred or warmup_handlers) else "skipped"
             log.info("Vector handler hydration skipped")
-            _record("handlers", "skipped")
+            _record("handlers", status)
 
     if _guard("scheduler"):
         if start_scheduler:
@@ -458,10 +517,12 @@ def warmup_vector_service(
                     _record("vectorise", "failed")
         else:
             if should_vectorise:
-                _record("vectorise", "skipped-no-service")
+                status = "deferred" if ("vectorise" in deferred or "handlers" in deferred) else "skipped-no-service"
+                _record("vectorise", status)
                 log.info("Vectorise warmup skipped: service unavailable")
             else:
-                _record("vectorise", "skipped")
+                status = "deferred" if "vectorise" in deferred else "skipped"
+                _record("vectorise", status)
                 log.info("Vectorise warmup skipped")
 
     log.info(
