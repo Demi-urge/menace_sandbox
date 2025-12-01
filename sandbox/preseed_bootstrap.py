@@ -1844,6 +1844,36 @@ def _bootstrap_embedder(
     )
     max_wait_deadline = start_time + _MAX_EMBEDDER_WAIT if _MAX_EMBEDDER_WAIT >= 0 else None
 
+    hard_timeout_triggered = threading.Event()
+
+    def _hard_timeout_watchdog() -> None:
+        if thread is None:
+            return
+        hard_timeout = None
+        timeout_candidates = []
+        if stage_wall_cap is not None and stage_wall_cap > 0:
+            timeout_candidates.append(stage_wall_cap)
+        if timeout is not None and timeout > 0:
+            timeout_candidates.append(timeout)
+        if timeout_candidates:
+            hard_timeout = min(timeout_candidates)
+
+        if hard_timeout is None:
+            return
+
+        remaining = (start_time + hard_timeout) - perf_counter()
+        if remaining <= 0:
+            remaining = 0
+
+        if embedder_stop_event.wait(remaining):
+            return
+
+        if thread.is_alive():
+            hard_timeout_triggered.set()
+            _record_abort(
+                "embedder_hard_timeout", deferred=True, schedule_background=True
+            )
+
     def _budget_watchdog() -> None:
         while thread.is_alive():
             now = perf_counter()
@@ -1868,6 +1898,9 @@ def _bootstrap_embedder(
                 return
             time.sleep(0.05)
 
+    threading.Thread(
+        target=_hard_timeout_watchdog, name="embedder-hard-timeout", daemon=True
+    ).start()
     threading.Thread(target=_budget_watchdog, name="embedder-budget", daemon=True).start()
 
     join_window = stage_wall_cap if stage_wall_cap is not None else 0.1
@@ -1880,6 +1913,9 @@ def _bootstrap_embedder(
         _record_abort(
             "stage_wall_cap_exceeded", deferred=True, schedule_background=True
         )
+        return placeholder
+
+    if hard_timeout_triggered.is_set():
         return placeholder
 
     return placeholder
