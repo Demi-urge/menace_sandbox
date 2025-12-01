@@ -33,6 +33,7 @@ from menace_sandbox.self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
+from bootstrap_gate import wait_for_bootstrap_gate
 from menace_sandbox.coding_bot_interface import (
     _GLOBAL_BOOTSTRAP_COORDINATOR,
     _bootstrap_dependency_broker,
@@ -114,8 +115,15 @@ def _bootstrap_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomation
         bootstrap_manager: SelfCodingManager | None = None
         try:
             broker_pipeline, broker_manager = dependency_broker.resolve()
+            broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
+            broker_placeholder_active = any(
+                getattr(candidate, "bootstrap_placeholder", False)
+                for candidate in (broker_pipeline, broker_manager)
+            )
         except Exception:  # pragma: no cover - best effort reuse
             broker_pipeline, broker_manager = None, None
+            broker_owner_active = False
+            broker_placeholder_active = False
         try:
             active_pipeline, active_manager = get_active_bootstrap_pipeline()
         except Exception:  # pragma: no cover - best effort reuse
@@ -221,6 +229,43 @@ def _bootstrap_pipeline_factory() -> Callable[[ContextBuilder], "ModelAutomation
                 _advertise_dependency_state(pipeline, getattr(pipeline, "manager", None))
                 _pipeline_promoter = _promote_with_broker
                 return pipeline
+
+        try:
+            broker_pipeline, broker_manager = dependency_broker.resolve()
+            broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
+            broker_placeholder_active = any(
+                getattr(candidate, "bootstrap_placeholder", False)
+                for candidate in (broker_pipeline, broker_manager)
+            )
+        except Exception:  # pragma: no cover - best effort reuse
+            broker_pipeline, broker_manager = None, None
+            broker_owner_active = False
+            broker_placeholder_active = False
+
+        if broker_owner_active or broker_placeholder_active:
+            if pipeline is None:
+                pipeline, bootstrap_manager = advertise_bootstrap_placeholder(
+                    dependency_broker=dependency_broker,
+                    pipeline=broker_pipeline,
+                    manager=bootstrap_manager or broker_manager,
+                    owner=True,
+                )
+            _advertise_dependency_state(pipeline, bootstrap_manager, owner=True)
+
+            def _promote_with_broker(real_manager: Any | None) -> None:
+                try:
+                    if promoter is not None:
+                        promoter(real_manager)
+                finally:
+                    _advertise_dependency_state(pipeline, real_manager, owner=True)
+
+            _pipeline_promoter = _promote_with_broker
+            return pipeline
+
+        try:
+            wait_for_bootstrap_gate(description="ImplementationOptimiserBot bootstrap gate")
+        except Exception:  # pragma: no cover - guard failures should not hard block
+            logger.debug("bootstrap gate wait failed; proceeding with bootstrap", exc_info=True)
 
         try:
             pipeline, promote = prepare_pipeline_for_bootstrap(
