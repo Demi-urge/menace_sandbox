@@ -203,6 +203,10 @@ def warmup_vector_service(
                 "Bootstrap context detected; deferring heavy vector warmup (force_heavy to override)",
                 extra={"download_model": download_model, "hydrate_handlers": hydrate_handlers, "start_scheduler": start_scheduler},
             )
+        if not warmup_lite:
+            log.info("Bootstrap context detected; forcing warmup_lite")
+        warmup_lite = True
+        run_vectorise = False
         if download_model:
             log.info("Bootstrap context detected; skipping embedding model download")
             download_model = False
@@ -212,8 +216,11 @@ def warmup_vector_service(
         if start_scheduler:
             log.info("Bootstrap context detected; scheduler start deferred")
             start_scheduler = False
+        summary_flag = "deferred-bootstrap"
+    else:
+        summary_flag = "normal"
 
-    summary: dict[str, str] = {}
+    summary: dict[str, str] = {"bootstrap": summary_flag}
     deferred = set(deferred_stages or ())
 
     def _record(stage: str, status: str) -> None:
@@ -298,7 +305,7 @@ def warmup_vector_service(
             finally:
                 done.set()
 
-        thread = threading.Thread(target=_runner, daemon=True)
+        thread = threading.Thread(target=_runner)
         thread.start()
 
         start = time.monotonic()
@@ -310,7 +317,7 @@ def warmup_vector_service(
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
                 )
-                thread.join(timeout=0.5)
+                thread.join()
                 return False, None
 
             if check_budget is not None:
@@ -322,7 +329,7 @@ def warmup_vector_service(
                     _record_timeout(stage)
                     _record(stage, "skipped-budget")
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
-                    thread.join(timeout=0.5)
+                    thread.join()
                     return False, None
 
         if error:
@@ -336,9 +343,9 @@ def warmup_vector_service(
         return True, result[0] if result else None
 
     base_timeouts = {
-        "model": 20.0,
-        "handlers": 25.0,
-        "vectorise": 8.0,
+        "model": 10.0,
+        "handlers": 10.0,
+        "vectorise": 5.0,
     }
 
     def _coerce_timeout(value: object) -> float | None:
