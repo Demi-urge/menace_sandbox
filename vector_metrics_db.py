@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Mapping, Sequence
+import threading
 import contextlib
 import json
 import logging
@@ -222,26 +223,36 @@ class VectorMetricsDB:
         )
         vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
         patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
-        vector_warmup_env = _env_flag("VECTOR_WARMUP", False) or _env_flag(
-            "VECTOR_SERVICE_WARMUP", False
+        vector_service_warmup = _env_flag("VECTOR_SERVICE_WARMUP", False)
+        vector_warmup_env = _env_flag("VECTOR_WARMUP", False) or vector_service_warmup
+        bootstrap_env = any(
+            _env_flag(flag, False)
+            for flag in (
+                "MENACE_BOOTSTRAP",
+                "MENACE_BOOTSTRAP_MODE",
+                "MENACE_BOOTSTRAP_FAST",
+            )
         )
         warmup = warmup if warmup is not None else _env_flag(
             "VECTOR_METRICS_WARMUP", False
         )
+        warmup = bool(warmup or vector_warmup_env or bootstrap_env)
         self.bootstrap_fast = bool(
             bootstrap_fast
             or vector_bootstrap_env
             or patch_bootstrap_env
             or vector_warmup_env
             or warmup
+            or bootstrap_env
         )
-        self._warmup_mode = bool(warmup or vector_warmup_env)
+        self._warmup_mode = bool(warmup or vector_warmup_env or bootstrap_env)
         self._lazy_mode = True
         self._boot_stub_active = bool(self.bootstrap_fast or self._warmup_mode)
         self._lazy_primed = self._boot_stub_active
         self._commit_required = False
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
+        self._readiness_hook_registered = False
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -314,6 +325,40 @@ class VectorMetricsDB:
             )
         self.router = None
         self._conn = None
+        if self._warmup_mode and (bootstrap_env or vector_service_warmup):
+            self._register_readiness_hook()
+
+    def _register_readiness_hook(self) -> None:
+        if self._readiness_hook_registered:
+            return
+        try:
+            from bootstrap_readiness import readiness_signal
+        except Exception:  # pragma: no cover - optional dependency
+            logger.debug("vector metrics readiness hook unavailable", exc_info=True)
+            return
+
+        self._readiness_hook_registered = True
+
+        def _await_bootstrap_ready() -> None:
+            try:
+                readiness_signal().await_ready(timeout=None)
+            except Exception:  # pragma: no cover - best effort logging
+                logger.debug(
+                    "vector metrics readiness gate failed", exc_info=True
+                )
+                return
+            try:
+                self.activate_persistence(reason="bootstrap_ready")
+            except Exception:  # pragma: no cover - best effort logging
+                logger.debug(
+                    "vector metrics persistence activation failed", exc_info=True
+                )
+
+        threading.Thread(
+            target=_await_bootstrap_ready,
+            name="vector-metrics-readiness",
+            daemon=True,
+        ).start()
 
     def _exit_lazy_mode(self, *, reason: str) -> None:
         """Upgrade from bootstrap stub to full schema on first meaningful use."""

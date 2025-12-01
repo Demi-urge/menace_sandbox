@@ -890,8 +890,14 @@ class ContextBuilder:
                 globals()["_VEC_METRICS"] = self._vector_metrics
                 return self._vector_metrics
 
-            bootstrap_flag = bool(bootstrap_fast or _VECTOR_SERVICE_WARMUP)
-            warmup_flag = bool(warmup or bootstrap_flag)
+            bootstrap_resolved = (
+                bootstrap_fast
+                if bootstrap_fast is not None
+                else self._bootstrap_fast
+            )
+            bootstrap_flag = bool(bootstrap_resolved or _VECTOR_SERVICE_WARMUP)
+            warmup_resolved = warmup if warmup is not None else bootstrap_flag
+            warmup_flag = bool(warmup_resolved)
             if warmup_flag:
                 try:
                     if VectorMetricsDB is not None:
