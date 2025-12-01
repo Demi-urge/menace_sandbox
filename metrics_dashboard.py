@@ -211,12 +211,30 @@ class MetricsDashboard:
             "sandbox_cpu_percent",
             "sandbox_memory_mb",
             "sandbox_crashes_total",
+            "bootstrap_attempts_total",
+            "bootstrap_concurrent_contention_total",
+            "bootstrap_success_total",
+            "bootstrap_failure_total",
+            "bootstrap_timeout_total",
+            "bootstrap_inflight",
         )
         if exporter is not None:
             for name in names:
                 gauge = getattr(exporter, name, None)
                 if gauge is not None:
                     metrics[name] = _get_value(gauge)
+
+            duration_gauge = getattr(
+                exporter, "bootstrap_attempt_duration_seconds", None
+            )
+            if duration_gauge is not None:
+                try:
+                    metrics["bootstrap_attempt_duration_seconds"] = {
+                        k[0]: v.get()
+                        for k, v in getattr(duration_gauge, "_values", {}).items()
+                    }
+                except Exception:
+                    metrics["bootstrap_attempt_duration_seconds"] = {}
 
             # Include per-status counts and impact totals from relevancy radar
             flag_gauge = getattr(exporter, "relevancy_flagged_modules_total", None)

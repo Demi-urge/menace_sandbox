@@ -7,8 +7,159 @@ import logging
 import math
 import os
 import statistics
+import threading
+import time
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
+
+import metrics_exporter as _metrics
+
+BOOTSTRAP_ATTEMPTS_TOTAL = getattr(
+    _metrics,
+    "bootstrap_attempts_total",
+    _metrics.Gauge("bootstrap_attempts_total", "Total bootstrap attempts observed"),
+)
+_metrics.bootstrap_attempts_total = BOOTSTRAP_ATTEMPTS_TOTAL
+
+BOOTSTRAP_CONTENTION_TOTAL = getattr(
+    _metrics,
+    "bootstrap_concurrent_contention_total",
+    _metrics.Gauge(
+        "bootstrap_concurrent_contention_total",
+        "Bootstrap attempts that started while another attempt was active",
+    ),
+)
+_metrics.bootstrap_concurrent_contention_total = BOOTSTRAP_CONTENTION_TOTAL
+
+BOOTSTRAP_SUCCESS_TOTAL = getattr(
+    _metrics,
+    "bootstrap_success_total",
+    _metrics.Gauge("bootstrap_success_total", "Successful bootstrap attempts"),
+)
+_metrics.bootstrap_success_total = BOOTSTRAP_SUCCESS_TOTAL
+
+BOOTSTRAP_FAILURE_TOTAL = getattr(
+    _metrics,
+    "bootstrap_failure_total",
+    _metrics.Gauge("bootstrap_failure_total", "Failed bootstrap attempts"),
+)
+_metrics.bootstrap_failure_total = BOOTSTRAP_FAILURE_TOTAL
+
+BOOTSTRAP_TIMEOUT_TOTAL = getattr(
+    _metrics,
+    "bootstrap_timeout_total",
+    _metrics.Gauge(
+        "bootstrap_timeout_total", "Bootstrap attempts that exhausted their budget"
+    ),
+)
+_metrics.bootstrap_timeout_total = BOOTSTRAP_TIMEOUT_TOTAL
+
+BOOTSTRAP_INFLIGHT = getattr(
+    _metrics,
+    "bootstrap_inflight",
+    _metrics.Gauge("bootstrap_inflight", "Concurrent in-flight bootstrap attempts"),
+)
+_metrics.bootstrap_inflight = BOOTSTRAP_INFLIGHT
+
+BOOTSTRAP_ATTEMPT_DURATION = getattr(
+    _metrics,
+    "bootstrap_attempt_duration_seconds",
+    _metrics.Gauge(
+        "bootstrap_attempt_duration_seconds",
+        "Duration of bootstrap attempts by outcome",
+        ["outcome"],
+    ),
+)
+_metrics.bootstrap_attempt_duration_seconds = BOOTSTRAP_ATTEMPT_DURATION
+
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT_COUNT = 0
+
+
+class BootstrapAttempt(AbstractContextManager["BootstrapAttempt"]):
+    """Context manager that records bootstrap attempt outcomes and contention."""
+
+    def __init__(self, *, logger: logging.Logger | None = None) -> None:
+        self.logger = logger
+        self._start: float | None = None
+        self._outcome: str | None = None
+        self._contended = False
+
+    def __enter__(self) -> "BootstrapAttempt":  # type: ignore[override]
+        global _INFLIGHT_COUNT
+        with _INFLIGHT_LOCK:
+            _INFLIGHT_COUNT += 1
+            BOOTSTRAP_INFLIGHT.set(float(_INFLIGHT_COUNT))
+            self._contended = _INFLIGHT_COUNT > 1
+            if self._contended:
+                BOOTSTRAP_CONTENTION_TOTAL.inc()
+        BOOTSTRAP_ATTEMPTS_TOTAL.inc()
+        self._start = time.monotonic()
+        return self
+
+    def _record_outcome(self, outcome: str) -> None:
+        duration = None
+        if self._start is not None:
+            duration = max(time.monotonic() - self._start, 0.0)
+            BOOTSTRAP_ATTEMPT_DURATION.labels(outcome).set(duration)
+
+        if outcome == "success":
+            BOOTSTRAP_SUCCESS_TOTAL.inc()
+        elif outcome == "timeout":
+            BOOTSTRAP_TIMEOUT_TOTAL.inc()
+        else:
+            BOOTSTRAP_FAILURE_TOTAL.inc()
+
+        if self.logger:
+            extra = {
+                "event": "bootstrap-attempt",
+                "outcome": outcome,
+                "contended": self._contended,
+            }
+            if duration is not None:
+                extra["duration"] = round(duration, 2)
+            self.logger.info("bootstrap attempt recorded", extra=extra)
+
+    def success(self) -> None:
+        """Mark the attempt as successful."""
+
+        self._outcome = "success"
+
+    def failure(self) -> None:
+        """Mark the attempt as failed."""
+
+        self._outcome = "failure"
+
+    def timeout(self) -> None:
+        """Mark the attempt as a timeout."""
+
+        self._outcome = "timeout"
+
+    def __exit__(self, exc_type, exc, tb) -> bool:  # type: ignore[override]
+        global _INFLIGHT_COUNT
+        outcome = self._outcome
+        if outcome is None:
+            if exc_type and issubclass(exc_type, TimeoutError):
+                outcome = "timeout"
+            elif exc_type is not None:
+                outcome = "failure"
+            else:
+                outcome = "success"
+
+        try:
+            self._record_outcome(outcome)
+        finally:
+            with _INFLIGHT_LOCK:
+                _INFLIGHT_COUNT = max(_INFLIGHT_COUNT - 1, 0)
+                BOOTSTRAP_INFLIGHT.set(float(_INFLIGHT_COUNT))
+        return False
+
+
+def bootstrap_attempt(*, logger: logging.Logger | None = None) -> BootstrapAttempt:
+    """Return a :class:`BootstrapAttempt` for measuring bootstrap health."""
+
+    return BootstrapAttempt(logger=logger)
 
 BOOTSTRAP_DURATION_STORE = Path(__file__).resolve().parent / "sandbox_data" / "bootstrap_durations.json"
 DURATION_HISTORY_LIMIT = int(os.getenv("BOOTSTRAP_DURATION_HISTORY_LIMIT", "40"))
