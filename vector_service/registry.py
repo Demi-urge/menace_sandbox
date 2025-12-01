@@ -9,13 +9,14 @@ provided so :mod:`embedding_backfill` discovers the appropriate
 ``EmbeddableDBMixin`` implementation automatically.
 """
 
-from typing import Callable, Dict, Tuple, Optional
+from typing import Callable, Dict, Tuple, Optional, Mapping
 import importlib
 import pkgutil
 import inspect
 import logging
 import os
 import time
+import threading
 
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,10 @@ def _resolve_bootstrap_fast(
 
 
 def load_handlers(
-    *, bootstrap_fast: bool | None = None, warmup_lite: bool = False
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup_lite: bool = False,
+    handler_timeouts: dict[str, float] | float | None = None,
 ) -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
     """Instantiate all registered vectorisers and return transform callables."""
 
@@ -87,6 +91,86 @@ def load_handlers(
     bootstrap_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
         bootstrap_fast
     )
+
+    base_timeout = 5.0
+    resolved_timeouts: dict[str, float | None] = {kind: base_timeout for kind in _VECTOR_REGISTRY}
+    explicit_timeouts: set[str] = set()
+
+    def _coerce_timeout(value: object) -> float | None:
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    provided_budget = _coerce_timeout(handler_timeouts) if not isinstance(handler_timeouts, Mapping) else None
+
+    if isinstance(handler_timeouts, Mapping):
+        for name, timeout in handler_timeouts.items():
+            if name == "budget":
+                provided_budget = _coerce_timeout(timeout)
+                continue
+            coerced = _coerce_timeout(timeout)
+            if coerced is None:
+                continue
+            resolved_timeouts[name] = coerced
+            explicit_timeouts.add(name)
+
+    def _apply_budget_caps(timeouts: dict[str, float | None], budget: float | None) -> dict[str, float | None]:
+        if budget is None:
+            return timeouts
+
+        explicit_total = sum(
+            value for key, value in timeouts.items() if key in explicit_timeouts and value is not None
+        )
+        remaining_budget = budget - explicit_total
+        flexible = [key for key in timeouts if key not in explicit_timeouts and timeouts.get(key) is not None]
+
+        if remaining_budget <= 0:
+            for kind in flexible:
+                timeouts[kind] = 0.0
+            return timeouts
+
+        flexible_default = sum(timeouts.get(kind, base_timeout) or base_timeout for kind in flexible)
+        if flexible_default <= 0:
+            return timeouts
+
+        scale = min(1.0, remaining_budget / flexible_default)
+        for kind in flexible:
+            default_timeout = timeouts.get(kind, base_timeout) or base_timeout
+            timeouts[kind] = max(0.0, min(timeouts[kind] or default_timeout, default_timeout * scale))
+        return timeouts
+
+    resolved_timeouts = _apply_budget_caps(resolved_timeouts, provided_budget)
+
+    def _instantiate_handler_with_timeout(kind: str, mod_name: str, cls_name: str, timeout: float | None):
+        result: list[Callable[[Dict[str, any]], list[float]]] = []
+        error: list[Exception] = []
+        done = threading.Event()
+
+        def _target() -> None:
+            try:
+                mod = importlib.import_module(mod_name)
+                cls = getattr(mod, cls_name)
+                kwargs = {}
+                if _accepts_bootstrap_fast(cls):
+                    kwargs["bootstrap_fast"] = bootstrap_fast
+                inst = cls(**kwargs)
+                result.append(inst.transform)
+            except Exception as exc:  # pragma: no cover - best effort
+                error.append(exc)
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+        thread.join(timeout)
+
+        if not done.is_set():
+            return None, TimeoutError(f"handler init exceeded budget ({timeout}s)")
+        if error:
+            raise error[0]
+        return result[0] if result else None, None
+
     start = time.perf_counter()
     logger.debug(
         "vector_registry.load_handlers.start",
@@ -132,6 +216,19 @@ def load_handlers(
             )
             handlers[kind] = _patch_stub_handler
             continue
+        timeout = resolved_timeouts.get(kind, base_timeout)
+        if timeout is not None and timeout <= 0.0:
+            logger.info(
+                "vector_registry.handler.deferred",
+                extra={
+                    "kind": kind,
+                    "reason": "budget",
+                    "timeout_s": timeout,
+                    "bootstrap_fast": bootstrap_fast,
+                },
+            )
+            handlers[kind] = _patch_stub_handler
+            continue
         if warmup_lite:
             logger.info(
                 "vector_registry.handler.skipped",
@@ -143,13 +240,24 @@ def load_handlers(
             )
             continue
         try:
-            mod = importlib.import_module(mod_name)
-            cls = getattr(mod, cls_name)
-            kwargs = {}
-            if _accepts_bootstrap_fast(cls):
-                kwargs["bootstrap_fast"] = bootstrap_fast
-            inst = cls(**kwargs)
-            handlers[kind] = inst.transform
+            handler, timeout_error = _instantiate_handler_with_timeout(
+                kind, mod_name, cls_name, timeout
+            )
+            if timeout_error:
+                logger.info(
+                    "vector_registry.handler.deferred",
+                    extra={
+                        "kind": kind,
+                        "reason": "timeout",
+                        "timeout_s": timeout,
+                        "bootstrap_fast": bootstrap_fast,
+                    },
+                )
+                handlers[kind] = _patch_stub_handler
+                continue
+            if handler is None:
+                continue
+            handlers[kind] = handler
             logger.info(
                 "vector_registry.handler.loaded kind=%s duration=%.6fs",
                 kind,
