@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dynamic_path_router import resolve_path
+from bootstrap_helpers import bootstrap_state_snapshot
 
 try:  # pragma: no cover - compatibility when packaged
     from .vector_metrics_db import default_vector_metrics_path
@@ -63,9 +64,21 @@ app = FastAPI()
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    """Simple liveness probe."""
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """Liveness probe that reports bootstrap readiness."""
+
+    state = bootstrap_state_snapshot()
+    if state.get("ready"):
+        return {"status": "ok", "bootstrap": {"ready": True}}
+
+    return {
+        "status": "bootstrap_pending",
+        "bootstrap": {
+            "ready": bool(state.get("ready")),
+            "in_progress": bool(state.get("in_progress")),
+            "pending": not bool(state.get("ready")),
+        },
+    }
 
 # Service instances are stored on ``app.state`` instead of module level globals.
 # This makes dependency injection explicit and avoids side effects when the

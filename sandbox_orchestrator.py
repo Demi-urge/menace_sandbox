@@ -7,8 +7,56 @@ from statistics import fmean
 from typing import Any, Callable, Mapping
 
 from composite_workflow_scorer import CompositeWorkflowScorer
-from bootstrap_helpers import ensure_bootstrapped
+from bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 from logging_utils import log_record
+
+
+_BOOTSTRAP_RETRY_BACKOFF = 20.0
+_BOOTSTRAP_RETRY_MAX = 3
+_BOOTSTRAP_ATTEMPTS = 0
+_BOOTSTRAP_NEXT_ALLOWED = 0.0
+
+logger = logging.getLogger(__name__)
+
+
+def _guarded_bootstrap_probe() -> None:
+    """Bound bootstrap retries to avoid health-check stampedes."""
+
+    global _BOOTSTRAP_ATTEMPTS, _BOOTSTRAP_NEXT_ALLOWED
+
+    state = bootstrap_state_snapshot()
+    if state.get("ready") or state.get("in_progress"):
+        return
+
+    now = time.monotonic()
+    if _BOOTSTRAP_ATTEMPTS >= _BOOTSTRAP_RETRY_MAX:
+        logger.warning(
+            "bootstrap pending for sandbox orchestrator; max retries reached",
+            extra=log_record(event="bootstrap-pending", attempts=_BOOTSTRAP_ATTEMPTS),
+        )
+        return
+
+    if now < _BOOTSTRAP_NEXT_ALLOWED:
+        logger.info(
+            "bootstrap backoff active for sandbox orchestrator",
+            extra=log_record(
+                event="bootstrap-backoff", cooldown_seconds=_BOOTSTRAP_NEXT_ALLOWED - now
+            ),
+        )
+        return
+
+    _BOOTSTRAP_ATTEMPTS += 1
+    _BOOTSTRAP_NEXT_ALLOWED = now + _BOOTSTRAP_RETRY_BACKOFF
+    try:
+        ensure_bootstrapped(timeout=15.0)
+        _BOOTSTRAP_ATTEMPTS = 0
+        _BOOTSTRAP_NEXT_ALLOWED = now
+    except Exception:
+        logger.warning(
+            "bootstrap attempt failed during orchestrator initialisation; will retry",
+            extra=log_record(event="bootstrap-retry", attempts=_BOOTSTRAP_ATTEMPTS),
+            exc_info=True,
+        )
 
 
 class SandboxOrchestrator:
@@ -23,9 +71,7 @@ class SandboxOrchestrator:
         diminishing_threshold: float = 0.0,
         patience: int = 3,
     ) -> None:
-        # The sandbox should respect the global bootstrap readiness state; do
-        # not re-trigger bootstrap from constructor paths.
-        ensure_bootstrapped()
+        _guarded_bootstrap_probe()
         self.workflows: dict[str, Callable[[], Any]] = dict(workflows)
         self.logger = logger or logging.getLogger(__name__)
         self.scorer = CompositeWorkflowScorer(failure_logger=self.logger)

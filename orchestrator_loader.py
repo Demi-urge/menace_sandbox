@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Iterator, Mapping, TYPE_CHECKING, Any
 
 from bootstrap_gate import resolve_bootstrap_placeholders
 from coding_bot_interface import get_active_bootstrap_pipeline
+from logging_utils import log_record
 from .bootstrap_placeholder import advertise_broker_placeholder
 from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 
@@ -27,6 +29,10 @@ _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
 _BOOTSTRAP_BROKER: object | None = None
 _BOOTSTRAP_GATE_TIMEOUT = 12.0
+_BOOTSTRAP_RETRY_BACKOFF = 10.0
+_BOOTSTRAP_RETRY_MAX = 2
+_BOOTSTRAP_ATTEMPTS = 0
+_BOOTSTRAP_NEXT_ALLOWED = 0.0
 
 
 def _bootstrap_placeholders(
@@ -35,13 +41,15 @@ def _bootstrap_placeholders(
     """Advertise bootstrap placeholders once the readiness gate clears."""
 
     global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
-    # Always lean on the global readiness snapshot instead of triggering
-    # bootstrap work from orchestrator imports.
-    state = bootstrap_state or bootstrap_state_snapshot()
-    if not state.get("ready") and not state.get("in_progress"):
-        ensure_bootstrapped()
+    state = _throttled_bootstrap_probe(bootstrap_state=bootstrap_state)
     if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+    if not state.get("ready"):
+        logger.info(
+            "bootstrap pending; returning placeholders without blocking gate",
+            extra=log_record(event="bootstrap-pending", state=state),
+        )
+        return _placeholder_tuple()
 
     pipeline, manager = get_active_bootstrap_pipeline()
     if pipeline is not None or manager is not None:
@@ -53,10 +61,18 @@ def _bootstrap_placeholders(
         )
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
-    pipeline, manager, broker = resolve_bootstrap_placeholders(
-        timeout=_BOOTSTRAP_GATE_TIMEOUT,
-        description="Orchestrator bootstrap gate",
-    )
+    try:
+        pipeline, manager, broker = resolve_bootstrap_placeholders(
+            timeout=_BOOTSTRAP_GATE_TIMEOUT,
+            description="Orchestrator bootstrap gate",
+        )
+    except TimeoutError:
+        logger.warning(
+            "bootstrap gate timed out; deferring placeholder resolution",
+            extra=log_record(event="bootstrap-timeout", timeout=_BOOTSTRAP_GATE_TIMEOUT),
+        )
+        return _placeholder_tuple()
+
     _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
         advertise_broker_placeholder(
             dependency_broker=broker,
@@ -73,6 +89,72 @@ if TYPE_CHECKING:  # pragma: no cover - typing only import
     from .capital_management_bot import CapitalManagementBot
 
 logger = logging.getLogger(__name__)
+
+
+def _placeholder_tuple() -> tuple[object, object, object]:
+    """Return cached placeholders, creating inert ones when absent."""
+
+    global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
+    if None in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
+        _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+            advertise_broker_placeholder()
+        )
+    return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
+
+def _throttled_bootstrap_probe(
+    *, bootstrap_state: Mapping[str, object] | None = None
+) -> Mapping[str, object]:
+    """Bound bootstrap retries and surface pending state to callers."""
+
+    global _BOOTSTRAP_ATTEMPTS, _BOOTSTRAP_NEXT_ALLOWED
+
+    state = dict(bootstrap_state or bootstrap_state_snapshot())
+    if state.get("ready") or state.get("in_progress"):
+        state["pending"] = False
+        return state
+
+    now = time.monotonic()
+    if _BOOTSTRAP_ATTEMPTS >= _BOOTSTRAP_RETRY_MAX:
+        state.update(
+            pending=True,
+            cooldown_seconds=max(0.0, _BOOTSTRAP_NEXT_ALLOWED - now),
+        )
+        logger.warning(
+            "bootstrap pending; orchestrator loader reached retry cap",
+            extra=log_record(event="bootstrap-pending", attempts=_BOOTSTRAP_ATTEMPTS),
+        )
+        return state
+
+    if now < _BOOTSTRAP_NEXT_ALLOWED:
+        state.update(pending=True, cooldown_seconds=_BOOTSTRAP_NEXT_ALLOWED - now)
+        logger.info(
+            "bootstrap backoff active for orchestrator loader",
+            extra=log_record(event="bootstrap-backoff", cooldown_seconds=state["cooldown_seconds"]),
+        )
+        return state
+
+    _BOOTSTRAP_ATTEMPTS += 1
+    _BOOTSTRAP_NEXT_ALLOWED = now + (_BOOTSTRAP_RETRY_BACKOFF * _BOOTSTRAP_ATTEMPTS)
+    try:
+        state = dict(
+            ensure_bootstrapped(timeout=_BOOTSTRAP_GATE_TIMEOUT)
+        )
+        _BOOTSTRAP_ATTEMPTS = 0
+        _BOOTSTRAP_NEXT_ALLOWED = now
+    except Exception as exc:
+        state.update(
+            pending=True,
+            cooldown_seconds=max(0.0, _BOOTSTRAP_NEXT_ALLOWED - now),
+            error=str(exc),
+        )
+        logger.warning(
+            "bootstrap attempt failed during orchestrator load; deferring",
+            extra=log_record(event="bootstrap-retry", attempts=_BOOTSTRAP_ATTEMPTS),
+            exc_info=True,
+        )
+    return state
 
 
 class _LazyEvolutionManager:
