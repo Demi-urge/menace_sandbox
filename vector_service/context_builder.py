@@ -892,12 +892,15 @@ class ContextBuilder:
 
             bootstrap_flag = bool(bootstrap_fast or _VECTOR_SERVICE_WARMUP)
             warmup_flag = bool(warmup or bootstrap_flag)
-            vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
             if warmup_flag:
                 try:
-                    vm.ready_probe()
+                    if VectorMetricsDB is not None:
+                        VectorMetricsDB.warmup_path_probe()
                 except Exception:  # pragma: no cover - best effort probe
                     logger.debug("vector metrics warmup probe failed", exc_info=True)
+                return None
+
+            vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
             self._vector_metrics = vm
             ContextBuilder._shared_vector_metrics = vm
             globals()["_VEC_METRICS"] = vm
