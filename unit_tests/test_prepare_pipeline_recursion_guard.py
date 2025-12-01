@@ -211,3 +211,56 @@ def test_recursion_guard_enforces_reentry_cap(monkeypatch, caplog):
 
     assert promise.waiters == 1
     assert any("reentry_cap_exceeded" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize(
+    "caller_module",
+    [
+        "research_aggregator_bot",
+        "prediction_manager_bot",
+        "cognition_layer",
+        "menace_orchestrator",
+    ],
+)
+def test_priority_callers_normalized_for_recursion_guard(monkeypatch, caplog, caller_module):
+    cbi._REENTRY_ATTEMPTS.clear()
+    promise = DummyPromise()
+    broker = DummyBroker()
+
+    monkeypatch.setattr(cbi, "_GLOBAL_BOOTSTRAP_COORDINATOR", DummyCoordinator(promise))
+    monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker)
+    monkeypatch.setattr(cbi._BOOTSTRAP_STATE, "depth", 1)
+    caplog.set_level("INFO")
+
+    def _caller_details():
+        return {"module": caller_module, "path": None, "stack_signature": "sig"}
+
+    monkeypatch.setattr(cbi, "_resolve_caller_details", _caller_details)
+
+    try:
+        result = cbi.prepare_pipeline_for_bootstrap(
+            pipeline_cls=type("Pipeline", (), {}),
+            context_builder=None,
+            bot_registry=None,
+            data_bot=None,
+        )
+    finally:
+        try:
+            delattr(cbi._BOOTSTRAP_STATE, "depth")
+        except AttributeError:
+            pass
+
+    assert result == promise.result
+    assert promise.waiters == 1
+    assert promise.wait_called == 1
+    assert broker.advertise_calls == 0
+    assert any("priority_promise_short_circuit" in record.message for record in caplog.records)
+    assert any(
+        getattr(record, "caller_module_normalized", None) in {
+            "researchaggregator",
+            "predictionmanager",
+            "cognitionlayer",
+            "menaceorchestrator",
+        }
+        for record in caplog.records
+    )
