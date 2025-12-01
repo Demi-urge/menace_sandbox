@@ -18,11 +18,33 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Iterator, TYPE_CHECKING, Any
 
+from bootstrap_gate import resolve_bootstrap_placeholders
 from .bootstrap_placeholder import advertise_broker_placeholder
 
-_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
-    advertise_broker_placeholder()
-)
+_BOOTSTRAP_PLACEHOLDER: object | None = None
+_BOOTSTRAP_SENTINEL: object | None = None
+_BOOTSTRAP_BROKER: object | None = None
+_BOOTSTRAP_GATE_TIMEOUT = 12.0
+
+
+def _bootstrap_placeholders() -> tuple[object, object, object]:
+    """Advertise bootstrap placeholders once the readiness gate clears."""
+
+    global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+    if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
+        return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
+    pipeline, manager, broker = resolve_bootstrap_placeholders(
+        timeout=_BOOTSTRAP_GATE_TIMEOUT,
+        description="Orchestrator bootstrap gate",
+    )
+    _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
+        dependency_broker=broker,
+        pipeline=pipeline,
+        manager=manager,
+    )
+    _BOOTSTRAP_BROKER = broker
+    return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import
     from .data_bot import DataBot
@@ -134,6 +156,7 @@ def get_orchestrator(
     """Return a singleton ``EvolutionOrchestrator``."""
 
     print("[debug] get_orchestrator invoked")
+    _bootstrap_placeholders()
     global _shared_orchestrator
     if _shared_orchestrator is None:
         from .evolution_orchestrator import EvolutionOrchestrator

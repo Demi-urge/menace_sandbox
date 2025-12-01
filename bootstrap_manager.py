@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable, Dict, Generic, Optional, Tuple, TypeVar
 
 T = TypeVar("T")
@@ -25,6 +26,9 @@ class BootstrapManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._steps: Dict[Tuple[str, str | None], _BootstrapStep[object]] = {}
+        self._ready_event = threading.Event()
+        self._ready_state: Optional[bool] = None
+        self._ready_error: Optional[str] = None
 
     def run_once(
         self,
@@ -107,6 +111,70 @@ class BootstrapManager:
             extra={"bootstrap_step": step, "fingerprint": fingerprint_key, "status": "finished"},
         )
         return result
+
+    def mark_ready(self, *, ready: bool = True, error: str | None = None) -> None:
+        """Publish bootstrap readiness state for gated callers.
+
+        The readiness gate is shared by all modules that need to defer work
+        until the bootstrap pipeline has been prepared by an orchestrator.
+        """
+
+        with self._lock:
+            self._ready_state = bool(ready)
+            self._ready_error = error
+            self._ready_event.set()
+
+    def wait_until_ready(
+        self,
+        *,
+        timeout: float | None = 10.0,
+        check: Callable[[], bool] | None = None,
+        poll_interval: float = 0.2,
+        description: str | None = None,
+    ) -> bool:
+        """Wait for bootstrap readiness without re-entering bootstrap logic.
+
+        A best-effort ``check`` callback may be provided to poll a central gate
+        (for example the dependency broker) while waiting.  Calls always
+        respect ``timeout`` to avoid deadlocks when the readiness gate is
+        unreachable.
+        """
+
+        desc = description or "bootstrap readiness"
+        if timeout is not None and timeout <= 0:
+            raise TimeoutError(f"Timed out immediately waiting for {desc}; timeout must be positive")
+
+        if self._ready_event.is_set():
+            if self._ready_state:
+                return True
+            raise RuntimeError(self._ready_error or f"{desc} gate reported failure")
+
+        deadline = None if timeout is None else time.monotonic() + timeout
+        last_error: Exception | None = None
+
+        while True:
+            if check is not None:
+                try:
+                    if check():
+                        self.mark_ready()
+                        return True
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    last_error = exc
+
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            if remaining is not None and remaining <= 0:
+                break
+
+            waited = self._ready_event.wait(poll_interval if remaining is None else min(poll_interval, remaining))
+            if waited:
+                if self._ready_state:
+                    return True
+                raise RuntimeError(self._ready_error or f"{desc} gate reported failure")
+
+        message = self._ready_error or f"Timed out waiting for {desc}"
+        if last_error is not None:
+            raise TimeoutError(message) from last_error
+        raise TimeoutError(message)
 
 
 bootstrap_manager = BootstrapManager()
