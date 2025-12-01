@@ -2004,6 +2004,7 @@ def _log_initial_prepare_invocation(
     logger: logging.Logger,
     cap: int | None = None,
     telemetry: Mapping[str, Any] | None = None,
+    suppress_initial_log: bool = False,
 ) -> bool:
     """Log initial prepare invocations and short-circuit when caps are exceeded."""
 
@@ -2021,7 +2022,8 @@ def _log_initial_prepare_invocation(
     }
     if count == 0:
         _PREPARE_CALL_INVOCATIONS[caller] = invocation
-        logger.info("calling prepare_pipeline_for_bootstrap", extra=telemetry)
+        if not suppress_initial_log:
+            logger.info("calling prepare_pipeline_for_bootstrap", extra=telemetry)
         return False
 
     _PREPARE_CALL_INVOCATIONS[caller] = invocation
@@ -5742,8 +5744,11 @@ def prepare_pipeline_for_bootstrap(
     reentry_cap = _resolve_bootstrap_reentry_cap()
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
     broker_placeholder_without_owner = broker_placeholder_active and not broker_owner_active
+    short_circuit_owner_active = broker_owner_active and (
+        broker_placeholder_active or broker_pipeline is not None or broker_sentinel is not None
+    )
     short_circuit_active = broker_placeholder_active or broker_pipeline is not None or broker_sentinel is not None
-    short_circuit_active = short_circuit_active or active_promise is not None
+    short_circuit_active = short_circuit_active or active_promise is not None or short_circuit_owner_active
     recursion_short_circuit = active_depth > 0 and short_circuit_active
     prioritized_callers = {
         "researchaggregator",
@@ -5763,6 +5768,7 @@ def prepare_pipeline_for_bootstrap(
         logger=logger,
         cap=reentry_cap,
         telemetry={"active_depth": active_depth},
+        suppress_initial_log=recursion_short_circuit or short_circuit_active,
     )
 
     if caller_matches_priority and (active_depth > 0 or broker_placeholder_active):
