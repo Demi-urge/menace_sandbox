@@ -2660,16 +2660,29 @@ def resolve_bootstrap_gate_timeout(
 
 
 def compute_gate_backoff(
-    *, queue_depth: int = 0, attempt: int = 1, remaining: float | None = None
+    *,
+    queue_depth: int = 0,
+    attempt: int = 1,
+    remaining: float | None = None,
+    reentrant: bool = False,
 ) -> float:
     """Return an exponential backoff delay that respects queue depth and budgets."""
 
-    queue_depth = max(queue_depth, 1)
+    queue_depth = max(queue_depth, 0)
     attempt = max(attempt, 1)
-    base_delay = 0.75 * queue_depth
-    delay = base_delay * (1.6 ** (attempt - 1))
+    depth_scale = 1.0 + min(queue_depth, 6) * 0.35
+
+    base_delay = 0.25 if reentrant else 0.75
+    delay = base_delay * depth_scale
+    growth = 1.3 if reentrant else 1.6
+    delay *= growth ** max(attempt - 1, 0)
+
     if remaining is not None:
-        delay = min(delay, max(remaining, 0.0))
+        ceiling = max(remaining, 0.0)
+        delay = min(delay, ceiling)
+        if reentrant:
+            delay = min(delay, max(ceiling * 0.15, 1.0))
+
     return max(delay, 0.1)
 
 

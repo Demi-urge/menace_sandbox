@@ -62,6 +62,17 @@ BOOTSTRAP_INFLIGHT = getattr(
 )
 _metrics.bootstrap_inflight = BOOTSTRAP_INFLIGHT
 
+BOOTSTRAP_ENTRY_TOTAL = getattr(
+    _metrics,
+    "bootstrap_entry_total",
+    _metrics.Gauge(
+        "bootstrap_entry_total",
+        "Bootstrap entrypoint invocations by status",
+        ["status"],
+    ),
+)
+_metrics.bootstrap_entry_total = BOOTSTRAP_ENTRY_TOTAL
+
 BOOTSTRAP_ATTEMPT_DURATION = getattr(
     _metrics,
     "bootstrap_attempt_duration_seconds",
@@ -160,6 +171,20 @@ def bootstrap_attempt(*, logger: logging.Logger | None = None) -> BootstrapAttem
     """Return a :class:`BootstrapAttempt` for measuring bootstrap health."""
 
     return BootstrapAttempt(logger=logger)
+
+
+def record_bootstrap_entry(
+    status: str, *, logger: logging.Logger | None = None, **context: object
+) -> None:
+    """Record a bootstrap entrypoint attempt with the provided status."""
+
+    label = status.replace(" ", "-")
+    BOOTSTRAP_ENTRY_TOTAL.labels(status=label).inc()
+    if logger:
+        extra = {"event": "bootstrap-entry", "status": status}
+        if context:
+            extra.update({f"context.{k}": v for k, v in context.items()})
+        logger.info("bootstrap entry recorded", extra=extra)
 
 BOOTSTRAP_DURATION_STORE = Path(__file__).resolve().parent / "sandbox_data" / "bootstrap_durations.json"
 DURATION_HISTORY_LIMIT = int(os.getenv("BOOTSTRAP_DURATION_HISTORY_LIMIT", "40"))

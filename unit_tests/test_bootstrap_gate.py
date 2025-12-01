@@ -26,9 +26,11 @@ def test_resolve_bootstrap_gate_timeout_honours_floor(monkeypatch, tmp_path):
 def test_compute_gate_backoff_scales_with_queue(monkeypatch):
     slow = compute_gate_backoff(queue_depth=1, attempt=1, remaining=10.0)
     faster = compute_gate_backoff(queue_depth=3, attempt=2, remaining=10.0)
+    reentrant = compute_gate_backoff(queue_depth=0, attempt=3, remaining=10.0, reentrant=True)
 
     assert faster > slow
     assert faster <= 10.0
+    assert reentrant < faster
 
 
 def test_wait_for_bootstrap_gate_retries_with_backoff(monkeypatch):
