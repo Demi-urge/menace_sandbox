@@ -490,3 +490,215 @@ def test_watchdog_health_checks_reuse_advertised_pipeline(monkeypatch):
     assert pipeline is pipeline_placeholder
     assert manager is sentinel_placeholder
     checker.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
+def test_cascading_bootstrap_placeholders_bypass_prepare(monkeypatch):
+    _reset_cbi_state()
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+    cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+    cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+    broker.advertise(pipeline=pipeline_placeholder, sentinel=sentinel_placeholder)
+
+    fail_prepare = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run"),
+    )
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", fail_prepare)
+
+    sys.modules.pop("menace_sandbox.research_aggregator_bot", None)
+    sys.modules.pop("menace_sandbox.prediction_manager_bot", None)
+    sys.modules.pop("cognition_layer", None)
+    sys.modules.pop("orchestrator_loader", None)
+
+    aggregator = importlib.import_module("menace_sandbox.research_aggregator_bot")
+    aggregator._BOOTSTRAP_PLACEHOLDER = None
+    aggregator._BOOTSTRAP_SENTINEL = None
+    aggregator._BOOTSTRAP_BROKER = None
+    aggregator.resolve_bootstrap_placeholders = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+        broker,
+    )
+    aggregator.advertise_bootstrap_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+    )
+    aggregator.prepare_pipeline_for_bootstrap = fail_prepare
+
+    prediction_manager = importlib.import_module("menace_sandbox.prediction_manager_bot")
+    prediction_manager._BOOTSTRAP_PLACEHOLDER_PIPELINE = None
+    prediction_manager._BOOTSTRAP_PLACEHOLDER_MANAGER = None
+    prediction_manager._BOOTSTRAP_BROKER = None
+    prediction_manager.resolve_bootstrap_placeholders = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+        broker,
+    )
+    prediction_manager.advertise_bootstrap_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+    )
+
+    cognition_module = importlib.import_module("cognition_layer")
+    cognition_module._BOOTSTRAP_PLACEHOLDER_PIPELINE = None
+    cognition_module._BOOTSTRAP_PLACEHOLDER_MANAGER = None
+    cognition_module._BOOTSTRAP_GATE_TIMEOUT = 0.2
+    cognition_module.resolve_bootstrap_placeholders = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+        broker,
+    )
+    cognition_module.advertise_bootstrap_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+    )
+    cognition_module.prepare_pipeline_for_bootstrap = fail_prepare
+
+    orchestrator = importlib.import_module("orchestrator_loader")
+    orchestrator._BOOTSTRAP_PLACEHOLDER = None
+    orchestrator._BOOTSTRAP_SENTINEL = None
+    orchestrator._BOOTSTRAP_BROKER = None
+    orchestrator.resolve_bootstrap_placeholders = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+        broker,
+    )
+    orchestrator.get_active_bootstrap_pipeline = lambda: (pipeline_placeholder, sentinel_placeholder)
+    orchestrator.advertise_broker_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+        broker,
+    )
+    orchestrator.prepare_pipeline_for_bootstrap = fail_prepare
+
+    agg_pipeline, agg_manager, agg_broker = aggregator._bootstrap_placeholders()
+    pred_pipeline, pred_manager, pred_broker = prediction_manager._bootstrap_placeholders()
+    cog_pipeline, cog_manager = cognition_module._bootstrap_placeholders()
+    orch_pipeline, orch_manager, orch_broker = orchestrator._bootstrap_placeholders(
+        bootstrap_state={"ready": True}
+    )
+
+    assert agg_pipeline is pipeline_placeholder
+    assert agg_manager is sentinel_placeholder
+    assert agg_broker is broker
+    assert pred_pipeline is pipeline_placeholder
+    assert pred_manager is sentinel_placeholder
+    assert pred_broker is broker
+    assert cog_pipeline is pipeline_placeholder
+    assert cog_manager is sentinel_placeholder
+    assert orch_pipeline is pipeline_placeholder
+    assert orch_manager is sentinel_placeholder
+    assert orch_broker is broker
+    fail_prepare.assert_not_called()
+
+
+def test_gate_promises_satisfy_cascading_bootstrap_consumers(monkeypatch):
+    _reset_cbi_state()
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+
+    promise = cbi._BootstrapPipelinePromise()
+    cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = promise
+
+    sentinel_placeholder = SimpleNamespace(bootstrap_placeholder=True)
+    pipeline_placeholder = SimpleNamespace(
+        manager=sentinel_placeholder,
+        initial_manager=sentinel_placeholder,
+        bootstrap_placeholder=True,
+    )
+    cbi._mark_bootstrap_placeholder(sentinel_placeholder)
+    cbi._mark_bootstrap_placeholder(pipeline_placeholder)
+
+    fail_prepare = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run"),
+    )
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", fail_prepare)
+
+    sys.modules.pop("menace_sandbox.research_aggregator_bot", None)
+    sys.modules.pop("menace_sandbox.prediction_manager_bot", None)
+    sys.modules.pop("cognition_layer", None)
+    sys.modules.pop("orchestrator_loader", None)
+
+    def _resolve_with_promise(**_: object) -> tuple[object, object, object]:
+        pipeline, _promote = promise.wait()
+        return pipeline, sentinel_placeholder, broker
+
+    def _resolve_later() -> None:
+        time.sleep(0.05)
+        broker.advertise(pipeline=pipeline_placeholder, sentinel=sentinel_placeholder)
+        promise.resolve((pipeline_placeholder, lambda *_: None))
+
+    threading.Thread(target=_resolve_later, daemon=True).start()
+
+    aggregator = importlib.import_module("menace_sandbox.research_aggregator_bot")
+    aggregator._BOOTSTRAP_PLACEHOLDER = None
+    aggregator._BOOTSTRAP_SENTINEL = None
+    aggregator._BOOTSTRAP_BROKER = None
+    aggregator.resolve_bootstrap_placeholders = _resolve_with_promise
+    aggregator.advertise_bootstrap_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+    )
+    aggregator.prepare_pipeline_for_bootstrap = fail_prepare
+
+    prediction_manager = importlib.import_module("menace_sandbox.prediction_manager_bot")
+    prediction_manager._BOOTSTRAP_PLACEHOLDER_PIPELINE = None
+    prediction_manager._BOOTSTRAP_PLACEHOLDER_MANAGER = None
+    prediction_manager._BOOTSTRAP_BROKER = None
+    prediction_manager.resolve_bootstrap_placeholders = _resolve_with_promise
+    prediction_manager.advertise_bootstrap_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+    )
+
+    cognition_module = importlib.import_module("cognition_layer")
+    cognition_module._BOOTSTRAP_PLACEHOLDER_PIPELINE = None
+    cognition_module._BOOTSTRAP_PLACEHOLDER_MANAGER = None
+    cognition_module._BOOTSTRAP_GATE_TIMEOUT = 0.2
+    cognition_module.resolve_bootstrap_placeholders = _resolve_with_promise
+    cognition_module.advertise_bootstrap_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+    )
+    cognition_module.prepare_pipeline_for_bootstrap = fail_prepare
+
+    orchestrator = importlib.import_module("orchestrator_loader")
+    orchestrator._BOOTSTRAP_PLACEHOLDER = None
+    orchestrator._BOOTSTRAP_SENTINEL = None
+    orchestrator._BOOTSTRAP_BROKER = None
+    orchestrator.resolve_bootstrap_placeholders = _resolve_with_promise
+    orchestrator.get_active_bootstrap_pipeline = lambda: (None, None)
+    orchestrator._throttled_bootstrap_probe = lambda **_: {"in_progress": True}
+    orchestrator.advertise_broker_placeholder = lambda **_: (
+        pipeline_placeholder,
+        sentinel_placeholder,
+        broker,
+    )
+    orchestrator.prepare_pipeline_for_bootstrap = fail_prepare
+
+    agg_pipeline, agg_manager, agg_broker = aggregator._bootstrap_placeholders()
+    pred_pipeline, pred_manager, pred_broker = prediction_manager._bootstrap_placeholders()
+    cog_pipeline, cog_manager = cognition_module._bootstrap_placeholders()
+    orch_pipeline, orch_manager, orch_broker = orchestrator._bootstrap_placeholders(
+        bootstrap_state={"in_progress": True}
+    )
+
+    assert agg_pipeline is pipeline_placeholder
+    assert agg_manager is sentinel_placeholder
+    assert agg_broker is broker
+    assert pred_pipeline is pipeline_placeholder
+    assert pred_manager is sentinel_placeholder
+    assert pred_broker is broker
+    assert cog_pipeline is pipeline_placeholder
+    assert cog_manager is sentinel_placeholder
+    assert orch_pipeline is pipeline_placeholder
+    assert orch_manager is sentinel_placeholder
+    assert orch_broker is broker
+    fail_prepare.assert_not_called()
