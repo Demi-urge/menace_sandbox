@@ -1334,15 +1334,6 @@ def _initialise_embedder_with_timeout(
 
     global _EMBEDDER_TIMEOUT_LOGGED, _EMBEDDER_SOFT_WAIT_LOGGED, _EMBEDDER_TIMEOUT_REACHED, _EMBEDDER_STOP_EVENT
 
-    if _embedder_disabled(stop_event):
-        logger.info(
-            "embedder initialisation skipped because embedder is disabled",  # pragma: no cover - logging only
-            extra={"model": _MODEL_NAME},
-        )
-        _EMBEDDER_TIMEOUT_REACHED = True
-        _EMBEDDER_INIT_EVENT.set()
-        return None
-
     with _EMBEDDER_THREAD_LOCK:
         if _EMBEDDER is not None:
             return _EMBEDDER
@@ -1351,6 +1342,15 @@ def _initialise_embedder_with_timeout(
         if stop_event is not None:
             _EMBEDDER_STOP_EVENT = stop_event
         event = _ensure_embedder_thread_locked(stop_event)
+
+    if _embedder_disabled(stop_event):
+        logger.info(
+            "embedder initialisation skipped because embedder is disabled",  # pragma: no cover - logging only
+            extra={"model": _MODEL_NAME},
+        )
+        _EMBEDDER_TIMEOUT_REACHED = True
+        _EMBEDDER_INIT_EVENT.set()
+        return None
 
     if _EMBEDDER_TIMEOUT_REACHED and not event.is_set():
         thread = _EMBEDDER_INIT_THREAD
