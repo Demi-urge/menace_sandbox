@@ -110,6 +110,26 @@ The sentinel manager returned during construction prevents nested helpers from t
 
 If bootstrap logs start looping with `prepare_pipeline_for_bootstrap` owner/reuse notices or `recursion_refused` entries, treat it as a cascade caused by a helper importing the pipeline before the placeholder was advertised. Call `advertise_bootstrap_placeholder` at the start of the maintenance script (or leave `bootstrap_guard=True` when using `prepare_pipeline_for_bootstrap`) so late imports reuse the existing sentinel instead of spawning competing bootstraps.
 
+### Centralised bootstrap gate
+
+Bootstrap entrypoints now sit behind a shared gate that serialises new requests and exposes the current pipeline and manager placeholders to latecomers. Align with the gate before any pipeline work by calling:
+
+```python
+from bootstrap_gate import wait_for_bootstrap_gate
+from coding_bot_interface import advertise_bootstrap_placeholder, prepare_pipeline_for_bootstrap
+
+advertise_bootstrap_placeholder()
+wait_for_bootstrap_gate(description="maintenance pipeline")
+pipeline, promote_manager = prepare_pipeline_for_bootstrap(
+    pipeline_cls=ModelAutomationPipeline,
+    context_builder=builder,
+    bot_registry=registry,
+    data_bot=data_bot,
+)
+```
+
+This pattern keeps helpers on the single-flight coordinator and honours the backoff calculated from the live bootstrap heartbeat. Do **not** bypass the gate by calling `_bootstrap_manager`, `bootstrap_self_coding.bootstrap()`, or direct `ModelAutomationPipeline` constructors; the central queue treats those as unsafe and they can deadlock concurrent starts.
+
 ## Initialization order
 
 1. `auto_env_setup.ensure_env()` – create or load the `.env` file.
