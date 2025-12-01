@@ -111,9 +111,14 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
         description="ResearchAggregatorBot bootstrap gate",
     )
     if not getattr(broker, "active_owner", False):
-        raise RuntimeError(
-            "Bootstrap dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) "
-            "before constructing ResearchAggregatorBot dependencies"
+        logger.error(
+            "Bootstrap dependency broker missing active owner; reusing cached placeholder for ResearchAggregatorBot",
+            extra={"event": "research-aggregator-broker-owner-missing"},
+        )
+        return (
+            _BOOTSTRAP_PLACEHOLDER or pipeline,
+            _BOOTSTRAP_SENTINEL or manager,
+            _BOOTSTRAP_BROKER or broker,
         )
     _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
         dependency_broker=broker,
@@ -296,9 +301,15 @@ def _ensure_runtime_dependencies(
         _bootstrap_placeholders()
     )
     if not getattr(placeholder_broker, "active_owner", False):
-        raise RuntimeError(
-            "Bootstrap dependency broker owner not active; aborting ResearchAggregatorBot initialisation"
-        )
+        if _looks_like_pipeline_candidate(placeholder_pipeline) or placeholder_manager:
+            logger.error(
+                "Bootstrap dependency broker owner inactive; reusing advertised ResearchAggregatorBot placeholder",
+                extra={"event": "research-aggregator-placeholder-owner-missing"},
+            )
+        else:
+            raise RuntimeError(
+                "Bootstrap dependency broker owner not active; aborting ResearchAggregatorBot initialisation"
+            )
     global registry
     global data_bot
     global _context_builder
@@ -382,8 +393,6 @@ def _ensure_runtime_dependencies(
     broker_active_pipeline = getattr(dependency_broker, "active_pipeline", None)
     broker_active_sentinel = getattr(dependency_broker, "active_sentinel", None)
     broker_active_owner = bool(getattr(dependency_broker, "active_owner", False))
-    placeholder_pipeline: object | None = None
-    placeholder_manager: object | None = None
     broker_placeholder_seeded = False
     if _runtime_state is None:
         try:
@@ -409,6 +418,31 @@ def _ensure_runtime_dependencies(
             "No bootstrap dependency broker placeholder available; refusing implicit pipeline construction",
             RuntimeWarning,
         )
+
+    if not broker_active_owner:
+        if _looks_like_pipeline_candidate(placeholder_pipeline):
+            pipeline = pipeline or placeholder_pipeline
+            pipeline_hint = pipeline_hint or placeholder_pipeline
+            if manager_override is None:
+                manager_override = placeholder_manager
+            logger.error(
+                "Bootstrap dependency broker owner inactive; reusing placeholder pipeline for ResearchAggregatorBot",
+                extra={
+                    "event": "research-aggregator-broker-owner-missing",
+                    "has_placeholder": True,
+                },
+            )
+        else:
+            logger.error(
+                "Bootstrap dependency broker owner inactive with no placeholder pipeline; refusing to claim new pipeline",
+                extra={
+                    "event": "research-aggregator-broker-missing-owner",
+                    "has_placeholder": False,
+                },
+            )
+            raise RuntimeError(
+                "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot pipeline"
+            )
 
     if _runtime_state is not None:
         _ensure_self_coding_decorated(_runtime_state)

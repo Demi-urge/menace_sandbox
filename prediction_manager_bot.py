@@ -220,9 +220,14 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
         description="PredictionManager bootstrap gate",
     )
     if not getattr(broker, "active_owner", False):
-        raise RuntimeError(
-            "PredictionManager dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) "
-            "before constructing registry or data bot"
+        logging.getLogger(__name__).error(
+            "PredictionManager dependency broker missing active owner; reusing cached placeholder",
+            extra={"event": "prediction-manager-broker-owner-missing"},
+        )
+        return (
+            _BOOTSTRAP_PLACEHOLDER_PIPELINE or pipeline,
+            _BOOTSTRAP_PLACEHOLDER_MANAGER or manager,
+            _BOOTSTRAP_BROKER or broker,
         )
     _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER = advertise_bootstrap_placeholder(
         dependency_broker=broker,

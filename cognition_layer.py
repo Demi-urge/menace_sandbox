@@ -29,6 +29,7 @@ Example
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping, Tuple
 
 from vector_service.context_builder import ContextBuilder
@@ -93,9 +94,14 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
         description="CognitionLayer bootstrap gate",
     )
     if not getattr(broker, "active_owner", False):
-        raise RuntimeError(
-            "CognitionLayer dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) "
-            "before building cognition helpers"
+        logging.getLogger(__name__).error(
+            "CognitionLayer dependency broker missing active owner; reusing cached placeholder",
+            extra={"event": "cognition-layer-broker-owner-missing"},
+        )
+        return (
+            _BOOTSTRAP_PLACEHOLDER_PIPELINE or pipeline,
+            _BOOTSTRAP_PLACEHOLDER_MANAGER or manager,
+            _BOOTSTRAP_PLACEHOLDER_BROKER or broker,
         )
     _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER = advertise_bootstrap_placeholder(
         dependency_broker=broker,
