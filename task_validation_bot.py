@@ -94,13 +94,24 @@ def _resolve_management(
     placeholder_manager = None
     try:
         interface_mod = load_internal("coding_bot_interface")
-        dependency_broker = interface_mod._bootstrap_dependency_broker()
-        broker_pipeline, broker_sentinel = dependency_broker.resolve()
+        try:
+            gate = load_internal("bootstrap_gate")
+        except Exception:  # pragma: no cover - gate resolution is best effort
+            gate = None
+
+        if gate is not None:
+            broker_pipeline, broker_sentinel, dependency_broker = gate.resolve_bootstrap_placeholders(
+                description="TaskValidationBot bootstrap gate",
+            )
+        else:
+            dependency_broker = interface_mod._bootstrap_dependency_broker()
+            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+
         _placeholder_pipeline, placeholder_manager = interface_mod.advertise_bootstrap_placeholder(
             dependency_broker=dependency_broker,
             pipeline=broker_pipeline,
             manager=broker_sentinel,
-            owner=True,
+            owner=False,
         )
     except Exception:  # pragma: no cover - best effort broker propagation
         logger.debug(
@@ -122,6 +133,8 @@ def _resolve_management(
         interface_mod = interface_mod or load_internal("coding_bot_interface")
         decorator = interface_mod.self_coding_managed
         prepare_pipeline_for_bootstrap = interface_mod.prepare_pipeline_for_bootstrap
+        advertise_bootstrap_placeholder = interface_mod.advertise_bootstrap_placeholder
+        bootstrap_coordinator = interface_mod._GLOBAL_BOOTSTRAP_COORDINATOR
         manager_mod = load_internal("self_coding_manager")
         engine_mod = load_internal("self_coding_engine")
         pipeline_mod = load_internal("model_automation_pipeline")
@@ -190,14 +203,35 @@ def _resolve_management(
             memory_cls(),
             context_builder=context_builder,
         )
-        pipeline, promote = prepare_pipeline_for_bootstrap(
-            pipeline_cls=pipeline_mod.ModelAutomationPipeline,
-            context_builder=context_builder,
-            bot_registry=registry,
-            data_bot=data_bot,
-            manager_sentinel=placeholder_manager or broker_sentinel,
-            validator_factory=_validator_factory,
-        )
+
+        pipeline = broker_pipeline or _placeholder_pipeline
+        promote = None
+
+        try:
+            active_promise = bootstrap_coordinator.peek_active()
+        except Exception:  # pragma: no cover - promise inspection best effort
+            active_promise = None
+
+        if active_promise is not None and pipeline is None:
+            try:
+                promised_pipeline, promised_promote = active_promise.wait()
+                pipeline = promised_pipeline or pipeline
+                promote = promised_promote or promote
+            except Exception:  # pragma: no cover - promise wait best effort
+                logger.debug(
+                    "TaskValidationBot bootstrap promise reuse failed", exc_info=True
+                )
+
+        if pipeline is None and promote is None:
+            pipeline, promote = prepare_pipeline_for_bootstrap(
+                pipeline_cls=pipeline_mod.ModelAutomationPipeline,
+                context_builder=context_builder,
+                bot_registry=registry,
+                data_bot=data_bot,
+                manager_sentinel=placeholder_manager or broker_sentinel,
+                validator_factory=_validator_factory,
+            )
+
         manager = manager_mod.SelfCodingManager(
             engine,
             pipeline,
@@ -207,14 +241,15 @@ def _resolve_management(
         promote_target = placeholder_manager or broker_sentinel
 
         def _promote_with_broker(real_manager: object) -> None:
-            promote(real_manager)
+            if promote is not None:
+                promote(real_manager)
             sentinel_candidate = promote_target or getattr(pipeline, "manager", None)
-            if dependency_broker is None:
-                return
+            broker = dependency_broker or interface_mod._bootstrap_dependency_broker()
             try:
-                dependency_broker.advertise(
+                advertise_bootstrap_placeholder(
+                    dependency_broker=broker,
                     pipeline=pipeline,
-                    sentinel=sentinel_candidate or real_manager,
+                    manager=sentinel_candidate or real_manager,
                     owner=True,
                 )
             except Exception:  # pragma: no cover - best effort broker propagation
