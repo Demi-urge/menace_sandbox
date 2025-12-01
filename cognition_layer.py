@@ -35,6 +35,7 @@ from vector_service.context_builder import ContextBuilder
 from coding_bot_interface import advertise_bootstrap_placeholder, get_active_bootstrap_pipeline
 from bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
+from bootstrap_readiness import readiness_signal
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from roi_tracker import ROITracker
 
@@ -56,12 +57,26 @@ _BOOTSTRAP_PLACEHOLDER_PIPELINE: object | None = None
 _BOOTSTRAP_PLACEHOLDER_MANAGER: object | None = None
 _BOOTSTRAP_PLACEHOLDER_BROKER: object | None = None
 _BOOTSTRAP_GATE_TIMEOUT = 12.0
+_BOOTSTRAP_READINESS = readiness_signal()
+
+
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
+    try:
+        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+    except TimeoutError as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(
+            f"{component} unavailable until bootstrap readiness clears: "
+            f"{_BOOTSTRAP_READINESS.describe()}"
+        ) from exc
 
 
 def _bootstrap_placeholders() -> tuple[object, object, object]:
     """Resolve bootstrap placeholders after the readiness gate clears."""
 
     global _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_PLACEHOLDER_BROKER
+    _ensure_bootstrap_ready(
+        "CognitionLayer bootstrap placeholder", timeout=_BOOTSTRAP_GATE_TIMEOUT
+    )
     if None not in (
         _BOOTSTRAP_PLACEHOLDER_PIPELINE,
         _BOOTSTRAP_PLACEHOLDER_MANAGER,
@@ -97,6 +112,12 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
         _BOOTSTRAP_PLACEHOLDER_MANAGER,
         _BOOTSTRAP_PLACEHOLDER_BROKER,
     )
+
+
+# Advertise the placeholder immediately at import time so context builders reuse
+# the shared bootstrap sentinel instead of triggering redundant preparation
+# callbacks.
+_bootstrap_placeholders()
 
 
 def _get_layer(
