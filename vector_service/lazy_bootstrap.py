@@ -170,6 +170,12 @@ def warmup_vector_service(
         run_vectorise = False
 
     if bootstrap_context and not force_heavy:
+        heavy_requested = download_model or hydrate_handlers or start_scheduler
+        if heavy_requested:
+            log.info(
+                "Bootstrap context detected; deferring heavy vector warmup (force_heavy to override)",
+                extra={"download_model": download_model, "hydrate_handlers": hydrate_handlers, "start_scheduler": start_scheduler},
+            )
         if download_model:
             log.info("Bootstrap context detected; skipping embedding model download")
             download_model = False
@@ -208,6 +214,15 @@ def warmup_vector_service(
             _record(stage, "deferred-budget")
             log.warning("Vector warmup deadline reached before %s: %s", stage, exc)
             return False
+
+    def _should_abort(stage: str) -> bool:
+        if budget_exhausted:
+            log.info(
+                "Vector warmup budget exhausted; skipping remaining heavy stages after %s",
+                stage,
+            )
+            return True
+        return False
 
     def _record_timeout(stage: str) -> None:
         try:
@@ -270,7 +285,10 @@ def warmup_vector_service(
     }
 
     _guard("init")
-    if _guard("model"):
+    if not _guard("model"):
+        if _should_abort("model"):
+            return
+    else:
         if download_model:
             completed, path = _run_with_budget(
                 "model",
@@ -282,6 +300,10 @@ def warmup_vector_service(
                     _record("model", f"ready:{path}" if path.exists() else "ready")
                 else:
                     _record("model", "missing")
+            elif budget_exhausted:
+                _record("model", "deferred-budget")
+                log.info("Vector warmup model download deferred after budget exhaustion")
+                return
         elif probe_model:
             completed, dest = _run_with_budget("model", _model_bundle_path)
             if completed and dest:
@@ -296,7 +318,10 @@ def warmup_vector_service(
             _record("model", "skipped")
 
     svc = None
-    if _guard("handlers"):
+    if not _guard("handlers"):
+        if _should_abort("handlers"):
+            return
+    else:
         if hydrate_handlers:
             try:
                 from .vectorizer import SharedVectorService
@@ -311,6 +336,12 @@ def warmup_vector_service(
                 )
                 if completed:
                     _record("handlers", "hydrated")
+                elif budget_exhausted:
+                    _record("handlers", "deferred-budget")
+                    log.info(
+                        "Vector warmup handler hydration deferred after budget exhaustion",
+                    )
+                    return
             except Exception as exc:  # pragma: no cover - best effort logging
                 log.warning("SharedVectorService warmup failed: %s", exc)
                 _record("handlers", "failed")

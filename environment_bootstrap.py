@@ -2134,27 +2134,25 @@ class EnvironmentBootstrapper:
             check_budget()
             raw = os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").strip().lower()
             tokens = {tok for tok in (t.strip() for t in raw.split(",")) if tok}
-            truthy = {"1", "true", "yes", "on", "full"}
-            warm_vectors = raw in truthy or "full" in tokens
+            truthy = {"1", "true", "yes", "on", "full", "heavy"}
+            heavy_requested = raw in truthy or "full" in tokens or "heavy" in tokens
             light_warmup = raw in {"light", "probe", "check"} or "probe" in tokens
-            warmup_model = warm_vectors or os.getenv(
+            model_requested = os.getenv(
                 "MENACE_BOOTSTRAP_WARM_VECTOR_MODEL", ""
             ).strip().lower() in truthy or "model" in tokens
-            warmup_handlers = warm_vectors or os.getenv(
+            handlers_requested = os.getenv(
                 "MENACE_BOOTSTRAP_WARM_VECTOR_HANDLERS", ""
             ).strip().lower() in truthy or "handlers" in tokens or "hydrate" in tokens
-            warmup_probe = (
-                warm_vectors
-                or light_warmup
-                or os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR_PROBE", "").strip().lower()
-                in truthy
-                or "check" in tokens
-                or "probe" in tokens
-            )
-            run_vectorise = warm_vectors or os.getenv(
+            probe_requested = os.getenv(
+                "MENACE_BOOTSTRAP_WARM_VECTOR_PROBE", ""
+            ).strip().lower() in truthy or "check" in tokens or "probe" in tokens
+            run_vectorise = os.getenv(
                 "MENACE_BOOTSTRAP_WARM_VECTOR_VECTORISE", ""
             ).strip().lower() in truthy or "vectorise" in tokens or "vectorize" in tokens
-            warmup_lite = light_warmup or (warmup_probe and not warmup_handlers)
+            warmup_model = heavy_requested or model_requested
+            warmup_handlers = heavy_requested or handlers_requested
+            warmup_probe = True if raw == "" else heavy_requested or light_warmup or probe_requested
+            warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
             if raw in {"defer", "later"}:
                 self.logger.info(
                     "Vector warmup explicitly deferred; assets will hydrate on first use",
@@ -2162,8 +2160,17 @@ class EnvironmentBootstrapper:
                 check_budget()
                 return
 
+            if not heavy_requested:
+                self.logger.info(
+                    "Defaulting to vector warmup-lite; heavy hydration will wait for an explicit heavy flag",
+                )
+            if warmup_handlers and not heavy_requested:
+                self.logger.info(
+                    "Vector handler hydration requested but deferred until heavy mode is enabled",
+                )
+
             warm_requested = (
-                warm_vectors
+                heavy_requested
                 or light_warmup
                 or warmup_model
                 or warmup_handlers
@@ -2185,10 +2192,10 @@ class EnvironmentBootstrapper:
                         check_budget=check_budget,
                         download_model=warmup_model,
                         probe_model=warmup_probe,
-                        hydrate_handlers=warmup_handlers,
-                        start_scheduler=True,
-                        run_vectorise=run_vectorise,
-                        force_heavy=warm_vectors,
+                        hydrate_handlers=heavy_requested and warmup_handlers,
+                        start_scheduler=heavy_requested,
+                        run_vectorise=run_vectorise and heavy_requested,
+                        force_heavy=heavy_requested,
                         bootstrap_fast=True,
                         warmup_lite=warmup_lite,
                         warmup_model=warmup_model,
