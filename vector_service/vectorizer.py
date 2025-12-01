@@ -171,12 +171,14 @@ class SharedVectorService:
     hydrate_handlers: bool | None = None
     lazy_vector_store: bool | None = None
     warmup_lite: bool | None = None
+    stop_event: threading.Event | None = None
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
     _handler_requires_store: Dict[str, bool] = field(init=False)
     _handler_bootstrap_flag: bool = field(init=False, default=False)
     _known_kinds: set[str] = field(init=False, default_factory=set)
 
     def __post_init__(self) -> None:
+        self._check_cancelled("init")
         # Handlers are populated dynamically from the registry so newly
         # registered vectorisers are picked up automatically.
         init_start = time.perf_counter()
@@ -251,13 +253,15 @@ class SharedVectorService:
             ),
         )
 
-    def hydrate_all_handlers(self) -> None:
+    def hydrate_all_handlers(self, *, stop_event: threading.Event | None = None) -> None:
         """Instantiate and cache all registered handlers."""
 
+        self._check_cancelled("hydrate-handlers", stop_event)
         handler_start = time.perf_counter()
         handlers = load_handlers(
             bootstrap_fast=self._handler_bootstrap_flag, warmup_lite=bool(self.warmup_lite)
         )
+        self._check_cancelled("hydrate-handlers", stop_event)
         self._handlers.update(handlers)
         for kind, handler in handlers.items():
             self._handler_requires_store[kind] = self._handler_requires_store.get(
@@ -340,6 +344,13 @@ class SharedVectorService:
             if value is not None:
                 return bool(value)
         return False
+
+    def _check_cancelled(
+        self, context: str, stop_event: threading.Event | None = None
+    ) -> None:
+        event = stop_event or self.stop_event
+        if event is not None and event.is_set():
+            raise TimeoutError(f"shared vector service cancelled during {context}")
 
     def _prepare_vector_store_for_handler(
         self, kind: str, handler: Callable[[Dict[str, Any]], List[float]]
@@ -475,8 +486,11 @@ class SharedVectorService:
                 return True
         return bool(SentenceTransformer is not None or torch is not None)
 
-    def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
+    def vectorise(
+        self, kind: str, record: Dict[str, Any], *, stop_event: threading.Event | None = None
+    ) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
+        self._check_cancelled("vectorise", stop_event)
         _trace("shared_vector_service.vectorise.start", kind=kind)
         payload = self._call_remote("/vectorise", {"kind": kind, "record": record})
         if payload is not None:
@@ -485,9 +499,12 @@ class SharedVectorService:
                 _trace("shared_vector_service.vectorise.remote", kind=kind)
                 return vec
 
+        self._check_cancelled("vectorise", stop_event)
+
         kind = kind.lower()
         handler = self._get_handler(kind)
         if handler:
+            self._check_cancelled("vectorise", stop_event)
             self._prepare_vector_store_for_handler(kind, handler)
             _trace("shared_vector_service.vectorise.handler", kind=kind)
             return handler(record)

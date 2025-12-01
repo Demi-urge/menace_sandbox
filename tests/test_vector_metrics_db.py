@@ -79,3 +79,21 @@ def test_vector_metrics_bootstrap_safe(monkeypatch, tmp_path):
 
     assert vm.router.local_conn.audit_bootstrap_safe is True
     assert vm.router.shared_conn.audit_bootstrap_safe is True
+
+
+def test_warmup_does_not_create_db_file(tmp_path):
+    db_path = tmp_path / "warm.db"
+    vm = vdb.VectorMetricsDB(db_path, warmup=True)
+
+    assert not db_path.exists()
+    assert vm.planned_path() == db_path
+    assert not db_path.exists()
+
+
+def test_bootstrap_fast_does_not_create_db_file(tmp_path):
+    db_path = tmp_path / "fast.db"
+    vm = vdb.VectorMetricsDB(db_path, bootstrap_fast=True)
+
+    assert not db_path.exists()
+    assert vm.planned_path() == db_path
+    assert not db_path.exists()
