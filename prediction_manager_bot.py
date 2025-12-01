@@ -252,8 +252,13 @@ def _get_registry(
     state = bootstrap_state or bootstrap_state_snapshot()
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
-    _bootstrap_placeholders()
-    _REGISTRY_PROXY.set_bootstrap_mode(bootstrap)
+    placeholder_pipeline, placeholder_manager, _placeholder_broker = (
+        _bootstrap_placeholders()
+    )
+    inferred_bootstrap = bootstrap or state.get("in_progress", False)
+    if not inferred_bootstrap:
+        inferred_bootstrap = bool(placeholder_manager or placeholder_pipeline)
+    _REGISTRY_PROXY.set_bootstrap_mode(inferred_bootstrap)
     return _REGISTRY_PROXY._hydrate()
 
 

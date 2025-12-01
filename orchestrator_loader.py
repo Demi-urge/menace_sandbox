@@ -44,12 +44,6 @@ def _bootstrap_placeholders(
     state = _throttled_bootstrap_probe(bootstrap_state=bootstrap_state)
     if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
-    if not state.get("ready"):
-        logger.info(
-            "bootstrap pending; returning placeholders without blocking gate",
-            extra=log_record(event="bootstrap-pending", state=state),
-        )
-        return _placeholder_tuple()
 
     pipeline, manager = get_active_bootstrap_pipeline()
     if pipeline is not None or manager is not None:
@@ -60,6 +54,34 @@ def _bootstrap_placeholders(
             )
         )
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
+    if state.get("in_progress"):
+        try:
+            pipeline, manager, broker = resolve_bootstrap_placeholders(
+                timeout=_BOOTSTRAP_GATE_TIMEOUT,
+                description="Orchestrator bootstrap gate",
+            )
+        except TimeoutError:
+            logger.info(
+                "bootstrap in progress; placeholders unresolved but preserved",
+                extra=log_record(event="bootstrap-in-progress", state=state),
+            )
+            return _placeholder_tuple()
+        _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+            advertise_broker_placeholder(
+                dependency_broker=broker,
+                pipeline=pipeline,
+                manager=manager,
+            )
+        )
+        return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
+    if not state.get("ready"):
+        logger.info(
+            "bootstrap pending; returning placeholders without blocking gate",
+            extra=log_record(event="bootstrap-pending", state=state),
+        )
+        return _placeholder_tuple()
 
     try:
         pipeline, manager, broker = resolve_bootstrap_placeholders(

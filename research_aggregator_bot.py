@@ -275,7 +275,9 @@ def _ensure_runtime_dependencies(
     state = bootstrap_state or bootstrap_state_snapshot()
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
-    _bootstrap_placeholders()
+    placeholder_pipeline, placeholder_manager, placeholder_broker = (
+        _bootstrap_placeholders()
+    )
     global registry
     global data_bot
     global _context_builder
@@ -308,6 +310,11 @@ def _ensure_runtime_dependencies(
     manager_pipeline = getattr(manager_override, "pipeline", None)
     if pipeline_hint is None and _looks_like_pipeline_candidate(manager_pipeline):
         pipeline_hint = manager_pipeline
+
+    if pipeline_hint is None and _looks_like_pipeline_candidate(placeholder_pipeline):
+        pipeline_hint = placeholder_pipeline
+    if manager_override is None and placeholder_manager is not None:
+        manager_override = placeholder_manager
 
     sentinel_active = False
     try:
@@ -345,7 +352,7 @@ def _ensure_runtime_dependencies(
 
     pipeline_override = pipeline_hint
 
-    dependency_broker = _bootstrap_dependency_broker()
+    dependency_broker = placeholder_broker or _bootstrap_dependency_broker()
     if dependency_broker is None:
         raise RuntimeError(
             "Bootstrap dependency broker unavailable; cannot initialise ResearchAggregatorBot"
