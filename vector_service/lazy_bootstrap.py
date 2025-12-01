@@ -44,7 +44,12 @@ def _model_bundle_path() -> Path:
     return resolve_path("vector_service/minilm/tiny-distilroberta-base.tar.xz")
 
 
-def ensure_embedding_model(*, logger: logging.Logger | None = None, warmup: bool = False) -> Path | None:
+def ensure_embedding_model(
+    *,
+    logger: logging.Logger | None = None,
+    warmup: bool = False,
+    stop_event: threading.Event | None = None,
+) -> Path | None:
     """Ensure the bundled embedding model archive exists.
 
     The download is performed at most once per process and only when the model
@@ -55,6 +60,10 @@ def ensure_embedding_model(*, logger: logging.Logger | None = None, warmup: bool
 
     global _MODEL_READY
     log = logger or logging.getLogger(__name__)
+    if stop_event is not None and stop_event.is_set():
+        log.info("embedding model download cancelled before start")
+        return None
+
     if _MODEL_READY:
         return _model_bundle_path()
 
@@ -66,6 +75,10 @@ def ensure_embedding_model(*, logger: logging.Logger | None = None, warmup: bool
             _MODEL_READY = True
             return dest
 
+        if stop_event is not None and stop_event.is_set():
+            log.info("embedding model download cancelled (budget exhausted)")
+            return None
+
         if importlib.util.find_spec("huggingface_hub") is None:
             log.info(
                 "embedding model download skipped (huggingface-hub unavailable); will retry on demand"
@@ -74,6 +87,10 @@ def ensure_embedding_model(*, logger: logging.Logger | None = None, warmup: bool
 
         try:
             from . import download_model as _dm
+
+            if stop_event is not None and stop_event.is_set():
+                log.info("embedding model download aborted before fetch start")
+                return None
 
             _dm.bundle(dest)
             _MODEL_READY = True
@@ -112,6 +129,7 @@ def warmup_vector_service(
     start_scheduler: bool = False,
     run_vectorise: bool | None = None,
     check_budget: Callable[[], None] | None = None,
+    budget_remaining: Callable[[], float | None] | None = None,
     logger: logging.Logger | None = None,
     force_heavy: bool = False,
     bootstrap_fast: bool | None = None,
@@ -134,7 +152,10 @@ def warmup_vector_service(
     When ``bootstrap_fast`` is True the vector service keeps the patch handler
     stubbed during warmup and avoids loading heavy indexes.  Stage timeouts can
     be provided via ``stage_timeouts`` to cap how long heavyweight tasks are
-    allowed to block before they are deferred to background execution.
+    allowed to block before they are deferred to background execution.  A
+    ``budget_remaining`` callback can be supplied to shorten those per-stage
+    limits (or skip stages entirely) when the caller's remaining bootstrap time
+    falls below the configured thresholds.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -197,11 +218,28 @@ def warmup_vector_service(
 
     budget_exhausted = False
 
+    def _remaining_budget() -> float | None:
+        if budget_remaining is None:
+            return None
+        try:
+            return budget_remaining()
+        except Exception:  # pragma: no cover - budget hint is advisory
+            log.debug("budget_remaining callback failed", exc_info=True)
+            return None
+
     def _guard(stage: str) -> bool:
         nonlocal budget_exhausted
         if budget_exhausted:
-            _record(stage, "deferred-budget")
+            _record(stage, "skipped-budget")
             log.info("Vector warmup budget already exhausted; deferring %s", stage)
+            return False
+        remaining = _remaining_budget()
+        if remaining is not None and remaining <= 0:
+            budget_exhausted = True
+            _record(stage, "skipped-budget")
+            log.info(
+                "Vector warmup budget exhausted before %s; skipping heavy stages", stage
+            )
             return False
         if check_budget is None:
             return True
@@ -211,7 +249,7 @@ def warmup_vector_service(
             return True
         except TimeoutError as exc:
             budget_exhausted = True
-            _record(stage, "deferred-budget")
+            _record(stage, "skipped-budget")
             log.warning("Vector warmup deadline reached before %s: %s", stage, exc)
             return False
 
@@ -232,13 +270,14 @@ def warmup_vector_service(
 
     def _run_with_budget(
         stage: str,
-        func: Callable[[], Any],
+        func: Callable[[threading.Event], Any],
         *,
         timeout: float | None = None,
     ) -> tuple[bool, Any | None]:
         nonlocal budget_exhausted
+        stop_event = threading.Event()
         if check_budget is None and timeout is None:
-            return True, func()
+            return True, func(stop_event)
 
         result: list[Any | None] = []
         error: list[BaseException] = []
@@ -246,7 +285,7 @@ def warmup_vector_service(
 
         def _runner() -> None:
             try:
-                result.append(func())
+                result.append(func(stop_event))
             except BaseException as exc:  # pragma: no cover - propagated to caller
                 error.append(exc)
             finally:
@@ -258,42 +297,71 @@ def warmup_vector_service(
         start = time.monotonic()
         while not done.wait(timeout=0.05):
             if timeout is not None and time.monotonic() - start >= timeout:
+                stop_event.set()
                 _record_timeout(stage)
                 _record(stage, "deferred-timeout")
-                log.warning("Vector warmup %s timed out after %.2fs; deferring", stage, timeout)
+                log.warning(
+                    "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
+                )
+                thread.join(timeout=0.5)
                 return False, None
 
             if check_budget is not None:
                 try:
                     check_budget()
                 except TimeoutError as exc:
+                    stop_event.set()
                     budget_exhausted = True
                     _record_timeout(stage)
-                    _record(stage, "deferred-budget")
+                    _record(stage, "skipped-budget")
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
+                    thread.join(timeout=0.5)
                     return False, None
 
         if error:
-            raise error[0]
+            err = error[0]
+            if isinstance(err, TimeoutError):
+                log.info("Vector warmup %s cancelled: %s", stage, err)
+                _record(stage, "skipped-budget")
+                return False, None
+            raise err
 
         return True, result[0] if result else None
 
-    resolved_timeouts = stage_timeouts or {
+    base_timeouts = {
         "model": 20.0,
         "handlers": 25.0,
         "vectorise": 8.0,
     }
+    resolved_timeouts = {**base_timeouts, **(stage_timeouts or {})}
+
+    def _effective_timeout(stage: str) -> float | None:
+        remaining = _remaining_budget()
+        stage_timeout = resolved_timeouts.get(stage)
+        if remaining is None:
+            return stage_timeout
+        if stage_timeout is None:
+            return remaining
+        return max(0.0, min(stage_timeout, remaining))
 
     _guard("init")
     if not _guard("model"):
         if _should_abort("model"):
             return
     else:
+        model_timeout = _effective_timeout("model")
         if download_model:
+            if model_timeout is not None and model_timeout <= 0:
+                budget_exhausted = True
+                _record("model", "skipped-budget")
+                log.info("Vector warmup model download skipped: no remaining budget")
+                return
             completed, path = _run_with_budget(
                 "model",
-                lambda: ensure_embedding_model(logger=log, warmup=True),
-                timeout=resolved_timeouts.get("model"),
+                lambda stop_event: ensure_embedding_model(
+                    logger=log, warmup=True, stop_event=stop_event
+                ),
+                timeout=model_timeout,
             )
             if completed:
                 if path:
@@ -301,11 +369,13 @@ def warmup_vector_service(
                 else:
                     _record("model", "missing")
             elif budget_exhausted:
-                _record("model", "deferred-budget")
+                _record("model", "skipped-budget")
                 log.info("Vector warmup model download deferred after budget exhaustion")
                 return
         elif probe_model:
-            completed, dest = _run_with_budget("model", _model_bundle_path)
+            completed, dest = _run_with_budget(
+                "model", lambda _stop: _model_bundle_path()
+            )
             if completed and dest:
                 if dest.exists():
                     log.info("embedding model already present at %s (probe only)", dest)
@@ -322,22 +392,29 @@ def warmup_vector_service(
         if _should_abort("handlers"):
             return
     else:
+        handler_timeout = _effective_timeout("handlers")
         if hydrate_handlers:
+            if handler_timeout is not None and handler_timeout <= 0:
+                budget_exhausted = True
+                _record("handlers", "skipped-budget")
+                log.info("Vector warmup handler hydration skipped: no remaining budget")
+                return
             try:
                 from .vectorizer import SharedVectorService
 
                 completed, svc = _run_with_budget(
                     "handlers",
-                    lambda: SharedVectorService(
+                    lambda stop_event: SharedVectorService(
                         bootstrap_fast=bootstrap_fast,
                         warmup_lite=warmup_lite,
+                        stop_event=stop_event,
                     ),
-                    timeout=resolved_timeouts.get("handlers"),
+                    timeout=handler_timeout,
                 )
                 if completed:
                     _record("handlers", "hydrated")
                 elif budget_exhausted:
-                    _record("handlers", "deferred-budget")
+                    _record("handlers", "skipped-budget")
                     log.info(
                         "Vector warmup handler hydration deferred after budget exhaustion",
                     )
@@ -359,18 +436,26 @@ def warmup_vector_service(
 
     should_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
     if _guard("vectorise"):
+        vectorise_timeout = _effective_timeout("vectorise")
         if should_vectorise and svc is not None:
-            try:
-                completed, _ = _run_with_budget(
-                    "vectorise",
-                    lambda: svc.vectorise("text", {"text": "warmup"}),
-                    timeout=resolved_timeouts.get("vectorise"),
-                )
-                if completed:
-                    _record("vectorise", "ok")
-            except Exception:  # pragma: no cover - allow partial warmup
-                log.debug("vector warmup transform failed; continuing", exc_info=True)
-                _record("vectorise", "failed")
+            if vectorise_timeout is not None and vectorise_timeout <= 0:
+                budget_exhausted = True
+                _record("vectorise", "skipped-budget")
+                log.info("Vectorise warmup skipped: no remaining budget")
+            else:
+                try:
+                    completed, _ = _run_with_budget(
+                        "vectorise",
+                        lambda stop_event: svc.vectorise(
+                            "text", {"text": "warmup"}, stop_event=stop_event
+                        ),
+                        timeout=vectorise_timeout,
+                    )
+                    if completed:
+                        _record("vectorise", "ok")
+                except Exception:  # pragma: no cover - allow partial warmup
+                    log.debug("vector warmup transform failed; continuing", exc_info=True)
+                    _record("vectorise", "failed")
         else:
             if should_vectorise:
                 _record("vectorise", "skipped-no-service")

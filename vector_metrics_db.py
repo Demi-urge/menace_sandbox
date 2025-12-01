@@ -177,6 +177,7 @@ def default_vector_metrics_path(*, ensure_exists: bool = True) -> Path:
     When ``ensure_exists`` is ``True`` the parent directory is created and an
     empty file is touched so subsequent :func:`resolve_path` calls succeed.
     ``sqlite3`` will initialise the actual database schema on first use.
+    When ``ensure_exists`` is ``False`` no filesystem writes are performed.
     """
 
     try:
@@ -292,8 +293,9 @@ class VectorMetricsDB:
         }
         self._bootstrap_safe = bootstrap_safe
         self._configured_path = Path(path)
+        eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
         self._resolved_path, self._default_path = self._resolve_requested_path(
-            self._configured_path, ensure_exists=False
+            self._configured_path, ensure_exists=eager_resolve
         )
         self.router = None
         self._conn = None
@@ -339,6 +341,15 @@ class VectorMetricsDB:
             )
             self._lazy_primed = False
         return True
+
+    def planned_path(self) -> Path:
+        """Return the resolved database path without touching the filesystem."""
+
+        if self._resolved_path is None or self._default_path is None:
+            self._resolved_path, self._default_path = self._resolve_requested_path(
+                self._configured_path, ensure_exists=False
+            )
+        return self._resolved_path
 
     @property
     def conn(self):
