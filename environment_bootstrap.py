@@ -1810,62 +1810,65 @@ class EnvironmentBootstrapper:
         halt_background: bool | None = None,
         skip_db_init: bool | None = None,
     ) -> None:
-        timeout = (
-            timeout
-            if timeout is not None
-            else float(os.getenv("MENACE_BOOTSTRAP_TIMEOUT", "0") or 0) or None
-        )
-        halt_background = (
-            halt_background
-            if halt_background is not None
-            else os.getenv("MENACE_BOOTSTRAP_HALT_THREADS") == "1"
-        )
-        skip_db_init = (
-            skip_db_init
-            if skip_db_init is not None
-            else os.getenv("MENACE_BOOTSTRAP_SKIP_DB_INIT") == "1"
-        )
-        budgets = self._resolve_phase_budgets(timeout)
-        try:
-            self._run_phase(
-                "critical",
-                budgets.get("critical"),
-                self._critical_prerequisites,
+        with bootstrap_metrics.bootstrap_attempt(logger=self.logger):
+            timeout = (
+                timeout
+                if timeout is not None
+                else float(os.getenv("MENACE_BOOTSTRAP_TIMEOUT", "0") or 0) or None
             )
-            self._run_phase(
-                "provisioning",
-                budgets.get("provisioning"),
-                lambda guard, state=None: self._provisioning_phase(
-                    guard, state, skip_db_init=skip_db_init
-                ),
+            halt_background = (
+                halt_background
+                if halt_background is not None
+                else os.getenv("MENACE_BOOTSTRAP_HALT_THREADS") == "1"
             )
-
-            def optional_work() -> None:
+            skip_db_init = (
+                skip_db_init
+                if skip_db_init is not None
+                else os.getenv("MENACE_BOOTSTRAP_SKIP_DB_INIT") == "1"
+            )
+            budgets = self._resolve_phase_budgets(timeout)
+            try:
                 self._run_phase(
-                    "optional",
-                    budgets.get("optional"),
-                    lambda guard, state=None: self._optional_tail(guard),
-                    strict=False,
+                    "critical",
+                    budgets.get("critical"),
+                    self._critical_prerequisites,
+                )
+                self._run_phase(
+                    "provisioning",
+                    budgets.get("provisioning"),
+                    lambda guard, state=None: self._provisioning_phase(
+                        guard, state, skip_db_init=skip_db_init
+                    ),
                 )
 
-            has_optional = self.policy.provision_vector_assets or budgets.get("optional")
-            if has_optional:
-                if halt_background:
-                    optional_work()
-                else:
-                    self._queue_background_task(
-                        "optional-phase",
-                        lambda: self._run_optional(optional_work),
-                        delay_until_ready=False,
-                        join_inner=False,
-                        ready_gate="online",
-                        stage="background_loops",
-                        budget_hint=self._stage_budget_hint("background_loops"),
+                def optional_work() -> None:
+                    self._run_phase(
+                        "optional",
+                        budgets.get("optional"),
+                        lambda guard, state=None: self._optional_tail(guard),
+                        strict=False,
                     )
-        finally:
-            if halt_background:
-                self.shutdown()
-            self._persist_phase_durations()
+
+                has_optional = self.policy.provision_vector_assets or budgets.get(
+                    "optional"
+                )
+                if has_optional:
+                    if halt_background:
+                        optional_work()
+                    else:
+                        self._queue_background_task(
+                            "optional-phase",
+                            lambda: self._run_optional(optional_work),
+                            delay_until_ready=False,
+                            join_inner=False,
+                            ready_gate="online",
+                            stage="background_loops",
+                            budget_hint=self._stage_budget_hint("background_loops"),
+                        )
+            finally:
+                if halt_background:
+                    self.shutdown()
+                self._persist_phase_durations()
 
     def _run_optional(self, work: Callable[[], None]) -> None:
         work()
