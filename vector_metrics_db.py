@@ -99,6 +99,10 @@ def _env_flag(name: str, default: bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _noop_logging(bootstrap_fast: bool, warmup_mode: bool) -> bool:
+    return bool(bootstrap_fast and warmup_mode)
+
+
 @dataclass
 class VectorMetric:
     """Single vector operation metric record."""
@@ -185,12 +189,18 @@ class VectorMetricsDB:
             or warmup
         )
         self._warmup_mode = bool(warmup or vector_warmup_env)
-        self._lazy_mode = self.bootstrap_fast
-        self._lazy_primed = self._lazy_mode
+        self._lazy_mode = True
+        self._lazy_primed = self.bootstrap_fast or self._warmup_mode
         init_start = time.perf_counter()
         logger.info(
             "vector_metrics_db.init.start",
-            extra=_timestamp_payload(init_start, configured_path=str(path)),
+            extra=_timestamp_payload(
+                init_start,
+                configured_path=str(path),
+                lazy_mode=self._lazy_mode,
+                bootstrap_fast=self.bootstrap_fast,
+                warmup_mode=self._warmup_mode,
+            ),
         )
 
         self._cached_weights: dict[str, float] = {}
@@ -244,27 +254,10 @@ class VectorMetricsDB:
         self._bootstrap_safe = bootstrap_safe
         self._configured_path = Path(path)
         self._resolved_path, self._default_path = self._resolve_requested_path(
-            self._configured_path, ensure_exists=not self._lazy_mode
+            self._configured_path, ensure_exists=False
         )
         self.router = None
         self._conn = None
-
-        if self._lazy_mode:
-            logger.info(
-                "vector_metrics_db.bootstrap.fast_path_short_circuit",
-                extra=_timestamp_payload(
-                    init_start,
-                    fast_path=True,
-                    vector_bootstrap_env=vector_bootstrap_env,
-                    patch_bootstrap_env=patch_bootstrap_env,
-                    vector_warmup_env=vector_warmup_env,
-                    warmup=warmup,
-                    resolved_path=str(self._resolved_path),
-                ),
-            )
-            return
-
-        self._prepare_connection(init_start)
 
     def _exit_lazy_mode(self, *, reason: str) -> None:
         """Upgrade from bootstrap stub to full schema on first meaningful use."""
@@ -288,6 +281,23 @@ class VectorMetricsDB:
             "vector_metrics_db.bootstrap.lazy_exit.complete",
             extra=_timestamp_payload(init_start, resolved_path=str(self._resolved_path)),
         )
+
+    def _should_skip_logging(self) -> bool:
+        if not _noop_logging(self.bootstrap_fast, self._warmup_mode):
+            return False
+        if self._lazy_primed:
+            start = time.perf_counter()
+            logger.info(
+                "vector_metrics_db.bootstrap.noop_logging",
+                extra=_timestamp_payload(
+                    start,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    configured_path=str(self._configured_path),
+                ),
+            )
+            self._lazy_primed = False
+        return True
 
     @property
     def conn(self):
@@ -604,6 +614,7 @@ class VectorMetricsDB:
             self._schema_cache.update(self._default_columns)
 
         _ensure_prometheus_objects()
+        self._lazy_primed = False
         self._lazy_mode = False
         logger.info(
             "vector_metrics_db.init.complete",
@@ -685,7 +696,19 @@ class VectorMetricsDB:
         """Return mapping of origin database to current ranking weight."""
 
         default_weights = dict(default or self._cached_weights)
-        timeout_ms = self.router.bootstrap_timeout_ms if (bootstrap or self.bootstrap_fast) else None
+        if _noop_logging(self.bootstrap_fast, self._warmup_mode):
+            return default_weights
+
+        if self.router is None:
+            _ = self.conn
+        if self.router is None:
+            return default_weights
+
+        timeout_ms = (
+            self.router.bootstrap_timeout_ms
+            if (bootstrap or self.bootstrap_fast)
+            else None
+        )
         start = time.perf_counter()
         connection_ctx: contextlib.AbstractContextManager = (
             self.router.bootstrap_connection("ranking_weights", timeout_ms=timeout_ms)
@@ -885,6 +908,8 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def add(self, rec: VectorMetric) -> None:
+        if self._should_skip_logging():
+            return
         self.conn.execute(
             """
             INSERT INTO vector_metrics(
@@ -1122,6 +1147,8 @@ class VectorMetricsDB:
         win: bool = False,
         regret: bool = False,
     ) -> None:
+        if self._should_skip_logging():
+            return
         for _, vec_id in vectors:
             self.conn.execute(
                 """
@@ -1143,6 +1170,8 @@ class VectorMetricsDB:
     def record_patch_ancestry(
         self, patch_id: str, vectors: list[tuple]
     ) -> None:
+        if self._should_skip_logging():
+            return
         for rank, vec in enumerate(vectors):
             vec_id, contrib, lic, alerts, sev, risk = (
                 list(vec) + [None, None, None, None, None]
@@ -1180,6 +1209,8 @@ class VectorMetricsDB:
         effort_estimate: float | None = None,
         enhancement_score: float | None = None,
     ) -> None:
+        if self._should_skip_logging():
+            return
         try:
             self.conn.execute(
                 "REPLACE INTO patch_metrics(patch_id, errors, tests_passed, "
