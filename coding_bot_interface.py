@@ -39,6 +39,8 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
+from bootstrap_metrics import BOOTSTRAP_PREPARE_REPEAT_TOTAL
+
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
     enforce_bootstrap_timeout_policy,
@@ -228,6 +230,9 @@ _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
     "timeouts": 0,
     "extensions": [],
 }
+
+_PREPARE_CALL_INVOCATIONS: dict[str, int] = {}
+_PREPARE_CALL_SUPPRESSIONS: set[str] = set()
 
 _REENTRY_ATTEMPTS: dict[str, int] = {}
 _REENTRY_CAP_ENV = "MENACE_BOOTSTRAP_REENTRY_CAP"
@@ -1988,6 +1993,52 @@ def _increment_reentry_attempt(caller_module: str) -> int:
     attempts = (_REENTRY_ATTEMPTS.get(caller_module) or 0) + 1
     _REENTRY_ATTEMPTS[caller_module] = attempts
     return attempts
+
+
+def _record_prepare_call(
+    caller_module: str | None,
+    *,
+    broker_placeholder: bool,
+    promise_active: bool,
+    logger: logging.Logger,
+) -> None:
+    """Log initial prepare invocations and suppress repeats per caller.
+
+    Operators were seeing repeated "calling prepare_pipeline_for_bootstrap" lines when
+    orchestration helpers retried during an active bootstrap.  Track unique caller
+    modules so the informational log lands once per process while repeated attempts
+    increment a gauge and emit a single warning per caller for observability without
+    spamming the logs.
+    """
+
+    caller = caller_module or "<unknown>"
+    count = _PREPARE_CALL_INVOCATIONS.get(caller, 0)
+    telemetry = {
+        "event": "prepare-pipeline-invocation",
+        "caller_module": caller_module,
+        "caller_seen": count,
+        "broker_placeholder": broker_placeholder,
+        "active_promise": promise_active,
+    }
+    if count == 0:
+        _PREPARE_CALL_INVOCATIONS[caller] = 1
+        logger.info("calling prepare_pipeline_for_bootstrap", extra=telemetry)
+        return
+
+    _PREPARE_CALL_INVOCATIONS[caller] = count + 1
+    try:
+        BOOTSTRAP_PREPARE_REPEAT_TOTAL.labels(caller).inc()
+    except Exception:
+        logger.debug("failed to publish prepare repeat metric", exc_info=True)
+
+    if caller in _PREPARE_CALL_SUPPRESSIONS:
+        return
+
+    _PREPARE_CALL_SUPPRESSIONS.add(caller)
+    logger.warning(
+        "suppressing repeated prepare_pipeline_for_bootstrap invocation",
+        extra={**telemetry, "repeat_invocations": count + 1},
+    )
 
 
 def _maybe_raise_reentry_cap(
@@ -5659,6 +5710,13 @@ def prepare_pipeline_for_bootstrap(
     short_circuit_active = broker_placeholder_active or broker_pipeline is not None or broker_sentinel is not None
     short_circuit_active = short_circuit_active or active_promise is not None
     recursion_short_circuit = active_depth > 0 and short_circuit_active
+
+    _record_prepare_call(
+        caller_module,
+        broker_placeholder=broker_placeholder_active,
+        promise_active=active_promise is not None,
+        logger=logger,
+    )
 
     if recursion_short_circuit or (short_circuit_active and active_depth == 0):
         telemetry_event = (

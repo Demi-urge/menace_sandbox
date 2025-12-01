@@ -62,6 +62,17 @@ BOOTSTRAP_INFLIGHT = getattr(
 )
 _metrics.bootstrap_inflight = BOOTSTRAP_INFLIGHT
 
+BOOTSTRAP_PREPARE_REPEAT_TOTAL = getattr(
+    _metrics,
+    "bootstrap_prepare_repeat_total",
+    _metrics.Gauge(
+        "bootstrap_prepare_repeat_total",
+        "Prepare pipeline invocations suppressed because a prior call is still active",
+        ["caller"],
+    ),
+)
+_metrics.bootstrap_prepare_repeat_total = BOOTSTRAP_PREPARE_REPEAT_TOTAL
+
 BOOTSTRAP_ENTRY_TOTAL = getattr(
     _metrics,
     "bootstrap_entry_total",
