@@ -18,7 +18,7 @@ import threading
 import os
 
 from dynamic_path_router import resolve_path
-from bootstrap_helpers import ensure_environment_bootstrapped
+from bootstrap_helpers import ensure_bootstrapped
 
 try:  # pragma: no cover - optional dependency
     from filelock import FileLock
@@ -546,7 +546,9 @@ class ContextBuilder:
         errors_db: str | os.PathLike[str] | None = None,
         workflows_db: str | os.PathLike[str] | None = None,
     ) -> None:
-        ensure_environment_bootstrapped()
+        # Respect the centralized bootstrap readiness snapshot rather than
+        # triggering bootstrap from context builder construction.
+        self._bootstrap_state = ensure_bootstrapped()
         self.provenance_token = provenance_token or uuid.uuid4().hex
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)

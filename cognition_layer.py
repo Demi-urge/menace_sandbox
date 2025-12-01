@@ -34,7 +34,7 @@ from typing import Any, Tuple
 from vector_service.context_builder import ContextBuilder
 from coding_bot_interface import advertise_bootstrap_placeholder, get_active_bootstrap_pipeline
 from bootstrap_gate import resolve_bootstrap_placeholders
-from bootstrap_helpers import ensure_environment_bootstrapped
+from bootstrap_helpers import ensure_bootstrapped
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from roi_tracker import ROITracker
 
@@ -83,7 +83,9 @@ def _get_layer(builder: ContextBuilder) -> _CognitionLayer:
     components across calls.
     """
 
-    ensure_environment_bootstrapped()
+    # Guard against recursive bootstrap from cognition entrypoints; rely on the
+    # shared readiness snapshot before building the layer cache.
+    ensure_bootstrapped()
     _bootstrap_placeholders()
     layer = getattr(builder, "_cognition_layer", None)
     if layer is None:

@@ -17,7 +17,7 @@ from .coding_bot_interface import (
     self_coding_managed,
 )
 from .data_bot import DataBot, MetricsDB
-from .bootstrap_helpers import ensure_environment_bootstrapped
+from .bootstrap_helpers import ensure_bootstrapped
 
 import importlib
 import json
@@ -244,7 +244,10 @@ def _get_data_bot_proxy() -> _LazyDataBot:
 def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
     """Instantiate and return the shared :class:`BotRegistry`."""
 
-    ensure_environment_bootstrapped()
+    # Ensure the global readiness snapshot is initialized once before the
+    # registry attaches bootstrap placeholders to avoid recursive bootstrap
+    # attempts inside constructor paths.
+    ensure_bootstrapped()
     _bootstrap_placeholders()
     _REGISTRY_PROXY.set_bootstrap_mode(bootstrap)
     return _REGISTRY_PROXY._hydrate()
@@ -254,7 +257,9 @@ def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
 def _get_data_bot() -> DataBot:
     """Instantiate and return the shared :class:`DataBot`."""
 
-    ensure_environment_bootstrapped()
+    # Keep registry construction tied to the central bootstrap readiness state
+    # instead of spawning a fresh bootstrap cycle from this module.
+    ensure_bootstrapped()
     _bootstrap_placeholders()
     return _DATA_BOT_PROXY._hydrate()
 
