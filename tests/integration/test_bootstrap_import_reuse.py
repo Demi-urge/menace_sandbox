@@ -271,6 +271,117 @@ def _install_orchestrator_stubs():
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_reset_bootstrap_state")
+def test_advertised_placeholder_reused_across_consumers(monkeypatch, caplog):
+    _install_research_stubs()
+    _install_cognition_stubs()
+    _install_orchestrator_stubs()
+
+    pkg_stub = types.ModuleType("menace_sandbox")
+    pkg_stub.__path__ = [str(Path(__file__).resolve().parents[1])]
+    sys.modules["menace_sandbox"] = pkg_stub
+    sys.modules.setdefault("menace_sandbox.coding_bot_interface", cbi)
+    setattr(pkg_stub, "coding_bot_interface", cbi)
+
+    broker = cbi._bootstrap_dependency_broker()
+    broker.clear()
+
+    caplog.set_level("INFO", logger=cbi.logger.name)
+
+    placeholder_pipeline, placeholder_manager = cbi.advertise_bootstrap_placeholder(
+        dependency_broker=broker, owner=True
+    )
+
+    prepare_calls: list[object] = []
+    original_prepare = cbi.prepare_pipeline_for_bootstrap
+
+    def _tracked_prepare(**kwargs: object):
+        prepare_calls.append(kwargs)
+        return original_prepare(**kwargs)
+
+    monkeypatch.setattr(cbi, "prepare_pipeline_for_bootstrap", _tracked_prepare)
+
+    class _Pipeline:
+        pass
+
+    pipeline, promoter = cbi.prepare_pipeline_for_bootstrap(
+        pipeline_cls=_Pipeline,
+        context_builder=SimpleNamespace(),
+        bot_registry=SimpleNamespace(),
+        data_bot=SimpleNamespace(),
+    )
+
+    assert pipeline is placeholder_pipeline
+    assert promoter is not None
+    assert len(prepare_calls) == 1
+    assert any(
+        r.message.startswith("prepare_pipeline.bootstrap.preflight_broker_short_circuit")
+        for r in caplog.records
+    )
+
+    sys.modules.pop("menace_sandbox.research_aggregator_bot", None)
+    sys.modules.pop("menace_sandbox.prediction_manager_bot", None)
+    sys.modules.pop("cognition_layer", None)
+    sys.modules.pop("menace_sandbox.menace_orchestrator", None)
+
+    readiness_stub = types.SimpleNamespace(
+        await_ready=lambda *_, **__: None, describe=lambda *_a, **_k: "ready"
+    )
+    sys.modules["bootstrap_readiness"] = types.SimpleNamespace(
+        readiness_signal=lambda: readiness_stub
+    )
+    sys.modules["bootstrap_gate"] = types.SimpleNamespace(
+        resolve_bootstrap_placeholders=lambda **_: (
+            placeholder_pipeline,
+            placeholder_manager,
+            broker,
+        )
+    )
+
+    rab = importlib.import_module("menace_sandbox.research_aggregator_bot")
+    rab.prepare_pipeline_for_bootstrap = _tracked_prepare
+
+    prediction_manager = importlib.import_module(
+        "menace_sandbox.prediction_manager_bot"
+    )
+    prediction_manager.prepare_pipeline_for_bootstrap = _tracked_prepare
+
+    cognition_module = importlib.import_module("cognition_layer")
+    cognition_module.prepare_pipeline_for_bootstrap = _tracked_prepare
+
+    orchestrator_module = importlib.import_module("menace_sandbox.menace_orchestrator")
+    orchestrator_module.prepare_pipeline_for_bootstrap = _tracked_prepare
+
+    agg_pipeline, agg_manager, agg_broker = rab._bootstrap_placeholders()
+    pred_pipeline, pred_manager, pred_broker = prediction_manager._bootstrap_placeholders()
+    cog_pipeline, cog_manager, cog_broker = cognition_module._bootstrap_placeholders()
+
+    orchestrator = orchestrator_module.MenaceOrchestrator(
+        context_builder=SimpleNamespace()
+    )
+
+    assert broker.resolve() == (placeholder_pipeline, placeholder_manager)
+    assert (agg_pipeline, agg_manager, agg_broker) == (
+        placeholder_pipeline,
+        placeholder_manager,
+        broker,
+    )
+    assert (pred_pipeline, pred_manager, pred_broker) == (
+        placeholder_pipeline,
+        placeholder_manager,
+        broker,
+    )
+    assert (cog_pipeline, cog_manager, cog_broker) == (
+        placeholder_pipeline,
+        placeholder_manager,
+        broker,
+    )
+    assert orchestrator.pipeline is placeholder_pipeline
+    assert len(prepare_calls) == 1
+    assert not [record for record in caplog.records if "recursion" in record.message]
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("_reset_bootstrap_state")
 def test_research_aggregator_import_reuses_placeholder(monkeypatch, caplog):
     _install_research_stubs()
     rab = importlib.import_module("menace_sandbox.research_aggregator_bot")
