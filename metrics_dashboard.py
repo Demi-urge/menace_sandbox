@@ -217,6 +217,7 @@ class MetricsDashboard:
             "bootstrap_failure_total",
             "bootstrap_timeout_total",
             "bootstrap_inflight",
+            "bootstrap_prepare_repeat_total",
         )
         if exporter is not None:
             for name in names:
@@ -235,6 +236,15 @@ class MetricsDashboard:
                     }
                 except Exception:
                     metrics["bootstrap_attempt_duration_seconds"] = {}
+
+            repeat_gauge = getattr(exporter, "bootstrap_prepare_repeat_total", None)
+            if repeat_gauge is not None:
+                try:
+                    metrics["bootstrap_prepare_repeat_total"] = {
+                        k[0]: v.get() for k, v in getattr(repeat_gauge, "_values", {}).items()
+                    }
+                except Exception:
+                    metrics["bootstrap_prepare_repeat_total"] = {}
 
             # Include per-status counts and impact totals from relevancy radar
             flag_gauge = getattr(exporter, "relevancy_flagged_modules_total", None)
