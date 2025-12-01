@@ -1565,43 +1565,9 @@ def _bootstrap_embedder(
         perf_counter() + stage_budget if stage_budget is not None and stage_budget >= 0 else None
     )
     next_progress = perf_counter() + 0.5
+    join_min_interval = 0.05
 
-    while thread.is_alive():
-        remaining = max(0.0, deadline - perf_counter())
-        if budget_deadline is not None and perf_counter() >= budget_deadline:
-            LOGGER.warning(
-                "embedder preload exceeded stage budget after %.1fs; cancelling warmup",
-                stage_budget,
-            )
-            embedder_stop_event.set()
-            cancel_embedder_initialisation(
-                embedder_stop_event, reason="bootstrap_budget_exceeded", join_timeout=1.0
-            )
-            try:
-                _activate_bundled_fallback("bootstrap_budget")
-            except Exception:  # pragma: no cover - diagnostics only
-                LOGGER.debug("failed to promote bundled embedder after budget cancel", exc_info=True)
-            _BOOTSTRAP_EMBEDDER_DISABLED = True
-            _BOOTSTRAP_EMBEDDER_STARTED = False
-            return
-
-        slice_wait = 0.25 if remaining > 0.25 else remaining
-        if slice_wait > 0:
-            thread.join(slice_wait)
-        if thread.is_alive() and perf_counter() >= next_progress:
-            remaining_budget = (
-                max(0.0, budget_deadline - perf_counter()) if budget_deadline is not None else None
-            )
-            LOGGER.debug(
-                "embedder preload still warming (remaining_slice=%.2fs, budget_remaining=%s)",
-                remaining or slice_wait,
-                f"{remaining_budget:.2f}s" if remaining_budget is not None else "n/a",
-            )
-            next_progress = perf_counter() + 0.5
-        if remaining <= 0 and thread.is_alive():
-            break
-
-    if thread.is_alive():
+    def _handle_embedder_timeout() -> Any:
         LOGGER.warning(
             "embedding model load exceeded %.1fs during bootstrap; deferring to stub",
             soft_wait,
@@ -1647,6 +1613,47 @@ def _bootstrap_embedder(
                 "bundled embedder fallback requested after timeout but none available yet"
             )
         return
+
+    while True:
+        if not thread.is_alive():
+            break
+
+        now = perf_counter()
+        if budget_deadline is not None and now >= budget_deadline:
+            LOGGER.warning(
+                "embedder preload exceeded stage budget after %.1fs; cancelling warmup",
+                stage_budget,
+            )
+            embedder_stop_event.set()
+            cancel_embedder_initialisation(
+                embedder_stop_event, reason="bootstrap_budget_exceeded", join_timeout=1.0
+            )
+            try:
+                _activate_bundled_fallback("bootstrap_budget")
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("failed to promote bundled embedder after budget cancel", exc_info=True)
+            _BOOTSTRAP_EMBEDDER_DISABLED = True
+            _BOOTSTRAP_EMBEDDER_STARTED = False
+            return
+
+        if now >= deadline:
+            return _handle_embedder_timeout()
+
+        remaining = max(0.0, deadline - now)
+        slice_wait = min(0.25, remaining) if remaining > 0 else join_min_interval
+        slice_wait = max(slice_wait, join_min_interval)
+        thread.join(slice_wait)
+
+        if thread.is_alive() and perf_counter() >= next_progress:
+            remaining_budget = (
+                max(0.0, budget_deadline - perf_counter()) if budget_deadline is not None else None
+            )
+            LOGGER.debug(
+                "embedder preload still warming (remaining_slice=%.2fs, budget_remaining=%s)",
+                remaining or slice_wait,
+                f"{remaining_budget:.2f}s" if remaining_budget is not None else "n/a",
+            )
+            next_progress = perf_counter() + 0.5
 
     if "error" in result:
         LOGGER.info("embedder preload failed; bootstrap will proceed without embeddings")

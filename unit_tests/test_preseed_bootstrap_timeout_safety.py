@@ -33,6 +33,7 @@ def _load_preseed_bootstrap_module():
             "lagging_optional_components": lambda *_args, **_kwargs: set(),
             "minimal_online": lambda *_args, **_kwargs: (False, set(), set(), False),
             "stage_for_step": lambda *_args, **_kwargs: None,
+            "_COMPONENT_BASELINES": {},
         },
     )
     _install_stub_module(
@@ -52,6 +53,7 @@ def _load_preseed_bootstrap_module():
             "build_progress_signal_hook": lambda *_, **__: lambda *_a, **_k: None,
             "collect_timeout_telemetry": lambda *_, **__: {},
             "enforce_bootstrap_timeout_policy": lambda *_, **__: None,
+            "get_bootstrap_guard_context": lambda *_, **__: contextlib.nullcontext(),
             "load_component_timeout_floors": lambda *_, **__: {},
             "read_bootstrap_heartbeat": lambda *_, **__: {},
             "compute_prepare_pipeline_component_budgets": lambda *_, **__: {},
@@ -70,8 +72,10 @@ def _load_preseed_bootstrap_module():
     _install_stub_module(
         "menace_sandbox.coding_bot_interface",
         {
+            "_bootstrap_dependency_broker": lambda: lambda *_, **__: None,
             "_BOOTSTRAP_TIMEOUT_FLOOR": 720.0,
             "_BOOTSTRAP_WAIT_TIMEOUT": 720.0,
+            "advertise_bootstrap_placeholder": lambda **_: (object(), object()),
             "_resolve_bootstrap_wait_timeout": lambda heavy=False: 900.0 if heavy else 720.0,
             "_PREPARE_PIPELINE_WATCHDOG": {"stages": []},
             "_pop_bootstrap_context": lambda *_, **__: None,
