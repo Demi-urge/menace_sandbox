@@ -59,8 +59,10 @@ _BOOTSTRAP_MARKER = Path(
 )
 _BOOTSTRAP_LOCK_PATH = os.getenv("MENACE_BOOTSTRAP_LOCK", "/tmp/menace_bootstrap.lock")
 _BOOTSTRAP_LOGGER = logging.getLogger(__name__ + ".orchestrator")
-_BOOTSTRAP_RUNNING = False
 _BOOTSTRAP_STATE: Mapping[str, object] | None = None
+_BOOTSTRAP_STATUS = "not_started"
+_BOOTSTRAP_ERROR: str | None = None
+_BOOTSTRAP_EVENT = threading.Event()
 
 
 def _async_lock() -> asyncio.Lock:
@@ -70,12 +72,25 @@ def _async_lock() -> asyncio.Lock:
     return _ASYNC_BOOTSTRAP_LOCK
 
 
+def _set_bootstrap_status(state: str, *, error: str | None = None) -> None:
+    global _BOOTSTRAP_STATUS, _BOOTSTRAP_ERROR
+    _BOOTSTRAP_STATUS = state
+    _BOOTSTRAP_ERROR = error
+    if state in {"ready", "failed"}:
+        _BOOTSTRAP_EVENT.set()
+    elif state == "running":
+        _BOOTSTRAP_EVENT.clear()
+    else:
+        _BOOTSTRAP_EVENT.clear()
+
+
 def _already_bootstrapped() -> bool:
     global _BOOTSTRAP_DONE
     if _BOOTSTRAP_DONE:
         return True
     if _BOOTSTRAP_MARKER.exists():
         _BOOTSTRAP_DONE = True
+        _set_bootstrap_status("ready")
         return True
     return False
 
@@ -90,6 +105,7 @@ def _log_skip(reason: str) -> None:
 def _mark_bootstrapped() -> None:
     global _BOOTSTRAP_DONE
     _BOOTSTRAP_DONE = True
+    _set_bootstrap_status("ready")
     try:
         _BOOTSTRAP_MARKER.parent.mkdir(parents=True, exist_ok=True)
         _BOOTSTRAP_MARKER.write_text(f"{os.getpid()},{time.time()}")
@@ -111,6 +127,37 @@ def _readiness_snapshot() -> Mapping[str, object]:
         _BOOTSTRAP_STATE = {"ready": False, "components": {}, "heartbeat": None}
 
     return _BOOTSTRAP_STATE
+
+
+def _wait_for_inflight_bootstrap(*, timeout: float | None, description: str) -> Mapping[str, object]:
+    """Block on the active bootstrap run and surface diagnostics on timeout."""
+
+    waited = _BOOTSTRAP_EVENT.wait(timeout)
+    if waited:
+        if _BOOTSTRAP_STATUS == "ready":
+            return _readiness_snapshot()
+        if _BOOTSTRAP_STATUS == "failed":
+            raise RuntimeError(_BOOTSTRAP_ERROR or f"{description} failed in another thread")
+
+    heartbeat = None
+    try:  # pragma: no cover - best effort diagnostic
+        heartbeat = bootstrap_timeout_policy.read_bootstrap_heartbeat()
+    except Exception:
+        heartbeat = None
+
+    _BOOTSTRAP_LOGGER.warning(
+        "bootstrap already running; wait timed out",
+        extra=log_record(
+            event="bootstrap-wait-timeout",
+            status=_BOOTSTRAP_STATUS,
+            lock_path=_BOOTSTRAP_LOCK_PATH,
+            heartbeat_pid=None if heartbeat is None else heartbeat.get("pid"),
+            heartbeat_ts=None if heartbeat is None else heartbeat.get("ts"),
+        ),
+    )
+    raise TimeoutError(
+        f"Timed out waiting for in-flight {description}; status={_BOOTSTRAP_STATUS} lock={_BOOTSTRAP_LOCK_PATH}"
+    )
 
 
 class BootstrapOrchestrator:
@@ -183,48 +230,61 @@ def ensure_bootstrapped(
     """Run environment bootstrap exactly once per process.
 
     The orchestrator caches readiness state and returns it for repeated callers.
-    Calls that race while another bootstrap is running immediately return the
-    last known readiness snapshot.
+    Calls that race while another bootstrap is running will wait for the active
+    attempt to complete instead of launching competing retries.
     """
 
-    global _BOOTSTRAP_RUNNING, _BOOTSTRAP_STATE
+    global _BOOTSTRAP_STATE
 
     if _already_bootstrapped():
         _log_skip("flag")
         return _readiness_snapshot()
+
+    wait_for_running = False
 
     with _BOOTSTRAP_MUTEX:
         if _already_bootstrapped():
             _log_skip("mutex-flag")
             return _readiness_snapshot()
 
-        if _BOOTSTRAP_RUNNING:
-            _log_skip("inflight")
+        if _BOOTSTRAP_STATUS == "ready":
+            _log_skip("ready-state")
             return _readiness_snapshot()
+        if _BOOTSTRAP_STATUS == "running":
+            wait_for_running = True
+        elif _BOOTSTRAP_STATUS == "failed":
+            raise RuntimeError(_BOOTSTRAP_ERROR or "bootstrap previously failed")
+        else:
+            _set_bootstrap_status("running")
 
-        _BOOTSTRAP_RUNNING = True
-        try:
-            with SandboxLock(_BOOTSTRAP_LOCK_PATH):
-                if _already_bootstrapped():
-                    _log_skip("marker")
-                    return _readiness_snapshot()
+    if wait_for_running:
+        _log_skip("inflight")
+        return _wait_for_inflight_bootstrap(timeout=timeout, description="bootstrap")
 
-                boot = BootstrapOrchestrator(bootstrapper)
-                _BOOTSTRAP_LOGGER.info(
-                    "bootstrap orchestrator starting",
-                    extra=log_record(event="bootstrap-start"),
-                )
-                _BOOTSTRAP_STATE = boot.run(
-                    timeout=timeout, halt_background=halt_background, skip_db_init=skip_db_init
-                )
-                _mark_bootstrapped()
-                _BOOTSTRAP_LOGGER.info(
-                    "bootstrap orchestrator finished",
-                    extra=log_record(event="bootstrap-complete"),
-                )
-                return _BOOTSTRAP_STATE
-        finally:
-            _BOOTSTRAP_RUNNING = False
+    try:
+        with SandboxLock(_BOOTSTRAP_LOCK_PATH):
+            if _already_bootstrapped():
+                _log_skip("marker")
+                return _readiness_snapshot()
+
+            boot = BootstrapOrchestrator(bootstrapper)
+            _BOOTSTRAP_LOGGER.info(
+                "bootstrap orchestrator starting",
+                extra=log_record(event="bootstrap-start"),
+            )
+            _BOOTSTRAP_STATE = boot.run(
+                timeout=timeout, halt_background=halt_background, skip_db_init=skip_db_init
+            )
+            _mark_bootstrapped()
+            _BOOTSTRAP_LOGGER.info(
+                "bootstrap orchestrator finished",
+                extra=log_record(event="bootstrap-complete"),
+            )
+            return _BOOTSTRAP_STATE
+    except Exception as exc:
+        with _BOOTSTRAP_MUTEX:
+            _set_bootstrap_status("failed", error=str(exc))
+        raise
 
 
 async def ensure_bootstrapped_async(
