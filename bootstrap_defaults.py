@@ -27,6 +27,8 @@ import string
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, MutableMapping
 
+from bootstrap_manager import bootstrap_manager
+
 LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_ENV_FILENAMES = (".env", ".env.local", ".env.bootstrap")
@@ -229,11 +231,27 @@ def ensure_bootstrap_defaults(
 ) -> tuple[set[str], Path]:
     """Populate defaults for ``required`` environment variables."""
 
-    manager = EnvironmentDefaultsManager(
-        repo_root=repo_root, env_file=env_file, environ=environ
+    normalized_required = tuple(sorted(required))
+
+    def _run() -> tuple[set[str], Path]:
+        manager = EnvironmentDefaultsManager(
+            repo_root=repo_root, env_file=env_file, environ=environ
+        )
+        created = manager.ensure(normalized_required)
+        return created, manager.env_path
+
+    fingerprint = {
+        "required": normalized_required,
+        "repo_root": str(repo_root) if repo_root else None,
+        "env_file": str(env_file) if env_file else None,
+    }
+
+    return bootstrap_manager.run_once(
+        "bootstrap_defaults.ensure",
+        _run,
+        logger=LOGGER,
+        fingerprint=fingerprint,
     )
-    created = manager.ensure(required)
-    return created, manager.env_path
 
 
 __all__ = ["EnvironmentDefaultsManager", "ensure_bootstrap_defaults"]

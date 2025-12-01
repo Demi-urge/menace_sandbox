@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Any, Iterable
 
 import bootstrap_metrics
+from bootstrap_manager import bootstrap_manager
 
 _SHARED_EVENT_BUS = None
 
@@ -3030,137 +3031,103 @@ def enforce_bootstrap_timeout_policy(
     """Clamp bootstrap timeouts to recommended floors when needed."""
 
     active_logger = logger or LOGGER
-    telemetry = telemetry or _collect_timeout_telemetry()
-    minimums: dict[str, float] = load_escalated_timeout_floors()
-    component_floors: dict[str, float] = load_component_timeout_floors()
-    component_budgets = compute_prepare_pipeline_component_budgets(
-        component_floors=component_floors, telemetry=telemetry
-    )
-    overrun_meta = _summarize_component_overruns(telemetry)
-    success_run = (telemetry.get("timeouts") or 0) == 0 and not overrun_meta
-    state = _load_timeout_state()
-    host_key = _state_host_key()
-    host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
-    state_changed = False
 
-    if success_run:
-        host_state["success_streak"] = int(host_state.get("success_streak", 0) or 0) + 1
-    else:
-        if host_state.get("success_streak"):
-            state_changed = True
-        host_state["success_streak"] = 0
-
-    if merge_overruns:
-        state_changed |= _merge_consumption_overruns(
-            host_state=host_state, component_floors=component_floors, overruns=overrun_meta
+    def _run() -> Dict[str, Dict[str, float | bool | None]]:
+        local_telemetry = telemetry or _collect_timeout_telemetry()
+        minimums: dict[str, float] = load_escalated_timeout_floors()
+        component_floors: dict[str, float] = load_component_timeout_floors()
+        component_budgets = compute_prepare_pipeline_component_budgets(
+            component_floors=component_floors, telemetry=local_telemetry
         )
-    state_changed |= _apply_success_decay(host_state=host_state, component_floors=component_floors)
-    escalation_meta = _maybe_escalate_timeout_floors(
-        minimums, component_floors, telemetry=telemetry, logger=active_logger
-    )
-    if escalation_meta:
-        state_changed = True
-        host_state.update({k: minimums.get(k, v) for k, v in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()})
+        overrun_meta = _summarize_component_overruns(local_telemetry)
+        success_run = (local_telemetry.get("timeouts") or 0) == 0 and not overrun_meta
+        state = _load_timeout_state()
+        host_key = _state_host_key()
+        host_state = state.get(host_key, {}) if isinstance(state, dict) else {}
+        state_changed = False
 
-    if escalation_meta or state_changed:
-        host_state["component_floors"] = dict(component_floors)
-        host_state["updated_at"] = time.time()
-        state = state if isinstance(state, dict) else {}
-        state[host_key] = host_state
-        _save_timeout_state(state)
-        active_logger.info(
-            "bootstrap timeout floors updated",
-            extra={
-                "timeouts": telemetry.get("timeouts"),
-                "host": host_key,
-                "escalation": escalation_meta,
-                "floors": minimums,
+        if success_run:
+            host_state["success_streak"] = int(host_state.get("success_streak", 0) or 0) + 1
+        else:
+            if host_state.get("success_streak"):
+                state_changed = True
+            host_state["success_streak"] = 0
+
+        if merge_overruns:
+            state_changed |= _merge_consumption_overruns(
+                host_state=host_state, component_floors=component_floors, overruns=overrun_meta
+            )
+        state_changed |= _apply_success_decay(host_state=host_state, component_floors=component_floors)
+        escalation_meta = _maybe_escalate_timeout_floors(
+            minimums, component_floors, telemetry=local_telemetry, logger=active_logger
+        )
+        if escalation_meta:
+            state_changed = True
+            host_state.update({k: minimums.get(k, v) for k, v in _BOOTSTRAP_TIMEOUT_MINIMUMS.items()})
+
+        if escalation_meta or state_changed:
+            host_state["component_floors"] = dict(component_floors)
+            host_state["updated_at"] = time.time()
+            state = state if isinstance(state, dict) else {}
+            state[host_key] = host_state
+            _save_timeout_state(state)
+            active_logger.info(
+                "bootstrap timeout floors updated",
+                extra={
+                    "timeouts": local_telemetry.get("timeouts"),
+                    "host": host_key,
+                    "escalation": escalation_meta,
+                    "floors": minimums,
+                    "component_floors": component_floors,
+                    "component_overruns": overrun_meta,
+                    "state_file": str(_TIMEOUT_STATE_PATH),
+                    "success_run": success_run,
+                },
+            )
+        allow_unsafe = _truthy_env(os.getenv(_OVERRIDE_ENV))
+        results: Dict[str, Dict[str, float | bool | None]] = {}
+        for env_name, minimum in minimums.items():
+            value = local_telemetry.get("env", {}).get(env_name)
+            state_value = host_state.get(env_name)
+            results[env_name] = _derive_timeout_setting(
+                env_name,
+                effective_minimum=minimum,
+                value=value,
+                allow_unsafe=allow_unsafe,
+                state_value=state_value,
+                prompt_override=prompt_override,
+                logger=active_logger,
+            )
+        for component, floor in component_floors.items():
+            telemetry_value = component_budgets.get(component)
+            results.setdefault("components", {})[component] = _component_timeout_setting(
+                component, telemetry_value, floor, allow_unsafe=allow_unsafe, logger=active_logger
+            )
+        results.setdefault("components", {}).setdefault(
+            "meta",
+            {
+                "telemetry": _summarize_component_telemetry(local_telemetry),
+                "overruns": overrun_meta,
                 "component_floors": component_floors,
-                "component_overruns": overrun_meta,
-                "state_file": str(_TIMEOUT_STATE_PATH),
                 "success_run": success_run,
+                "host": host_key,
+                "state_file": str(_TIMEOUT_STATE_PATH),
             },
         )
-    allow_unsafe = _truthy_env(os.getenv(_OVERRIDE_ENV))
-    results: Dict[str, Dict[str, float | bool | None]] = {}
+        return results
 
-    for env_var, minimum in minimums.items():
-        raw_value = os.getenv(env_var)
-        requested_value = _parse_float(raw_value)
-        effective_value = requested_value if requested_value is not None else minimum
-        clamped = False
-        override_granted = False
+    fingerprint = {
+        "merge_overruns": merge_overruns,
+        "telemetry": repr(telemetry) if telemetry is not None else None,
+        "prompt_override": bool(prompt_override),
+    }
 
-        if requested_value is None and raw_value is not None:
-            active_logger.warning(
-                "%s is not a valid float (%r); forcing recommended minimum %.1fs",
-                env_var,
-                raw_value,
-                minimum,
-                extra={"env_var": env_var, "raw_value": raw_value, "minimum": minimum},
-            )
-            clamped = True
-            effective_value = minimum
-            os.environ[env_var] = str(minimum)
-        elif requested_value is not None and requested_value < minimum:
-            if allow_unsafe:
-                active_logger.warning(
-                    "%s below safe floor (requested=%.1fs, minimum=%.1fs) but %s=1 allows override",
-                    env_var,
-                    requested_value,
-                    minimum,
-                    _OVERRIDE_ENV,
-                )
-                override_granted = True
-                effective_value = requested_value
-            elif prompt_override is not None:
-                override_granted = prompt_override(env_var, requested_value, minimum)
-                if override_granted:
-                    active_logger.warning(
-                        "%s below safe floor (requested=%.1fs, minimum=%.1fs); proceeding after explicit user override",
-                        env_var,
-                        requested_value,
-                        minimum,
-                    )
-                    effective_value = requested_value
-                else:
-                    clamped = True
-                    effective_value = minimum
-            else:
-                clamped = True
-                effective_value = minimum
-
-            if clamped:
-                active_logger.warning(
-                    "%s below safe floor (requested=%.1fs); clamping to %.1fs",
-                    env_var,
-                    requested_value,
-                    minimum,
-                    extra={
-                        "requested_timeout": requested_value,
-                        "timeout_floor": minimum,
-                        "effective_timeout": effective_value,
-                    },
-                )
-                os.environ[env_var] = str(effective_value)
-
-        results[env_var] = {
-            "requested": requested_value,
-            "effective": effective_value,
-            "minimum": minimum,
-            "clamped": clamped,
-            "override_granted": override_granted,
-        }
-
-    results[_OVERRIDE_ENV] = {"requested": float(allow_unsafe), "effective": float(allow_unsafe)}
-    results["component_floors"] = component_floors
-    results["component_budgets"] = component_budgets
-    soft_budget_inputs = {k: v.get("effective") for k, v in results.items() if k in minimums}
-    results["soft_budgets"] = derive_phase_soft_budgets(
-        soft_budget_inputs, telemetry=telemetry
+    return bootstrap_manager.run_once(
+        "bootstrap_timeout_policy.enforce",
+        _run,
+        logger=active_logger,
+        fingerprint=fingerprint,
     )
-    return results
-
 
 def render_prepare_pipeline_timeout_hints(
     vector_heavy: bool | None = None,
