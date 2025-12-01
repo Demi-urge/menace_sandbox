@@ -1988,6 +1988,24 @@ def _resolve_bootstrap_reentry_cap() -> int | None:
     return value
 
 
+def _normalize_caller_module_identifier(module_name: str | None) -> str | None:
+    """Return a canonical caller module label for telemetry and guard checks."""
+
+    if not module_name:
+        return None
+
+    normalized = re.sub(r"[._-]", "", module_name).lower()
+    canonical_aliases = {
+        "researchaggregatorbot": "researchaggregator",
+        "researchaggregator": "researchaggregator",
+        "predictionmanagerbot": "predictionmanager",
+        "predictionmanager": "predictionmanager",
+        "cognitionlayer": "cognitionlayer",
+        "menaceorchestrator": "menaceorchestrator",
+    }
+    return canonical_aliases.get(normalized, normalized)
+
+
 def _increment_reentry_attempt(caller_module: str) -> int:
     """Track how many recursion guard invocations a caller triggered."""
 
@@ -2005,6 +2023,7 @@ def _log_initial_prepare_invocation(
     cap: int | None = None,
     telemetry: Mapping[str, Any] | None = None,
     suppress_initial_log: bool = False,
+    normalized_caller_module: str | None = None,
 ) -> bool:
     """Log initial prepare invocations and short-circuit when caps are exceeded."""
 
@@ -2018,6 +2037,7 @@ def _log_initial_prepare_invocation(
         "broker_placeholder": broker_placeholder,
         "active_promise": promise_active,
         "reentry_cap": cap,
+        "caller_module_normalized": normalized_caller_module,
         **(telemetry or {}),
     }
     if count == 0:
@@ -5740,6 +5760,7 @@ def prepare_pipeline_for_bootstrap(
     active_promise = _GLOBAL_BOOTSTRAP_COORDINATOR.peek_active()
     caller_details = _resolve_caller_details()
     caller_module = caller_details["module"] or _resolve_caller_module_name()
+    caller_module_normalized = _normalize_caller_module_identifier(caller_module)
     caller_stack_signature = caller_details.get("stack_signature")
     reentry_cap = _resolve_bootstrap_reentry_cap()
     active_depth = getattr(_BOOTSTRAP_STATE, "depth", 0)
@@ -5757,7 +5778,7 @@ def prepare_pipeline_for_bootstrap(
         "menaceorchestrator",
     }
     caller_matches_priority = any(
-        prioritized in (caller_module or "").lower()
+        prioritized in (caller_module_normalized or "")
         for prioritized in prioritized_callers
     )
 
@@ -5767,8 +5788,12 @@ def prepare_pipeline_for_bootstrap(
         promise_active=active_promise is not None,
         logger=logger,
         cap=reentry_cap,
-        telemetry={"active_depth": active_depth},
+        telemetry={
+            "active_depth": active_depth,
+            "caller_module_normalized": caller_module_normalized,
+        },
         suppress_initial_log=recursion_short_circuit or short_circuit_active,
+        normalized_caller_module=caller_module_normalized,
     )
 
     if caller_matches_priority and (active_depth > 0 or broker_placeholder_active):
@@ -5778,6 +5803,7 @@ def prepare_pipeline_for_bootstrap(
             "broker_placeholder": broker_placeholder_active,
             "broker_owner_active": broker_owner_active,
             "caller_module": caller_module,
+            "caller_module_normalized": caller_module_normalized,
             "caller_module_path": caller_details.get("path"),
             "caller_stack_signature": caller_stack_signature,
             "active_depth": active_depth,
