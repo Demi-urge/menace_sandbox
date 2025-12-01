@@ -3,12 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, MutableMapping
 
+import logging
 import os
+
+from bootstrap_manager import bootstrap_manager
 
 from bootstrap_timeout_policy import (
     _COMPONENT_TIMEOUT_MINIMUMS,
     _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
@@ -120,64 +125,86 @@ def build_stage_deadlines(
     tripping fatal watchdogs.
     """
 
-    window_scale = 1.0
-    if adaptive_window is not None and baseline_timeout:
-        window_scale = max(adaptive_window / baseline_timeout, 1.0)
-    scale = (heavy_scale if heavy_detected and not soft_deadline else 1.0) * window_scale
-    stage_deadlines: dict[str, dict[str, object]] = {}
-    for stage in READINESS_STAGES:
-        resolved_budget, stage_floor = _baseline_for_stage(
-            stage.name,
-            component_budgets=component_budgets,
-            component_floors=component_floors,
-            fallback=baseline_timeout,
-        )
-        adaptive_stage_window = _resolve_stage_budget(stage.name, stage_windows)
-        stage_window_scale = window_scale
-        if adaptive_stage_window is not None and resolved_budget:
-            stage_window_scale = max(adaptive_stage_window / resolved_budget, window_scale)
-            resolved_budget = max(resolved_budget, adaptive_stage_window)
+    def _compute() -> dict[str, dict[str, object]]:
+        window_scale = 1.0
+        if adaptive_window is not None and baseline_timeout:
+            window_scale = max(adaptive_window / baseline_timeout, 1.0)
+        scale = (heavy_scale if heavy_detected and not soft_deadline else 1.0) * window_scale
+        stage_deadlines: dict[str, dict[str, object]] = {}
+        for stage in READINESS_STAGES:
+            resolved_budget, stage_floor = _baseline_for_stage(
+                stage.name,
+                component_budgets=component_budgets,
+                component_floors=component_floors,
+                fallback=baseline_timeout,
+            )
+            adaptive_stage_window = _resolve_stage_budget(stage.name, stage_windows)
+            stage_window_scale = window_scale
+            if adaptive_stage_window is not None and resolved_budget:
+                stage_window_scale = max(adaptive_stage_window / resolved_budget, window_scale)
+                resolved_budget = max(resolved_budget, adaptive_stage_window)
 
-        scaled_budget = resolved_budget * scale * stage_window_scale if resolved_budget is not None else None
-        if stage.optional and scaled_budget is not None:
-            # Give optional background phases slightly more time so they can
-            # converge without tripping fatal watchdogs while the system is
-            # already serving traffic in a degraded state.
-            scaled_budget *= 1.25
+            scaled_budget = (
+                resolved_budget * scale * stage_window_scale if resolved_budget is not None else None
+            )
+            if stage.optional and scaled_budget is not None:
+                # Give optional background phases slightly more time so they can
+                # converge without tripping fatal watchdogs while the system is
+                # already serving traffic in a degraded state.
+                scaled_budget *= 1.25
 
-        if stage_floor is not None and scaled_budget is not None:
-            scaled_budget = max(scaled_budget, stage_floor)
+            if stage_floor is not None and scaled_budget is not None:
+                scaled_budget = max(scaled_budget, stage_floor)
 
-        enforced = not stage.optional and not soft_deadline
-        hard_deadline = None if stage.optional else scaled_budget
-        if soft_deadline:
-            hard_deadline = None
+            enforced = not stage.optional and not soft_deadline
+            hard_deadline = None if stage.optional else scaled_budget
+            if soft_deadline:
+                hard_deadline = None
 
-        # Core stages are now degradable: the initial deadline is treated as a
-        # soft budget that triggers degraded readiness instead of aborting the
-        # bootstrap loop. Optional stages retain soft budgets but already warm
-        # in the background.
-        soft_degrade = True if stage.name in CORE_COMPONENTS else stage.optional
+            # Core stages are now degradable: the initial deadline is treated as a
+            # soft budget that triggers degraded readiness instead of aborting the
+            # bootstrap loop. Optional stages retain soft budgets but already warm
+            # in the background.
+            soft_degrade = True if stage.name in CORE_COMPONENTS else stage.optional
 
-        stage_deadlines[stage.name] = {
-            "deadline": hard_deadline,
-            "soft_budget": scaled_budget,
-            "optional": stage.optional,
-            "enforced": enforced,
-            "floor": stage_floor,
-            "budget": resolved_budget,
-            "scaled_budget": scaled_budget,
-            "soft_degrade": soft_degrade,
-            "scale": scale,
-            "window_scale": window_scale,
-            "stage_window_scale": stage_window_scale,
-            "adaptive_stage_window": adaptive_stage_window,
-            "runtime": dict(stage_runtime.get(stage.name, {}))
-            if isinstance(stage_runtime, Mapping)
-            else {},
-            "core_gate": not stage.optional,
-        }
-    return stage_deadlines
+            stage_deadlines[stage.name] = {
+                "deadline": hard_deadline,
+                "soft_budget": scaled_budget,
+                "optional": stage.optional,
+                "enforced": enforced,
+                "floor": stage_floor,
+                "budget": resolved_budget,
+                "scaled_budget": scaled_budget,
+                "soft_degrade": soft_degrade,
+                "scale": scale,
+                "window_scale": window_scale,
+                "stage_window_scale": stage_window_scale,
+                "adaptive_stage_window": adaptive_stage_window,
+                "runtime": dict(stage_runtime.get(stage.name, {}))
+                if isinstance(stage_runtime, Mapping)
+                else {},
+                "core_gate": not stage.optional,
+            }
+        return stage_deadlines
+
+    fingerprint = {
+        "baseline": baseline_timeout,
+        "heavy_detected": heavy_detected,
+        "soft_deadline": soft_deadline,
+        "heavy_scale": heavy_scale,
+        "component_budgets": repr(component_budgets),
+        "component_floors": repr(component_floors),
+        "adaptive_window": adaptive_window,
+        "stage_windows": repr(stage_windows),
+        "stage_runtime": repr(stage_runtime),
+    }
+
+    return bootstrap_manager.run_once(
+        "bootstrap_readiness.build_stage_deadlines",
+        _compute,
+        logger=LOGGER,
+        fingerprint=fingerprint,
+    )
 
 
 def _degraded_quorum(online_state: Mapping[str, object] | None = None) -> int:
