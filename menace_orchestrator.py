@@ -22,6 +22,7 @@ from .coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
 )
+from bootstrap_readiness import readiness_signal
 
 _BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder(
     dependency_broker=_bootstrap_dependency_broker()
@@ -81,12 +82,24 @@ from .cognition_layer import build_cognitive_context, log_feedback
 import db_router
 from db_router import DBRouter
 
+_BOOTSTRAP_READINESS = readiness_signal()
+
 
 def _latest_bootstrap_promoter() -> Callable[[Any], None] | None:
     callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
     if callbacks:
         return callbacks[-1]
     return None
+
+
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
+    try:
+        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+    except TimeoutError as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(
+            f"{component} cannot start until bootstrap readiness clears: "
+            f"{_BOOTSTRAP_READINESS.describe()}"
+        ) from exc
 
 
 class _SimpleScheduler:
@@ -188,6 +201,7 @@ class MenaceOrchestrator:
     ) -> None:
         menace_id = menace_id or uuid.uuid4().hex
         self.menace_id = menace_id
+        _ensure_bootstrap_ready("MenaceOrchestrator")
         if router is None:
             router = DBRouter(
                 menace_id,
