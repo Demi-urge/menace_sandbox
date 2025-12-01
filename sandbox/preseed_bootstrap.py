@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import inspect
 import logging
 import os
 import sys
@@ -1291,6 +1292,17 @@ def _run_with_timeout(
 
         result: Dict[str, Any] = {}
 
+        fn_signature = None
+        try:
+            fn_signature = inspect.signature(fn)
+        except Exception:
+            fn_signature = None
+        if fn_signature is not None:
+            if "timeout" in fn_signature.parameters:
+                kwargs.setdefault("timeout", effective_timeout)
+            if "stage_budget" in fn_signature.parameters:
+                kwargs.setdefault("stage_budget", effective_timeout)
+
         def _target() -> None:
             try:
                 result["value"] = fn(**kwargs)
@@ -1480,7 +1492,12 @@ def _ensure_not_stopped(stop_event: threading.Event | None) -> None:
         raise TimeoutError("initialize_bootstrap_context cancelled via stop event")
 
 
-def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = None) -> None:
+def _bootstrap_embedder(
+    timeout: float,
+    *,
+    stop_event: threading.Event | None = None,
+    stage_budget: float | None = None,
+) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
     global _BOOTSTRAP_EMBEDDER_DISABLED, _BOOTSTRAP_EMBEDDER_STARTED
@@ -1510,12 +1527,14 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
 
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
-    timeout_cap = apply_bootstrap_timeout_caps()
+    timeout_cap = apply_bootstrap_timeout_caps(stage_budget)
     hard_cap = min(timeout_cap, 5.0)
     if timeout is None:
         timeout = hard_cap
     elif timeout > 0:
         timeout = min(timeout, hard_cap)
+    elif stage_budget is not None and stage_budget >= 0:
+        timeout = min(stage_budget, hard_cap)
     else:
         timeout = 0.0
     _BOOTSTRAP_EMBEDDER_STARTED = True
@@ -1523,7 +1542,10 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
     def _worker() -> None:
         try:
             result["embedder"] = get_embedder(
-                timeout=timeout, stop_event=embedder_stop_event
+                timeout=timeout,
+                stop_event=embedder_stop_event,
+                bootstrap_timeout=stage_budget,
+                bootstrap_mode=True,
             )
         except Exception as exc:  # pragma: no cover - diagnostics only
             result["error"] = exc
@@ -1583,6 +1605,7 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
         LOGGER.info("embedder preload failed; bootstrap will proceed without embeddings")
         LOGGER.debug("embedder preload error", exc_info=result["error"])
         _BOOTSTRAP_EMBEDDER_DISABLED = True
+        _BOOTSTRAP_EMBEDDER_STARTED = False
         return
 
     embedder = result.get("embedder")
@@ -1592,7 +1615,16 @@ def _bootstrap_embedder(timeout: float, *, stop_event: threading.Event | None = 
             timeout,
         )
         _BOOTSTRAP_EMBEDDER_DISABLED = True
+        _BOOTSTRAP_EMBEDDER_STARTED = False
     else:
+        placeholder_reason = getattr(embedder, "_placeholder_reason", None)
+        if placeholder_reason:
+            LOGGER.warning(
+                "bootstrap using degraded embedder placeholder (%s); later calls may retry full initialisation",
+                placeholder_reason,
+                extra={"timeout": timeout, "stage_budget": stage_budget},
+            )
+            _BOOTSTRAP_EMBEDDER_STARTED = False
         LOGGER.info("bootstrap embedder ready: %s", type(embedder).__name__)
 
 

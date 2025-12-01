@@ -314,12 +314,14 @@ def _bootstrap_context_timeout_cap() -> float:
     return fallback_cap
 
 
-def apply_bootstrap_timeout_caps() -> float:
+def apply_bootstrap_timeout_caps(budget: float | None = None) -> float:
     """Clamp embedder waits to a small budget for bootstrap/warmup paths."""
 
     global _EMBEDDER_INIT_TIMEOUT, _MAX_EMBEDDER_WAIT
 
     cap = _bootstrap_context_timeout_cap()
+    if budget is not None and budget >= 0:
+        cap = min(cap, budget)
     if _EMBEDDER_INIT_TIMEOUT >= 0 and _EMBEDDER_INIT_TIMEOUT > cap:
         logger.info(
             "tightening embedder init timeout to %.1fs for bootstrap/warmup (requested %.1fs)",
@@ -1320,7 +1322,8 @@ def _initialise_embedder_with_timeout(
     suppress_timeout_log: bool = False,
     requester: str | None = None,
     stop_event: threading.Event | None = None,
-) -> None:
+    fallback_on_timeout: bool = False,
+) -> SentenceTransformer | Any | None:
     """Initialise the shared embedder without blocking indefinitely.
 
     ``timeout_override`` allows callers to shorten the wait period without
@@ -1338,11 +1341,11 @@ def _initialise_embedder_with_timeout(
         )
         _EMBEDDER_TIMEOUT_REACHED = True
         _EMBEDDER_INIT_EVENT.set()
-        return
+        return None
 
     with _EMBEDDER_THREAD_LOCK:
         if _EMBEDDER is not None:
-            return
+            return _EMBEDDER
         if stop_event is None and _EMBEDDER_STOP_EVENT is not None and _EMBEDDER_STOP_EVENT.is_set():
             _EMBEDDER_STOP_EVENT = None
         if stop_event is not None:
@@ -1362,7 +1365,7 @@ def _initialise_embedder_with_timeout(
                 "embedder initialisation previously timed out; returning cached failure",
                 extra={"model": _MODEL_NAME, "thread_alive": alive},
             )
-        return
+        return _EMBEDDER
 
     global _EMBEDDER_WAIT_CAPPED
 
@@ -1523,7 +1526,7 @@ def _initialise_embedder_with_timeout(
             wait_time=round(wait_time, 3),
             waited=round(waited, 3),
         )
-        return
+        return _EMBEDDER
 
     _dump_embedder_thread("wait_timeout", waited or wait_time or 0.0)
     _cancel_embedder_initialisation(stop_event, reason="wait_timeout")
@@ -1534,6 +1537,8 @@ def _initialise_embedder_with_timeout(
             requester=requester,
             removed=cleaned,
         )
+
+    placeholder = None
 
     if _EMBEDDER is None and _activate_bundled_fallback("timeout"):
         _EMBEDDER_TIMEOUT_LOGGED = False
@@ -1547,12 +1552,25 @@ def _initialise_embedder_with_timeout(
             extra={"model": _MODEL_NAME, "requester": requester},
         )
         _trace(
-            "wait.fallback",
+            "wait.timeout.fallback",
             requester=requester,
-            wait_time=round(wait_time, 3),
-            waited=round(waited, 3),
+            waited=round(waited or wait_time or 0.0, 3),
         )
-        return
+        return _EMBEDDER
+
+    if fallback_on_timeout:
+        placeholder = _build_stub_embedder()
+        setattr(placeholder, "_placeholder_reason", "timeout")
+        logger.info(
+            "embedder initialisation exceeded %.1fs; returning placeholder embedder",
+            waited or wait_time,
+            extra={"model": _MODEL_NAME, "requester": requester},
+        )
+        _trace(
+            "wait.timeout.placeholder",
+            requester=requester,
+            waited=round(waited or wait_time or 0.0, 3),
+        )
 
     if suppress_timeout_log:
         if wait_time > 0:
@@ -1579,7 +1597,7 @@ def _initialise_embedder_with_timeout(
         if requester:
             with _EMBEDDER_REQUESTER_LOCK:
                 _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
-        return
+        return placeholder or _EMBEDDER
 
     if not _EMBEDDER_TIMEOUT_LOGGED:
         _EMBEDDER_TIMEOUT_LOGGED = True
@@ -1615,6 +1633,7 @@ def _initialise_embedder_with_timeout(
             with _EMBEDDER_REQUESTER_LOCK:
                 _EMBEDDER_REQUESTER_TIMEOUTS.add(requester)
         _cancel_embedder_initialisation(stop_event, reason="timeout_logged")
+    return placeholder or _EMBEDDER
 
 
 def _cancel_embedder_initialisation(
@@ -1959,7 +1978,11 @@ def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransfo
 
 
 def get_embedder(
-    timeout: float | None = None, *, stop_event: threading.Event | None = None
+    timeout: float | None = None,
+    *,
+    stop_event: threading.Event | None = None,
+    bootstrap_timeout: float | None = None,
+    bootstrap_mode: bool = False,
 ) -> SentenceTransformer | None:
     """Return a lazily-instantiated shared :class:`SentenceTransformer`.
 
@@ -1974,8 +1997,18 @@ def get_embedder(
         return _EMBEDDER
 
     requester = _identify_embedder_requester()
-    lock = _embedder_lock()
     wait_override = timeout
+    if bootstrap_mode or bootstrap_timeout is not None:
+        cap_budget = bootstrap_timeout if bootstrap_timeout is not None else timeout
+        apply_bootstrap_timeout_caps(cap_budget)
+        if timeout is None and cap_budget is not None:
+            wait_override = cap_budget
+        elif cap_budget is not None and timeout is not None:
+            wait_override = min(timeout, cap_budget)
+        elif cap_budget is not None:
+            wait_override = cap_budget
+    lock = _embedder_lock()
+    placeholder_embedder = None
     lock_timeout = LOCK_TIMEOUT
     if wait_override is not None:
         try:
@@ -2005,23 +2038,25 @@ def get_embedder(
         lock_timeout = lock_cap
 
     if lock is None:
-        _initialise_embedder_with_timeout(
+        placeholder_embedder = _initialise_embedder_with_timeout(
             timeout_override=wait_override,
             suppress_timeout_log=wait_override is not None,
             requester=requester,
             stop_event=stop_event,
+            fallback_on_timeout=wait_override is not None,
         )
-        return _EMBEDDER
+        return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
 
     cleaned_once = False
     while True:
         try:
             with lock.acquire(timeout=lock_timeout):
-                _initialise_embedder_with_timeout(
+                placeholder_embedder = _initialise_embedder_with_timeout(
                     timeout_override=wait_override,
                     suppress_timeout_log=wait_override is not None,
                     requester=requester,
                     stop_event=stop_event,
+                    fallback_on_timeout=wait_override is not None,
                 )
                 break
         except LockTimeout:
@@ -2061,7 +2096,7 @@ def get_embedder(
                 cache_removed=removed_cache,
             )
             continue
-    return _EMBEDDER
+    return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
 
 
 def governed_embed(text: str, embedder: SentenceTransformer | None = None) -> Optional[List[float]]:
