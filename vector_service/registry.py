@@ -79,7 +79,7 @@ def _resolve_bootstrap_fast(
 
 
 def load_handlers(
-    *, bootstrap_fast: bool | None = None
+    *, bootstrap_fast: bool | None = None, warmup_lite: bool = False
 ) -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
     """Instantiate all registered vectorisers and return transform callables."""
 
@@ -92,6 +92,15 @@ def load_handlers(
         "vector_registry.load_handlers.start",
         extra={"registered": len(_VECTOR_REGISTRY)},
     )
+    if warmup_lite:
+        logger.info(
+            "vector_registry.warmup_lite.enabled",
+            extra={
+                "registered": len(_VECTOR_REGISTRY),
+                "bootstrap_context": bootstrap_context,
+                "bootstrap_fast": bootstrap_fast,
+            },
+        )
     if bootstrap_context and bootstrap_fast:
         logger.info(
             "vector_registry.bootstrap_fast.enabled",
@@ -122,6 +131,16 @@ def load_handlers(
                 },
             )
             handlers[kind] = _patch_stub_handler
+            continue
+        if warmup_lite:
+            logger.info(
+                "vector_registry.handler.skipped",
+                extra={
+                    "kind": kind,
+                    "reason": "warmup_lite",
+                    "bootstrap_fast": bootstrap_fast,
+                },
+            )
             continue
         try:
             mod = importlib.import_module(mod_name)
