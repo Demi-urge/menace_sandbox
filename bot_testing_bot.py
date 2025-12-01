@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from .coding_bot_interface import prepare_pipeline_for_bootstrap, self_coding_managed
+from .coding_bot_interface import (
+    advertise_bootstrap_placeholder,
+    prepare_pipeline_for_bootstrap,
+    self_coding_managed,
+)
+from bootstrap_gate import resolve_bootstrap_placeholders
 import importlib
 import inspect
 import doctest
@@ -113,6 +118,24 @@ def _get_pipeline() -> "ModelAutomationPipeline":
         "ModelAutomationPipeline",
         "model_automation_pipeline",
     )
+
+    placeholder_pipeline, placeholder_manager, dependency_broker = resolve_bootstrap_placeholders(
+        description="BotTestingBot bootstrap gate",
+    )
+    broker_pipeline, broker_manager = dependency_broker.resolve()
+    placeholder_pipeline = placeholder_pipeline or broker_pipeline
+    placeholder_manager = placeholder_manager or broker_manager
+
+    if placeholder_pipeline is not None or placeholder_manager is not None:
+        placeholder_pipeline, _placeholder_manager = advertise_bootstrap_placeholder(
+            dependency_broker=dependency_broker,
+            pipeline=placeholder_pipeline,
+            manager=placeholder_manager,
+            owner=False,
+        )
+        if placeholder_pipeline is None:
+            placeholder_pipeline = _placeholder_manager
+        return placeholder_pipeline
 
     pipeline, promote = prepare_pipeline_for_bootstrap(
         pipeline_cls=pipeline_cls,
