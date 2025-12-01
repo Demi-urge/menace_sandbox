@@ -1,5 +1,14 @@
 """Centralised readiness gate helpers for bootstrap-sensitive modules."""
 
+# Developer note: the gate sits on top of ``bootstrap_manager`` to enforce a
+# single-flight lock and idempotent reuse of the advertised pipeline/manager
+# placeholders. New services should *not* bypass the gate or instantiate their
+# own sentinels; instead, advertise a placeholder via
+# ``coding_bot_interface.advertise_bootstrap_placeholder`` during import and
+# wait on ``wait_for_bootstrap_gate``/``resolve_bootstrap_placeholders`` before
+# wiring dependencies. This keeps queueing, backoff, and recursion protection in
+# one place so bootstrap remains serialised and resumable across processes.
+
 from __future__ import annotations
 
 import logging
