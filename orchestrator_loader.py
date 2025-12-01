@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from typing import Iterator, TYPE_CHECKING, Any
 
 from bootstrap_gate import resolve_bootstrap_placeholders
+from coding_bot_interface import get_active_bootstrap_pipeline
 from .bootstrap_placeholder import advertise_broker_placeholder
 
 _BOOTSTRAP_PLACEHOLDER: object | None = None
@@ -34,16 +35,27 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
     if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
+    pipeline, manager = get_active_bootstrap_pipeline()
+    if pipeline is not None or manager is not None:
+        _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+            advertise_broker_placeholder(
+                pipeline=pipeline,
+                manager=manager,
+            )
+        )
+        return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
     pipeline, manager, broker = resolve_bootstrap_placeholders(
         timeout=_BOOTSTRAP_GATE_TIMEOUT,
         description="Orchestrator bootstrap gate",
     )
-    _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
-        dependency_broker=broker,
-        pipeline=pipeline,
-        manager=manager,
+    _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
+        advertise_broker_placeholder(
+            dependency_broker=broker,
+            pipeline=pipeline,
+            manager=manager,
+        )
     )
-    _BOOTSTRAP_BROKER = broker
     return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import

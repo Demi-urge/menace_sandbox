@@ -7,6 +7,7 @@ import logging
 import os
 
 from bootstrap_manager import bootstrap_manager
+from bootstrap_timeout_policy import read_bootstrap_heartbeat
 
 from bootstrap_timeout_policy import (
     _COMPONENT_TIMEOUT_MINIMUMS,
@@ -207,6 +208,45 @@ def build_stage_deadlines(
     )
 
 
+def shared_online_state(max_age: float | None = None) -> Mapping[str, object] | None:
+    """Return the most recent bootstrap heartbeat state when available."""
+
+    try:
+        heartbeat = read_bootstrap_heartbeat(max_age=max_age)
+    except Exception:  # pragma: no cover - heartbeat is best effort
+        LOGGER.debug("unable to read bootstrap heartbeat for readiness probe", exc_info=True)
+        return None
+
+    if not isinstance(heartbeat, Mapping):
+        return None
+
+    readiness = heartbeat.get("readiness") if isinstance(heartbeat, Mapping) else None
+    components: Mapping[str, object] = {}
+    if isinstance(readiness, Mapping):
+        candidate_components = readiness.get("components")
+        if isinstance(candidate_components, Mapping):
+            components = candidate_components
+    ready_flags = []
+    if isinstance(readiness, Mapping):
+        ready_flags.extend(
+            [
+                readiness.get("online"),
+                readiness.get("online_partial"),
+                readiness.get("full_ready"),
+                readiness.get("ready"),
+            ]
+        )
+    signal = heartbeat.get("signal")
+    if isinstance(signal, str) and "online" in signal:
+        ready_flags.append(True)
+
+    return {
+        "ready": any(bool(flag) for flag in ready_flags),
+        "components": dict(components),
+        "heartbeat": heartbeat,
+    }
+
+
 def _degraded_quorum(online_state: Mapping[str, object] | None = None) -> int:
     """Return the minimum number of degraded components required for quorum."""
 
@@ -224,7 +264,7 @@ def _degraded_quorum(online_state: Mapping[str, object] | None = None) -> int:
 
 
 def minimal_online(
-    online_state: Mapping[str, object]
+    online_state: Mapping[str, object] | None
 ) -> tuple[bool, set[str], set[str], bool]:
     """Evaluate readiness using only core components.
 
@@ -233,6 +273,12 @@ def minimal_online(
     ``(ready, lagging_core, degraded_core, degraded_online)`` where ``ready``
     reflects core quorum, not background orchestration work.
     """
+    if not online_state:
+        online_state = shared_online_state() or {}
+
+    if isinstance(online_state, Mapping) and online_state.get("ready") is True:
+        return True, set(), set(), False
+
     components = online_state.get("components", {}) if isinstance(online_state, Mapping) else {}
     lagging: set[str] = set()
     degraded: set[str] = set()
@@ -272,4 +318,5 @@ __all__ = [
     "lagging_optional_components",
     "minimal_online",
     "stage_for_step",
+    "shared_online_state",
 ]
