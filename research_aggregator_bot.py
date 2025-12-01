@@ -33,6 +33,7 @@ from .coding_bot_interface import (
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
+from .bootstrap_helpers import ensure_environment_bootstrapped
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -256,6 +257,7 @@ def _ensure_runtime_dependencies(
     explicit error when nothing has been provided.
     """
 
+    ensure_environment_bootstrapped()
     _bootstrap_placeholders()
     global registry
     global data_bot
