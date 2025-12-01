@@ -12,7 +12,7 @@ import importlib.util
 import logging
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:  # pragma: no cover - lightweight import wrapper
     from dynamic_path_router import resolve_path
@@ -93,16 +93,52 @@ def ensure_scheduler_started(*, logger: logging.Logger | None = None) -> Any | N
 def warmup_vector_service(
     *,
     download_model: bool = True,
-    hydrate_handlers: bool = True,
+    probe_model: bool = False,
+    hydrate_handlers: bool = False,
     start_scheduler: bool = False,
+    run_vectorise: bool | None = None,
+    check_budget: Callable[[], None] | None = None,
     logger: logging.Logger | None = None,
 ) -> None:
-    """Eagerly initialise vector assets and caches."""
+    """Eagerly initialise vector assets and caches.
+
+    The default behaviour favours a "light" warmup that validates scheduler
+    configuration and optional model presence without instantiating
+    ``SharedVectorService``.  Callers may opt-in to handler hydration and
+    vectorisation by setting ``hydrate_handlers=True`` (and optionally
+    ``run_vectorise=True``) when a heavier warmup is desired.
+    """
 
     log = logger or logging.getLogger(__name__)
 
+    def _guard(stage: str) -> None:
+        if check_budget is None:
+            return
+        check_budget()
+        log.debug("vector warmup budget check after %s", stage)
+
+    summary: dict[str, str] = {}
+
+    _guard("init")
     if download_model:
-        ensure_embedding_model(logger=log, warmup=True)
+        path = ensure_embedding_model(logger=log, warmup=True)
+        if path:
+            summary["model"] = f"ready:{path}" if path.exists() else "ready"
+        else:
+            summary["model"] = "missing"
+    elif probe_model:
+        dest = _model_bundle_path()
+        if dest.exists():
+            log.info("embedding model already present at %s (probe only)", dest)
+            summary["model"] = "present"
+        else:
+            log.info("embedding model probe: archive missing; will fetch on demand")
+            summary["model"] = "absent-probe"
+    else:
+        log.info("Skipping embedding model download (disabled)")
+        summary["model"] = "skipped"
+
+    _guard("model")
 
     svc = None
     if hydrate_handlers:
@@ -110,17 +146,42 @@ def warmup_vector_service(
             from .vectorizer import SharedVectorService
 
             svc = SharedVectorService()
+            summary["handlers"] = "hydrated"
         except Exception as exc:  # pragma: no cover - best effort logging
             log.warning("SharedVectorService warmup failed: %s", exc)
+            summary["handlers"] = "failed"
+    else:
+        log.info("Vector handler hydration skipped")
+        summary["handlers"] = "skipped"
+
+    _guard("handlers")
 
     if start_scheduler:
         ensure_scheduler_started(logger=log)
+        summary["scheduler"] = "started"
+    else:
+        log.info("Scheduler warmup skipped")
+        summary["scheduler"] = "skipped"
 
-    if svc is not None:
+    _guard("scheduler")
+
+    should_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
+    if should_vectorise and svc is not None:
         try:
             svc.vectorise("text", {"text": "warmup"})
+            summary["vectorise"] = "ok"
         except Exception:  # pragma: no cover - allow partial warmup
             log.debug("vector warmup transform failed; continuing", exc_info=True)
+            summary["vectorise"] = "failed"
+    else:
+        if should_vectorise:
+            summary["vectorise"] = "skipped-no-service"
+            log.info("Vectorise warmup skipped: service unavailable")
+        else:
+            summary["vectorise"] = "skipped"
+            log.info("Vectorise warmup skipped")
+
+    log.debug("vector warmup summary: %s", summary)
 
 
 __all__ = ["ensure_embedding_model", "ensure_scheduler_started", "warmup_vector_service"]
