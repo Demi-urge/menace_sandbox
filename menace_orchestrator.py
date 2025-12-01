@@ -25,7 +25,22 @@ from .coding_bot_interface import (
 from bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_readiness import readiness_signal
 
+_BOOTSTRAP_READINESS = readiness_signal()
+
+
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
+    try:
+        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+    except TimeoutError as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(
+            f"{component} cannot start until bootstrap readiness clears: "
+            f"{_BOOTSTRAP_READINESS.describe()}"
+        ) from exc
+
 def _seed_bootstrap_placeholder() -> tuple[object, object]:
+    _ensure_bootstrap_ready(
+        "MenaceOrchestrator bootstrap placeholder", timeout=12.0
+    )
     pipeline, manager, broker = resolve_bootstrap_placeholders(
         description="MenaceOrchestrator bootstrap gate"
     )
@@ -101,24 +116,12 @@ from .cognition_layer import build_cognitive_context, log_feedback
 import db_router
 from db_router import DBRouter
 
-_BOOTSTRAP_READINESS = readiness_signal()
-
 
 def _latest_bootstrap_promoter() -> Callable[[Any], None] | None:
     callbacks = getattr(_BOOTSTRAP_STATE, "helper_promotion_callbacks", None)
     if callbacks:
         return callbacks[-1]
     return None
-
-
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
-    try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
-    except TimeoutError as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(
-            f"{component} cannot start until bootstrap readiness clears: "
-            f"{_BOOTSTRAP_READINESS.describe()}"
-        ) from exc
 
 
 class _SimpleScheduler:

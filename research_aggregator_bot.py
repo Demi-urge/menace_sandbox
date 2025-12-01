@@ -169,6 +169,14 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
         ) from exc
 
 
+# Eagerly advertise the bootstrap placeholder as soon as the module loads so
+# downstream imports reuse the shared sentinel before instantiating helpers.
+_ensure_bootstrap_ready(
+    "ResearchAggregatorBot bootstrap placeholder", timeout=_BOOTSTRAP_GATE_TIMEOUT
+)
+_bootstrap_placeholders()
+
+
 def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
     """Return the concrete :class:`ModelAutomationPipeline` implementation."""
 
