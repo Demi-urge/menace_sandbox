@@ -170,6 +170,7 @@ class SharedVectorService:
     bootstrap_fast: bool | None = None
     hydrate_handlers: bool | None = None
     lazy_vector_store: bool | None = None
+    warmup_lite: bool | None = None
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
     _handler_bootstrap_flag: bool = field(init=False, default=False)
     _known_kinds: set[str] = field(init=False, default_factory=set)
@@ -187,12 +188,16 @@ class SharedVectorService:
         resolved_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
             requested_fast
         )
+        warmup_lite = bool(self.warmup_lite)
+        self.warmup_lite = warmup_lite
         if self.bootstrap_fast is None:
             self.bootstrap_fast = resolved_fast
         if self.hydrate_handlers is None:
             self.hydrate_handlers = not (bootstrap_context and resolved_fast)
         if self.lazy_vector_store is None:
             self.lazy_vector_store = bootstrap_context or resolved_fast
+        if warmup_lite:
+            self.lazy_vector_store = True
         self._handler_bootstrap_flag = resolved_fast
         self._handlers = {}
         self._handler_lock = threading.RLock()
@@ -208,8 +213,10 @@ class SharedVectorService:
             )
         handler_bootstrap_flag = resolved_fast
         if self.hydrate_handlers:
-            self._handlers = load_handlers(bootstrap_fast=handler_bootstrap_flag)
-            self._known_kinds = set(self._handlers.keys())
+            self._handlers = load_handlers(
+                bootstrap_fast=handler_bootstrap_flag, warmup_lite=warmup_lite
+            )
+            self._known_kinds = set(_VECTOR_REGISTRY.keys())
             logger.info(
                 "shared_vector_service.handlers.loaded",
                 extra=_timestamp_payload(
@@ -259,10 +266,20 @@ class SharedVectorService:
                     handler_count=len(self._known_kinds),
                     bootstrap_fast_active=resolved_fast,
                     bootstrap_context=bootstrap_context,
+                    warmup_lite=warmup_lite,
                 ),
             )
         if self.vector_store is not None:
             self.lazy_vector_store = False
+        if warmup_lite:
+            logger.info(
+                "shared_vector_service.warmup_lite.active",
+                extra=_timestamp_payload(
+                    handler_start,
+                    bootstrap_fast_active=resolved_fast,
+                    bootstrap_context=bootstrap_context,
+                ),
+            )
         if self.vector_store is None and not self.lazy_vector_store:
             self._initialise_vector_store()
         _trace(
@@ -305,7 +322,7 @@ class SharedVectorService:
         handler = self._handlers.get(normalised)
         if handler is not None:
             return handler
-        if self.hydrate_handlers:
+        if self.hydrate_handlers and not self.warmup_lite:
             return None
         if normalised not in self._known_kinds:
             return None

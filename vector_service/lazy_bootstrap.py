@@ -101,6 +101,8 @@ def warmup_vector_service(
     check_budget: Callable[[], None] | None = None,
     logger: logging.Logger | None = None,
     force_heavy: bool = False,
+    bootstrap_fast: bool | None = None,
+    warmup_lite: bool = False,
 ) -> None:
     """Eagerly initialise vector assets and caches.
 
@@ -109,6 +111,11 @@ def warmup_vector_service(
     ``SharedVectorService``.  Callers may opt-in to handler hydration and
     vectorisation by setting ``hydrate_handlers=True`` (and optionally
     ``run_vectorise=True``) when a heavier warmup is desired.
+
+    When ``bootstrap_fast`` is True the vector service keeps the patch handler
+    stubbed during warmup and avoids loading heavy indexes.  Setting
+    ``warmup_lite`` further short-circuits handler hydration and vector store
+    acquisition so readiness checks do not incur heavy startup costs.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -162,7 +169,10 @@ def warmup_vector_service(
         try:
             from .vectorizer import SharedVectorService
 
-            svc = SharedVectorService()
+            svc = SharedVectorService(
+                bootstrap_fast=bootstrap_fast,
+                warmup_lite=warmup_lite,
+            )
             summary["handlers"] = "hydrated"
         except Exception as exc:  # pragma: no cover - best effort logging
             log.warning("SharedVectorService warmup failed: %s", exc)

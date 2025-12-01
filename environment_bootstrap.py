@@ -2135,6 +2135,7 @@ class EnvironmentBootstrapper:
             raw = os.getenv("MENACE_BOOTSTRAP_WARM_VECTOR", "").strip().lower()
             warm_vectors = raw in {"1", "true", "yes", "on", "full"}
             light_warmup = raw in {"light", "probe", "check"}
+            warmup_lite = light_warmup
             if raw in {"defer", "later"}:
                 self.logger.info(
                     "Vector warmup explicitly deferred; assets will hydrate on first use",
@@ -2155,6 +2156,8 @@ class EnvironmentBootstrapper:
                         start_scheduler=True,
                         run_vectorise=warm_vectors,
                         force_heavy=warm_vectors,
+                        bootstrap_fast=True,
+                        warmup_lite=warmup_lite,
                     )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)
@@ -2163,7 +2166,7 @@ class EnvironmentBootstrapper:
                     (
                         "Vector assets deferred to lazy initialisation; set "
                         "MENACE_BOOTSTRAP_WARM_VECTOR=light for a budgeted probe "
-                        "or 1 for full warmup"
+                        "(warmup-lite: skips handler hydration) or 1 for full warmup"
                     ),
                 )
             check_budget()
