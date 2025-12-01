@@ -8,15 +8,10 @@ to maintain the broker-first loading pattern. Troubleshooting steps live in
 
 from __future__ import annotations
 
-from .bootstrap_placeholder import advertise_broker_placeholder
-
-_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
-    advertise_broker_placeholder()
-)
+from bootstrap_gate import resolve_bootstrap_placeholders
 
 from .bot_registry import BotRegistry
 from .coding_bot_interface import (
-    _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
     get_active_bootstrap_pipeline,
     self_coding_managed,
@@ -202,16 +197,34 @@ class _LazyDataBot:
 _REGISTRY_PROXY = _LazyBotRegistry()
 _DATA_BOT_PROXY = _LazyDataBot()
 
-_BOOTSTRAP_DEPENDENCY_BROKER = _bootstrap_dependency_broker()
-_BOOTSTRAP_PIPELINE, _BOOTSTRAP_MANAGER = get_active_bootstrap_pipeline()
-(
-    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
-    _BOOTSTRAP_PLACEHOLDER_MANAGER,
-) = advertise_bootstrap_placeholder(
-    dependency_broker=_BOOTSTRAP_DEPENDENCY_BROKER,
-    pipeline=_BOOTSTRAP_PIPELINE,
-    manager=_BOOTSTRAP_MANAGER,
-)
+_BOOTSTRAP_PLACEHOLDER_PIPELINE: object | None = None
+_BOOTSTRAP_PLACEHOLDER_MANAGER: object | None = None
+_BOOTSTRAP_BROKER: object | None = None
+_BOOTSTRAP_GATE_TIMEOUT = 12.0
+
+
+def _bootstrap_placeholders() -> tuple[object, object, object]:
+    """Resolve bootstrap placeholders after the readiness gate clears."""
+
+    global _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_BROKER
+    if None not in (
+        _BOOTSTRAP_PLACEHOLDER_PIPELINE,
+        _BOOTSTRAP_PLACEHOLDER_MANAGER,
+        _BOOTSTRAP_BROKER,
+    ):
+        return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_BROKER
+
+    pipeline, manager, broker = resolve_bootstrap_placeholders(
+        timeout=_BOOTSTRAP_GATE_TIMEOUT,
+        description="PredictionManager bootstrap gate",
+    )
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER = advertise_bootstrap_placeholder(
+        dependency_broker=broker,
+        pipeline=pipeline,
+        manager=manager,
+    )
+    _BOOTSTRAP_BROKER = broker
+    return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_BROKER
 
 
 def _get_registry_proxy() -> _LazyBotRegistry:
@@ -230,6 +243,7 @@ def _get_data_bot_proxy() -> _LazyDataBot:
 def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
     """Instantiate and return the shared :class:`BotRegistry`."""
 
+    _bootstrap_placeholders()
     _REGISTRY_PROXY.set_bootstrap_mode(bootstrap)
     return _REGISTRY_PROXY._hydrate()
 
@@ -238,6 +252,7 @@ def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
 def _get_data_bot() -> DataBot:
     """Instantiate and return the shared :class:`DataBot`."""
 
+    _bootstrap_placeholders()
     return _DATA_BOT_PROXY._hydrate()
 
 try:

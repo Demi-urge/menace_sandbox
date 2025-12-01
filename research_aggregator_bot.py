@@ -12,11 +12,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Type, Callable
 
-from .bootstrap_placeholder import advertise_broker_placeholder
-
-_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER = (
-    advertise_broker_placeholder()
-)
+from bootstrap_gate import resolve_bootstrap_placeholders
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
@@ -93,6 +89,31 @@ except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+_BOOTSTRAP_PLACEHOLDER: object | None = None
+_BOOTSTRAP_SENTINEL: object | None = None
+_BOOTSTRAP_BROKER: object | None = None
+_BOOTSTRAP_GATE_TIMEOUT = 12.0
+
+
+def _bootstrap_placeholders() -> tuple[object, object, object]:
+    """Resolve bootstrap placeholders after the readiness gate clears."""
+
+    global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+    if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
+        return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+
+    pipeline, manager, broker = resolve_bootstrap_placeholders(
+        timeout=_BOOTSTRAP_GATE_TIMEOUT,
+        description="ResearchAggregatorBot bootstrap gate",
+    )
+    _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
+        dependency_broker=broker,
+        pipeline=pipeline,
+        manager=manager,
+    )
+    _BOOTSTRAP_BROKER = broker
+    return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
 
 @dataclass(frozen=True)
@@ -235,6 +256,7 @@ def _ensure_runtime_dependencies(
     explicit error when nothing has been provided.
     """
 
+    _bootstrap_placeholders()
     global registry
     global data_bot
     global _context_builder

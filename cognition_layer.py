@@ -32,11 +32,8 @@ from __future__ import annotations
 from typing import Any, Tuple
 
 from vector_service.context_builder import ContextBuilder
-from coding_bot_interface import (
-    _bootstrap_dependency_broker,
-    advertise_bootstrap_placeholder,
-    get_active_bootstrap_pipeline,
-)
+from coding_bot_interface import advertise_bootstrap_placeholder, get_active_bootstrap_pipeline
+from bootstrap_gate import resolve_bootstrap_placeholders
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from roi_tracker import ROITracker
 
@@ -54,16 +51,28 @@ __all__ = [
 # retrieval sessions.  Context builders are supplied by callers to avoid
 # implicit global state.
 _roi_tracker = ROITracker()
-_dependency_broker = _bootstrap_dependency_broker()
-_bootstrap_pipeline, _bootstrap_manager = get_active_bootstrap_pipeline()
-(
-    _BOOTSTRAP_PLACEHOLDER_PIPELINE,
-    _BOOTSTRAP_PLACEHOLDER_MANAGER,
-) = advertise_bootstrap_placeholder(
-    dependency_broker=_dependency_broker,
-    pipeline=_bootstrap_pipeline,
-    manager=_bootstrap_manager,
-)
+_BOOTSTRAP_PLACEHOLDER_PIPELINE: object | None = None
+_BOOTSTRAP_PLACEHOLDER_MANAGER: object | None = None
+_BOOTSTRAP_GATE_TIMEOUT = 12.0
+
+
+def _bootstrap_placeholders() -> tuple[object, object]:
+    """Resolve bootstrap placeholders after the readiness gate clears."""
+
+    global _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER
+    if None not in (_BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER):
+        return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER
+
+    pipeline, manager, broker = resolve_bootstrap_placeholders(
+        timeout=_BOOTSTRAP_GATE_TIMEOUT,
+        description="CognitionLayer bootstrap gate",
+    )
+    _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER = advertise_bootstrap_placeholder(
+        dependency_broker=broker,
+        pipeline=pipeline,
+        manager=manager,
+    )
+    return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER
 
 
 def _get_layer(builder: ContextBuilder) -> _CognitionLayer:
@@ -73,6 +82,7 @@ def _get_layer(builder: ContextBuilder) -> _CognitionLayer:
     components across calls.
     """
 
+    _bootstrap_placeholders()
     layer = getattr(builder, "_cognition_layer", None)
     if layer is None:
         layer = _CognitionLayer(context_builder=builder, roi_tracker=_roi_tracker)
