@@ -25,6 +25,8 @@ _BOOTSTRAP_COMPLEXITY_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_COMPLEXITY_SCALE"
 BOOTSTRAP_COMPONENT_HINTS_ENV = _BOOTSTRAP_COMPONENT_HINTS_ENV
 BOOTSTRAP_DB_INDEX_BYTES_ENV = _BOOTSTRAP_DB_INDEX_BYTES_ENV
 BOOTSTRAP_COMPLEXITY_SCALE_ENV = _BOOTSTRAP_COMPLEXITY_SCALE_ENV
+_BOOTSTRAP_WAIT_ENV = "MENACE_BOOTSTRAP_WAIT_SECS"
+_BOOTSTRAP_VECTOR_WAIT_ENV = "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"
 
 _BOOTSTRAP_TIMEOUT_MINIMUMS: dict[str, float] = {
     "MENACE_BOOTSTRAP_WAIT_SECS": 720.0,
@@ -2633,6 +2635,42 @@ def guard_bootstrap_wait_env(
         resolved[env_var] = resolved_value
 
     return resolved
+
+
+def resolve_bootstrap_gate_timeout(
+    *,
+    vector_heavy: bool = False,
+    fallback_timeout: float | None = None,
+) -> float:
+    """Return the shared bootstrap gate timeout with policy floors applied."""
+
+    floor_key = _BOOTSTRAP_VECTOR_WAIT_ENV if vector_heavy else _BOOTSTRAP_WAIT_ENV
+    env_timeout = _parse_float(os.getenv(floor_key))
+    persisted = load_persisted_bootstrap_wait(vector_heavy=vector_heavy)
+    minimum = _BOOTSTRAP_TIMEOUT_MINIMUMS.get(floor_key) or 0.0
+
+    resolved = max(float(fallback_timeout or 0.0), minimum)
+    for candidate in (env_timeout, persisted):
+        try:
+            resolved = max(resolved, float(candidate) if candidate is not None else resolved)
+        except (TypeError, ValueError):
+            continue
+
+    return resolved
+
+
+def compute_gate_backoff(
+    *, queue_depth: int = 0, attempt: int = 1, remaining: float | None = None
+) -> float:
+    """Return an exponential backoff delay that respects queue depth and budgets."""
+
+    queue_depth = max(queue_depth, 1)
+    attempt = max(attempt, 1)
+    base_delay = 0.75 * queue_depth
+    delay = base_delay * (1.6 ** (attempt - 1))
+    if remaining is not None:
+        delay = min(delay, max(remaining, 0.0))
+    return max(delay, 0.1)
 
 
 def _collect_timeout_telemetry() -> Mapping[str, object]:

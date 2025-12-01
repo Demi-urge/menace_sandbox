@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable, Tuple
 
 from bootstrap_manager import bootstrap_manager
@@ -11,9 +12,10 @@ from coding_bot_interface import (
     get_active_bootstrap_pipeline,
     read_bootstrap_heartbeat,
 )
+from bootstrap_timeout_policy import compute_gate_backoff, resolve_bootstrap_gate_timeout
 
 LOGGER = logging.getLogger(__name__)
-_DEFAULT_TIMEOUT_SECONDS = 12.0
+_DEFAULT_TIMEOUT_SECONDS = None
 
 
 def _pipeline_ready_probe() -> bool:
@@ -44,20 +46,51 @@ def _pipeline_ready_probe() -> bool:
 
 
 def wait_for_bootstrap_gate(
-    *, timeout: float = _DEFAULT_TIMEOUT_SECONDS, description: str = "bootstrap gate"
+    *, timeout: float | None = _DEFAULT_TIMEOUT_SECONDS, description: str = "bootstrap gate"
 ) -> None:
     """Block until the bootstrap pipeline is ready or the gate times out."""
 
-    try:
-        bootstrap_manager.wait_until_ready(
-            timeout=timeout,
-            check=_pipeline_ready_probe,
-            description=description,
-        )
-    except TimeoutError as exc:
-        raise RuntimeError(
-            f"{description} unreachable after {timeout:.1f}s; bootstrap pipeline not ready"
-        ) from exc
+    resolved_timeout = resolve_bootstrap_gate_timeout(fallback_timeout=timeout or 0.0)
+    deadline = None if resolved_timeout is None else time.monotonic() + resolved_timeout
+    attempts = 0
+
+    while True:
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        try:
+            bootstrap_manager.wait_until_ready(
+                timeout=remaining,
+                check=_pipeline_ready_probe,
+                description=description,
+            )
+            return
+        except TimeoutError as exc:
+            heartbeat = read_bootstrap_heartbeat()
+            if heartbeat is None or (remaining is not None and remaining <= 0):
+                raise RuntimeError(
+                    f"{description} unreachable after {resolved_timeout:.1f}s; bootstrap pipeline not ready"
+                ) from exc
+
+            attempts += 1
+            queue_depth = 0
+            try:
+                queue_depth = int(heartbeat.get("queue_depth", 0) or 0)
+            except Exception:  # pragma: no cover - best effort parsing
+                queue_depth = 0
+
+            delay = compute_gate_backoff(
+                queue_depth=queue_depth, attempt=attempts, remaining=remaining
+            )
+            LOGGER.info(
+                "bootstrap gate busy; retrying after backoff",
+                extra={
+                    "event": "bootstrap-gate-backoff",
+                    "queue_depth": queue_depth,
+                    "attempt": attempts,
+                    "delay": round(delay, 3),
+                    "remaining": remaining,
+                },
+            )
+            time.sleep(delay)
 
 
 def resolve_bootstrap_placeholders(
