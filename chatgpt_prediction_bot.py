@@ -19,6 +19,7 @@ from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 from .self_coding_engine import SelfCodingEngine
 from context_builder import handle_failure, PromptBuildError
+from bootstrap_readiness import readiness_signal
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any, Iterable, List, Mapping, Tuple
@@ -53,6 +54,7 @@ LOG_FORMAT = os.environ.get(
 )
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
+_BOOTSTRAP_READINESS = readiness_signal()
 
 from .error_flags import RAISE_ERRORS  # noqa: E402
 
@@ -108,6 +110,16 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when service missing
     class ErrorResult(Exception):
         """Fallback placeholder when vector service is unavailable."""
+
+
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 10.0) -> None:
+    try:
+        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+    except TimeoutError as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(
+            f"{component} cannot start until bootstrap readiness clears: "
+            f"{_BOOTSTRAP_READINESS.describe()}"
+        ) from exc
 
 
 def _build_prediction_prompt(
@@ -703,6 +715,7 @@ class ChatGPTPredictionBot:
         if context_builder is None:  # pragma: no cover - defensive guard
             raise TypeError("context_builder is required")
 
+        _ensure_bootstrap_ready("ChatGPTPredictionBot")
         context_builder.refresh_db_weights()
 
         self.model_path = Path(model_path) if model_path else CFG.model_path

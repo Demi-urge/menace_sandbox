@@ -7,6 +7,7 @@ from typing import Iterable, Mapping, MutableMapping
 
 import logging
 import os
+import time
 
 from bootstrap_manager import bootstrap_manager
 from bootstrap_timeout_policy import read_bootstrap_heartbeat
@@ -312,6 +313,119 @@ def lagging_optional_components(online_state: Mapping[str, object]) -> set[str]:
     return lagging
 
 
+@dataclass(frozen=True)
+class ReadinessProbe:
+    """Snapshot of bootstrap readiness state."""
+
+    ready: bool
+    lagging_core: tuple[str, ...]
+    degraded_core: tuple[str, ...]
+    degraded_online: bool
+    optional_pending: tuple[str, ...]
+    heartbeat: Mapping[str, object] | None = None
+
+    def summary(self) -> str:
+        """Return a human friendly summary of the probe."""
+
+        if self.ready:
+            return "bootstrap readiness satisfied"
+
+        parts: list[str] = []
+        if self.lagging_core:
+            parts.append(
+                f"lagging core components: {', '.join(sorted(self.lagging_core))}"
+            )
+        if self.degraded_core:
+            parts.append(
+                f"degraded core components: {', '.join(sorted(self.degraded_core))}"
+            )
+        if self.degraded_online and not self.lagging_core:
+            parts.append("core components are degraded but quorum is satisfied")
+        if self.optional_pending:
+            parts.append(
+                f"optional components still warming: {', '.join(sorted(self.optional_pending))}"
+            )
+        if self.heartbeat is None:
+            parts.append("no bootstrap heartbeat available")
+
+        return "; ".join(parts) if parts else "bootstrap readiness unknown"
+
+
+class ReadinessSignal:
+    """Lightweight readiness probe shared across bootstrap-sensitive modules."""
+
+    def __init__(self, *, poll_interval: float = 0.5, max_age: float | None = 30.0) -> None:
+        self.poll_interval = poll_interval
+        self.max_age = max_age
+        self._last_probe: ReadinessProbe | None = None
+
+    @property
+    def context(self) -> ReadinessProbe | None:
+        """Return the most recent probe result, if any."""
+
+        return self._last_probe
+
+    def describe(self) -> str:
+        """Return a human readable description of the latest probe."""
+
+        if self._last_probe is None:
+            return "bootstrap readiness unknown"
+        return self._last_probe.summary()
+
+    def probe(self) -> ReadinessProbe:
+        """Capture and return the latest readiness information."""
+
+        online_state = shared_online_state(max_age=self.max_age) or {}
+        ready, lagging_core, degraded_core, degraded_online = minimal_online(online_state)
+        optional_pending = (
+            lagging_optional_components(online_state)
+            if isinstance(online_state, Mapping)
+            else set()
+        )
+        probe = ReadinessProbe(
+            ready=ready,
+            lagging_core=tuple(sorted(lagging_core)),
+            degraded_core=tuple(sorted(degraded_core)),
+            degraded_online=degraded_online,
+            optional_pending=tuple(sorted(optional_pending)),
+            heartbeat=online_state.get("heartbeat")
+            if isinstance(online_state, Mapping)
+            else None,
+        )
+        self._last_probe = probe
+        return probe
+
+    def is_ready(self) -> bool:
+        """Return ``True`` when core bootstrap readiness has been achieved."""
+
+        return self.probe().ready
+
+    def await_ready(self, timeout: float | None = None) -> bool:
+        """Block until readiness is achieved or ``timeout`` expires."""
+
+        start = time.perf_counter()
+        while True:
+            probe = self.probe()
+            if probe.ready:
+                return True
+
+            if timeout is not None and (time.perf_counter() - start) >= timeout:
+                raise TimeoutError(
+                    f"bootstrap readiness not satisfied after {timeout:.1f}s: {probe.summary()}"
+                )
+
+            time.sleep(self.poll_interval)
+
+
+_READINESS_SIGNAL = ReadinessSignal()
+
+
+def readiness_signal() -> ReadinessSignal:
+    """Return the shared readiness signal instance."""
+
+    return _READINESS_SIGNAL
+
+
 __all__ = [
     "CORE_COMPONENTS",
     "OPTIONAL_COMPONENTS",
@@ -319,6 +433,9 @@ __all__ = [
     "build_stage_deadlines",
     "lagging_optional_components",
     "minimal_online",
+    "ReadinessProbe",
+    "ReadinessSignal",
+    "readiness_signal",
     "stage_for_step",
     "shared_online_state",
 ]

@@ -34,6 +34,7 @@ from .coding_bot_interface import (
     self_coding_managed,
 )
 from .bootstrap_helpers import ensure_bootstrapped
+from bootstrap_readiness import readiness_signal
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -90,6 +91,7 @@ except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+_BOOTSTRAP_READINESS = readiness_signal()
 
 _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
@@ -146,6 +148,16 @@ _runtime_state: _RuntimeDependencies | None = None
 _runtime_placeholder: _RuntimeDependencies | None = None
 _runtime_initializing = False
 _self_coding_configured = False
+
+
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
+    try:
+        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+    except TimeoutError as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(
+            f"{component} unavailable until bootstrap readiness clears: "
+            f"{_BOOTSTRAP_READINESS.describe()}"
+        ) from exc
 
 
 def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
@@ -1781,6 +1793,7 @@ class ResearchAggregatorBot:
         bootstrap: bool = False,
         defer_migrations_until_ready: bool = False,
     ) -> None:
+        _ensure_bootstrap_ready("ResearchAggregatorBot")
         init_start = time.perf_counter()
         deps = _ensure_runtime_dependencies(
             bootstrap_owner=bootstrap_owner,

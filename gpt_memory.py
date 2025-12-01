@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
+from bootstrap_readiness import readiness_signal
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
@@ -48,6 +49,7 @@ else:  # pragma: no cover - ensure helper aliases exist
 
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
+_BOOTSTRAP_READINESS = readiness_signal()
 
 _db_router = load_internal("db_router")
 DBRouter = _db_router.DBRouter
@@ -130,6 +132,16 @@ STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}
 logger = logging.getLogger(__name__)
 
 
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 8.0) -> None:
+    try:
+        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+    except TimeoutError as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(
+            f"{component} cannot start until bootstrap readiness clears: "
+            f"{_BOOTSTRAP_READINESS.describe()}"
+        ) from exc
+
+
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     """Return the cosine similarity between two vectors."""
 
@@ -185,6 +197,7 @@ class GPTMemoryManager(GPTMemoryInterface):
         vector_service: SharedVectorService | None = None,
         router: "DBRouter | None" = None,
     ) -> None:
+        _ensure_bootstrap_ready("GPTMemoryManager")
         self.db_path = Path(db_path)
         self.router = router or _db_router.GLOBAL_ROUTER
         if self.router is None:
