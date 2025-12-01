@@ -519,7 +519,9 @@ def test_bootstrap_fast_pipeline_shared_vector_service(monkeypatch, tmp_path):
     promote(SimpleNamespace(bootstrap_fast=True, bootstrap_mode=True))
     elapsed = time.perf_counter() - start
 
-    handler = pipeline.cognition_layer.patch_retriever.vector_service._handlers["patch"]
+    svc = pipeline.cognition_layer.patch_retriever.vector_service
+    handler = svc._get_handler("patch")
+    assert handler is not None
     patch_vectorizer = getattr(handler, "__self__", None)
 
     assert pipeline.manager.bootstrap_fast is True
