@@ -22,11 +22,30 @@ from .coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
 )
+from bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_readiness import readiness_signal
 
-_BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder(
-    dependency_broker=_bootstrap_dependency_broker()
-)
+def _seed_bootstrap_placeholder() -> tuple[object, object]:
+    pipeline, manager, broker = resolve_bootstrap_placeholders(
+        description="MenaceOrchestrator bootstrap gate"
+    )
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "Bootstrap dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) before orchestrator"
+        )
+    placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
+        dependency_broker=broker,
+        pipeline=pipeline,
+        manager=manager,
+    )
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "Failed to advertise MenaceOrchestrator bootstrap placeholder with active owner"
+        )
+    return placeholder_pipeline, broker
+
+
+_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_BROKER = _seed_bootstrap_placeholder()
 from dynamic_path_router import resolve_path, get_project_root
 
 from .knowledge_graph import KnowledgeGraph
@@ -219,7 +238,11 @@ class MenaceOrchestrator:
             self.logger.exception("context builder refresh failed")
         bootstrap_context = None
         bootstrap_heartbeat = None
-        dependency_broker = _bootstrap_dependency_broker()
+        dependency_broker = _BOOTSTRAP_BROKER or _bootstrap_dependency_broker()
+        if not getattr(dependency_broker, "active_owner", False):
+            raise RuntimeError(
+                "Bootstrap dependency broker owner not active; MenaceOrchestrator will not construct pipeline"
+            )
         self.dependency_broker = dependency_broker
         (
             self.pipeline,
@@ -313,6 +336,10 @@ class MenaceOrchestrator:
                 return None
             return pipeline
 
+        if not getattr(dependency_broker, "active_owner", False):
+            raise RuntimeError(
+                "Bootstrap dependency broker owner not active; refusing to initialize MenaceOrchestrator pipeline"
+            )
         broker_pipeline, broker_sentinel = dependency_broker.resolve()
         broker_pipeline = _strip_placeholder(broker_pipeline)
         broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))

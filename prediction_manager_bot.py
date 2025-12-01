@@ -219,11 +219,20 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
         timeout=_BOOTSTRAP_GATE_TIMEOUT,
         description="PredictionManager bootstrap gate",
     )
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "PredictionManager dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) "
+            "before constructing registry or data bot"
+        )
     _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER = advertise_bootstrap_placeholder(
         dependency_broker=broker,
         pipeline=pipeline,
         manager=manager,
     )
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "Failed to advertise PredictionManager bootstrap placeholder with active owner"
+        )
     _BOOTSTRAP_BROKER = broker
     return _BOOTSTRAP_PLACEHOLDER_PIPELINE, _BOOTSTRAP_PLACEHOLDER_MANAGER, _BOOTSTRAP_BROKER
 
@@ -252,9 +261,11 @@ def _get_registry(
     state = bootstrap_state or bootstrap_state_snapshot()
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
-    placeholder_pipeline, placeholder_manager, _placeholder_broker = (
-        _bootstrap_placeholders()
-    )
+    placeholder_pipeline, placeholder_manager, placeholder_broker = _bootstrap_placeholders()
+    if not getattr(placeholder_broker, "active_owner", False):
+        raise RuntimeError(
+            "PredictionManager bootstrap dependency broker owner not active; refusing to construct registry"
+        )
     inferred_bootstrap = bootstrap or state.get("in_progress", False)
     if not inferred_bootstrap:
         inferred_bootstrap = bool(placeholder_manager or placeholder_pipeline)
@@ -271,7 +282,11 @@ def _get_data_bot(*, bootstrap_state: Mapping[str, object] | None = None) -> Dat
     state = bootstrap_state or bootstrap_state_snapshot()
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
-    _bootstrap_placeholders()
+    _, _, placeholder_broker = _bootstrap_placeholders()
+    if not getattr(placeholder_broker, "active_owner", False):
+        raise RuntimeError(
+            "PredictionManager bootstrap dependency broker owner not active; refusing to construct data bot"
+        )
     return _DATA_BOT_PROXY._hydrate()
 
 try:

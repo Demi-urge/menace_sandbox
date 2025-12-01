@@ -110,11 +110,20 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
         timeout=_BOOTSTRAP_GATE_TIMEOUT,
         description="ResearchAggregatorBot bootstrap gate",
     )
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "Bootstrap dependency broker missing active owner; seed advertise_bootstrap_placeholder(owner=True) "
+            "before constructing ResearchAggregatorBot dependencies"
+        )
     _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
         dependency_broker=broker,
         pipeline=pipeline,
         manager=manager,
     )
+    if not getattr(broker, "active_owner", False):
+        raise RuntimeError(
+            "Failed to advertise bootstrap placeholder with active owner; refusing to construct ResearchAggregatorBot"
+        )
     _BOOTSTRAP_BROKER = broker
     return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
@@ -278,6 +287,10 @@ def _ensure_runtime_dependencies(
     placeholder_pipeline, placeholder_manager, placeholder_broker = (
         _bootstrap_placeholders()
     )
+    if not getattr(placeholder_broker, "active_owner", False):
+        raise RuntimeError(
+            "Bootstrap dependency broker owner not active; aborting ResearchAggregatorBot initialisation"
+        )
     global registry
     global data_bot
     global _context_builder
