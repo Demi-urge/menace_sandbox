@@ -104,13 +104,12 @@ _BOOTSTRAP_HEARTBEAT_PATH = Path(
 )
 _BACKGROUND_UNLIMITED_ENV = "MENACE_BOOTSTRAP_BACKGROUND_UNLIMITED"
 _ESSENTIAL_PHASES = {
-    "vectorizers",
     "retrievers",
     "db_indexes",
     "orchestrator_state",
     "pipeline_config",
 }
-_OPTIONAL_PHASES = {"background_loops"}
+_OPTIONAL_PHASES = {"background_loops", "vectorizers"}
 
 # The component key used when the prepare pipeline floor needs to be raised
 # before work has started. This keeps the persisted telemetry consistent with
@@ -542,6 +541,8 @@ class BootstrapHeartbeatSupervisor:
         elif remaining is None:
             state = "pending"
         else:
+            state = "warming"
+        if component in _OPTIONAL_PHASES and state == "pending":
             state = "warming"
         return component, state
 
@@ -2390,6 +2391,8 @@ def compute_prepare_pipeline_component_budgets(
         "component_budgets": budgets,
         "stage_budgets": stage_budgets,
         "component_overruns": host_overruns,
+        "optional_components": sorted(_OPTIONAL_PHASES),
+        "warming_components": sorted(_OPTIONAL_PHASES),
         "budget_violations": host_state_details.get("component_budget_violations"),
         "global_window": global_window,
         "global_window_extension": global_window_extension,
@@ -2778,12 +2781,14 @@ def _summarize_stage_telemetry(telemetry: Mapping[str, object]) -> Mapping[str, 
         for entry in stages
         if entry.get("vector_heavy") and float(entry.get("elapsed", 0.0) or 0.0) > 0
     ]
+    vector_heavy = bool(vector_labels or vector_longest)
 
     return {
         "longest_stage": longest_stage,
         "vector_longest": vector_longest,
         "vector_labels": vector_labels,
         "vector_stage_count": len(vector_labels),
+        "vector_heavy": vector_heavy,
     }
 
 
@@ -2830,6 +2835,8 @@ def _summarize_component_overruns(telemetry: Mapping[str, object]) -> dict[str, 
             component_state["host_load"] = max(
                 float(component_state.get("host_load", 0.0) or 0.0), host_load
             )
+        if component == "vectorizers":
+            component_state["deferred_class"] = "warming"
 
     extension_records = telemetry.get("extensions") or []
     for entry in extension_records:
@@ -3039,13 +3046,15 @@ def _soft_budget_from_timeout(
     *,
     telemetry: Mapping[str, object],
     load_scale: float,
-    grace_floor: float = 30.0,
+    grace_floor: float | None = None,
     grace_ratio: float = 0.25,
     stage_bias: float = 0.15,
 ) -> Dict[str, float | None]:
     stage_summary = _summarize_stage_telemetry(telemetry)
     longest_stage = float(stage_summary.get("longest_stage", 0.0) or 0.0)
     vector_longest = float(stage_summary.get("vector_longest", 0.0) or 0.0)
+    vector_stage_count = int(stage_summary.get("vector_stage_count", 0) or 0)
+    vector_heavy = bool(vector_stage_count and vector_longest)
 
     if timeout is None:
         return {
@@ -3058,10 +3067,15 @@ def _soft_budget_from_timeout(
         }
 
     scaled_budget = timeout * load_scale
+    if vector_heavy and vector_longest:
+        scaled_budget = max(scaled_budget, vector_longest * 1.35)
     base_grace = scaled_budget * grace_ratio
     stage_grace = longest_stage * stage_bias if longest_stage else 0.0
     vector_grace = vector_longest * (stage_bias + 0.1) if vector_longest else 0.0
-    grace = max(grace_floor, base_grace, stage_grace, vector_grace)
+    grace_candidates = [base_grace, stage_grace, vector_grace]
+    if grace_floor is not None:
+        grace_candidates.append(grace_floor)
+    grace = max(grace_candidates)
 
     return {
         "budget": scaled_budget,
@@ -3070,6 +3084,8 @@ def _soft_budget_from_timeout(
         "scale": load_scale,
         "longest_stage": longest_stage,
         "vector_longest": vector_longest,
+        "vector_heavy": vector_heavy,
+        "vector_stage_count": vector_stage_count,
     }
 
 
@@ -3238,7 +3254,7 @@ def render_prepare_pipeline_timeout_hints(
         (
             "Vector-heavy pipelines: set MENACE_BOOTSTRAP_VECTOR_WAIT_SECS="
             f"{int(vector_wait)} or BOOTSTRAP_VECTOR_STEP_TIMEOUT={int(vector_step)} "
-            "to bypass the legacy 30s cap and give vector services time to warm up."
+            "to pre-warm vector services without stalling core readiness."
         ),
         "Stagger concurrent bootstraps or shrink watched directories to reduce contention during pipeline and vector service startup.",
     ]
