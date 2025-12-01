@@ -21,6 +21,7 @@ from typing import Iterator, TYPE_CHECKING, Any
 from bootstrap_gate import resolve_bootstrap_placeholders
 from coding_bot_interface import get_active_bootstrap_pipeline
 from .bootstrap_placeholder import advertise_broker_placeholder
+from .bootstrap_helpers import ensure_environment_bootstrapped
 
 _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
@@ -32,6 +33,7 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
     """Advertise bootstrap placeholders once the readiness gate clears."""
 
     global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+    ensure_environment_bootstrapped()
     if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 

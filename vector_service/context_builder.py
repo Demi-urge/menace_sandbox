@@ -18,6 +18,7 @@ import threading
 import os
 
 from dynamic_path_router import resolve_path
+from bootstrap_helpers import ensure_environment_bootstrapped
 
 try:  # pragma: no cover - optional dependency
     from filelock import FileLock
@@ -545,6 +546,7 @@ class ContextBuilder:
         errors_db: str | os.PathLike[str] | None = None,
         workflows_db: str | os.PathLike[str] | None = None,
     ) -> None:
+        ensure_environment_bootstrapped()
         self.provenance_token = provenance_token or uuid.uuid4().hex
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)

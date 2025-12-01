@@ -7,6 +7,7 @@ from statistics import fmean
 from typing import Any, Callable, Mapping
 
 from composite_workflow_scorer import CompositeWorkflowScorer
+from bootstrap_helpers import ensure_environment_bootstrapped
 from logging_utils import log_record
 
 
@@ -22,6 +23,7 @@ class SandboxOrchestrator:
         diminishing_threshold: float = 0.0,
         patience: int = 3,
     ) -> None:
+        ensure_environment_bootstrapped()
         self.workflows: dict[str, Callable[[], Any]] = dict(workflows)
         self.logger = logger or logging.getLogger(__name__)
         self.scorer = CompositeWorkflowScorer(failure_logger=self.logger)

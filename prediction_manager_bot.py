@@ -17,6 +17,7 @@ from .coding_bot_interface import (
     self_coding_managed,
 )
 from .data_bot import DataBot, MetricsDB
+from .bootstrap_helpers import ensure_environment_bootstrapped
 
 import importlib
 import json
@@ -243,6 +244,7 @@ def _get_data_bot_proxy() -> _LazyDataBot:
 def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
     """Instantiate and return the shared :class:`BotRegistry`."""
 
+    ensure_environment_bootstrapped()
     _bootstrap_placeholders()
     _REGISTRY_PROXY.set_bootstrap_mode(bootstrap)
     return _REGISTRY_PROXY._hydrate()
@@ -252,6 +254,7 @@ def _get_registry(*, bootstrap: bool = False) -> BotRegistry:
 def _get_data_bot() -> DataBot:
     """Instantiate and return the shared :class:`DataBot`."""
 
+    ensure_environment_bootstrapped()
     _bootstrap_placeholders()
     return _DATA_BOT_PROXY._hydrate()
 
