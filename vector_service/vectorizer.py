@@ -312,7 +312,9 @@ class SharedVectorService:
             _trace("shared_vector_service.vector_store.fetch")
             store_start = time.perf_counter()
             try:
-                self.vector_store = get_default_vector_store()
+                self.vector_store = get_default_vector_store(
+                    lazy=bool(self.lazy_vector_store)
+                )
             except Exception as exc:  # pragma: no cover - defensive logging
                 _trace("shared_vector_service.vector_store.error", error=str(exc))
                 raise
