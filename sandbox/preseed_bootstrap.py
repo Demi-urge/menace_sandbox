@@ -459,6 +459,25 @@ class _StagedBootstrapController:
 
         self._emit_stage_signal(stage, step_name, "ready" if ready else "running")
 
+    def defer_step(self, step_name: str, *, reason: str | None = None) -> None:
+        stage = stage_for_step(step_name)
+        if not stage:
+            return
+
+        remaining = self._remaining_steps.get(stage)
+        if remaining is not None:
+            remaining.discard(step_name)
+
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            stage, reason=reason or f"{step_name}_deferred"
+        )
+        _set_component_state(stage, "deferred")
+
+        if self._coordinator:
+            self._coordinator.mark_component_state(stage, "running")
+
+        self._emit_stage_signal(stage, step_name, "deferred")
+
     def stage_budget(self, *, step_name: str | None = None, stage: str | None = None) -> float | None:
         target_stage = stage or (stage_for_step(step_name) if step_name else None)
         if target_stage is None:
@@ -1945,6 +1964,9 @@ def initialize_bootstrap_context(
 
     global _BOOTSTRAP_CACHE
 
+    def _env_flag(name: str) -> bool:
+        return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
     def _log_step(step_name: str, start_time: float) -> None:
         elapsed = perf_counter() - start_time
         LOGGER.info("%s completed (elapsed=%.3fs)", step_name, elapsed)
@@ -1988,6 +2010,11 @@ def initialize_bootstrap_context(
 
     env_heavy = os.getenv("BOOTSTRAP_HEAVY_BOOTSTRAP", "")
     heavy_bootstrap = heavy_bootstrap or env_heavy.lower() in {"1", "true", "yes"}
+    bootstrap_mode_env = os.getenv("MENACE_BOOTSTRAP_MODE", "").strip().lower()
+    bootstrap_fast_env = _env_flag("MENACE_BOOTSTRAP_FAST")
+    bootstrap_lite_mode = bootstrap_mode_env in {"lite", "fast"}
+    bootstrap_fast_context = bootstrap_fast_env or bootstrap_lite_mode
+    force_vector_warmup = _env_flag("MENACE_FORCE_HEAVY_VECTOR_WARMUP")
     vector_bootstrap_hint = False
     vector_env_snapshot: dict[str, str | float] = {}
     LOGGER.info(
@@ -2116,6 +2143,7 @@ def initialize_bootstrap_context(
 
     runner = _BootstrapDagRunner(logger=LOGGER)
     vector_bootstrap_hint_holder = {"vector": vector_bootstrap_hint}
+    embedder_preload_enabled = not (bootstrap_fast_context and not force_vector_warmup)
 
     def _task_embedder(_: dict[str, Any]) -> None:
         _mark_bootstrap_step("embedder_preload")
@@ -2230,15 +2258,28 @@ def initialize_bootstrap_context(
             )
             return cached_context
 
-    runner.add(
-        _BootstrapTask(
-            name="vectorizer_preload",
-            fn=_task_embedder,
-            component="vectorizer_preload",
-            critical=False,
-            background=True,
+    if embedder_preload_enabled:
+        runner.add(
+            _BootstrapTask(
+                name="vectorizer_preload",
+                fn=_task_embedder,
+                component="vectorizer_preload",
+                critical=False,
+                background=True,
+            )
         )
-    )
+    else:
+        LOGGER.info(
+            "bootstrap fast/lite detected; deferring embedder preload to lazy activation",
+            extra={
+                "bootstrap_mode": bootstrap_mode_env,
+                "bootstrap_fast": bootstrap_fast_context,
+                "force_vector_warmup": force_vector_warmup,
+            },
+        )
+        stage_controller.defer_step(
+            "embedder_preload", reason="embedder_preload_deferred_bootstrap_fast"
+        )
     runner.add(
         _BootstrapTask(
             name="context_builder",
