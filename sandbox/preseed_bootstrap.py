@@ -36,6 +36,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
 from menace_sandbox.coding_bot_interface import (
     _bootstrap_dependency_broker,
+    _current_bootstrap_context,
     _pop_bootstrap_context,
     _push_bootstrap_context,
     advertise_bootstrap_placeholder,
@@ -3054,6 +3055,14 @@ def initialize_bootstrap_context(
             if bootstrap_deadline is not None
             else None
         )
+        bootstrap_context_active = False
+        try:
+            bootstrap_context_active = bool(
+                _current_bootstrap_context()
+                or getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+            )
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("failed to detect active bootstrap context", exc_info=True)
         estimated_preload_cost = float(
             _COMPONENT_BASELINES.get("vector_seeding")
             or embedder_warmup_cap
@@ -3085,6 +3094,10 @@ def initialize_bootstrap_context(
             fast_presence_reason = "embedder_presence_bootstrap_fast"
         elif warmup_lite_context:
             fast_presence_reason = "embedder_presence_warmup_lite"
+        if bootstrap_context_active and not full_preload_requested:
+            presence_only = True
+            budget_guarded = True
+            presence_reason = presence_reason or "embedder_presence_bootstrap_context_active"
         if fast_presence_reason:
             presence_only = True
             budget_guarded = True
@@ -3170,6 +3183,7 @@ def initialize_bootstrap_context(
                     "ready_after_bootstrap": True,
                     "background_enqueue_reason": reason,
                     "warmup_placeholder_reason": reason,
+                    "deferral_reason": reason,
                 }
             )
 
@@ -3341,6 +3355,8 @@ def initialize_bootstrap_context(
             probe_timeout = (
                 min(probe_timeout_candidates) if probe_timeout_candidates else 0.75
             )
+            probe_timeout_hard_cap = 1.5
+            probe_timeout = min(probe_timeout, probe_timeout_hard_cap)
             probe_stop_event = threading.Event()
             presence_available = False
             probe_timed_out = False
@@ -3400,6 +3416,11 @@ def initialize_bootstrap_context(
                 if probe_thread.is_alive() or probe_stop_event.is_set():
                     probe_timed_out = True
                     probe_stop_event.set()
+                    presence_reason = presence_reason or "embedder_presence_probe_timeout"
+
+            if warmup_summary is not None:
+                warmup_summary.setdefault("deferred", True)
+                warmup_summary.setdefault("deferred_reason", presence_reason)
 
             job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
             job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
@@ -3416,6 +3437,7 @@ def initialize_bootstrap_context(
                     "warmup_placeholder_reason": presence_reason,
                     "presence_only": True,
                     "budget_window_missing": budget_window_missing,
+                    "deferral_reason": presence_reason,
                 }
             )
 
