@@ -2270,9 +2270,6 @@ class EnvironmentBootstrapper:
                     stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
                 except Exception:
                     stage_timeouts = {"model": 9.0, "handlers": 9.0, "vectorise": 4.5}
-            if raw == "":
-                warmup_probe = warmup_budget is not None and warmup_budget >= 1.0
-                warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
             vector_state = self._phase_readiness.get("vector_warmup")
             persisted_deferred = (
                 set(vector_state.get("deferred", ()))
@@ -2283,14 +2280,56 @@ class EnvironmentBootstrapper:
                 isinstance(vector_state, Mapping)
                 and vector_state.get("background") == "pending"
             )
+            prior_mode = vector_state.get("mode") if isinstance(vector_state, Mapping) else None
+            prior_summary = (
+                vector_state.get("summary") if isinstance(vector_state, Mapping) else None
+            )
             background_status: str | None = "pending" if background_pending else None
             pending_background_stages: set[str] = set()
+            background_ticket_only = False
+            if raw == "":
+                warmup_probe = True
+                warmup_lite = True
+                background_ticket_only = True
+                default_deferred = {"model", "handlers", "vectorise"}
+                pending_background_stages |= default_deferred
+                persisted_deferred |= default_deferred
+                background_status = background_status or "pending"
+                self.logger.info(
+                    (
+                        "Vector warmup defaulting to probe-only (warmup-lite) with heavy stages "
+                        "deferred to background; set MENACE_BOOTSTRAP_WARM_VECTOR=1 or HEAVY to "
+                        "force heavy hydration"
+                    )
+                )
             if raw in {"defer", "later"}:
                 self.logger.info(
                     "Vector warmup explicitly deferred; assets will hydrate on first use",
                 )
                 check_budget()
                 return
+
+            if prior_mode in {"deferred", "timeout"} or (
+                isinstance(prior_summary, Mapping)
+                and prior_summary.get("bootstrap") in {"deferred", "timeout"}
+            ):
+                self.logger.info(
+                    "Vector warmup previously deferred/timeout; skipping heavy hydration until resumed",
+                    extra=log_record(
+                        event="vector-warmup-skipped",
+                        mode=prior_mode,
+                        summary_bootstrap=None
+                        if not isinstance(prior_summary, Mapping)
+                        else prior_summary.get("bootstrap"),
+                    ),
+                )
+                warmup_model = False
+                warmup_handlers = False
+                run_vectorise = False
+                heavy_model_requested = False
+                heavy_handlers_requested = False
+                heavy_vectorise_requested = False
+                persisted_deferred |= {"model", "handlers", "vectorise"}
 
             if background_pending:
                 self.logger.info(
@@ -2489,16 +2528,17 @@ class EnvironmentBootstrapper:
                         ),
                     )
                     if heavy_to_schedule:
-                        self._queue_background_task(
-                            "vector-warmup-heavy",
-                            _run_heavy_background,
-                            delay_until_ready=True,
-                            join_inner=False,
-                            ready_gate="optional",
-                            stage="vector_warmup",
-                            budget_hint=vector_budget_hint,
-                        )
-                    summary = {
+                        if not background_ticket_only:
+                            self._queue_background_task(
+                                "vector-warmup-heavy",
+                                _run_heavy_background,
+                                delay_until_ready=True,
+                                join_inner=False,
+                                ready_gate="optional",
+                                stage="vector_warmup",
+                                budget_hint=vector_budget_hint,
+                            )
+                summary = {
                         "bootstrap": "deferred",
                         "budget_exhausted": "true",
                         "background": background_status or "pending",
@@ -2546,7 +2586,7 @@ class EnvironmentBootstrapper:
                         "Vector warmup invoked with flags: %s", selected_flags
                     )
                     heavy_to_schedule = _schedule_heavy_background(warmup_background)
-                    if heavy_to_schedule:
+                    if heavy_to_schedule and not background_ticket_only:
                         self._queue_background_task(
                             "vector-warmup-heavy",
                             _run_heavy_background,
