@@ -56,6 +56,7 @@ def ensure_embedding_model(
     logger: logging.Logger | None = None,
     warmup: bool = False,
     stop_event: threading.Event | None = None,
+    budget_check: Callable[[threading.Event | None], None] | None = None,
 ) -> Path | None:
     """Ensure the bundled embedding model archive exists.
 
@@ -67,9 +68,13 @@ def ensure_embedding_model(
 
     global _MODEL_READY
     log = logger or logging.getLogger(__name__)
-    if stop_event is not None and stop_event.is_set():
-        log.info("embedding model download cancelled before start")
-        return None
+    def _check_cancelled(context: str) -> None:
+        if stop_event is not None and stop_event.is_set():
+            raise TimeoutError(f"embedding model download cancelled during {context}")
+        if budget_check is not None:
+            budget_check(stop_event)
+
+    _check_cancelled("init")
 
     if _MODEL_READY:
         return _model_bundle_path()
@@ -82,9 +87,7 @@ def ensure_embedding_model(
             _MODEL_READY = True
             return dest
 
-        if stop_event is not None and stop_event.is_set():
-            log.info("embedding model download cancelled (budget exhausted)")
-            return None
+        _check_cancelled("init")
 
         if importlib.util.find_spec("huggingface_hub") is None:
             log.info(
@@ -95,11 +98,8 @@ def ensure_embedding_model(
         try:
             from . import download_model as _dm
 
-            if stop_event is not None and stop_event.is_set():
-                log.info("embedding model download aborted before fetch start")
-                return None
-
-            _dm.bundle(dest)
+            _check_cancelled("fetch")
+            _dm.bundle(dest, stop_event=stop_event, budget_check=budget_check)
             _MODEL_READY = True
             return dest
         except Exception as exc:  # pragma: no cover - best effort during warmup
@@ -313,6 +313,18 @@ def warmup_vector_service(
         except Exception:  # pragma: no cover - metrics best effort
             log.debug("failed emitting vector warmup timeout metric", exc_info=True)
 
+    def _cooperative_budget_check(stage: str, stop_event: threading.Event | None) -> None:
+        if stop_event is not None and stop_event.is_set():
+            raise TimeoutError(f"vector warmup {stage} cancelled")
+        if check_budget is None:
+            return
+        try:
+            check_budget()
+        except TimeoutError:
+            if stop_event is not None:
+                stop_event.set()
+            raise
+
     def _run_with_budget(
         stage: str,
         func: Callable[[threading.Event], Any],
@@ -336,7 +348,7 @@ def warmup_vector_service(
             finally:
                 done.set()
 
-        thread = threading.Thread(target=_runner)
+        thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
 
         start = time.monotonic()
@@ -348,7 +360,8 @@ def warmup_vector_service(
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
                 )
-                thread.join()
+                if not done.wait(timeout=0.25):
+                    log.debug("vector warmup %s still cancelling after timeout", stage)
                 return False, None
 
             if check_budget is not None:
@@ -358,16 +371,18 @@ def warmup_vector_service(
                     stop_event.set()
                     budget_exhausted = True
                     _record_timeout(stage)
-                    _record(stage, "skipped-budget")
+                    _record(stage, "deferred-budget")
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
-                    thread.join()
+                    done.wait(timeout=0.25)
                     return False, None
 
         if error:
             err = error[0]
             if isinstance(err, TimeoutError):
+                stop_event.set()
+                budget_exhausted = True
                 log.info("Vector warmup %s cancelled: %s", stage, err)
-                _record(stage, "skipped-budget")
+                _record(stage, "deferred-budget")
                 return False, None
             raise err
 
@@ -524,7 +539,12 @@ def warmup_vector_service(
             completed, path = _run_with_budget(
                 "model",
                 lambda stop_event: ensure_embedding_model(
-                    logger=log, warmup=True, stop_event=stop_event
+                    logger=log,
+                    warmup=True,
+                    stop_event=stop_event,
+                    budget_check=lambda evt: _cooperative_budget_check(
+                        "model", evt
+                    ),
                 ),
                 timeout=model_timeout,
             )
@@ -534,7 +554,8 @@ def warmup_vector_service(
                 else:
                     _record("model", "missing")
             elif budget_exhausted:
-                _record("model", "skipped-budget")
+                if "model" not in summary:
+                    _record("model", "deferred-budget")
                 log.info("Vector warmup model download deferred after budget exhaustion")
                 return
         elif probe_model:
@@ -582,13 +603,17 @@ def warmup_vector_service(
                         bootstrap_fast=bootstrap_fast,
                         warmup_lite=warmup_lite,
                         stop_event=stop_event,
+                        budget_check=lambda evt: _cooperative_budget_check(
+                            "handlers", evt
+                        ),
                     ),
                     timeout=handler_timeout,
                 )
                 if completed:
                     _record("handlers", "hydrated")
                 elif budget_exhausted:
-                    _record("handlers", "skipped-budget")
+                    if "handlers" not in summary:
+                        _record("handlers", "deferred-budget")
                     log.info(
                         "Vector warmup handler hydration deferred after budget exhaustion",
                     )

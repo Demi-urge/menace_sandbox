@@ -172,6 +172,7 @@ class SharedVectorService:
     lazy_vector_store: bool | None = None
     warmup_lite: bool | None = None
     stop_event: threading.Event | None = None
+    budget_check: Callable[[threading.Event | None], None] | None = None
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
     _handler_requires_store: Dict[str, bool] = field(init=False)
     _handler_bootstrap_flag: bool = field(init=False, default=False)
@@ -353,6 +354,8 @@ class SharedVectorService:
         event = stop_event or self.stop_event
         if event is not None and event.is_set():
             raise TimeoutError(f"shared vector service cancelled during {context}")
+        if self.budget_check is not None:
+            self.budget_check(event)
 
     def _prepare_vector_store_for_handler(
         self, kind: str, handler: Callable[[Dict[str, Any]], List[float]]
