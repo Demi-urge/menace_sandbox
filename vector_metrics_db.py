@@ -77,6 +77,8 @@ class _BootstrapVectorMetricsStub:
         if warmup is not None:
             self._activation_kwargs["warmup"] = bool(warmup)
         self._delegate: "VectorMetricsDB | None" = None
+        self._noop_calls: set[str] = set()
+        self._readiness_hook_registered = False
         self._activate_on_first_write = False
         self._deferred_summary_emitted = False
         self._pending_weights: dict[str, float] = {}
@@ -158,6 +160,72 @@ class _BootstrapVectorMetricsStub:
     def activate(self, *, reason: str = "explicit") -> "VectorMetricsDB":
         return self._activate(reason=reason)
 
+    def register_readiness_hook(self) -> None:
+        if self._delegate is not None:
+            return
+        if self._readiness_hook_registered:
+            return
+        try:  # pragma: no cover - optional dependency
+            from bootstrap_readiness import readiness_signal
+        except Exception:
+            logger.debug("vector metrics stub readiness hook unavailable", exc_info=True)
+            return
+
+        self._readiness_hook_registered = True
+
+        def _await_ready() -> None:
+            try:
+                readiness_signal().await_ready(timeout=None)
+            except Exception:  # pragma: no cover - best effort logging
+                logger.debug(
+                    "vector metrics stub readiness gate failed", exc_info=True
+                )
+                return
+            self._promote_from_stub(reason="bootstrap_ready")
+
+        logger.info(
+            "vector_metrics_db.bootstrap.stub_readiness_registered",
+            extra={
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+                "read_only": bool(self._activation_kwargs.get("read_only")),
+                "ensure_exists": self._activation_kwargs.get("ensure_exists"),
+            },
+        )
+        threading.Thread(
+            target=_await_ready,
+            name="vector-metrics-stub-readiness",
+            daemon=True,
+        ).start()
+
+    def _promote_from_stub(self, *, reason: str) -> "VectorMetricsDB | None":
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        delegate = self._activate(reason=reason)
+        if isinstance(delegate, VectorMetricsDB):
+            try:  # pragma: no cover - best effort promotion
+                delegate.end_warmup(reason=reason)
+                delegate.activate_persistence(reason=reason)
+                _apply_pending_weights(delegate)
+            except Exception:
+                logger.debug(
+                    "vector metrics stub promotion failed", exc_info=True
+                )
+            else:
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_promoted",
+                    extra={
+                        "reason": reason,
+                        "bootstrap_fast": bool(
+                            self._activation_kwargs.get("bootstrap_fast")
+                        ),
+                        "warmup": bool(self._activation_kwargs.get("warmup")),
+                        "read_only": bool(self._activation_kwargs.get("read_only")),
+                    },
+                )
+        return delegate
+
     def _activate(self, *, reason: str = "attribute_access") -> "VectorMetricsDB":
         if self._delegate is not None:
             return self._delegate
@@ -184,8 +252,25 @@ class _BootstrapVectorMetricsStub:
         )
         return vdb
 
+    def _noop(self, *, method: str, default: Any = None):
+        if method not in self._noop_calls:
+            self._noop_calls.add(method)
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_noop",
+                extra={
+                    "method": method,
+                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                    "read_only": bool(self._activation_kwargs.get("read_only")),
+                },
+            )
+        return default
+
     def planned_path(self) -> Path:
         return Path(self._activation_kwargs["path"]).expanduser()
+
+    def ready_probe(self) -> str:
+        return str(self.planned_path())
 
     def persistence_probe(self) -> bool:
         return False
@@ -205,7 +290,76 @@ class _BootstrapVectorMetricsStub:
             return default or {}
         return self._delegate.get_db_weights(default=default)
 
+    def add(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="add")
+        return self._delegate.add(*_args, **_kwargs)
+
+    def log_embedding(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="log_embedding")
+        return self._delegate.log_embedding(*_args, **_kwargs)
+
+    def log_retrieval(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="log_retrieval")
+        return self._delegate.log_retrieval(*_args, **_kwargs)
+
+    def log_retrieval_feedback(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="log_retrieval_feedback")
+        return self._delegate.log_retrieval_feedback(*_args, **_kwargs)
+
+    def log_ranker_update(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="log_ranker_update")
+        return self._delegate.log_ranker_update(*_args, **_kwargs)
+
+    def save_session(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="save_session")
+        return self._delegate.save_session(*_args, **_kwargs)
+
+    def load_sessions(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="load_sessions", default={})
+        return self._delegate.load_sessions(*_args, **_kwargs)
+
+    def delete_session(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="delete_session")
+        return self._delegate.delete_session(*_args, **_kwargs)
+
+    def embedding_tokens_total(self, *_args, **_kwargs):
+        if self._delegate is None:
+            return self._noop(method="embedding_tokens_total", default=0)
+        return self._delegate.embedding_tokens_total(*_args, **_kwargs)
+
+    def activate_persistence(self, *, reason: str = "stub_ready") -> "VectorMetricsDB | None":
+        delegate = self._promote_from_stub(reason=reason)
+        if delegate is None:
+            return None
+        return delegate
+
+    def activate_router(self, *, reason: str = "stub_ready") -> "VectorMetricsDB | None":
+        delegate = self._promote_from_stub(reason=reason)
+        if isinstance(delegate, VectorMetricsDB):
+            return delegate.activate_router(reason=reason)
+        return delegate
+
     def __getattr__(self, name: str):
+        if self._delegate is not None:
+            return getattr(self._delegate, name)
+        noop_prefixes = (
+            "log_",
+            "add",
+            "save_",
+            "load_",
+            "delete_",
+            "embedding_",
+        )
+        if name.startswith(noop_prefixes):
+            return lambda *args, **kwargs: self._noop(method=name)
         delegate = self._activate(reason=f"attr:{name}")
         return getattr(delegate, name)
 
@@ -324,6 +478,11 @@ def _arm_shared_readiness_hook() -> None:
         return
 
     _READINESS_HOOK_ARMED = True
+
+    instance = _VECTOR_DB_INSTANCE
+    if isinstance(instance, _BootstrapVectorMetricsStub):
+        instance.register_readiness_hook()
+        return
 
     def _await_ready() -> None:
         try:
@@ -533,6 +692,7 @@ def get_shared_vector_metrics_db(
                     ensure_exists=ensure_exists,
                     read_only=bool(read_only) if read_only is not None else False,
                 )
+                _VECTOR_DB_INSTANCE.register_readiness_hook()
             else:
                 _VECTOR_DB_INSTANCE = VectorMetricsDB(
                     "vector_metrics.db",
