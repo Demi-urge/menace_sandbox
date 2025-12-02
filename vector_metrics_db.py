@@ -207,7 +207,6 @@ class _BootstrapVectorMetricsStub:
             try:  # pragma: no cover - best effort promotion
                 delegate.end_warmup(reason=reason)
                 delegate.activate_persistence(reason=reason)
-                _apply_pending_weights(delegate)
             except Exception:
                 logger.debug(
                     "vector metrics stub promotion failed", exc_info=True
@@ -709,6 +708,9 @@ def get_shared_vector_metrics_db(
                 read_only=read_only,
             )
 
+    if resolved_bootstrap_fast or resolved_warmup or env_requested:
+        return _VECTOR_DB_INSTANCE
+
     _apply_pending_weights(_VECTOR_DB_INSTANCE)
     return _VECTOR_DB_INSTANCE
 
@@ -730,7 +732,6 @@ def activate_shared_vector_metrics_db(
     if isinstance(vm, VectorMetricsDB):
         vm.end_warmup(reason=reason)
         vm.activate_persistence(reason=reason)
-        _apply_pending_weights(vm)
     return vm
 
 
@@ -926,6 +927,12 @@ def default_vector_metrics_path(
     allow_fs_changes = bool(ensure_exists and not bootstrap_read_only and not read_only)
     path: Path | None = None
 
+    if bootstrap_read_only:
+        path = Path("vector_metrics.db").expanduser()
+        if not path.is_absolute():
+            path = path.resolve()
+        return path
+
     if not bootstrap_read_only:
         try:
             path = _dynamic_path_router().resolve_path("vector_metrics.db")
@@ -995,7 +1002,7 @@ class VectorMetricsDB:
             resolved_warmup = True
         if self._bootstrap_timers_active and warmup is None:
             resolved_warmup = True
-        explicit_bootstrap_stub_opt_out = warmup is False
+        explicit_bootstrap_stub_opt_out = bool(warmup is False and not resolved_bootstrap_fast)
         self._warmup_override_disabled = bool(explicit_bootstrap_stub_opt_out)
         self.bootstrap_fast = resolved_bootstrap_fast
         self._warmup_mode = (
@@ -1012,14 +1019,14 @@ class VectorMetricsDB:
         self._lazy_mode = True
         self._boot_stub_active = bool(
             self._read_only
-            or not explicit_bootstrap_stub_opt_out
-            and (
+            or (
                 self._bootstrap_context
                 or self.bootstrap_fast
                 or self._warmup_mode
                 or self._bootstrap_timers_active
                 or self._env_warmup_opt_in
             )
+            and not explicit_bootstrap_stub_opt_out
         )
         self._lazy_primed = self._boot_stub_active
         if ensure_exists is None:
@@ -1418,6 +1425,7 @@ class VectorMetricsDB:
         )
         self._persistence_activation_pending = False
         self._exit_lazy_mode(reason=reason)
+        _apply_pending_weights(self)
         logger.info(
             "vector_metrics_db.bootstrap.persistence_activated",
             extra=_timestamp_payload(
