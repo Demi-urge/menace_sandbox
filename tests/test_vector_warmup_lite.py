@@ -61,9 +61,9 @@ def test_warmup_lite_defers_heavy_stages(monkeypatch, caplog):
     lazy_bootstrap.warmup_vector_service(logger=logging.getLogger("test"))
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["handlers"] == "deferred-lite"
+    assert warmup_summary["handlers"] == "deferred-lite-noop"
     assert warmup_summary["scheduler"] == "deferred-lite"
-    assert warmup_summary["vectorise"] == "deferred-lite"
+    assert warmup_summary["vectorise"] == "deferred-lite-noop"
     assert {"handlers", "scheduler", "vectorise"}.issubset(set(warmup_summary["deferred"].split(",")))
     assert not scheduler_calls
 
