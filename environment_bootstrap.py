@@ -2194,6 +2194,19 @@ class EnvironmentBootstrapper:
                     remaining_phase_budget = None
             budget_candidates = [hint for hint in (vector_budget_hint, remaining_phase_budget) if hint is not None]
             warmup_budget = min(budget_candidates) if budget_candidates else None
+            fallback_warmup_budget = warmup_budget
+            if warmup_budget is None:
+                env_hint = os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT", "").strip()
+                try:
+                    fallback_warmup_budget = float(env_hint) if env_hint else None
+                except (TypeError, ValueError):
+                    fallback_warmup_budget = None
+                if fallback_warmup_budget is None:
+                    fallback_warmup_budget = 30.0
+                self.logger.debug(
+                    "Applying fallback vector warmup budget: %.1fs", fallback_warmup_budget
+                )
+            warmup_budget = fallback_warmup_budget
             stage_timeouts = {"budget": warmup_budget} if warmup_budget is not None else None
             vector_state = self._phase_readiness.get("vector_warmup")
             persisted_deferred = (
