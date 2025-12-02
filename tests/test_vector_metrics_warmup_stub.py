@@ -36,3 +36,22 @@ def test_normal_operation_exits_lazy_mode(monkeypatch, tmp_path):
     assert calls == ["prepare"]
     assert vm._conn is not None
     assert vm._lazy_mode is False
+
+
+def test_warmup_auto_activates_on_first_write(monkeypatch, tmp_path):
+    orig_prepare = vector_metrics_db.VectorMetricsDB._prepare_connection
+    calls = []
+
+    def record_prepare(self, init_start=None):
+        calls.append("prepare")
+        return orig_prepare(self, init_start)
+
+    monkeypatch.setattr(vector_metrics_db.VectorMetricsDB, "_prepare_connection", record_prepare)
+
+    vm = vector_metrics_db.VectorMetricsDB(tmp_path / "warm_write.db", warmup=True)
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+
+    assert calls == ["prepare"]
+    assert vm._conn is not None
+    assert vm._boot_stub_active is False
+    assert vm._warmup_mode is False

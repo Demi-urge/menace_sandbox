@@ -235,16 +235,22 @@ class VectorMetricsDB:
                 "MENACE_BOOTSTRAP_FAST",
             )
         )
-        warmup = warmup if warmup is not None else _env_flag(
-            "VECTOR_METRICS_WARMUP", False
+        requested_warmup = warmup if warmup is not None else bool(
+            bootstrap_fast
+            or vector_warmup_env
+            or vector_bootstrap_env
+            or patch_bootstrap_env
+            or bootstrap_env
+            or _env_flag("VECTOR_METRICS_WARMUP", False)
         )
-        warmup = bool(warmup or vector_warmup_env or bootstrap_env)
+        warmup = bool(requested_warmup or vector_warmup_env or bootstrap_env)
         env_bootstrap = bool(
             vector_bootstrap_env
             or patch_bootstrap_env
             or vector_warmup_env
             or bootstrap_env
         )
+        self._bootstrap_context = bool(bootstrap_fast or requested_warmup or env_bootstrap)
         self.bootstrap_fast = bool(bootstrap_fast or warmup or env_bootstrap)
         self._warmup_mode = bool(warmup or vector_warmup_env or bootstrap_env)
         self._lazy_mode = True
@@ -374,7 +380,7 @@ class VectorMetricsDB:
                 bootstrap_fast=self.bootstrap_fast,
             ),
         )
-        if self._warmup_mode:
+        if self._warmup_mode or self.bootstrap_fast:
             self.bootstrap_fast = False
             self._warmup_mode = False
         self._boot_stub_active = False
@@ -460,7 +466,10 @@ class VectorMetricsDB:
 
     def _conn_for(self, *, reason: str, commit_required: bool = True):
         if self._boot_stub_active:
-            commit_required = False
+            if commit_required:
+                self.activate_persistence(reason=f"{reason}.auto")
+            else:
+                commit_required = False
         conn = self._connection(reason=reason, commit_required=commit_required)
         if commit_required:
             self._commit_required = False
@@ -508,6 +517,16 @@ class VectorMetricsDB:
         init_start = init_start or time.perf_counter()
         if self._conn is not None:
             return
+        if self._bootstrap_context and not self._warmup_mode:
+            logger.info(
+                "vector_metrics_db.bootstrap.eager_initialization",
+                extra=_timestamp_payload(
+                    init_start,
+                    bootstrap_fast=self.bootstrap_fast,
+                    warmup_mode=self._warmup_mode,
+                    configured_path=str(self._configured_path),
+                ),
+            )
         if self._boot_stub_active or self._warmup_mode:
             logger.info(
                 "vector_metrics_db.bootstrap.fast_return",

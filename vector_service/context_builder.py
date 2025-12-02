@@ -956,6 +956,13 @@ class ContextBuilder:
             )
             if vm is None:
                 return
+            if getattr(vm, "_boot_stub_active", False):
+                try:
+                    vm.activate_persistence(reason="context_builder.refresh_weights")
+                except Exception:  # pragma: no cover - best effort activation
+                    logger.debug(
+                        "vector metrics activation failed post-bootstrap", exc_info=True
+                    )
             try:
                 weights = vm.get_db_weights(bootstrap=fast_bootstrap)
             except Exception:
