@@ -19,6 +19,7 @@ vector DB migrations need extra breathing room.
 from __future__ import annotations
 
 import contextlib
+import math
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import io
 import inspect
@@ -435,6 +436,7 @@ class _StagedBootstrapController:
         self._coordinator = coordinator
         self._signal_hook = signal_hook
         self._stage_windows: Mapping[str, Mapping[str, float | None]] = {}
+        self._stage_deferred_reason: dict[str, str] = {}
         self._start_component_windows()
 
     def _start_component_windows(self) -> None:
@@ -524,6 +526,8 @@ class _StagedBootstrapController:
         _BOOTSTRAP_SCHEDULER.mark_partial(
             stage, reason=reason or f"{step_name}_deferred"
         )
+        if reason:
+            self._stage_deferred_reason.setdefault(stage, reason)
         _set_component_state(stage, "deferred")
 
         if self._coordinator:
@@ -560,6 +564,39 @@ class _StagedBootstrapController:
                 except (TypeError, ValueError):
                     continue
         return None
+
+    def stage_deadline(
+        self, *, step_name: str | None = None, stage: str | None = None
+    ) -> float | None:
+        target_stage = stage or (stage_for_step(step_name) if step_name else None)
+        if target_stage is None:
+            return None
+
+        window = self._stage_windows.get(target_stage, {}) if self._stage_windows else {}
+        deadline = window.get("deadline")
+        if deadline is not None:
+            try:
+                return float(deadline)
+            except (TypeError, ValueError):
+                LOGGER.debug("invalid stage deadline", exc_info=True)
+
+        entry = self._stage_policy.get(target_stage, {}) if self._stage_policy else {}
+        if isinstance(entry, Mapping):
+            candidate = entry.get("deadline")
+            try:
+                if candidate is not None:
+                    return float(candidate)
+            except (TypeError, ValueError):
+                LOGGER.debug("invalid stage deadline policy", exc_info=True)
+        return None
+
+    def deferred_reason(
+        self, *, step_name: str | None = None, stage: str | None = None
+    ) -> str | None:
+        target_stage = stage or (stage_for_step(step_name) if step_name else None)
+        if target_stage is None:
+            return None
+        return self._stage_deferred_reason.get(target_stage)
 
 
 
@@ -1720,6 +1757,10 @@ def _bootstrap_embedder(
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     now = time.monotonic()
+    stage_deadline_hint = caps.get("stage_deadline")
+    stage_deadline_remaining = (
+        max(0.0, stage_deadline_hint - now) if stage_deadline_hint is not None else None
+    )
     remaining_bootstrap_window = (
         max(0.0, bootstrap_deadline - now) if bootstrap_deadline is not None else None
     )
@@ -1730,6 +1771,9 @@ def _bootstrap_embedder(
             cap
             for cap in (
                 stage_budget if stage_budget is not None and stage_budget > 0 else None,
+                stage_deadline_remaining
+                if stage_deadline_remaining is not None and stage_deadline_remaining > 0
+                else None,
                 remaining_bootstrap_window
                 if remaining_bootstrap_window is not None and remaining_bootstrap_window > 0
                 else None,
@@ -1743,6 +1787,7 @@ def _bootstrap_embedder(
         stage_budget if stage_budget is not None and stage_budget > 0 else None,
         BOOTSTRAP_EMBEDDER_TIMEOUT if BOOTSTRAP_EMBEDDER_TIMEOUT > 0 else None,
         warmup_cap,
+        stage_deadline_remaining if stage_deadline_remaining is not None else None,
         remaining_bootstrap_window if remaining_bootstrap_window is not None else None,
     ]
     strict_timeout_cap = min(
@@ -1783,11 +1828,22 @@ def _bootstrap_embedder(
         if effective_timeout_cap is not None and effective_timeout_cap > 0
         else None
     )
+    stage_wall_cap_hint = caps.get("stage_wall_cap")
+    if stage_wall_cap_hint is not None and stage_wall_cap_hint >= 0:
+        stage_wall_cap = (
+            stage_wall_cap_hint if stage_wall_cap is None else min(stage_wall_cap, stage_wall_cap_hint)
+        )
     if remaining_bootstrap_window is not None:
         stage_wall_cap = (
             remaining_bootstrap_window
             if stage_wall_cap is None
             else min(stage_wall_cap, remaining_bootstrap_window)
+        )
+    if stage_deadline_remaining is not None:
+        stage_wall_cap = (
+            stage_deadline_remaining
+            if stage_wall_cap is None
+            else min(stage_wall_cap, stage_deadline_remaining)
         )
     if max_duration_cap is not None:
         if stage_wall_cap is None:
@@ -1856,6 +1912,7 @@ def _bootstrap_embedder(
             "effective_timeout_cap": effective_timeout_cap,
             "bootstrap_timeout": bootstrap_timeout,
             "stage_wall_cap": stage_wall_cap,
+            "stage_deadline": stage_deadline_hint,
         }
     )
 
@@ -3137,11 +3194,13 @@ def initialize_bootstrap_context(
         step_name="embedder_preload"
     )
     embedder_warmup_lite_budget_guard = bool(
-        embedder_stage_budget_hint is not None and embedder_stage_budget_hint < 1.25
+        embedder_stage_budget_hint is not None
+        and math.isfinite(embedder_stage_budget_hint)
+        and embedder_stage_budget_hint > 0
     )
     if embedder_warmup_lite_budget_guard and not warmup_lite_context:
         LOGGER.info(
-            "forcing embedder warmup-lite path due to tight stage budget",
+            "forcing embedder warmup-lite path due to finite stage budget",
             extra={
                 "event": "embedder-preload-budget-lite",
                 "stage_budget": embedder_stage_budget_hint,
@@ -3165,6 +3224,14 @@ def initialize_bootstrap_context(
         )
         embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
         embedder_stage_budget = stage_controller.stage_budget(step_name="embedder_preload")
+        embedder_stage_deadline = stage_controller.stage_deadline(
+            step_name="embedder_preload"
+        )
+        embedder_stage_deadline_remaining = (
+            max(0.0, embedder_stage_deadline - time.monotonic())
+            if embedder_stage_deadline is not None
+            else None
+        )
         embedder_warmup_cap = (
             BOOTSTRAP_EMBEDDER_WARMUP_CAP if BOOTSTRAP_EMBEDDER_WARMUP_CAP > 0 else None
         )
@@ -3271,6 +3338,7 @@ def initialize_bootstrap_context(
                 embedder_stage_budget,
                 embedder_timeout,
                 embedder_warmup_cap,
+                embedder_stage_deadline_remaining,
                 remaining_bootstrap_window,
             )
             if candidate is not None and candidate > 0
@@ -3490,6 +3558,44 @@ def initialize_bootstrap_context(
             return _BOOTSTRAP_PLACEHOLDER
 
         timebox_insufficient = strict_timebox is None or strict_timebox < estimated_preload_cost
+        if embedder_stage_deadline_remaining is not None and embedder_stage_deadline_remaining <= 0:
+            deadline_reason = embedder_deferral_reason or "embedder_stage_deadline_elapsed"
+            warmup_summary = warmup_summary or {}
+            warmup_summary.update(
+                {
+                    "deferred": True,
+                    "deferred_reason": deadline_reason,
+                    "deferral_reason": deadline_reason,
+                    "strict_timebox": strict_timebox,
+                }
+            )
+            return _defer_to_presence(
+                deadline_reason,
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=full_preload_requested,
+                strict_timebox=0.0 if strict_timebox is None else strict_timebox,
+                non_blocking_probe=True,
+            )
+        if remaining_bootstrap_window is not None and remaining_bootstrap_window <= 0:
+            deadline_reason = embedder_deferral_reason or "embedder_bootstrap_deadline_elapsed"
+            warmup_summary = warmup_summary or {}
+            warmup_summary.update(
+                {
+                    "deferred": True,
+                    "deferred_reason": deadline_reason,
+                    "deferral_reason": deadline_reason,
+                    "strict_timebox": strict_timebox,
+                }
+            )
+            return _defer_to_presence(
+                deadline_reason,
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=full_preload_requested,
+                strict_timebox=0.0 if strict_timebox is None else strict_timebox,
+                non_blocking_probe=True,
+            )
         if timebox_insufficient:
             presence_reason = (
                 "embedder_preload_timebox_missing"
@@ -3526,6 +3632,8 @@ def initialize_bootstrap_context(
                 )
             if embedder_timeout is not None:
                 remaining_candidates.append(embedder_timeout - (time.monotonic() - warmup_started))
+            if embedder_stage_deadline is not None:
+                remaining_candidates.append(embedder_stage_deadline - time.monotonic())
             if bootstrap_deadline is not None:
                 remaining_candidates.append(bootstrap_deadline - time.monotonic())
             if strict_timebox is not None:
@@ -3578,7 +3686,9 @@ def initialize_bootstrap_context(
                         "warmup_summary": warmup_summary
                     }
 
-        def _schedule_background_preload(reason: str) -> dict[str, Any]:
+        def _schedule_background_preload(
+            reason: str, *, strict_timebox: float | None = None
+        ) -> dict[str, Any]:
             job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
             job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
             job_snapshot.setdefault("placeholder_reason", reason)
@@ -3590,6 +3700,7 @@ def initialize_bootstrap_context(
                     "warmup_placeholder_reason": reason,
                     "deferral_reason": reason,
                     "background_full_warmup": True,
+                    "strict_timebox": strict_timebox,
                 }
             )
 
@@ -3601,6 +3712,17 @@ def initialize_bootstrap_context(
                     resolved_timeout = embedder_timeout
                     if resolved_timeout is None or resolved_timeout <= 0:
                         resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT
+                    cap_hints = {
+                        "stage_budget": embedder_stage_budget,
+                        "bootstrap_deadline": bootstrap_deadline,
+                        "stage_deadline": embedder_stage_deadline,
+                        "stage_wall_cap": strict_timebox,
+                    }
+                    resolved_caps = {
+                        key: value
+                        for key, value in cap_hints.items()
+                        if value is not None and (not isinstance(value, (int, float)) or value >= 0)
+                    }
                     LOGGER.info(
                         "starting deferred embedder preload after readiness",  # pragma: no cover - telemetry
                         extra={
@@ -3622,6 +3744,7 @@ def initialize_bootstrap_context(
                         bootstrap_fast=False,
                         schedule_background=True,
                         bootstrap_deadline=bootstrap_deadline,
+                        precomputed_caps=resolved_caps,
                     )
                 except Exception:  # pragma: no cover - background safety
                     LOGGER.debug("deferred embedder preload failed", exc_info=True)
@@ -3672,7 +3795,9 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "background_loops", reason=f"embedder_placeholder:{exhausted_reason}"
             )
-            job_snapshot = _schedule_background_preload(exhausted_reason)
+            job_snapshot = _schedule_background_preload(
+                exhausted_reason, strict_timebox=strict_timebox
+            )
             job_snapshot.update(
                 {
                     "presence_available": False,
@@ -3708,7 +3833,9 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "background_loops", reason=f"embedder_placeholder:{shortfall_reason}"
             )
-            job_snapshot = _schedule_background_preload(shortfall_reason)
+            job_snapshot = _schedule_background_preload(
+                shortfall_reason, strict_timebox=strict_timebox
+            )
             job_snapshot.update(
                 {
                     "presence_available": False,
@@ -3768,6 +3895,13 @@ def initialize_bootstrap_context(
                     (
                         warmup_started + embedder_stage_budget_hint,
                         "embedder_stage_budget_deadline",
+                    )
+                )
+            if embedder_stage_deadline is not None:
+                deadlines.append(
+                    (
+                        embedder_stage_deadline,
+                        "embedder_stage_deadline_elapsed",
                     )
                 )
             if bootstrap_deadline is not None:
