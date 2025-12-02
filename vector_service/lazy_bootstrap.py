@@ -771,6 +771,12 @@ def warmup_vector_service(
             summary["deferred"] = ",".join(sorted(deferred_record))
         if background_candidates:
             summary["background"] = ",".join(sorted(background_candidates))
+        summary["deferred_stages"] = (
+            ",".join(sorted(background_candidates | deferred_record))
+            if (background_candidates or deferred_record)
+            else ""
+        )
+        summary["capped_stages"] = ",".join(sorted(capped_stages)) if capped_stages else ""
         if heavy_admission is not None:
             summary["heavy_admission"] = heavy_admission
         for stage, ceiling in stage_budget_ceiling.items():
@@ -1007,6 +1013,9 @@ def warmup_vector_service(
 
     resolved_timeouts = _distribute_budget(resolved_timeouts, provided_budget)
     stage_budget_ceiling = {stage: resolved_timeouts.get(stage) for stage in base_timeouts}
+    capped_stages: set[str] = {
+        stage for stage, timeout in stage_budget_ceiling.items() if timeout is not None
+    }
 
     def _below_conservative_budget(stage: str) -> bool:
         threshold = _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
