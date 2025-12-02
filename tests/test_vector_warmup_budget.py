@@ -91,7 +91,23 @@ def test_stage_skipped_when_budget_below_estimate(caplog):
     )
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["model"] == "skipped-estimate"
+    assert warmup_summary["model"] == "deferred-estimate"
+
+
+def test_background_hook_invoked_for_estimate_deferral(caplog):
+    caplog.set_level(logging.INFO)
+    deferred: set[str] = set()
+
+    lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        budget_remaining=lambda: 5.0,
+        logger=logging.getLogger("test"),
+        background_hook=deferred.update,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["model"] == "deferred-estimate"
+    assert deferred == {"model"}
 
 
 def test_default_stage_timeouts_enforced_without_budget(caplog, monkeypatch, tmp_path):

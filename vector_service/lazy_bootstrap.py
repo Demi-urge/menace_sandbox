@@ -146,6 +146,7 @@ def warmup_vector_service(
     warmup_probe: bool | None = None,
     stage_timeouts: dict[str, float] | float | None = None,
     deferred_stages: set[str] | None = None,
+    background_hook: Callable[[set[str]], None] | None = None,
 ) -> Mapping[str, str]:
     """Eagerly initialise vector assets and caches.
 
@@ -168,7 +169,8 @@ def warmup_vector_service(
     when the caller's remaining bootstrap time falls below the configured
     thresholds.  Callers that intentionally defer stages can supply
     ``deferred_stages`` so the warmup summary reflects the deferral rather than
-    a silent skip.
+    a silent skip.  ``background_hook`` is invoked with any stages proactively
+    deferred for background execution so callers can enqueue follow-up tasks.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -246,6 +248,8 @@ def warmup_vector_service(
     deferred = set(deferred_stages or ()) | deferred_bootstrap
     memoised_results = dict(_WARMUP_STAGE_MEMO)
 
+    background_candidates: set[str] = set()
+
     def _record(stage: str, status: str) -> None:
         summary[stage] = status
         _WARMUP_STAGE_MEMO[stage] = status
@@ -253,6 +257,10 @@ def warmup_vector_service(
             VECTOR_WARMUP_STAGE_TOTAL.labels(stage, status).inc()
         except Exception:  # pragma: no cover - metrics best effort
             log.debug("failed emitting vector warmup metric", exc_info=True)
+
+    def _record_deferred(stage: str, status: str) -> None:
+        background_candidates.add(stage)
+        _record(stage, status)
 
     def _reuse(stage: str) -> bool:
         status = memoised_results.get(stage)
@@ -544,9 +552,9 @@ def warmup_vector_service(
             return True
         if remaining >= estimate:
             return True
-        _record(stage, "skipped-estimate")
+        _record_deferred(stage, "deferred-estimate")
         log.info(
-            "Vector warmup skipping %s; remaining budget %.2fs below estimated cost %.2fs",
+            "Vector warmup deferring %s; remaining budget %.2fs below estimated cost %.2fs",
             stage,
             remaining,
             estimate,
@@ -566,7 +574,7 @@ def warmup_vector_service(
         if download_model:
             if model_timeout is not None and model_timeout <= 0:
                 budget_exhausted = True
-                _record("model", "skipped-budget")
+                _record_deferred("model", "skipped-budget")
                 log.info("Vector warmup model download skipped: no remaining budget")
                 return
             if not _has_estimated_budget("model"):
@@ -590,7 +598,7 @@ def warmup_vector_service(
                     _record("model", "missing")
             elif budget_exhausted:
                 if "model" not in summary:
-                    _record("model", "deferred-budget")
+                    _record_deferred("model", "deferred-budget")
                 log.info("Vector warmup model download deferred after budget exhaustion")
                 return
         elif probe_model:
@@ -624,7 +632,7 @@ def warmup_vector_service(
         if hydrate_handlers:
             if handler_timeout is not None and handler_timeout <= 0:
                 budget_exhausted = True
-                _record("handlers", "skipped-budget")
+                _record_deferred("handlers", "skipped-budget")
                 log.info("Vector warmup handler hydration skipped: no remaining budget")
                 return
             if not _has_estimated_budget("handlers"):
@@ -648,7 +656,7 @@ def warmup_vector_service(
                     _record("handlers", "hydrated")
                 elif budget_exhausted:
                     if "handlers" not in summary:
-                        _record("handlers", "deferred-budget")
+                        _record_deferred("handlers", "deferred-budget")
                     log.info(
                         "Vector warmup handler hydration deferred after budget exhaustion",
                     )
@@ -684,7 +692,7 @@ def warmup_vector_service(
         if should_vectorise and svc is not None:
             if vectorise_timeout is not None and vectorise_timeout <= 0:
                 budget_exhausted = True
-                _record("vectorise", "skipped-budget")
+                _record_deferred("vectorise", "skipped-budget")
                 log.info("Vectorise warmup skipped: no remaining budget")
             elif _has_estimated_budget("vectorise"):
                 try:
@@ -713,6 +721,14 @@ def warmup_vector_service(
                 status = "deferred-bootstrap" if "vectorise" in deferred_bootstrap else ("deferred" if "vectorise" in deferred else "skipped")
                 _record("vectorise", status)
                 log.info("Vectorise warmup skipped")
+
+    if background_candidates:
+        summary["background"] = ",".join(sorted(background_candidates))
+    if background_hook is not None:
+        try:
+            background_hook(set(background_candidates))
+        except Exception:  # pragma: no cover - advisory hook
+            log.debug("background hook failed", exc_info=True)
 
     log.info(
         "vector warmup stages recorded", extra={"event": "vector-warmup", "warmup": summary}
