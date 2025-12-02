@@ -709,6 +709,23 @@ class VectorMetricsDB:
         self._warmup_complete = threading.Event()
         if not self._warmup_mode:
             self._warmup_complete.set()
+        self._bootstrap_guard_active = bool(
+            self._boot_stub_active
+            and (self._warmup_mode or self.bootstrap_fast or self._bootstrap_context)
+        )
+        if self._bootstrap_guard_active:
+            self._pending_readiness_hook = False
+            self._default_ensure_exists = False
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_guard",
+                extra=_timestamp_payload(
+                    None,
+                    configured_path=str(path),
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    menace_bootstrap=self._bootstrap_context,
+                ),
+            )
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -780,6 +797,16 @@ class VectorMetricsDB:
                     menace_bootstrap=self._bootstrap_context,
                     bootstrap_deadlines=self._bootstrap_timers_active,
                     warmup_mode=self._warmup_mode,
+                ),
+            )
+            logger.info(
+                "vector_metrics_db.bootstrap.stubbed_persistence_deferred",
+                extra=_timestamp_payload(
+                    init_start,
+                    configured_path=str(path),
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    menace_bootstrap=self._bootstrap_context,
                 ),
             )
             self._conn = self._stub_conn
@@ -1015,6 +1042,8 @@ class VectorMetricsDB:
         if not self._boot_stub_active:
             self._persistence_activation_pending = False
             return
+        if self._bootstrap_guard_active and not self._pending_readiness_hook:
+            self._pending_readiness_hook = True
         if self._pending_readiness_hook and not self._readiness_hook_registered:
             self._register_readiness_hook()
         warmup_guard_active = (

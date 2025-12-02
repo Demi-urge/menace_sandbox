@@ -1009,7 +1009,11 @@ class ContextBuilder:
                 self._vector_metrics = vm
                 globals()["_VEC_METRICS"] = vm
             else:
-                vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
+                vm = VectorMetricsDB(
+                    bootstrap_fast=bootstrap_flag,
+                    warmup=warmup_flag,
+                    read_only=bool(bootstrap_flag or warmup_flag),
+                )
                 ContextBuilder._shared_vector_metrics = vm
                 globals()["_VEC_METRICS"] = vm
                 self._vector_metrics = vm

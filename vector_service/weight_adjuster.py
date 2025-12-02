@@ -82,7 +82,9 @@ class WeightAdjuster:
         if self.vector_metrics is None:
             try:
                 self.vector_metrics = VectorMetricsDB(
-                    bootstrap_fast=resolved_fast, warmup=warmup_mode
+                    bootstrap_fast=resolved_fast,
+                    warmup=warmup_mode,
+                    read_only=bool(resolved_fast or warmup_mode),
                 )
             except Exception:
                 self.vector_metrics = None
