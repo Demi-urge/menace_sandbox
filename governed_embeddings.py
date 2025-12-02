@@ -1362,6 +1362,7 @@ def _initialise_embedder_with_timeout(
     requester: str | None = None,
     stop_event: threading.Event | None = None,
     fallback_on_timeout: bool = False,
+    max_wait_override: float | None = None,
 ) -> SentenceTransformer | Any | None:
     """Initialise the shared embedder without blocking indefinitely.
 
@@ -1420,7 +1421,12 @@ def _initialise_embedder_with_timeout(
     if timeout_override is not None:
         requested_timeout = min(requested_timeout, max(0.0, timeout_override))
 
-    wait_cap = max(0.0, min(requested_timeout, _MAX_EMBEDDER_WAIT))
+    max_wait = (
+        _MAX_EMBEDDER_WAIT
+        if max_wait_override is None
+        else min(_MAX_EMBEDDER_WAIT, max_wait_override)
+    )
+    wait_cap = max(0.0, min(requested_timeout, max_wait))
     wait_limit = wait_cap
     soft_clamped = False
     if _SOFT_EMBEDDER_WAIT >= 0:
@@ -1478,7 +1484,7 @@ def _initialise_embedder_with_timeout(
                     "model": _MODEL_NAME,
                     "wait_time": round(wait_time, 3),
                     "requested_timeout": round(requested_timeout, 3),
-                    "max_wait": round(_MAX_EMBEDDER_WAIT, 3),
+                    "max_wait": round(max_wait, 3),
                     "soft_wait": round(_SOFT_EMBEDDER_WAIT, 3),
                 },
             )
@@ -2064,10 +2070,12 @@ def get_embedder(
     wait_override = timeout
     bootstrap_wait_cap: float | None = None
     bootstrap_deadline: float | None = None
+    max_wait_override: float | None = None
     if bootstrap_mode or bootstrap_timeout is not None:
         cap_budget = bootstrap_timeout if bootstrap_timeout is not None else timeout
         bootstrap_wait_cap = apply_bootstrap_timeout_caps(cap_budget)
         bootstrap_deadline = bootstrap_wait_cap
+        max_wait_override = bootstrap_wait_cap
         if wait_override is None and bootstrap_wait_cap is not None:
             wait_override = bootstrap_wait_cap
         elif bootstrap_wait_cap is not None and wait_override is not None:
@@ -2119,7 +2127,11 @@ def get_embedder(
     # hours.  The cap mirrors the longest time the caller would otherwise wait
     # for the background initialisation thread, making sure both phases respect
     # the same upper bound.
-    lock_cap = _MAX_EMBEDDER_WAIT
+    lock_cap = (
+        _MAX_EMBEDDER_WAIT
+        if max_wait_override is None
+        else min(_MAX_EMBEDDER_WAIT, max_wait_override)
+    )
     if _EMBEDDER_INIT_TIMEOUT >= 0:
         lock_cap = min(lock_cap, max(0.0, _EMBEDDER_INIT_TIMEOUT))
     if lock_cap >= 0 and lock_timeout > lock_cap:
@@ -2131,14 +2143,15 @@ def get_embedder(
         lock_timeout = lock_cap
 
     if lock is None:
-        placeholder_embedder = _initialise_embedder_with_timeout(
-            timeout_override=wait_override,
-            suppress_timeout_log=wait_override is not None,
-            requester=requester,
-            stop_event=stop_event,
-            fallback_on_timeout=bootstrap_mode or wait_override is not None,
-        )
-        return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
+            placeholder_embedder = _initialise_embedder_with_timeout(
+                timeout_override=wait_override,
+                suppress_timeout_log=wait_override is not None,
+                requester=requester,
+                stop_event=stop_event,
+                fallback_on_timeout=bootstrap_mode or wait_override is not None,
+                max_wait_override=max_wait_override,
+            )
+            return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
 
     cleaned_once = False
     while True:
@@ -2150,6 +2163,7 @@ def get_embedder(
                     requester=requester,
                     stop_event=stop_event,
                     fallback_on_timeout=bootstrap_mode or wait_override is not None,
+                    max_wait_override=max_wait_override,
                 )
                 break
         except LockTimeout:

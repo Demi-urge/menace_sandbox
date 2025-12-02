@@ -947,19 +947,20 @@ class ContextBuilder:
             if self._vector_metrics is not None:
                 return self._vector_metrics
 
-            if ContextBuilder._shared_vector_metrics is not None:
-                self._vector_metrics = ContextBuilder._shared_vector_metrics
-                globals()["_VEC_METRICS"] = self._vector_metrics
-                return self._vector_metrics
-
+            bootstrap_env = any(
+                os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
+                for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_MODE", "MENACE_BOOTSTRAP_FAST")
+            )
             bootstrap_resolved = (
                 bootstrap_fast
                 if bootstrap_fast is not None
                 else self._bootstrap_fast
             )
-            bootstrap_flag = bool(bootstrap_resolved or _VECTOR_SERVICE_WARMUP)
+            bootstrap_flag = bool(bootstrap_resolved or _VECTOR_SERVICE_WARMUP or bootstrap_env)
             warmup_resolved = warmup if warmup is not None else bootstrap_flag
             warmup_flag = bool(warmup_resolved)
+
+            existing = ContextBuilder._shared_vector_metrics
 
             def _activate_real_db(reason: str = "vector_metrics.activate") -> "VectorMetricsDB | None":
                 vm = ContextBuilder._shared_vector_metrics
@@ -980,11 +981,13 @@ class ContextBuilder:
                 return vm
 
             if warmup_flag:
-                if isinstance(ContextBuilder._shared_vector_metrics, _VectorMetricsWarmupStub):
-                    stub = ContextBuilder._shared_vector_metrics
+                if isinstance(existing, _VectorMetricsWarmupStub):
+                    stub = existing
                 else:
                     stub = _VectorMetricsWarmupStub(
-                        lambda: VectorMetricsDB(
+                        lambda: existing
+                        if isinstance(existing, VectorMetricsDB)
+                        else VectorMetricsDB(
                             bootstrap_fast=False,
                             warmup=False,
                         ),
@@ -992,8 +995,8 @@ class ContextBuilder:
                             reason="context_builder.warmup_activate"
                         ),
                     )
-                    ContextBuilder._shared_vector_metrics = stub
-                    globals()["_VEC_METRICS"] = stub
+                ContextBuilder._shared_vector_metrics = stub
+                globals()["_VEC_METRICS"] = stub
                 self._vector_metrics = stub
                 return stub
 
