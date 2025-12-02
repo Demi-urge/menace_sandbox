@@ -323,6 +323,8 @@ class VectorMetricsDB:
         self._bootstrap_context = bool(
             resolved_bootstrap_fast or resolved_warmup or env_bootstrap
         )
+        if self._bootstrap_context and warmup is None:
+            resolved_warmup = True
         self._warmup_override_disabled = bool(
             warmup is False and not self._bootstrap_context
         )
@@ -399,12 +401,15 @@ class VectorMetricsDB:
         self._schema_cache: dict[str, list[str]] = {}
         self._default_columns: dict[str, list[str]] = {}
         self._schema_defaults_initialized = False
+        self._deferred_path: Path | None = None
         if not self._boot_stub_active:
             self._initialize_schema_defaults()
         self._bootstrap_safe = bootstrap_safe
         self._configured_path = Path(path)
         self._resolved_path: Path | None = None
         self._default_path: Path | None = None
+        if self._boot_stub_active:
+            self._deferred_path = Path(path).expanduser()
         eager_resolve = not (
             self.bootstrap_fast or self._warmup_mode or self._boot_stub_active
         )
@@ -554,6 +559,9 @@ class VectorMetricsDB:
 
         if not self._boot_stub_active:
             return
+        if self._deferred_path is not None and self._resolved_path is None:
+            self._resolved_path = self._deferred_path
+            self._default_path = self._deferred_path
         if self._pending_readiness_hook and not self._readiness_hook_registered:
             self._register_readiness_hook()
         logger.info(
@@ -567,6 +575,13 @@ class VectorMetricsDB:
             ),
         )
         self._exit_lazy_mode(reason=reason)
+
+    def activate_router(self, *, reason: str = "bootstrap_complete") -> "VectorMetricsDB":
+        """Convert the bootstrap stub into a real router-backed instance."""
+
+        self.activate_persistence(reason=reason)
+        _ = self.conn
+        return self
 
     def planned_path(self) -> Path:
         """Return the resolved database path without touching the filesystem."""

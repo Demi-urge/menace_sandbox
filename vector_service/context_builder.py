@@ -963,6 +963,10 @@ class ContextBuilder:
 
             def _activate_real_db(reason: str = "vector_metrics.activate") -> "VectorMetricsDB | None":
                 vm = ContextBuilder._shared_vector_metrics
+                if isinstance(vm, VectorMetricsDB) and getattr(
+                    vm, "_boot_stub_active", False
+                ):
+                    vm = vm.activate_router(reason=reason)
                 if isinstance(vm, _VectorMetricsWarmupStub):
                     vm = vm.activate_persistence(reason=reason)
                 if vm is None or isinstance(vm, _VectorMetricsWarmupStub):
@@ -997,6 +1001,10 @@ class ContextBuilder:
             if isinstance(existing, _VectorMetricsWarmupStub):
                 vm = _activate_real_db(reason="context_builder.post_bootstrap")
             elif existing is not None:
+                if isinstance(existing, VectorMetricsDB) and getattr(
+                    existing, "_boot_stub_active", False
+                ):
+                    existing.activate_router(reason="context_builder.post_bootstrap")
                 vm = existing
                 self._vector_metrics = vm
                 globals()["_VEC_METRICS"] = vm
