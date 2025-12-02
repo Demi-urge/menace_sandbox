@@ -1032,6 +1032,18 @@ class VectorMetricsDB:
             )
             and not explicit_bootstrap_stub_opt_out
         )
+        if self._warmup_mode and not self._boot_stub_active:
+            self._boot_stub_active = True
+            logger.info(
+                "vector_metrics_db.bootstrap.warmup_stub_forced",
+                extra=_timestamp_payload(
+                    None,
+                    configured_path=str(path),
+                    warmup_mode=self._warmup_mode,
+                    menace_bootstrap=self._bootstrap_context,
+                    env_bootstrap_requested=self._env_warmup_opt_in,
+                ),
+            )
         self._lazy_primed = self._boot_stub_active
         if ensure_exists is None:
             self._default_ensure_exists = not (
@@ -1571,7 +1583,7 @@ class VectorMetricsDB:
     def _resolve_requested_path(
         self, path: Path, *, ensure_exists: bool
     ) -> tuple[Path, Path]:
-        if self._boot_stub_active:
+        if self._boot_stub_active or self._warmup_mode:
             requested = Path(path).expanduser()
             return requested, requested
         default_path = default_vector_metrics_path(
@@ -1596,6 +1608,17 @@ class VectorMetricsDB:
         init_start = init_start or time.perf_counter()
         if self._conn is not None:
             return
+        if self._warmup_mode or self._boot_stub_active:
+            logger.info(
+                "vector_metrics_db.bootstrap.fast_return",
+                extra=_timestamp_payload(
+                    init_start,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    stub_mode=self._boot_stub_active,
+                ),
+            )
+            return
         if not self._persistence_activated:
             logger.info(
                 "vector_metrics_db.bootstrap.persistence_suspended",
@@ -1617,17 +1640,6 @@ class VectorMetricsDB:
                     configured_path=str(self._configured_path),
                 ),
             )
-        if self._boot_stub_active or self._warmup_mode:
-            logger.info(
-                "vector_metrics_db.bootstrap.fast_return",
-                extra=_timestamp_payload(
-                    init_start,
-                    warmup_mode=self._warmup_mode,
-                    bootstrap_fast=self.bootstrap_fast,
-                    stub_mode=self._boot_stub_active,
-                ),
-            )
-            return
 
         logger.info(
             "vector_metrics_db.initialization.mode",
