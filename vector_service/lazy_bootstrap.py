@@ -948,6 +948,25 @@ def warmup_vector_service(
         ceiling = stage_budget_ceiling.get(stage)
         return threshold is not None and ceiling is not None and ceiling < threshold
 
+    def _insufficient_stage_budget(stage: str) -> bool:
+        ceiling = stage_budget_ceiling.get(stage)
+        estimate = base_stage_cost.get(stage)
+        if ceiling is None or estimate is None:
+            return False
+        return ceiling < estimate
+
+    if hydrate_handlers and _insufficient_stage_budget("handlers"):
+        _defer_handler_chain(
+            "deferred-ceiling", stage_timeout=stage_budget_ceiling.get("handlers")
+        )
+    pending_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
+    if pending_vectorise and not hydrate_handlers and _insufficient_stage_budget("vectorise"):
+        status = "deferred-ceiling"
+        _record_deferred_background("vectorise", status)
+        _hint_background_budget("vectorise", stage_budget_ceiling.get("vectorise"))
+        budget_gate_reason = budget_gate_reason or status
+        run_vectorise = False
+
     if hydrate_handlers and _below_conservative_budget("handlers"):
         _record_deferred_background("handlers", "deferred-ceiling")
         hydrate_handlers = False
