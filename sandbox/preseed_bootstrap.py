@@ -1605,18 +1605,43 @@ def _bootstrap_embedder(
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     timeout_cap = apply_bootstrap_timeout_caps(stage_budget)
-    stage_wall_cap = timeout_cap if timeout_cap >= 0 else None
-    if stage_wall_cap is not None:
-        stage_wall_cap = min(stage_wall_cap, 15.0)
+    strict_timeout_candidates = [
+        stage_budget if stage_budget is not None and stage_budget > 0 else None,
+        BOOTSTRAP_EMBEDDER_TIMEOUT if BOOTSTRAP_EMBEDDER_TIMEOUT > 0 else None,
+    ]
+    strict_timeout_cap = min(
+        (candidate for candidate in strict_timeout_candidates if candidate is not None),
+        default=None,
+    )
+    effective_timeout_cap = min(
+        (
+            candidate
+            for candidate in (timeout_cap, strict_timeout_cap)
+            if candidate is not None and candidate > 0
+        ),
+        default=strict_timeout_cap,
+    )
 
     if timeout is None:
-        timeout = timeout_cap
-    elif timeout > 0:
-        timeout = min(timeout, timeout_cap)
-    elif stage_budget is not None and stage_budget >= 0:
-        timeout = min(stage_budget, timeout_cap)
-    else:
+        timeout = effective_timeout_cap
+    elif timeout > 0 and effective_timeout_cap is not None:
+        timeout = min(timeout, effective_timeout_cap)
+    elif timeout < 0 and effective_timeout_cap is not None:
+        timeout = effective_timeout_cap
+    elif timeout < 0:
         timeout = 0.0
+
+    bootstrap_timeout = stage_budget
+    if bootstrap_timeout is None:
+        bootstrap_timeout = effective_timeout_cap
+    elif bootstrap_timeout > 0 and effective_timeout_cap is not None:
+        bootstrap_timeout = min(bootstrap_timeout, effective_timeout_cap)
+
+    stage_wall_cap = (
+        effective_timeout_cap
+        if effective_timeout_cap is not None and effective_timeout_cap > 0
+        else None
+    )
 
     try:
         placeholder_candidate = _activate_bundled_fallback("bootstrap_placeholder")
@@ -1704,6 +1729,7 @@ def _bootstrap_embedder(
         reason: str, *, deferred: bool = False, schedule_background: bool = False
     ) -> None:
         nonlocal placeholder
+        global _BOOTSTRAP_EMBEDDER_DISABLED
         result["aborted"] = True
         result["deferred"] = deferred
         _signal_stop(reason)
@@ -1760,6 +1786,7 @@ def _bootstrap_embedder(
         LOGGER.warning(
             "background embedder warmup aborted", extra=abort_metadata
         )
+        _BOOTSTRAP_EMBEDDER_DISABLED = True
         _finalize_embedder_job(
             placeholder,
             placeholder_reason=reason,
@@ -1772,7 +1799,7 @@ def _bootstrap_embedder(
             result["embedder"] = get_embedder(
                 timeout=timeout,
                 stop_event=embedder_stop_event,
-                bootstrap_timeout=stage_budget,
+                bootstrap_timeout=bootstrap_timeout,
                 bootstrap_mode=True,
             )
         except Exception as exc:  # pragma: no cover - diagnostics only
@@ -1855,13 +1882,23 @@ def _bootstrap_embedder(
     thread.start()
     _BOOTSTRAP_EMBEDDER_JOB["thread"] = thread
 
-    budget_deadline = (
-        start_time + stage_budget if stage_budget is not None and stage_budget >= 0 else None
-    )
+    budget_window = stage_budget if stage_budget is not None and stage_budget >= 0 else None
+    if stage_wall_cap is not None:
+        budget_window = (
+            stage_wall_cap
+            if budget_window is None
+            else min(stage_wall_cap, budget_window)
+        )
+    budget_deadline = start_time + budget_window if budget_window is not None else None
     wall_clock_deadline = (
         start_time + stage_wall_cap if stage_wall_cap is not None else None
     )
-    max_wait_deadline = start_time + _MAX_EMBEDDER_WAIT if _MAX_EMBEDDER_WAIT >= 0 else None
+    max_wait_cap = (
+        min(_MAX_EMBEDDER_WAIT, stage_wall_cap)
+        if stage_wall_cap is not None and _MAX_EMBEDDER_WAIT >= 0
+        else _MAX_EMBEDDER_WAIT
+    )
+    max_wait_deadline = start_time + max_wait_cap if max_wait_cap >= 0 else None
 
     hard_timeout_triggered = threading.Event()
 
@@ -1893,6 +1930,17 @@ def _bootstrap_embedder(
                 "embedder_hard_timeout", deferred=True, schedule_background=True
             )
 
+    def _stop_event_watchdog() -> None:
+        if stop_event is None:
+            return
+        stop_event.wait()
+        if stop_event.is_set() and (
+            thread.is_alive() or not _BOOTSTRAP_EMBEDDER_JOB.get("result")
+        ):
+            _record_abort(
+                "bootstrap_stop_signal", deferred=False, schedule_background=False
+            )
+
     def _budget_watchdog() -> None:
         while thread.is_alive():
             now = perf_counter()
@@ -1920,6 +1968,7 @@ def _bootstrap_embedder(
     threading.Thread(
         target=_hard_timeout_watchdog, name="embedder-hard-timeout", daemon=True
     ).start()
+    threading.Thread(target=_stop_event_watchdog, name="embedder-stop", daemon=True).start()
     threading.Thread(target=_budget_watchdog, name="embedder-budget", daemon=True).start()
 
     join_window = stage_wall_cap if stage_wall_cap is not None else 0.1
