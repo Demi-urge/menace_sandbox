@@ -585,6 +585,9 @@ class VectorMetricsDB:
         self._persistence_activation_pending = bool(self._boot_stub_active)
         self._activate_on_first_write = False
         self._prometheus_ready = False
+        self._warmup_complete = threading.Event()
+        if not self._warmup_mode:
+            self._warmup_complete.set()
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -647,7 +650,7 @@ class VectorMetricsDB:
         self.router = None
         self._conn = None
 
-        if self._boot_stub_active:
+        if self._boot_stub_active or self._warmup_mode:
             self._register_readiness_hook()
             self._conn = self._stub_conn
             return
@@ -732,6 +735,18 @@ class VectorMetricsDB:
                 )
                 return
             try:
+                if self._warmup_mode and not self._warmup_complete.is_set():
+                    logger.info(
+                        "vector_metrics_db.bootstrap.persistence_deferred",
+                        extra=_timestamp_payload(
+                            None,
+                            warmup_mode=self._warmup_mode,
+                            bootstrap_fast=self.bootstrap_fast,
+                            menace_bootstrap=self._bootstrap_context,
+                            reason="warmup_in_progress",
+                        ),
+                    )
+                    self._warmup_complete.wait()
                 self.activate_persistence(reason="bootstrap_ready")
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
@@ -765,6 +780,10 @@ class VectorMetricsDB:
             return
         buffered = list(self._stub_buffer)
         self._stub_buffer.clear()
+        logger.info(
+            "vector_metrics_db.bootstrap.flush_stub_buffer",
+            extra=_timestamp_payload(None, count=len(buffered)),
+        )
         for rec in buffered:
             try:
                 self.add(rec)
@@ -786,8 +805,7 @@ class VectorMetricsDB:
             ),
         )
         if self._warmup_mode or self.bootstrap_fast:
-            self.bootstrap_fast = False
-            self._warmup_mode = False
+            self._mark_warmup_complete(reason=reason)
         self._read_only = False
         self._boot_stub_active = False
         self._lazy_mode = False
@@ -803,6 +821,42 @@ class VectorMetricsDB:
             "vector_metrics_db.bootstrap.lazy_exit.complete",
             extra=_timestamp_payload(init_start, resolved_path=str(self._resolved_path)),
         )
+
+    def _mark_warmup_complete(self, *, reason: str) -> None:
+        if self._warmup_complete.is_set():
+            return
+        self._warmup_complete.set()
+        if self._warmup_mode or self.bootstrap_fast:
+            logger.info(
+                "vector_metrics_db.bootstrap.warmup_complete",
+                extra=_timestamp_payload(
+                    None,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    reason=reason,
+                ),
+            )
+        self._warmup_mode = False
+        self.bootstrap_fast = False
+
+    def end_warmup(self, *, reason: str = "warmup_complete") -> None:
+        """Mark warmup as complete and trigger pending activation."""
+
+        if self._warmup_complete.is_set():
+            return
+        self._mark_warmup_complete(reason=reason)
+        if self._persistence_activation_pending:
+            logger.info(
+                "vector_metrics_db.bootstrap.persistence_retry",
+                extra=_timestamp_payload(
+                    None,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    stub_mode=self._boot_stub_active,
+                    reason=reason,
+                ),
+            )
+            self.activate_persistence(reason=reason)
 
     def _should_skip_logging(self) -> bool:
         if not self._boot_stub_active:
@@ -833,10 +887,11 @@ class VectorMetricsDB:
             return
         if self._pending_readiness_hook and not self._readiness_hook_registered:
             self._register_readiness_hook()
-        if (
+        warmup_guard_active = (
             (self._warmup_mode or self.bootstrap_fast or self._bootstrap_context)
-            and reason != "first_write"
-        ):
+            and not self._warmup_complete.is_set()
+        )
+        if warmup_guard_active and reason != "first_write":
             self._persistence_activation_pending = True
             logger.info(
                 "vector_metrics_db.bootstrap.persistence_pending",
@@ -846,6 +901,7 @@ class VectorMetricsDB:
                     bootstrap_fast=self.bootstrap_fast,
                     stub_mode=self._boot_stub_active,
                     menace_bootstrap=self._bootstrap_context,
+                    reason=reason,
                 ),
             )
             return
