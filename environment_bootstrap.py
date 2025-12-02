@@ -2248,6 +2248,16 @@ class EnvironmentBootstrapper:
             if warmup_budget is not None and phase_remaining is not None:
                 warmup_budget = min(warmup_budget, phase_remaining)
             base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
+            budget_guard_deferred: set[str] = set()
+
+            for stage in ("handlers", "vectorise"):
+                estimate = base_stage_cost.get(stage)
+                if estimate is None:
+                    continue
+                if warmup_budget is not None and warmup_budget < estimate:
+                    budget_guard_deferred.add(stage)
+                if phase_remaining is not None and phase_remaining < estimate:
+                    budget_guard_deferred.add(stage)
 
             def _coerce_timeout(value: object) -> float | None:
                 try:
@@ -2278,6 +2288,19 @@ class EnvironmentBootstrapper:
                 except Exception:
                     stage_timeouts = {"model": 9.0, "handlers": 9.0, "vectorise": 4.5}
             vector_state = self._phase_readiness.get("vector_warmup")
+            if budget_guard_deferred:
+                if "handlers" in budget_guard_deferred and warmup_handlers:
+                    self.logger.info(
+                        "Vector handler hydration deferred upfront due to budget guard",
+                        extra=log_record(event="vector-warmup-guard", stage="handlers"),
+                    )
+                if "vectorise" in budget_guard_deferred and run_vectorise:
+                    self.logger.info(
+                        "Vectorise warmup deferred upfront due to budget guard",
+                        extra=log_record(event="vector-warmup-guard", stage="vectorise"),
+                    )
+                warmup_handlers = False if "handlers" in budget_guard_deferred else warmup_handlers
+                run_vectorise = False if "vectorise" in budget_guard_deferred else run_vectorise
             persisted_deferred = (
                 set(vector_state.get("deferred", ()))
                 if isinstance(vector_state, Mapping)
@@ -2294,6 +2317,8 @@ class EnvironmentBootstrapper:
             background_status: str | None = "pending" if background_pending else None
             pending_background_stages: set[str] = set()
             background_ticket_only = False
+            if budget_guard_deferred:
+                pending_background_stages |= budget_guard_deferred
             if raw == "":
                 warmup_probe = True
                 warmup_lite = True
@@ -2354,6 +2379,7 @@ class EnvironmentBootstrapper:
                 if run_vectorise:
                     deferred.add("vectorise")
                 deferred |= persisted_deferred
+                deferred |= budget_guard_deferred
                 self.logger.info(
                     "Vector warmup deferred due to insufficient remaining budget (%.2fs)",
                     min_remaining_budget,
@@ -2431,7 +2457,7 @@ class EnvironmentBootstrapper:
                     and stage_budget_cap is not None
                     and heavy_budget_needed > stage_budget_cap
                 )
-                deferred_stages: set[str] = set(persisted_deferred)
+                deferred_stages: set[str] = set(persisted_deferred) | set(budget_guard_deferred)
                 if deferred_stages:
                     defer_heavy = True
 
@@ -2452,7 +2478,7 @@ class EnvironmentBootstrapper:
                         background_status = background_status or "pending"
                         pending_background_stages |= set(heavy_to_schedule)
                     return set(heavy_to_schedule)
-                budget_deferred = False
+                budget_deferred = bool(budget_guard_deferred)
                 if defer_heavy:
                     if warmup_handlers:
                         deferred_stages.add("handlers")

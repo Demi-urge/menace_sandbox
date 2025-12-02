@@ -464,9 +464,10 @@ def warmup_vector_service(
         run_vectorise = False
 
     summary: dict[str, str] = {"bootstrap": summary_flag, "warmup_lite": str(warmup_lite)}
-    deferred = set(deferred_stages or ()) | deferred_bootstrap | lite_deferrals
+    explicit_deferred: set[str] = set(deferred_stages or ())
+    deferred = explicit_deferred | deferred_bootstrap | lite_deferrals
     memoised_results = dict(_WARMUP_STAGE_MEMO)
-    prior_deferred = set(deferred_stages or ()) | {
+    prior_deferred = explicit_deferred | {
         stage for stage, status in memoised_results.items() if status.startswith("deferred")
     }
 
@@ -506,12 +507,19 @@ def warmup_vector_service(
 
     def _record_background(stage: str, status: str) -> None:
         _record(stage, status)
-        if stage in prior_deferred:
+        if stage in prior_deferred and stage not in explicit_deferred:
             return
         background_warmup.add(stage)
         background_candidates.add(stage)
 
     def _reuse(stage: str) -> bool:
+        if stage in explicit_deferred and not force_heavy:
+            status = memoised_results.get(stage, "deferred-explicit")
+            if not isinstance(status, str) or not status.startswith("deferred"):
+                status = "deferred-explicit"
+            _record_background(stage, status)
+            memoised_results[stage] = status
+            return True
         status = memoised_results.get(stage)
         if status is None:
             return False
