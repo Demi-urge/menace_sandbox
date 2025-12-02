@@ -57,6 +57,7 @@ def ensure_embedding_model(
     warmup: bool = False,
     stop_event: threading.Event | None = None,
     budget_check: Callable[[threading.Event | None], None] | None = None,
+    download_timeout: float | None = None,
 ) -> Path | None:
     """Ensure the bundled embedding model archive exists.
 
@@ -105,7 +106,12 @@ def ensure_embedding_model(
             from . import download_model as _dm
 
             _check_cancelled("fetch")
-            _dm.bundle(dest, stop_event=stop_event, budget_check=budget_check)
+            _dm.bundle(
+                dest,
+                stop_event=stop_event,
+                budget_check=budget_check,
+                timeout=download_timeout,
+            )
             _MODEL_READY = True
             return dest
         except Exception as exc:  # pragma: no cover - best effort during warmup
@@ -784,6 +790,7 @@ def warmup_vector_service(
                     budget_check=lambda evt: _cooperative_budget_check(
                         "model", evt
                     ),
+                    download_timeout=model_timeout,
                 ),
                 timeout=model_timeout,
             )

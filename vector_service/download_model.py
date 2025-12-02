@@ -11,10 +11,11 @@ python -m vector_service.download_model
 
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
 import tarfile
 import tempfile
+import time
+from pathlib import Path
 
 from huggingface_hub import snapshot_download
 from dynamic_path_router import resolve_path
@@ -33,10 +34,14 @@ MODEL_ARCHIVE = resolve_path("vector_service/minilm") / "tiny-distilroberta-base
 
 
 def _check_cancelled(
-    *, stop_event, budget_check
+    *, stop_event, budget_check, deadline: float | None
 ) -> None:  # pragma: no cover - trivial helper
     if stop_event is not None and stop_event.is_set():
         raise TimeoutError("embedding model download cancelled")
+    if deadline is not None and time.monotonic() >= deadline:
+        if stop_event is not None:
+            stop_event.set()
+        raise TimeoutError("embedding model download cancelled (timeout)")
     if budget_check is not None:
         budget_check(stop_event)
 
@@ -46,20 +51,29 @@ def bundle(
     *,
     stop_event=None,
     budget_check=None,
+    timeout: float | None = None,
 ) -> None:
     """Download ``MODEL_ID`` and write a compressed archive to ``dest``."""
 
-    _check_cancelled(stop_event=stop_event, budget_check=budget_check)
-    model_dir = Path(snapshot_download(MODEL_ID))
+    deadline = time.monotonic() + timeout if timeout is not None else None
+
+    def _check() -> None:
+        _check_cancelled(stop_event=stop_event, budget_check=budget_check, deadline=deadline)
+
+    def _progress_callback(*_args: object) -> None:
+        _check()
+
+    _check()
+    model_dir = Path(snapshot_download(MODEL_ID, progress_callback=_progress_callback))
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         for name in FILES:
-            _check_cancelled(stop_event=stop_event, budget_check=budget_check)
+            _check()
             shutil.copy(model_dir / name, tmp / name)
         dest.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(dest, "w:xz") as tar:
             for name in FILES:
-                _check_cancelled(stop_event=stop_event, budget_check=budget_check)
+                _check()
                 tar.add(tmp / name, arcname=name)
 
 
