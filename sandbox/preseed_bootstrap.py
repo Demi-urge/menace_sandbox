@@ -3344,6 +3344,7 @@ def initialize_bootstrap_context(
             if candidate is not None and candidate > 0
         ]
         strict_timebox = min(timebox_candidates) if timebox_candidates else None
+        default_missing_budget_timebox = 12.0
         stage_guard_timebox = None
         if embedder_stage_budget_hint is not None:
             stage_guard_timebox = max(5.0, min(embedder_stage_budget_hint, 10.0))
@@ -3363,6 +3364,8 @@ def initialize_bootstrap_context(
             strict_timebox = (
                 stage_guard_timebox if strict_timebox is None else min(strict_timebox, stage_guard_timebox)
             )
+        if budget_window_missing and strict_timebox is None:
+            strict_timebox = default_missing_budget_timebox
         warmup_summary: dict[str, Any] | None = None
         minimum_presence_window = 5.0
         if (
@@ -3886,6 +3889,46 @@ def initialize_bootstrap_context(
                 job_snapshot["background_future"] = background_future
                 job_snapshot["background_enqueued"] = True
             return job_snapshot
+
+        if budget_window_missing and embedder_stage_budget is None and embedder_timeout is None:
+            missing_budget_reason = presence_reason or "embedder_budget_unavailable"
+            warmup_summary = warmup_summary or {}
+            warmup_summary.update(
+                {
+                    "deferred": True,
+                    "deferred_reason": missing_budget_reason,
+                    "deferral_reason": missing_budget_reason,
+                    "strict_timebox": strict_timebox,
+                }
+            )
+            stage_controller.defer_step("embedder_preload", reason=missing_budget_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vectorizer_preload", reason=missing_budget_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=missing_budget_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{missing_budget_reason}"
+            )
+            job_snapshot = _schedule_background_preload(
+                missing_budget_reason, strict_timebox=strict_timebox
+            )
+            job_snapshot.update(
+                {
+                    "presence_available": False,
+                    "presence_probe_timeout": False,
+                    "budget_guarded": True,
+                    "presence_only": True,
+                    "budget_window_missing": True,
+                    "forced_background": full_preload_requested,
+                    "deferral_reason": missing_budget_reason,
+                }
+            )
+            if warmup_summary:
+                job_snapshot.setdefault("warmup_summary", warmup_summary)
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            _set_component_state("vector_seeding", "deferred")
+            stage_controller.complete_step("embedder_preload", 0.0)
+            return _BOOTSTRAP_PLACEHOLDER
 
         budget_shortfall = any(
             candidate is not None
