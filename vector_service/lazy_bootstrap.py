@@ -29,6 +29,8 @@ except Exception:  # pragma: no cover - fallback when run standalone
 
 _MODEL_LOCK = threading.Lock()
 _MODEL_READY = False
+_MODEL_BACKGROUND_LOCK = threading.Lock()
+_MODEL_BACKGROUND_THREAD: threading.Thread | None = None
 _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
 _WARMUP_STAGE_MEMO: dict[str, str] = {}
@@ -52,6 +54,32 @@ VECTOR_WARMUP_STAGE_TOTAL = getattr(
         ["stage", "status"],
     ),
 )
+
+
+def _update_warmup_stage_cache(
+    stage: str,
+    status: str,
+    logger: logging.Logger,
+    *,
+    meta: Mapping[str, object] | None = None,
+    emit_metric: bool = True,
+) -> None:
+    meta_payload = _WARMUP_STAGE_META.setdefault(stage, {})
+    if meta:
+        meta_payload.update(meta)
+    _WARMUP_STAGE_MEMO[stage] = status
+    try:
+        _persist_warmup_cache(logger)
+    except Exception:  # pragma: no cover - advisory cache
+        logger.debug("Failed persisting warmup cache for %s", stage, exc_info=True)
+
+    if not emit_metric:
+        return
+
+    try:
+        VECTOR_WARMUP_STAGE_TOTAL.labels(stage, status).inc()
+    except Exception:  # pragma: no cover - metrics best effort
+        logger.debug("failed emitting vector warmup metric", exc_info=True)
 
 
 def _coerce_timeout(value: object) -> float | None:
@@ -143,6 +171,73 @@ def _model_bundle_path() -> Path:
     return resolve_path("vector_service/minilm/tiny-distilroberta-base.tar.xz")
 
 
+def _note_model_background(state: str, logger: logging.Logger, *, emit_metric: bool = False) -> None:
+    _update_warmup_stage_cache(
+        "model",
+        _WARMUP_STAGE_MEMO.get("model", "deferred"),
+        logger,
+        meta={"background_state": state, "background_updated_at": time.time()},
+        emit_metric=emit_metric,
+    )
+
+
+def _queue_background_model_download(
+    logger: logging.Logger, *, download_timeout: float | None = None
+) -> None:
+    global _MODEL_BACKGROUND_THREAD
+
+    with _MODEL_BACKGROUND_LOCK:
+        if _MODEL_READY:
+            return
+        if _model_bundle_path().exists():
+            _MODEL_READY = True
+            _update_warmup_stage_cache(
+                "model",
+                "ready",
+                logger,
+                meta={"background_state": "complete"},
+            )
+            return
+
+        if _MODEL_BACKGROUND_THREAD is not None and _MODEL_BACKGROUND_THREAD.is_alive():
+            return
+
+        _note_model_background("queued", logger)
+
+        def _background_download() -> None:
+            global _MODEL_BACKGROUND_THREAD
+            _note_model_background("running", logger)
+            try:
+                path = ensure_embedding_model(
+                    logger=logger,
+                    warmup=True,
+                    warmup_lite=False,
+                    stop_event=None,
+                    budget_check=None,
+                    download_timeout=download_timeout,
+                )
+                if path:
+                    _MODEL_READY = True
+                    _update_warmup_stage_cache(
+                        "model",
+                        "ready",
+                        logger,
+                        meta={"background_state": "complete"},
+                    )
+                    return
+            except Exception:  # pragma: no cover - background best effort
+                logger.debug("background embedding model download failed", exc_info=True)
+                _note_model_background("failed", logger)
+            finally:
+                with _MODEL_BACKGROUND_LOCK:
+                    _MODEL_BACKGROUND_THREAD = None
+
+        _MODEL_BACKGROUND_THREAD = threading.Thread(
+            target=_background_download, name="vector-model-warmup", daemon=True
+        )
+        _MODEL_BACKGROUND_THREAD.start()
+
+
 def ensure_embedding_model(
     *,
     logger: logging.Logger | None = None,
@@ -214,6 +309,7 @@ def ensure_embedding_model(
             raise error
         status = "deferred-timebox" if getattr(error, "_warmup_timebox", False) else "deferred-budget"
         timeout_hint = getattr(error, "_timebox_timeout", None)
+        _queue_background_model_download(log, download_timeout=effective_timeout)
         log.info(
             "embedding model warmup deferred after cancellation",
             extra={
@@ -236,6 +332,9 @@ def ensure_embedding_model(
         dest = _model_bundle_path()
         if dest.exists():
             _MODEL_READY = True
+            _update_warmup_stage_cache(
+                "model", "ready", log, meta={"background_state": "complete"}
+            )
             return _result(dest, "ready")
 
         if warmup_lite:
@@ -271,6 +370,9 @@ def ensure_embedding_model(
                 timeout=effective_timeout,
             )
             _MODEL_READY = True
+            _update_warmup_stage_cache(
+                "model", "ready", log, meta={"background_state": "complete"}
+            )
             return _result(dest, "ready")
         except TimeoutError as exc:
             deferred = _handle_timeout(_timebox_error(str(exc), effective_timeout))
@@ -518,6 +620,7 @@ def warmup_vector_service(
     explicit_deferred: set[str] = set(deferred_stages or ())
     deferred = explicit_deferred | deferred_bootstrap | lite_deferrals
     memoised_results = dict(_WARMUP_STAGE_MEMO)
+    model_background_state = _WARMUP_STAGE_META.get("model", {}).get("background_state")
     prior_deferred = explicit_deferred | {
         stage for stage, status in memoised_results.items() if status.startswith("deferred")
     }
@@ -534,6 +637,22 @@ def warmup_vector_service(
     if deferred:
         background_warmup.update(deferred)
         background_candidates.update(deferred)
+
+    if (
+        not force_heavy
+        and (
+            model_background_state in {"queued", "running"}
+            or memoised_results.get("model") in {"deferred-budget", "deferred-timebox"}
+        )
+    ):
+        if download_model:
+            log.info(
+                "Embedding model download already queued; falling back to probe-only warmup",
+                extra={"event": "vector-warmup", "model_status": model_background_state},
+            )
+        model_probe_only = True
+        probe_model = True
+        download_model = False
 
     def _record(stage: str, status: str) -> None:
         current_status = summary.get(stage)
@@ -552,19 +671,8 @@ def warmup_vector_service(
         summary[stage] = status
         if status.startswith("deferred"):
             recorded_deferred.add(stage)
-        now = time.time()
-        meta = _WARMUP_STAGE_META.setdefault(stage, {})
-        meta.setdefault("recorded_at", now)
-        meta["updated_at"] = now
-        meta["status"] = status
-        meta["source_pid"] = os.getpid()
         memoised_results[stage] = status
-        _WARMUP_STAGE_MEMO[stage] = status
-        _persist_warmup_cache(log)
-        try:
-            VECTOR_WARMUP_STAGE_TOTAL.labels(stage, status).inc()
-        except Exception:  # pragma: no cover - metrics best effort
-            log.debug("failed emitting vector warmup metric", exc_info=True)
+        _update_warmup_stage_cache(stage, status, log)
 
     def _record_deferred(stage: str, status: str) -> None:
         _record(stage, status)
@@ -581,6 +689,8 @@ def warmup_vector_service(
         _record(stage, status)
         if stage in prior_deferred and stage not in explicit_deferred:
             return
+        if stage == "model" and status in {"deferred-budget", "deferred-timebox"}:
+            _queue_background_model_download(log, download_timeout=_effective_timeout(stage))
         background_warmup.add(stage)
         background_candidates.add(stage)
 
