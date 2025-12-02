@@ -3187,16 +3187,40 @@ def initialize_bootstrap_context(
             or embedder_timeout
             or BOOTSTRAP_EMBEDDER_TIMEOUT
         )
-        full_preload_requested = (
-            force_vector_warmup or force_embedder_preload or full_embedder_preload
-        )
-        embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
-        fast_or_lite = bootstrap_fast_context or warmup_lite_context
-        gate_constrained = bool(embedder_gate.get("contention"))
         budget_window_missing = not (
             (embedder_stage_budget is not None and embedder_stage_budget > 0)
             and (embedder_timeout is not None and embedder_timeout > 0)
         )
+        presence_only = False
+        presence_reason = None
+        budget_guarded = False
+        guard_blocks_preload = False
+        if bootstrap_fast_context:
+            presence_only = True
+            budget_guarded = True
+            guard_blocks_preload = True
+            presence_reason = "embedder_presence_bootstrap_fast_guard"
+        elif warmup_lite_context:
+            presence_only = True
+            budget_guarded = True
+            guard_blocks_preload = True
+            presence_reason = "embedder_presence_warmup_lite_guard"
+        if budget_window_missing:
+            presence_only = True
+            budget_guarded = True
+            guard_blocks_preload = True
+            presence_reason = presence_reason or "embedder_budget_unavailable"
+        guard_presence_only = presence_only
+        guard_presence_reason = presence_reason
+        guard_budget_guarded = budget_guarded
+        full_preload_requested = False
+        if not guard_blocks_preload:
+            full_preload_requested = (
+                force_vector_warmup or force_embedder_preload or full_embedder_preload
+            )
+        embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
+        fast_or_lite = bootstrap_fast_context or warmup_lite_context
+        gate_constrained = bool(embedder_gate.get("contention"))
         presence_only, presence_reason, budget_guarded = _embedder_presence_policy(
             gate_constrained=gate_constrained,
             stage_budget=embedder_stage_budget,
@@ -3207,6 +3231,9 @@ def initialize_bootstrap_context(
             bootstrap_fast_context=bootstrap_fast_context,
             warmup_lite_context=warmup_lite_context,
         )
+        presence_only = presence_only or guard_presence_only
+        budget_guarded = budget_guarded or guard_budget_guarded
+        presence_reason = presence_reason or guard_presence_reason
         non_blocking_presence_probe = False
         fast_presence_reason = None
         if bootstrap_fast_context:
@@ -3249,6 +3276,13 @@ def initialize_bootstrap_context(
             if candidate is not None and candidate > 0
         ]
         strict_timebox = min(timebox_candidates) if timebox_candidates else None
+        stage_guard_timebox = None
+        if embedder_stage_budget_hint is not None:
+            stage_guard_timebox = max(5.0, min(embedder_stage_budget_hint, 10.0))
+        elif embedder_stage_budget is not None:
+            stage_guard_timebox = max(5.0, min(embedder_stage_budget, 10.0))
+        elif bootstrap_fast_context or warmup_lite_context or budget_window_missing:
+            stage_guard_timebox = 10.0
         hard_cap_candidates = [
             candidate
             for candidate in (embedder_stage_budget, embedder_timeout)
@@ -3257,6 +3291,10 @@ def initialize_bootstrap_context(
         warmup_hard_cap = min(hard_cap_candidates) if hard_cap_candidates else None
         if warmup_hard_cap is not None:
             strict_timebox = warmup_hard_cap if strict_timebox is None else min(strict_timebox, warmup_hard_cap)
+        if stage_guard_timebox is not None:
+            strict_timebox = (
+                stage_guard_timebox if strict_timebox is None else min(strict_timebox, stage_guard_timebox)
+            )
         warmup_summary: dict[str, Any] | None = None
         minimum_presence_window = 5.0
         if (
@@ -3276,6 +3314,7 @@ def initialize_bootstrap_context(
             forced_background: bool = False,
             strict_timebox: float | None = None,
             non_blocking_probe: bool = False,
+            resume_download: bool | None = None,
         ) -> Any:
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
@@ -3291,6 +3330,7 @@ def initialize_bootstrap_context(
                     "budget_window_missing": budget_window_missing,
                     "forced_background": forced_background,
                     "strict_timebox": strict_timebox,
+                    "resume_download": resume_download,
                     "event": "embedder-preload-presence-only",
                 },
             )
@@ -3400,6 +3440,7 @@ def initialize_bootstrap_context(
                     "deferral_reason": reason,
                     "strict_timebox": strict_timebox,
                     "background_full_warmup": True,
+                    "resume_embedder_download": bool(resume_download),
                 }
             )
 
@@ -3731,6 +3772,13 @@ def initialize_bootstrap_context(
                 )
             if bootstrap_deadline is not None:
                 deadlines.append((bootstrap_deadline, "embedder_bootstrap_deadline"))
+            if stage_guard_timebox is not None:
+                deadlines.append(
+                    (
+                        warmup_started + stage_guard_timebox,
+                        "embedder_stage_timebox_guard",
+                    )
+                )
 
             if deadlines:
 
@@ -3809,6 +3857,10 @@ def initialize_bootstrap_context(
             warmup_summary.setdefault("deferred_reason", warmup_timeout_reason)
             warmup_summary.setdefault("strict_timebox", strict_timebox)
             warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+            resume_download = warmup_timeout_reason in {
+                "embedder_stage_timebox_guard",
+                "embedder_preload_timebox_expired",
+            }
             warmup_deferral_reason = (
                 warmup_timeout_reason
                 if warmup_timeout_reason != "embedder_preload_timebox_expired"
@@ -3821,6 +3873,7 @@ def initialize_bootstrap_context(
                 forced_background=full_preload_requested,
                 strict_timebox=warmup_hard_cap or strict_timebox,
                 non_blocking_probe=non_blocking_presence_probe,
+                resume_download=resume_download,
             )
 
         _BOOTSTRAP_EMBEDDER_JOB = (_BOOTSTRAP_EMBEDDER_JOB or {}) | {
