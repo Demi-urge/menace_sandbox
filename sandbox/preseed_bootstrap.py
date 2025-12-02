@@ -2768,6 +2768,15 @@ def initialize_bootstrap_context(
             bootstrap_fast_context=bootstrap_fast_context,
             warmup_lite_context=warmup_lite_context,
         )
+        fast_presence_reason = None
+        if bootstrap_fast_context:
+            fast_presence_reason = "embedder_presence_bootstrap_fast"
+        elif warmup_lite_context:
+            fast_presence_reason = "embedder_presence_warmup_lite"
+        if fast_presence_reason:
+            presence_only = True
+            budget_guarded = True
+            presence_reason = fast_presence_reason
         if budget_window_missing and not force_full_preload:
             presence_only = True
             presence_reason = "embedder_budget_unavailable"
@@ -2834,6 +2843,48 @@ def initialize_bootstrap_context(
             for candidate in (embedder_stage_budget, embedder_timeout, embedder_warmup_cap)
         )
 
+        exhausted_budget = any(
+            candidate is not None and candidate <= 0
+            for candidate in (embedder_stage_budget, embedder_timeout)
+        )
+
+        if exhausted_budget:
+            exhausted_reason = presence_reason or "embedder_budget_exhausted"
+            LOGGER.info(
+                "embedder preload budget exhausted; deferring to background",
+                extra={
+                    "stage_budget": embedder_stage_budget,
+                    "timeout": embedder_timeout,
+                    "force_preload": force_full_preload,
+                    "bootstrap_fast": bootstrap_fast_context,
+                    "warmup_lite": warmup_lite_context,
+                    "event": "embedder-preload-deferred-budget-exhausted",
+                },
+            )
+            stage_controller.defer_step("embedder_preload", reason=exhausted_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vectorizer_preload", reason=exhausted_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=exhausted_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{exhausted_reason}"
+            )
+            job_snapshot = _schedule_background_preload(exhausted_reason)
+            job_snapshot.update(
+                {
+                    "presence_available": False,
+                    "presence_probe_timeout": False,
+                    "budget_guarded": True,
+                    "presence_only": True,
+                    "budget_window_missing": budget_window_missing,
+                    "forced_background": force_full_preload,
+                }
+            )
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            _set_component_state("vector_seeding", "deferred")
+            stage_controller.complete_step("embedder_preload", 0.0)
+            return _BOOTSTRAP_PLACEHOLDER
+
         if budget_shortfall and not force_full_preload:
             shortfall_reason = "embedder_preload_budget_shortfall"
             LOGGER.info(
@@ -2882,6 +2933,7 @@ def initialize_bootstrap_context(
                     "budget_guarded": budget_guarded,
                     "presence_reason": presence_reason,
                     "budget_window_missing": budget_window_missing,
+                    "forced_background": force_full_preload,
                     "event": "embedder-preload-presence-only",
                 },
             )
