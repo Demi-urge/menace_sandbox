@@ -371,9 +371,8 @@ class VectorMetricsDB:
         )
         if self._bootstrap_context and warmup is None:
             resolved_warmup = True
-        self._warmup_override_disabled = bool(
-            warmup is False and not self._bootstrap_context
-        )
+        explicit_bootstrap_stub_opt_out = warmup is False
+        self._warmup_override_disabled = bool(explicit_bootstrap_stub_opt_out)
         self.bootstrap_fast = resolved_bootstrap_fast
         self._warmup_mode = (
             False if self._warmup_override_disabled else resolved_warmup
@@ -386,14 +385,14 @@ class VectorMetricsDB:
             or self._bootstrap_timers_active
         )
         self._lazy_mode = True
-        self._boot_stub_active = (
-            False
-            if self._warmup_override_disabled
-            else bool(
+        self._boot_stub_active = bool(
+            not explicit_bootstrap_stub_opt_out
+            and (
                 self._bootstrap_context
                 or self.bootstrap_fast
                 or self._warmup_mode
                 or self._bootstrap_timers_active
+                or self._env_warmup_opt_in
             )
         )
         self._lazy_primed = self._boot_stub_active
@@ -412,6 +411,7 @@ class VectorMetricsDB:
         self._persistence_ready_logged = False
         self._stub_usage_logged = False
         self._persistence_activated = not self._boot_stub_active
+        self._activate_on_first_write = False
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -686,6 +686,11 @@ class VectorMetricsDB:
         _ = self.conn
         return self
 
+    def activate_on_first_write(self) -> None:
+        """Defer persistence activation until the first metric is recorded."""
+
+        self._activate_on_first_write = True
+
     def planned_path(self) -> Path:
         """Return the resolved database path without touching the filesystem."""
 
@@ -748,23 +753,31 @@ class VectorMetricsDB:
 
         return str(Path(path).expanduser())
 
-    def ready_probe(self) -> str:
-        """Return the resolved database path without any I/O."""
-        if self._boot_stub_active and not self._ready_probe_logged:
+    def readiness_probe(self) -> dict[str, Any]:
+        """Log and return bootstrap readiness without touching disk."""
+
+        status = {
+            "configured_path": str(Path(self._configured_path).expanduser()),
+            "stub_mode": self._boot_stub_active,
+            "warmup_mode": self._warmup_mode,
+            "bootstrap_fast": self.bootstrap_fast,
+            "bootstrap_deadlines": self._bootstrap_timers_active,
+            "env_bootstrap_requested": self._bootstrap_env_requested,
+            "menace_bootstrap": self._menace_bootstrap_env,
+        }
+        if not self._ready_probe_logged:
             self._ready_probe_logged = True
             logger.info(
-                "vector_metrics_db.bootstrap.persistence_pending",
-                extra={
-                    "bootstrap_fast": self.bootstrap_fast,
-                    "warmup_mode": self._warmup_mode,
-                    "configured_path": str(self._configured_path),
-                    "bootstrap_env": self._menace_bootstrap_env,
-                    "stub_mode": True,
-                    "env_bootstrap_requested": self._bootstrap_env_requested,
-                },
+                "vector_metrics_db.bootstrap.readiness_probe",
+                extra=_timestamp_payload(None, **status),
             )
+        return status
+
+    def ready_probe(self) -> str:
+        """Return the resolved database path without any I/O."""
+        status = self.readiness_probe()
         if self._boot_stub_active and self._resolved_path is None:
-            return str(Path(self._configured_path).expanduser())
+            return status["configured_path"]
         if self._resolved_path is None or self._default_path is None:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path,
@@ -1414,6 +1427,9 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def add(self, rec: VectorMetric) -> None:
+        if self._boot_stub_active and self._activate_on_first_write:
+            self.activate_persistence(reason="first_write")
+            self._activate_on_first_write = False
         if self._boot_stub_active:
             self._buffer_stub_metric(rec)
         if self._should_skip_logging():
