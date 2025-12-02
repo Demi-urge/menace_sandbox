@@ -96,9 +96,13 @@ except Exception:  # pragma: no cover - fallback for top-level imports
     from alert_dispatcher import send_discord_alert, CONFIG as ALERT_CONFIG  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from .vector_metrics_db import VectorMetricsDB
+    from .vector_metrics_db import (
+        VectorMetricsDB,
+        get_bootstrap_vector_metrics_db,
+    )
 except Exception:  # pragma: no cover - fallback when module unavailable
     VectorMetricsDB = None  # type: ignore
+    get_bootstrap_vector_metrics_db = None  # type: ignore
 
 from chunking import split_into_chunks
 from analysis.semantic_diff_filter import find_semantic_risks
@@ -1623,9 +1627,14 @@ class PatchHistoryDB:
         )
 
     def _init_vec_db(self) -> VectorMetricsDB | None:
-        if VectorMetricsDB is None:
+        if VectorMetricsDB is None and get_bootstrap_vector_metrics_db is None:
             return None
         try:
+            if get_bootstrap_vector_metrics_db is not None:
+                return get_bootstrap_vector_metrics_db(
+                    bootstrap_fast=self._bootstrap_fast,
+                    warmup=self._bootstrap_fast,
+                )
             return VectorMetricsDB(
                 bootstrap_fast=self._bootstrap_fast, warmup=self._bootstrap_fast
             )
