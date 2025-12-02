@@ -637,3 +637,56 @@ def test_bundled_fallback_uses_stub_when_archive_missing(monkeypatch):
     assert isinstance(vectors, list)
     assert vectors[0] == [0.0] * governed_embeddings._STUB_EMBEDDER_DIMENSION
     assert governed_embeddings._EMBEDDER_INIT_EVENT.is_set()
+
+
+def test_bootstrap_placeholder_memoizes_until_rearmed(monkeypatch, caplog):
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    governed_embeddings.rearm_bootstrap_embedder_placeholder()
+
+    calls: dict[str, object] = {}
+
+    def fake_initialise_embedder_with_timeout(**kwargs):
+        calls["initialise_called"] = True
+        governed_embeddings._EMBEDDER = "ready"
+        return "ready"
+
+    monkeypatch.setattr(
+        governed_embeddings,
+        "_initialise_embedder_with_timeout",
+        fake_initialise_embedder_with_timeout,
+    )
+    monkeypatch.setattr(governed_embeddings, "_embedder_lock", lambda: None)
+
+    stop_event = threading.Event()
+    stop_event.set()
+
+    with caplog.at_level(logging.INFO):
+        placeholder = governed_embeddings.get_embedder(stop_event=stop_event, bootstrap_mode=True)
+
+    assert getattr(placeholder, "_placeholder_reason") == "bootstrap_budget_exhausted"
+    assert any("warmup deferred" in record.msg for record in caplog.records)
+    assert "initialise_called" not in calls
+
+    caplog.clear()
+
+    follow_up_event = threading.Event()
+    with caplog.at_level(logging.DEBUG):
+        repeat_placeholder = governed_embeddings.get_embedder(
+            stop_event=follow_up_event, bootstrap_mode=True
+        )
+
+    assert repeat_placeholder is placeholder
+    assert "initialise_called" not in calls
+    assert any("memoized bootstrap embedder placeholder" in record.msg for record in caplog.records)
+
+    governed_embeddings.rearm_bootstrap_embedder_placeholder()
+
+    fresh_event = threading.Event()
+    ready_embedder = governed_embeddings.get_embedder(stop_event=fresh_event, bootstrap_mode=True)
+
+    assert ready_embedder == "ready"
+    assert calls.get("initialise_called") is True
+
+    governed_embeddings._EMBEDDER = None

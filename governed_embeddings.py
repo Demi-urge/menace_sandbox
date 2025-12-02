@@ -214,6 +214,8 @@ _EMBEDDER_TIMEOUT_LOGGED = False
 _EMBEDDER_WAIT_CAPPED = False
 _EMBEDDER_SOFT_WAIT_LOGGED = False
 _EMBEDDER_TIMEOUT_REACHED = False
+_EMBEDDER_BOOTSTRAP_DEFERRED = False
+_EMBEDDER_BOOTSTRAP_PLACEHOLDER: Any | None = None
 _FALLBACK_ANNOUNCED = False
 _HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
 _BUNDLED_EMBEDDER: Any | None = None
@@ -471,6 +473,24 @@ def _build_stub_embedder() -> Any:
             return self._dimension
 
     return _StubSentenceTransformer(_STUB_EMBEDDER_DIMENSION)
+
+
+def _record_bootstrap_placeholder(reason: str) -> Any:
+    """Memoize and return a placeholder embedder for bootstrap callers."""
+
+    global _EMBEDDER_BOOTSTRAP_DEFERRED, _EMBEDDER_BOOTSTRAP_PLACEHOLDER
+
+    if _EMBEDDER_BOOTSTRAP_PLACEHOLDER is None:
+        _EMBEDDER_BOOTSTRAP_PLACEHOLDER = _build_stub_embedder()
+    setattr(_EMBEDDER_BOOTSTRAP_PLACEHOLDER, "_placeholder_reason", reason)
+    if not _EMBEDDER_BOOTSTRAP_DEFERRED:
+        logger.info(
+            "bootstrap embedder warmup deferred; returning placeholder",
+            extra={"model": _MODEL_NAME, "reason": reason},
+        )
+        _trace("bootstrap.deferred", reason=reason)
+    _EMBEDDER_BOOTSTRAP_DEFERRED = True
+    return _EMBEDDER_BOOTSTRAP_PLACEHOLDER
 
 
 def _load_bundled_embedder() -> Any | None:
@@ -2033,6 +2053,13 @@ def get_embedder(
     if _EMBEDDER is not None:
         return _EMBEDDER
 
+    if bootstrap_mode and _EMBEDDER_BOOTSTRAP_DEFERRED and _EMBEDDER_BOOTSTRAP_PLACEHOLDER is not None:
+        logger.debug(
+            "returning memoized bootstrap embedder placeholder",
+            extra={"model": _MODEL_NAME},
+        )
+        return _EMBEDDER_BOOTSTRAP_PLACEHOLDER
+
     requester = _identify_embedder_requester()
     wait_override = timeout
     bootstrap_wait_cap: float | None = None
@@ -2070,11 +2097,9 @@ def get_embedder(
         ).start()
 
     if bootstrap_mode and stop_event is not None and stop_event.is_set():
-        if _activate_bundled_fallback("bootstrap_cancelled") and _EMBEDDER is not None:
-            return _EMBEDDER
-        placeholder = _build_stub_embedder()
-        setattr(placeholder, "_placeholder_reason", "bootstrap_cancelled")
-        return placeholder
+        reason = "bootstrap_budget_exhausted" if bootstrap_deadline is not None else "bootstrap_cancelled"
+        return _record_bootstrap_placeholder(reason)
+
     lock = _embedder_lock()
     placeholder_embedder = None
     lock_timeout = LOCK_TIMEOUT
@@ -2246,6 +2271,15 @@ def cancel_embedder_initialisation(
     _cancel_embedder_initialisation(stop_event, reason=reason, join_timeout=join_timeout)
 
 
+def rearm_bootstrap_embedder_placeholder() -> None:
+    """Clear any bootstrap placeholder memo and allow initialisation attempts."""
+
+    global _EMBEDDER_BOOTSTRAP_DEFERRED, _EMBEDDER_BOOTSTRAP_PLACEHOLDER
+
+    _EMBEDDER_BOOTSTRAP_DEFERRED = False
+    _EMBEDDER_BOOTSTRAP_PLACEHOLDER = None
+
+
 __all__ = [
     "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
     "canonical_model_id",
@@ -2253,6 +2287,7 @@ __all__ = [
     "governed_embed",
     "get_embedder",
     "cancel_embedder_initialisation",
+    "rearm_bootstrap_embedder_placeholder",
     "disable_embedder",
     "embedder_diagnostics",
     "initialise_sentence_transformer",
