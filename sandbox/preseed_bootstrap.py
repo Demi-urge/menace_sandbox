@@ -1550,10 +1550,12 @@ def _bootstrap_embedder(
     stage_budget: float | None = None,
     budget: SharedTimeoutCoordinator | None = None,
     budget_label: str | None = None,
+    presence_probe: bool = False,
 ) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
     global _BOOTSTRAP_EMBEDDER_DISABLED, _BOOTSTRAP_EMBEDDER_STARTED, _BOOTSTRAP_EMBEDDER_ATTEMPTED
+    global _BOOTSTRAP_EMBEDDER_JOB
 
     if timeout <= 0:
         LOGGER.info("bootstrap embedder timeout disabled; skipping embedder preload")
@@ -1593,8 +1595,6 @@ def _bootstrap_embedder(
     except Exception:  # pragma: no cover - optional dependency
         LOGGER.debug("governed_embeddings unavailable; skipping embedder bootstrap", exc_info=True)
         return
-
-    global _BOOTSTRAP_EMBEDDER_JOB
 
     if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("thread"):
         existing = _BOOTSTRAP_EMBEDDER_JOB["thread"]
@@ -1651,6 +1651,12 @@ def _bootstrap_embedder(
     placeholder = placeholder_candidate or _BOOTSTRAP_PLACEHOLDER
     _BOOTSTRAP_EMBEDDER_STARTED = True
     start_time = perf_counter()
+    presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
+    if presence_cap < 0:
+        presence_cap = 0.0
+    presence_deadline = (
+        start_time + presence_cap if presence_cap and presence_cap > 0 else None
+    )
     _BOOTSTRAP_EMBEDDER_JOB = {
         "thread": None,
         "stop_event": embedder_stop_event,
@@ -1965,17 +1971,43 @@ def _bootstrap_embedder(
                 return
             time.sleep(0.05)
 
-    threading.Thread(
-        target=_hard_timeout_watchdog, name="embedder-hard-timeout", daemon=True
-    ).start()
-    threading.Thread(target=_stop_event_watchdog, name="embedder-stop", daemon=True).start()
-    threading.Thread(target=_budget_watchdog, name="embedder-budget", daemon=True).start()
+    if not presence_probe:
+        threading.Thread(
+            target=_hard_timeout_watchdog, name="embedder-hard-timeout", daemon=True
+        ).start()
+        threading.Thread(
+            target=_stop_event_watchdog, name="embedder-stop", daemon=True
+        ).start()
+        threading.Thread(
+            target=_budget_watchdog, name="embedder-budget", daemon=True
+        ).start()
+    else:
+        LOGGER.debug("skipping embedder watchdogs for presence probe")
 
     join_window = stage_wall_cap if stage_wall_cap is not None else 0.1
+    if presence_deadline is not None:
+        join_window = min(join_window, presence_cap) if join_window is not None else presence_cap
     try:
         thread.join(join_window)
     except Exception:
         LOGGER.debug("embedder warmup join probe failed", exc_info=True)
+
+    if thread.is_alive() and presence_deadline is not None:
+        _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
+        _BOOTSTRAP_EMBEDDER_JOB["placeholder_reason"] = "presence_check_deferred"
+        LOGGER.info(
+            "embedder presence check deferred to background",  # pragma: no cover - telemetry
+            extra={
+                "presence_cap": presence_cap,
+                "stage_budget": stage_budget,
+                "timeout": timeout,
+                "probe": presence_probe,
+            },
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason="embedder_presence_check_deferred"
+        )
+        return placeholder
 
     if thread.is_alive() and stage_wall_cap is not None:
         _record_abort(
@@ -2064,6 +2096,7 @@ def initialize_bootstrap_context(
     bootstrap_lite_mode = bootstrap_mode_env in {"lite", "fast"}
     bootstrap_fast_context = bootstrap_fast_env or bootstrap_lite_mode
     force_vector_warmup = _env_flag("MENACE_FORCE_HEAVY_VECTOR_WARMUP")
+    force_embedder_preload = _env_flag("MENACE_FORCE_EMBEDDER_PRELOAD")
     vector_bootstrap_hint = False
     vector_env_snapshot: dict[str, str | float] = {}
     LOGGER.info(
@@ -2192,7 +2225,9 @@ def initialize_bootstrap_context(
 
     runner = _BootstrapDagRunner(logger=LOGGER)
     vector_bootstrap_hint_holder = {"vector": vector_bootstrap_hint}
-    embedder_preload_enabled = not (bootstrap_fast_context and not force_vector_warmup)
+    embedder_preload_enabled = force_embedder_preload or not (
+        bootstrap_fast_context and not force_vector_warmup
+    )
 
     def _task_embedder(_: dict[str, Any]) -> None:
         _mark_bootstrap_step("embedder_preload")
@@ -2201,6 +2236,33 @@ def initialize_bootstrap_context(
         )
         embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
         embedder_stage_budget = stage_controller.stage_budget(step_name="embedder_preload")
+        gate_constrained = bool(embedder_gate.get("contention"))
+        budget_constrained = embedder_stage_budget is not None and embedder_stage_budget < 5.0
+        force_full_preload = force_vector_warmup or force_embedder_preload
+        if (gate_constrained or budget_constrained) and not force_full_preload:
+            LOGGER.info(
+                "embedder preload guarded; scheduling presence probe",
+                extra={
+                    "gate": embedder_gate,
+                    "budget": embedder_stage_budget,
+                    "force_preload": force_full_preload,
+                },
+            )
+            stage_controller.defer_step(
+                "embedder_preload", reason="embedder_preload_guarded"
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vectorizer_preload", reason="embedder_preload_guarded"
+            )
+            _bootstrap_embedder(
+                timeout=embedder_timeout,
+                stop_event=stop_event,
+                stage_budget=embedder_stage_budget,
+                budget=shared_timeout_coordinator,
+                budget_label="vector_seeding",
+                presence_probe=True,
+            )
+            return
         _run_with_timeout(
             _bootstrap_embedder,
             timeout=embedder_timeout,
