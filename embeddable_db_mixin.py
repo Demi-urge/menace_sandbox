@@ -274,11 +274,14 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 try:
     _vector_metrics_db = load_internal("vector_metrics_db")
     VectorMetricsDB = _vector_metrics_db.VectorMetricsDB
+    resolve_vector_bootstrap_flags = _vector_metrics_db.resolve_vector_bootstrap_flags
 except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dependency
 
     class VectorMetricsDB:  # type: ignore
         def log_embedding(self, *args, **kwargs):
             return None
+
+    resolve_vector_bootstrap_flags = None  # type: ignore
 
 try:
     _embedding_stats_db = load_internal("embedding_stats_db")
@@ -341,8 +344,45 @@ def _resolve_metrics_db() -> type[Any]:
     return cls
 
 
-_VEC_METRICS = VectorMetricsDB()
+_VEC_METRICS: VectorMetricsDB | None = None
 _EMBED_STATS_DB = EmbeddingStatsDB("metrics.db")
+
+
+def _vector_metrics_db() -> VectorMetricsDB | None:
+    global _VEC_METRICS
+    if _VEC_METRICS is not None:
+        return _VEC_METRICS
+    if VectorMetricsDB is None:
+        return None
+
+    warmup_kwargs = {}
+    if resolve_vector_bootstrap_flags is not None:
+        (
+            bootstrap_fast,
+            warmup_mode,
+            env_requested,
+            bootstrap_env,
+        ) = resolve_vector_bootstrap_flags()
+        warmup_stub = bool(
+            warmup_mode or env_requested or bootstrap_env or bootstrap_fast
+        )
+        warmup_kwargs = {
+            "bootstrap_fast": bootstrap_fast,
+            "warmup": warmup_stub,
+        }
+        if warmup_stub:
+            logger.info(
+                "embeddable_db_mixin.vector_metrics.stubbed",
+                extra={
+                    "bootstrap_fast": bootstrap_fast,
+                    "warmup_mode": warmup_mode,
+                    "env_bootstrap_requested": env_requested,
+                    "menace_bootstrap": bootstrap_env,
+                },
+            )
+
+    _VEC_METRICS = VectorMetricsDB(**warmup_kwargs)
+    return _VEC_METRICS
 
 
 def log_embedding_metrics(
@@ -370,13 +410,15 @@ def log_embedding_metrics(
             wall_ms=wall_time * 1000,
             store_ms=store_latency * 1000,
         )
-        _VEC_METRICS.log_embedding(
-            db=db_name,
-            tokens=tokens,
-            wall_time_ms=wall_time * 1000,
-            store_time_ms=store_latency * 1000,
-            vector_id=vector_id,
-        )
+        vec_metrics = _vector_metrics_db()
+        if vec_metrics is not None:
+            vec_metrics.log_embedding(
+                db=db_name,
+                tokens=tokens,
+                wall_time_ms=wall_time * 1000,
+                store_time_ms=store_latency * 1000,
+                vector_id=vector_id,
+            )
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to persist embedding metrics")
 

@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Dict, Tuple, List
+import logging
 import os
 import uuid
 
@@ -24,23 +25,90 @@ SHARED_DB_PATH = os.getenv(
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from analytics.session_roi import per_origin_stats  # noqa: E402
-from vector_metrics_db import VectorMetricsDB  # noqa: E402
+from vector_metrics_db import (  # noqa: E402
+    VectorMetricsDB,
+    resolve_vector_bootstrap_flags,
+)
+
+logger = logging.getLogger(__name__)
 
 router = GLOBAL_ROUTER
+_router_stubbed = False
+
+
+def _get_router():
+    global router, _router_stubbed
+    if router is not None or _router_stubbed:
+        return router
+
+    (
+        bootstrap_fast,
+        warmup_mode,
+        env_requested,
+        bootstrap_env,
+    ) = resolve_vector_bootstrap_flags()
+    warmup_stub = bool(warmup_mode or env_requested or bootstrap_env or bootstrap_fast)
+    if warmup_stub:
+        _router_stubbed = True
+        logger.info(
+            "vector_metrics_aggregator.bootstrap.router_stubbed",
+            extra={
+                "bootstrap_fast": bootstrap_fast,
+                "warmup_mode": warmup_mode,
+                "env_bootstrap_requested": env_requested,
+                "menace_bootstrap": bootstrap_env,
+            },
+        )
+        return None
+
+    router = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
+    return router
 
 
 class VectorMetricsAggregator:
     """Summarise :class:`VectorMetricsDB` records by time period."""
 
-    def __init__(self, db_path: Path | str = "vector_metrics.db") -> None:
+    def __init__(
+        self, db_path: Path | str = "vector_metrics.db", *, warmup: bool | None = None
+    ) -> None:
         self.db_path = Path(db_path)
+        (
+            bootstrap_fast,
+            warmup_mode,
+            env_requested,
+            bootstrap_env,
+        ) = resolve_vector_bootstrap_flags(warmup=warmup)
+        self._bootstrap_fast = bootstrap_fast
+        self._warmup_mode = warmup_mode or False
+        self._env_requested = env_requested
+        self._bootstrap_env = bootstrap_env
+        self._warmup_stub = bool(
+            self._warmup_mode
+            or self._env_requested
+            or self._bootstrap_env
+            or self._bootstrap_fast
+        )
 
     # ------------------------------------------------------------------
     def _rows(self) -> Iterable[Tuple[str, str, int, float, str]]:
         """Yield ``(event_type, db, tokens, contribution, ts)`` rows from the database."""
-        if not self.db_path.exists():
+        if self._warmup_stub or not self.db_path.exists():
+            if self._warmup_stub:
+                logger.info(
+                    "vector_metrics_aggregator.bootstrap.stub_rows",
+                    extra={
+                        "bootstrap_fast": self._bootstrap_fast,
+                        "warmup_mode": self._warmup_mode,
+                        "env_bootstrap_requested": self._env_requested,
+                        "menace_bootstrap": self._bootstrap_env,
+                    },
+                )
             return []
-        cur = router.get_connection("vector_metrics").execute(
+
+        db_router = _get_router()
+        if db_router is None:
+            return []
+        cur = db_router.get_connection("vector_metrics").execute(
             "SELECT event_type, db, tokens, COALESCE(contribution,0), ts FROM vector_metrics"
         )
         return cur.fetchall()
@@ -88,7 +156,11 @@ class VectorMetricsAggregator:
         """Return per-origin success rates and ROI deltas."""
         if not self.db_path.exists():
             return {}
-        db = VectorMetricsDB(self.db_path)
+        db = VectorMetricsDB(
+            self.db_path,
+            bootstrap_fast=self._bootstrap_fast,
+            warmup=self._warmup_stub,
+        )
         return per_origin_stats(db)
 
     # ------------------------------------------------------------------

@@ -332,6 +332,12 @@ class VectorMetricsDB:
         self._warmup_mode = (
             False if self._warmup_override_disabled else resolved_warmup
         )
+        self._env_warmup_opt_in = bool(
+            self._bootstrap_context
+            or env_bootstrap
+            or resolved_warmup
+            or resolved_bootstrap_fast
+        )
         self._lazy_mode = True
         self._boot_stub_active = (
             False
@@ -358,6 +364,7 @@ class VectorMetricsDB:
         )
         self._ready_probe_logged = False
         self._persistence_ready_logged = False
+        self._stub_usage_logged = False
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -383,6 +390,17 @@ class VectorMetricsDB:
                     stub_mode=True,
                     menace_bootstrap=bootstrap_context,
                     env_bootstrap_requested=env_bootstrap,
+                ),
+            )
+        if self._boot_stub_active and self._env_warmup_opt_in:
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_env_opt_in",
+                extra=_timestamp_payload(
+                    init_start,
+                    menace_bootstrap=bootstrap_context,
+                    env_bootstrap_requested=env_bootstrap,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
                 ),
             )
         if self._boot_stub_active and self._bootstrap_context:
@@ -626,10 +644,19 @@ class VectorMetricsDB:
 
     def _conn_for(self, *, reason: str, commit_required: bool = True):
         if self._boot_stub_active:
-            if commit_required:
-                self.activate_persistence(reason=f"{reason}.auto")
-            else:
-                commit_required = False
+            if not self._stub_usage_logged:
+                self._stub_usage_logged = True
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_connection",
+                    extra={
+                        "reason": reason,
+                        "warmup_mode": self._warmup_mode,
+                        "bootstrap_fast": self.bootstrap_fast,
+                        "menace_bootstrap": self._menace_bootstrap_env,
+                        "env_bootstrap_requested": self._bootstrap_env_requested,
+                    },
+                )
+            commit_required = False
         conn = self._connection(reason=reason, commit_required=commit_required)
         if commit_required:
             self._commit_required = False
