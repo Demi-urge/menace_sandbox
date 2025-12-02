@@ -705,7 +705,12 @@ def warmup_vector_service(
         if stage_budget_cap is not None and cumulative_elapsed >= stage_budget_cap:
             budget_exhausted = True
 
-    def _defer_handler_chain(status: str, *, stage_timeout: float | None = None) -> None:
+    def _defer_handler_chain(
+        status: str,
+        *,
+        stage_timeout: float | None = None,
+        vectorise_timeout: float | None = None,
+    ) -> None:
         nonlocal hydrate_handlers, run_vectorise, budget_gate_reason
         _record_deferred_background("handlers", status)
         _hint_background_budget("handlers", stage_timeout)
@@ -713,7 +718,7 @@ def warmup_vector_service(
         budget_gate_reason = budget_gate_reason or status
         if run_vectorise:
             _record_deferred_background("vectorise", status)
-            _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+            _hint_background_budget("vectorise", vectorise_timeout)
             run_vectorise = False
 
     def _finalise() -> Mapping[str, str]:
@@ -958,7 +963,9 @@ def warmup_vector_service(
 
     if hydrate_handlers and _insufficient_stage_budget("handlers"):
         _defer_handler_chain(
-            "deferred-ceiling", stage_timeout=stage_budget_ceiling.get("handlers")
+            "deferred-ceiling",
+            stage_timeout=stage_budget_ceiling.get("handlers"),
+            vectorise_timeout=stage_budget_ceiling.get("vectorise"),
         )
     pending_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
     if pending_vectorise and not hydrate_handlers and _insufficient_stage_budget("vectorise"):
@@ -1036,6 +1043,11 @@ def warmup_vector_service(
     stage_budget_cap = _stage_budget_cap()
     if stage_budget_cap is None and provided_budget is not None:
         stage_budget_cap = provided_budget
+    if stage_budget_cap is None:
+        conservative_ceiling = sum(
+            timeout for timeout in _CONSERVATIVE_STAGE_TIMEOUTS.values() if timeout is not None
+        )
+        stage_budget_cap = conservative_ceiling if conservative_ceiling > 0 else None
     heavy_budget_needed = 0.0
     if download_model:
         heavy_budget_needed += base_stage_cost["model"]
@@ -1109,32 +1121,6 @@ def warmup_vector_service(
         not run_vectorise or _has_stage_budget("vectorise")
     )
 
-    budget_missing_gate = (
-        heavy_requested
-        and not force_heavy
-        and not stage_timeouts_supplied
-        and provided_budget is None
-        and initial_budget_remaining is None
-    )
-
-    if budget_missing_gate:
-        budget_gate_reason = "deferred-no-budget"
-        if download_model or model_probe_only:
-            _record_background("model", budget_gate_reason)
-            background_stage_timeouts = background_stage_timeouts or {
-                stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
-                for stage in base_timeouts
-            }
-            download_model = False
-            probe_model = False
-        if hydrate_handlers:
-            _defer_handler_chain(budget_gate_reason, stage_timeout=_effective_timeout("handlers"))
-        if run_vectorise:
-            _record_deferred_background("vectorise", budget_gate_reason)
-            _hint_background_budget("vectorise", _effective_timeout("vectorise"))
-            run_vectorise = False
-        warmup_lite = True
-
     if bootstrap_fast and not fast_heavy_allowed:
         if hydrate_handlers:
             log.info(
@@ -1182,6 +1168,50 @@ def warmup_vector_service(
         if stage_timeout is None:
             return shared_remaining
         return min(shared_remaining, stage_timeout)
+
+    budget_callback_missing = budget_remaining is None or budget_remaining is _default_budget_remaining
+    check_budget_missing = check_budget is None or check_budget is _default_check_budget
+    has_budget_signal = any(
+        value is not None for value in (provided_budget, initial_budget_remaining, env_budget)
+    ) or not budget_callback_missing or not check_budget_missing
+
+    budget_inputs_missing = (
+        not force_heavy
+        and not stage_timeouts_supplied
+        and not has_budget_signal
+    )
+
+    if budget_inputs_missing:
+        status = "deferred-no-budget"
+        budget_gate_reason = status
+        background_stage_timeouts = background_stage_timeouts or {
+            stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+            for stage in base_timeouts
+        }
+        for stage in ("handlers", "scheduler", "vectorise"):
+            memoised_results[stage] = status
+            if stage == "handlers":
+                handler_timeout = _effective_timeout("handlers")
+                _record_background("handlers", status)
+                _hint_background_budget("handlers", handler_timeout)
+                hydrate_handlers = False
+                if run_vectorise:
+                    _record_background("vectorise", status)
+                    _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+                    run_vectorise = False
+            elif stage == "scheduler":
+                _record_background("scheduler", status)
+                _hint_background_budget("scheduler", _effective_timeout("scheduler"))
+                start_scheduler = False
+            else:
+                _record_background("vectorise", status)
+                _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+                run_vectorise = False
+        if download_model or model_probe_only:
+            _record_background("model", status)
+            download_model = False
+            probe_model = False
+        warmup_lite = True
 
     def _should_defer_upfront(
         stage: str, *, stage_timeout: float | None, stage_enabled: bool
@@ -1289,6 +1319,7 @@ def warmup_vector_service(
             _defer_handler_chain(
                 heavy_admission,
                 stage_timeout=_effective_timeout("handlers"),
+                vectorise_timeout=_effective_timeout("vectorise"),
             )
             memoised_results["handlers"] = heavy_admission
 
@@ -1418,6 +1449,7 @@ def warmup_vector_service(
         pass
     else:
         handler_timeout = _effective_timeout("handlers")
+        vectorise_timeout = _effective_timeout("vectorise")
         if _gate_conservative_budget("handlers", hydrate_handlers, handler_timeout):
             if _should_defer_upfront(
                 "handlers", stage_timeout=handler_timeout, stage_enabled=hydrate_handlers
@@ -1428,7 +1460,11 @@ def warmup_vector_service(
                 handler_status = summary.get("handlers", "deferred-budget")
                 if handler_status.startswith("skipped"):
                     handler_status = handler_status.replace("skipped", "deferred", 1)
-                _defer_handler_chain(handler_status, stage_timeout=handler_timeout)
+                _defer_handler_chain(
+                    handler_status,
+                    stage_timeout=handler_timeout,
+                    vectorise_timeout=vectorise_timeout,
+                )
                 if _should_abort("handlers"):
                     return _finalise()
             else:
@@ -1436,7 +1472,9 @@ def warmup_vector_service(
                     if handler_timeout is not None and handler_timeout <= 0:
                         budget_exhausted = True
                         _defer_handler_chain(
-                            "deferred-budget", stage_timeout=handler_timeout
+                            "deferred-budget",
+                            stage_timeout=handler_timeout,
+                            vectorise_timeout=vectorise_timeout,
                         )
                         _record_cancelled("handlers", "budget")
                         log.info(
@@ -1447,6 +1485,7 @@ def warmup_vector_service(
                         _defer_handler_chain(
                             summary.get("handlers", "deferred-budget"),
                             stage_timeout=handler_timeout,
+                            vectorise_timeout=vectorise_timeout,
                         )
                         _record_cancelled("handlers", "budget")
                         return _finalise()
