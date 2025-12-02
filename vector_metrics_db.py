@@ -372,16 +372,11 @@ class VectorMetricsDB:
         self._commit_required = False
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
+        self._stub_buffer: list[VectorMetric] = []
+        self._stub_buffer_limit = 256
+        self._stub_overflow_logged = False
         self._readiness_hook_registered = False
-        self._pending_readiness_hook = bool(
-            self._warmup_mode
-            and not self.bootstrap_fast
-            and (
-                bootstrap_context
-                or _env_flag("VECTOR_SERVICE_WARMUP", False)
-                or _env_flag("VECTOR_WARMUP", False)
-            )
-        )
+        self._pending_readiness_hook = bool(self._boot_stub_active)
         self._ready_probe_logged = False
         self._persistence_ready_logged = False
         self._stub_usage_logged = False
@@ -449,6 +444,8 @@ class VectorMetricsDB:
         self._conn = None
 
         if self._boot_stub_active:
+            self._register_readiness_hook()
+            self._conn = self._stub_conn
             return
 
         eager_resolve = self._default_ensure_exists
@@ -543,6 +540,33 @@ class VectorMetricsDB:
             daemon=True,
         ).start()
 
+    def _buffer_stub_metric(self, rec: VectorMetric) -> None:
+        if len(self._stub_buffer) < self._stub_buffer_limit:
+            self._stub_buffer.append(rec)
+            return
+        if self._stub_overflow_logged:
+            return
+        self._stub_overflow_logged = True
+        logger.info(
+            "vector_metrics_db.bootstrap.stub_buffer_overflow",
+            extra={
+                "buffer_limit": self._stub_buffer_limit,
+                "bootstrap_fast": self.bootstrap_fast,
+                "warmup_mode": self._warmup_mode,
+            },
+        )
+
+    def _flush_stub_buffer(self) -> None:
+        if not self._stub_buffer:
+            return
+        buffered = list(self._stub_buffer)
+        self._stub_buffer.clear()
+        for rec in buffered:
+            try:
+                self.add(rec)
+            except Exception:  # pragma: no cover - best effort flush
+                logger.debug("vector_metrics_db.bootstrap.flush_failed", exc_info=True)
+
     def _exit_lazy_mode(self, *, reason: str) -> None:
         """Upgrade from bootstrap stub to full schema on first meaningful use."""
 
@@ -566,6 +590,7 @@ class VectorMetricsDB:
         self._persistence_activated = True
         self._initialize_schema_defaults()
         self._prepare_connection(init_start)
+        self._flush_stub_buffer()
         self._commit_required = False
         self._commit_reason = "first_use"
         logger.info(
@@ -1358,6 +1383,8 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def add(self, rec: VectorMetric) -> None:
+        if self._boot_stub_active:
+            self._buffer_stub_metric(rec)
         if self._should_skip_logging():
             return
         conn = self._conn_for(reason="add_metric")
