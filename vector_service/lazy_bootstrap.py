@@ -146,7 +146,7 @@ def warmup_vector_service(
     warmup_probe: bool | None = None,
     stage_timeouts: dict[str, float] | float | None = None,
     deferred_stages: set[str] | None = None,
-) -> None:
+) -> Mapping[str, str]:
     """Eagerly initialise vector assets and caches.
 
     The default behaviour favours a "light" warmup that validates scheduler
@@ -378,6 +378,7 @@ def warmup_vector_service(
         "handlers": 10.0,
         "vectorise": 5.0,
     }
+    base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
     if stage_timeouts is None and check_budget is None:
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
@@ -443,7 +444,6 @@ def warmup_vector_service(
         return _coerce_timeout(stage_timeouts)
 
     stage_budget_cap = _stage_budget_cap()
-    base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
     heavy_budget_needed = 0.0
     if download_model:
         heavy_budget_needed += base_stage_cost["model"]
@@ -487,6 +487,22 @@ def warmup_vector_service(
             return max(0.0, min(remaining, fallback_budget))
         return max(0.0, min(stage_timeout, remaining))
 
+    def _has_estimated_budget(stage: str) -> bool:
+        remaining = _remaining_budget()
+        estimate = base_stage_cost.get(stage)
+        if remaining is None or estimate is None:
+            return True
+        if remaining >= estimate:
+            return True
+        _record(stage, "skipped-estimate")
+        log.info(
+            "Vector warmup skipping %s; remaining budget %.2fs below estimated cost %.2fs",
+            stage,
+            remaining,
+            estimate,
+        )
+        return False
+
     if not _guard("init"):
         log.info("Vector warmup aborted before start: insufficient bootstrap budget")
         return
@@ -502,6 +518,8 @@ def warmup_vector_service(
                 budget_exhausted = True
                 _record("model", "skipped-budget")
                 log.info("Vector warmup model download skipped: no remaining budget")
+                return
+            if not _has_estimated_budget("model"):
                 return
             completed, path = _run_with_budget(
                 "model",
@@ -552,6 +570,8 @@ def warmup_vector_service(
                 budget_exhausted = True
                 _record("handlers", "skipped-budget")
                 log.info("Vector warmup handler hydration skipped: no remaining budget")
+                return
+            if not _has_estimated_budget("handlers"):
                 return
             try:
                 from .vectorizer import SharedVectorService
@@ -606,7 +626,7 @@ def warmup_vector_service(
                 budget_exhausted = True
                 _record("vectorise", "skipped-budget")
                 log.info("Vectorise warmup skipped: no remaining budget")
-            else:
+            elif _has_estimated_budget("vectorise"):
                 try:
                     completed, _ = _run_with_budget(
                         "vectorise",
@@ -638,6 +658,8 @@ def warmup_vector_service(
         "vector warmup stages recorded", extra={"event": "vector-warmup", "warmup": summary}
     )
     log.debug("vector warmup summary: %s", summary)
+
+    return summary
 
 
 __all__ = ["ensure_embedding_model", "ensure_scheduler_started", "warmup_vector_service"]
