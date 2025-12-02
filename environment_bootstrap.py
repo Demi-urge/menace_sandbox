@@ -2494,6 +2494,7 @@ class EnvironmentBootstrapper:
                             warmup_handlers=heavy_handlers_requested,
                             warmup_probe=warmup_probe,
                             stage_timeouts=stage_timeouts,
+                            background_hook=_schedule_heavy_background,
                         )
                     except Exception as exc:  # pragma: no cover - defensive logging
                         self.logger.warning("vector warmup background failed: %s", exc)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import threading
 from typing import Sequence
 
 from .lazy_bootstrap import warmup_vector_service
@@ -57,6 +58,27 @@ def cli(argv: Sequence[str] | None = None) -> int:
         lite = not args.no_lite
 
     logger = logging.getLogger(__name__)
+
+    def _background(stages: set[str]) -> None:
+        if not stages:
+            return
+
+        def _run() -> None:
+            warmup_vector_service(
+                download_model=download and "model" in stages,
+                probe_model=probe and "model" in stages and not download,
+                hydrate_handlers=hydrate and "handlers" in stages,
+                start_scheduler=scheduler and "scheduler" in stages,
+                run_vectorise=vectorise and "vectorise" in stages,
+                logger=logger,
+                force_heavy=True,
+                warmup_lite=False,
+                background_hook=None,
+                deferred_stages=set(),
+            )
+
+        threading.Thread(target=_run, daemon=True).start()
+
     warmup_vector_service(
         download_model=download,
         probe_model=probe,
@@ -66,6 +88,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
         logger=logger,
         force_heavy=force,
         warmup_lite=lite,
+        background_hook=_background,
     )
     return 0
 
