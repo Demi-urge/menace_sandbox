@@ -84,6 +84,8 @@ def load_handlers(
     bootstrap_fast: bool | None = None,
     warmup_lite: bool = False,
     handler_timeouts: dict[str, float] | float | None = None,
+    stop_event: threading.Event | None = None,
+    budget_check: Callable[[threading.Event | None], None] | None = None,
 ) -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
     """Instantiate all registered vectorisers and return transform callables."""
 
@@ -142,6 +144,12 @@ def load_handlers(
 
     resolved_timeouts = _apply_budget_caps(resolved_timeouts, provided_budget)
 
+    def _check_cancelled(context: str) -> None:
+        if stop_event is not None and stop_event.is_set():
+            raise TimeoutError(f"handler hydration cancelled during {context}")
+        if budget_check is not None:
+            budget_check(stop_event)
+
     def _instantiate_handler_with_timeout(kind: str, mod_name: str, cls_name: str, timeout: float | None):
         result: list[Callable[[Dict[str, any]], list[float]]] = []
         error: list[Exception] = []
@@ -149,6 +157,7 @@ def load_handlers(
 
         def _target() -> None:
             try:
+                _check_cancelled(f"{kind}-target")
                 mod = importlib.import_module(mod_name)
                 cls = getattr(mod, cls_name)
                 kwargs = {}
@@ -163,10 +172,17 @@ def load_handlers(
 
         thread = threading.Thread(target=_target, daemon=True)
         thread.start()
-        thread.join(timeout)
+        start = time.perf_counter()
+        while not done.wait(timeout=0.05):
+            try:
+                _check_cancelled(f"{kind}-wait")
+            except TimeoutError as exc:
+                return None, exc
+            if timeout is not None and time.perf_counter() - start >= timeout:
+                if stop_event is not None:
+                    stop_event.set()
+                return None, TimeoutError(f"handler init exceeded budget ({timeout}s)")
 
-        if not done.is_set():
-            return None, TimeoutError(f"handler init exceeded budget ({timeout}s)")
         if error:
             raise error[0]
         return result[0] if result else None, None

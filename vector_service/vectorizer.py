@@ -294,6 +294,8 @@ class SharedVectorService:
             handlers = load_handlers(
                 bootstrap_fast=self._handler_bootstrap_flag,
                 warmup_lite=bool(self.warmup_lite),
+                stop_event=stop_event or self.stop_event,
+                budget_check=budget_check or self.budget_check,
             )
             self._check_budget_deadline(
                 "hydrate-handlers", handler_start, timeout, stop_event, budget_check
@@ -349,6 +351,8 @@ class SharedVectorService:
         timeout: float | None = None,
         budget_check: Callable[[threading.Event | None], None] | None = None,
     ) -> None:
+        event = stop_event or self.stop_event
+        budget_hook = budget_check or self.budget_check
         if self.vector_store is not None:
             return
         if not force and (self.lazy_vector_store or self._should_skip_vector_store()):
@@ -360,7 +364,7 @@ class SharedVectorService:
         start = time.perf_counter()
         try:
             self._check_budget_deadline(
-                "vector-store", start, timeout, stop_event, budget_check
+                "vector-store", start, timeout, event, budget_hook
             )
         except TimeoutError:
             logger.info(
@@ -373,7 +377,7 @@ class SharedVectorService:
             _trace("shared_vector_service.vector_store.fetch")
             try:
                 self._check_budget_deadline(
-                    "vector-store", start, timeout, stop_event, budget_check
+                    "vector-store", start, timeout, event, budget_hook
                 )
             except TimeoutError:
                 logger.info(
@@ -391,7 +395,7 @@ class SharedVectorService:
                 raise
             try:
                 self._check_budget_deadline(
-                    "vector-store", start, timeout, stop_event, budget_check
+                    "vector-store", start, timeout, event, budget_hook
                 )
             except TimeoutError:
                 logger.info(
@@ -489,8 +493,14 @@ class SharedVectorService:
         self._background_hydration_thread.start()
 
     def _prepare_vector_store_for_handler(
-        self, kind: str, handler: Callable[[Dict[str, Any]], List[float]]
+        self,
+        kind: str,
+        handler: Callable[[Dict[str, Any]], List[float]],
+        *,
+        stop_event: threading.Event | None = None,
+        budget_check: Callable[[threading.Event | None], None] | None = None,
     ) -> None:
+        self._check_cancelled("prepare-vector-store", stop_event, budget_check)
         requires_store = self._handler_requires_store.get(kind)
         if requires_store is None:
             requires_store = self._handler_requires_store_flag(handler)
@@ -505,8 +515,8 @@ class SharedVectorService:
             return
         self._initialise_vector_store(
             force=True,
-            stop_event=self.stop_event,
-            budget_check=self.budget_check,
+            stop_event=stop_event or self.stop_event,
+            budget_check=budget_check or self.budget_check,
         )
 
     def _get_handler(self, kind: str) -> Callable[[Dict[str, Any]], List[float]] | None:
@@ -630,7 +640,8 @@ class SharedVectorService:
         self, kind: str, record: Dict[str, Any], *, stop_event: threading.Event | None = None
     ) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
-        self._check_cancelled("vectorise", stop_event)
+        event = stop_event or self.stop_event
+        self._check_cancelled("vectorise", event)
         _trace("shared_vector_service.vectorise.start", kind=kind)
         payload = self._call_remote("/vectorise", {"kind": kind, "record": record})
         if payload is not None:
@@ -639,13 +650,15 @@ class SharedVectorService:
                 _trace("shared_vector_service.vectorise.remote", kind=kind)
                 return vec
 
-        self._check_cancelled("vectorise", stop_event)
+        self._check_cancelled("vectorise", event)
 
         kind = kind.lower()
         handler = self._get_handler(kind)
         if handler:
-            self._check_cancelled("vectorise", stop_event)
-            self._prepare_vector_store_for_handler(kind, handler)
+            self._check_cancelled("vectorise", event)
+            self._prepare_vector_store_for_handler(
+                kind, handler, stop_event=event, budget_check=self.budget_check
+            )
             _trace("shared_vector_service.vectorise.handler", kind=kind)
             return handler(record)
         if kind in {"text", "prompt"}:
