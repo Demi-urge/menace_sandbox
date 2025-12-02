@@ -90,3 +90,28 @@ def test_menace_bootstrap_uses_stub(monkeypatch, tmp_path):
     assert weights == {}
     assert not path.exists()
 
+
+def test_readiness_hook_warmup_skips_io(monkeypatch, tmp_path):
+    path = tmp_path / "warm-readiness.db"
+
+    monkeypatch.setenv("VECTOR_SERVICE_WARMUP", "1")
+
+    def explode_default_path(*_args, **_kwargs):  # pragma: no cover - safety guard
+        raise AssertionError("default path resolution should be skipped during warmup")
+
+    def explode_router(*_args, **_kwargs):  # pragma: no cover - safety guard
+        raise AssertionError("router should not initialise during warmup")
+
+    monkeypatch.setattr(
+        vector_metrics_db, "default_vector_metrics_path", explode_default_path
+    )
+    monkeypatch.setattr(vector_metrics_db, "init_db_router", explode_router)
+
+    vm = vector_metrics_db.VectorMetricsDB(path, warmup=True)
+
+    assert vm.router is None
+    assert vm._readiness_hook_registered is False
+    assert not path.exists()
+    assert vm.ready_probe() == str(path)
+    assert not path.exists()
+
