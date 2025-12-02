@@ -366,6 +366,9 @@ class VectorMetricsDB:
             )
         )
         self._lazy_primed = self._boot_stub_active
+        self._default_ensure_exists = not (
+            self._boot_stub_active or self.bootstrap_fast or self._warmup_mode
+        )
         self._commit_required = False
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
@@ -382,6 +385,7 @@ class VectorMetricsDB:
         self._ready_probe_logged = False
         self._persistence_ready_logged = False
         self._stub_usage_logged = False
+        self._persistence_activated = not self._boot_stub_active
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -447,8 +451,7 @@ class VectorMetricsDB:
         if self._boot_stub_active:
             return
 
-        self._initialize_schema_defaults()
-        eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
+        eager_resolve = self._default_ensure_exists
         if eager_resolve:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path, ensure_exists=eager_resolve
@@ -509,6 +512,8 @@ class VectorMetricsDB:
     def _register_readiness_hook(self) -> None:
         if self._readiness_hook_registered:
             return
+        if not self._boot_stub_active:
+            return
         try:
             from bootstrap_readiness import readiness_signal
         except Exception:  # pragma: no cover - optional dependency
@@ -558,6 +563,7 @@ class VectorMetricsDB:
         self._boot_stub_active = False
         self._lazy_mode = False
         self._lazy_primed = False
+        self._persistence_activated = True
         self._initialize_schema_defaults()
         self._prepare_connection(init_start)
         self._commit_required = False
@@ -709,6 +715,11 @@ class VectorMetricsDB:
                 ensure_exists=False,
             )
         return str(self._resolved_path)
+
+    def persistence_probe(self) -> bool:
+        """Indicate whether persistence has been activated without any I/O."""
+
+        return bool(self._persistence_activated and not self._boot_stub_active)
 
     def _resolve_requested_path(
         self, path: Path, *, ensure_exists: bool
