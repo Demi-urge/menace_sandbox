@@ -177,6 +177,12 @@ class SharedVectorService:
     _handler_requires_store: Dict[str, bool] = field(init=False)
     _handler_bootstrap_flag: bool = field(init=False, default=False)
     _known_kinds: set[str] = field(init=False, default_factory=set)
+    _handler_hydration_deferred: bool = field(init=False, default=False)
+    _handler_deferral_reasons: set[str] = field(init=False, default_factory=set)
+    _background_hydration_started: bool = field(init=False, default=False)
+    _background_hydration_thread: threading.Thread | None = field(
+        init=False, default=None
+    )
 
     def __post_init__(self) -> None:
         self._check_cancelled("init")
@@ -218,8 +224,12 @@ class SharedVectorService:
             )
         self._known_kinds = set(_VECTOR_REGISTRY.keys())
         if self.hydrate_handlers:
-            self.hydrate_all_handlers()
+            self.hydrate_all_handlers(stop_event=self.stop_event)
         else:
+            self._mark_handler_deferral(
+                "deferred-init" if not warmup_lite else "warmup-lite",
+                schedule_background=True,
+            )
             logger.info(
                 "shared_vector_service.handlers.deferred",
                 extra=_timestamp_payload(
@@ -254,15 +264,48 @@ class SharedVectorService:
             ),
         )
 
-    def hydrate_all_handlers(self, *, stop_event: threading.Event | None = None) -> None:
+    @property
+    def handler_hydration_deferred(self) -> bool:
+        return self._handler_hydration_deferred
+
+    @property
+    def handler_deferral_reasons(self) -> set[str]:
+        return set(self._handler_deferral_reasons)
+
+    def schedule_background_hydration(self) -> None:
+        """Expose a best-effort background hydration trigger."""
+
+        self._schedule_background_hydration()
+
+    def hydrate_all_handlers(
+        self,
+        *,
+        stop_event: threading.Event | None = None,
+        timeout: float | None = None,
+        budget_check: Callable[[threading.Event | None], None] | None = None,
+    ) -> None:
         """Instantiate and cache all registered handlers."""
 
-        self._check_cancelled("hydrate-handlers", stop_event)
         handler_start = time.perf_counter()
-        handlers = load_handlers(
-            bootstrap_fast=self._handler_bootstrap_flag, warmup_lite=bool(self.warmup_lite)
-        )
-        self._check_cancelled("hydrate-handlers", stop_event)
+        try:
+            self._check_budget_deadline(
+                "hydrate-handlers", handler_start, timeout, stop_event, budget_check
+            )
+            handlers = load_handlers(
+                bootstrap_fast=self._handler_bootstrap_flag,
+                warmup_lite=bool(self.warmup_lite),
+            )
+            self._check_budget_deadline(
+                "hydrate-handlers", handler_start, timeout, stop_event, budget_check
+            )
+        except TimeoutError:
+            self._mark_handler_deferral("timeout", schedule_background=True)
+            logger.info(
+                "shared_vector_service.handlers.deferred", extra={"reason": "timeout"}
+            )
+            return
+
+        self._clear_handler_deferral()
         self._handlers.update(handlers)
         for kind, handler in handlers.items():
             self._handler_requires_store[kind] = self._handler_requires_store.get(
@@ -298,7 +341,14 @@ class SharedVectorService:
     def _should_skip_vector_store(self) -> bool:
         return bool(self.bootstrap_fast) or bool(self.warmup_lite)
 
-    def _initialise_vector_store(self, *, force: bool = False) -> None:
+    def _initialise_vector_store(
+        self,
+        *,
+        force: bool = False,
+        stop_event: threading.Event | None = None,
+        timeout: float | None = None,
+        budget_check: Callable[[threading.Event | None], None] | None = None,
+    ) -> None:
         if self.vector_store is not None:
             return
         if not force and (self.lazy_vector_store or self._should_skip_vector_store()):
@@ -307,10 +357,30 @@ class SharedVectorService:
                 extra={"lazy": bool(self.lazy_vector_store), "bootstrap_fast": bool(self.bootstrap_fast)},
             )
             return
+        start = time.perf_counter()
+        try:
+            self._check_budget_deadline(
+                "vector-store", start, timeout, stop_event, budget_check
+            )
+        except TimeoutError:
+            logger.info(
+                "shared_vector_service.vector_store.deferred", extra={"reason": "timeout"}
+            )
+            return
         with self._vector_store_lock:
             if self.vector_store is not None:
                 return
             _trace("shared_vector_service.vector_store.fetch")
+            try:
+                self._check_budget_deadline(
+                    "vector-store", start, timeout, stop_event, budget_check
+                )
+            except TimeoutError:
+                logger.info(
+                    "shared_vector_service.vector_store.deferred",
+                    extra={"reason": "timeout-lock"},
+                )
+                return
             store_start = time.perf_counter()
             try:
                 self.vector_store = get_default_vector_store(
@@ -319,6 +389,15 @@ class SharedVectorService:
             except Exception as exc:  # pragma: no cover - defensive logging
                 _trace("shared_vector_service.vector_store.error", error=str(exc))
                 raise
+            try:
+                self._check_budget_deadline(
+                    "vector-store", start, timeout, stop_event, budget_check
+                )
+            except TimeoutError:
+                logger.info(
+                    "shared_vector_service.vector_store.partial", extra={"reason": "timeout"}
+                )
+                return
             logger.info(
                 "shared_vector_service.vector_store.resolved",
                 extra=_timestamp_payload(
@@ -349,13 +428,65 @@ class SharedVectorService:
         return False
 
     def _check_cancelled(
-        self, context: str, stop_event: threading.Event | None = None
+        self,
+        context: str,
+        stop_event: threading.Event | None = None,
+        budget_check: Callable[[threading.Event | None], None] | None = None,
     ) -> None:
         event = stop_event or self.stop_event
         if event is not None and event.is_set():
             raise TimeoutError(f"shared vector service cancelled during {context}")
-        if self.budget_check is not None:
-            self.budget_check(event)
+        hook = budget_check or self.budget_check
+        if hook is not None:
+            hook(event)
+
+    def _check_budget_deadline(
+        self,
+        context: str,
+        start: float,
+        timeout: float | None,
+        stop_event: threading.Event | None,
+        budget_check: Callable[[threading.Event | None], None] | None,
+    ) -> None:
+        self._check_cancelled(context, stop_event, budget_check)
+        if timeout is None:
+            return
+        if (time.perf_counter() - start) >= timeout:
+            raise TimeoutError(f"shared vector service {context} timed out")
+
+    def _mark_handler_deferral(
+        self, reason: str, *, schedule_background: bool = False
+    ) -> None:
+        self._handler_hydration_deferred = True
+        self._handler_deferral_reasons.add(reason)
+        if schedule_background:
+            self._schedule_background_hydration()
+
+    def _clear_handler_deferral(self) -> None:
+        self._handler_hydration_deferred = False
+        self._handler_deferral_reasons.clear()
+
+    def _schedule_background_hydration(self) -> None:
+        if self._background_hydration_started:
+            return
+        if self.stop_event is not None and self.stop_event.is_set():
+            return
+        self._background_hydration_started = True
+
+        def _runner() -> None:
+            try:
+                self.hydrate_all_handlers(stop_event=self.stop_event)
+            except Exception:  # pragma: no cover - best effort background hydration
+                logger.debug(
+                    "background handler hydration failed", exc_info=True
+                )
+
+        self._background_hydration_thread = threading.Thread(
+            target=_runner,
+            name="shared-vector-service-handler-hydration",
+            daemon=True,
+        )
+        self._background_hydration_thread.start()
 
     def _prepare_vector_store_for_handler(
         self, kind: str, handler: Callable[[Dict[str, Any]], List[float]]
@@ -372,7 +503,11 @@ class SharedVectorService:
                 extra={"kind": kind, "bootstrap_fast": bool(self.bootstrap_fast)},
             )
             return
-        self._initialise_vector_store(force=True)
+        self._initialise_vector_store(
+            force=True,
+            stop_event=self.stop_event,
+            budget_check=self.budget_check,
+        )
 
     def _get_handler(self, kind: str) -> Callable[[Dict[str, Any]], List[float]] | None:
         normalised = kind.lower()
@@ -552,7 +687,9 @@ class SharedVectorService:
             )
             return vec
         if self.vector_store is None:
-            self._initialise_vector_store(force=True)
+            self._initialise_vector_store(
+                force=True, stop_event=self.stop_event, budget_check=self.budget_check
+            )
         if self.vector_store is None:
             raise RuntimeError("VectorStore not configured")
         self.vector_store.add(
