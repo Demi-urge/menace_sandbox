@@ -3461,16 +3461,16 @@ def initialize_bootstrap_context(
             non_blocking_presence_probe = True
             presence_reason = presence_reason or "embedder_preload_min_budget"
 
-        def _defer_to_presence(
-            reason: str,
-            *,
-            budget_guarded: bool,
-            budget_window_missing: bool,
-            forced_background: bool = False,
-            strict_timebox: float | None = None,
-            non_blocking_probe: bool = False,
-            resume_download: bool | None = None,
-        ) -> Any:
+            def _defer_to_presence(
+                reason: str,
+                *,
+                budget_guarded: bool,
+                budget_window_missing: bool,
+                forced_background: bool = False,
+                strict_timebox: float | None = None,
+                non_blocking_probe: bool = False,
+                resume_download: bool | None = None,
+            ) -> Any:
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
                 extra={
@@ -3577,6 +3577,7 @@ def initialize_bootstrap_context(
             if warmup_summary is not None:
                 warmup_summary.setdefault("deferred", True)
                 warmup_summary.setdefault("deferred_reason", reason)
+                warmup_summary.setdefault("stage", "deferred-timebox")
                 job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
                 job_snapshot["warmup_summary"] = warmup_summary
             else:
@@ -3584,6 +3585,16 @@ def initialize_bootstrap_context(
 
             job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
             job_snapshot.setdefault("placeholder_reason", reason)
+            job_snapshot.setdefault(
+                "budget_hints",
+                {
+                    "strict_timebox": strict_timebox,
+                    "stage_budget": embedder_stage_budget,
+                    "stage_budget_hint": embedder_stage_budget_hint,
+                    "stage_deadline": embedder_stage_deadline,
+                    "bootstrap_deadline": bootstrap_deadline,
+                },
+            )
             job_snapshot.update(
                 {
                     "deferred": True,
@@ -3680,6 +3691,13 @@ def initialize_bootstrap_context(
                             "background_gate": background_dispatch_gate,
                         },
                     )
+                    cap_hints = {
+                        "stage_budget": embedder_stage_budget,
+                        "stage_budget_hint": embedder_stage_budget_hint,
+                        "stage_deadline": embedder_stage_deadline,
+                        "stage_wall_cap": strict_timebox,
+                        "bootstrap_deadline": bootstrap_deadline,
+                    }
                     background_result = _bootstrap_embedder(
                         resolved_timeout,
                         stop_event=stop_event,
@@ -3692,6 +3710,7 @@ def initialize_bootstrap_context(
                         schedule_background=True,
                         bootstrap_deadline=bootstrap_deadline,
                         precomputed_caps={
+                            **{k: v for k, v in cap_hints.items() if v is not None},
                             "stage_budget": embedder_stage_budget,
                             "stage_deadline": cap_deadline,
                             "stage_wall_cap": background_cap,
@@ -3904,6 +3923,16 @@ def initialize_bootstrap_context(
                 job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
                 job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
                 job_snapshot.setdefault("placeholder_reason", reason)
+                job_snapshot.setdefault(
+                    "budget_hints",
+                    {
+                        "strict_timebox": strict_timebox,
+                        "stage_budget": embedder_stage_budget,
+                        "stage_budget_hint": embedder_stage_budget_hint,
+                        "stage_deadline": embedder_stage_deadline,
+                        "bootstrap_deadline": bootstrap_deadline,
+                    },
+                )
                 job_snapshot.update(
                     {
                         "deferred": True,
@@ -3983,6 +4012,7 @@ def initialize_bootstrap_context(
                         resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT
                     cap_hints = {
                         "stage_budget": embedder_stage_budget,
+                        "stage_budget_hint": embedder_stage_budget_hint,
                         "bootstrap_deadline": bootstrap_deadline,
                         "stage_deadline": embedder_stage_deadline,
                         "stage_wall_cap": strict_timebox,
@@ -4318,6 +4348,7 @@ def initialize_bootstrap_context(
             warmup_summary.setdefault("deferred_reason", warmup_timeout_reason)
             warmup_summary.setdefault("strict_timebox", strict_timebox)
             warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+            warmup_summary.setdefault("stage", "deferred-timebox")
             resume_download = warmup_timeout_reason in {
                 "embedder_stage_timebox_guard",
                 "embedder_preload_timebox_expired",
