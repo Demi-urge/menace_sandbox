@@ -68,6 +68,12 @@ def ensure_embedding_model(
 
     global _MODEL_READY
     log = logger or logging.getLogger(__name__)
+
+    def _coerce_timeout(value: object) -> float | None:
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
     def _check_cancelled(context: str) -> None:
         if stop_event is not None and stop_event.is_set():
             raise TimeoutError(f"embedding model download cancelled during {context}")
@@ -174,6 +180,32 @@ def warmup_vector_service(
     """
 
     log = logger or logging.getLogger(__name__)
+    env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"))
+    if env_budget is None:
+        env_budget = _coerce_timeout(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT"))
+    if env_budget is None:
+        env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_TIMEOUT"))
+    env_budget = env_budget if env_budget is not None and env_budget > 0 else None
+    budget_start = time.monotonic()
+
+    def _default_budget_remaining() -> float | None:
+        if env_budget is None:
+            return None
+        remaining = env_budget - (time.monotonic() - budget_start)
+        return max(0.0, remaining)
+
+    def _default_check_budget(_evt: threading.Event | None = None) -> None:
+        remaining = _default_budget_remaining()
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError("bootstrap vector warmup budget exhausted")
+
+    if budget_remaining is None:
+        budget_remaining = _default_budget_remaining
+    if check_budget is None:
+        check_budget = _default_check_budget if env_budget is not None else None
+    if stage_timeouts is None and env_budget is not None:
+        stage_timeouts = env_budget
+
     bootstrap_context = any(
         os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
         for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
@@ -307,13 +339,13 @@ def warmup_vector_service(
     def _guard(stage: str) -> bool:
         nonlocal budget_exhausted
         if budget_exhausted:
-            _record(stage, "skipped-budget")
+            _record_deferred(stage, "skipped-budget")
             log.info("Vector warmup budget already exhausted; deferring %s", stage)
             return False
         remaining = _remaining_budget()
         if remaining is not None and remaining <= 0:
             budget_exhausted = True
-            _record(stage, "skipped-budget")
+            _record_deferred(stage, "skipped-budget")
             log.info(
                 "Vector warmup budget exhausted before %s; skipping heavy stages", stage
             )
@@ -326,7 +358,7 @@ def warmup_vector_service(
             return True
         except TimeoutError as exc:
             budget_exhausted = True
-            _record(stage, "skipped-budget")
+            _record_deferred(stage, "deferred-budget")
             log.warning("Vector warmup deadline reached before %s: %s", stage, exc)
             return False
 
@@ -356,6 +388,25 @@ def warmup_vector_service(
             if stop_event is not None:
                 stop_event.set()
             raise
+
+    def _finalise() -> Mapping[str, str]:
+        deferred_record = deferred | recorded_deferred
+        if deferred_record:
+            summary["deferred"] = ",".join(sorted(deferred_record))
+        if background_candidates:
+            summary["background"] = ",".join(sorted(background_candidates))
+        if background_hook is not None:
+            try:
+                background_hook(set(background_candidates))
+            except Exception:  # pragma: no cover - advisory hook
+                log.debug("background hook failed", exc_info=True)
+
+        log.info(
+            "vector warmup stages recorded", extra={"event": "vector-warmup", "warmup": summary}
+        )
+        log.debug("vector warmup summary: %s", summary)
+
+        return summary
 
     def _run_with_budget(
         stage: str,
@@ -388,7 +439,7 @@ def warmup_vector_service(
             if timeout is not None and time.monotonic() - start >= timeout:
                 stop_event.set()
                 _record_timeout(stage)
-                _record(stage, "deferred-timeout")
+                _record_deferred(stage, "deferred-timeout")
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
                 )
@@ -403,7 +454,7 @@ def warmup_vector_service(
                     stop_event.set()
                     budget_exhausted = True
                     _record_timeout(stage)
-                    _record(stage, "deferred-budget")
+                    _record_deferred(stage, "deferred-budget")
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
                     done.wait(timeout=0.25)
                     return False, None
@@ -414,7 +465,7 @@ def warmup_vector_service(
                 stop_event.set()
                 budget_exhausted = True
                 log.info("Vector warmup %s cancelled: %s", stage, err)
-                _record(stage, "deferred-budget")
+                _record_deferred(stage, "deferred-budget")
                 return False, None
             raise err
 
@@ -428,12 +479,6 @@ def warmup_vector_service(
     base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
     if bootstrap_context or bootstrap_fast or (stage_timeouts is None and check_budget is None):
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
-
-    def _coerce_timeout(value: object) -> float | None:
-        try:
-            return float(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return None
 
     provided_budget = _coerce_timeout(stage_timeouts) if not isinstance(stage_timeouts, Mapping) else None
     resolved_timeouts: dict[str, float | None] = dict(base_timeouts)
@@ -585,12 +630,12 @@ def warmup_vector_service(
 
     if not _guard("init"):
         log.info("Vector warmup aborted before start: insufficient bootstrap budget")
-        return
+        return _finalise()
     if _reuse("model"):
         pass
     elif not _guard("model"):
         if _should_abort("model"):
-            return
+            return _finalise()
     else:
         model_timeout = _effective_timeout("model")
         if download_model:
@@ -598,9 +643,9 @@ def warmup_vector_service(
                 budget_exhausted = True
                 _record_deferred("model", "skipped-budget")
                 log.info("Vector warmup model download skipped: no remaining budget")
-                return
+                return _finalise()
             if not _has_estimated_budget("model"):
-                return
+                return _finalise()
             completed, path = _run_with_budget(
                 "model",
                 lambda stop_event: ensure_embedding_model(
@@ -622,7 +667,7 @@ def warmup_vector_service(
                 if "model" not in summary:
                     _record_deferred("model", "deferred-budget")
                 log.info("Vector warmup model download deferred after budget exhaustion")
-                return
+                return _finalise()
         elif probe_model:
             completed, dest = _run_with_budget(
                 "model", lambda _stop: _model_bundle_path()
@@ -648,7 +693,7 @@ def warmup_vector_service(
         pass
     elif not _guard("handlers"):
         if _should_abort("handlers"):
-            return
+            return _finalise()
     else:
         handler_timeout = _effective_timeout("handlers")
         if hydrate_handlers:
@@ -656,9 +701,9 @@ def warmup_vector_service(
                 budget_exhausted = True
                 _record_deferred("handlers", "skipped-budget")
                 log.info("Vector warmup handler hydration skipped: no remaining budget")
-                return
+                return _finalise()
             if not _has_estimated_budget("handlers"):
-                return
+                return _finalise()
             try:
                 from .vectorizer import SharedVectorService
 
@@ -682,7 +727,7 @@ def warmup_vector_service(
                     log.info(
                         "Vector warmup handler hydration deferred after budget exhaustion",
                     )
-                    return
+                    return _finalise()
             except Exception as exc:  # pragma: no cover - best effort logging
                 log.warning("SharedVectorService warmup failed: %s", exc)
                 _record("handlers", "failed")
@@ -765,23 +810,7 @@ def warmup_vector_service(
                 _record("vectorise", status)
                 log.info("Vectorise warmup skipped")
 
-    deferred_record = deferred | recorded_deferred
-    if deferred_record:
-        summary["deferred"] = ",".join(sorted(deferred_record))
-    if background_candidates:
-        summary["background"] = ",".join(sorted(background_candidates))
-    if background_hook is not None:
-        try:
-            background_hook(set(background_candidates))
-        except Exception:  # pragma: no cover - advisory hook
-            log.debug("background hook failed", exc_info=True)
-
-    log.info(
-        "vector warmup stages recorded", extra={"event": "vector-warmup", "warmup": summary}
-    )
-    log.debug("vector warmup summary: %s", summary)
-
-    return summary
+    return _finalise()
 
 
 __all__ = ["ensure_embedding_model", "ensure_scheduler_started", "warmup_vector_service"]
