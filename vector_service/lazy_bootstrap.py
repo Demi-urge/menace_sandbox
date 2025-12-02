@@ -827,6 +827,7 @@ def warmup_vector_service(
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     provided_budget = _coerce_timeout(stage_timeouts) if not isinstance(stage_timeouts, Mapping) else None
+    initial_budget_remaining = _remaining_budget()
     resolved_timeouts: dict[str, float | None] = dict(base_timeouts)
     explicit_timeouts: set[str] = set()
 
@@ -877,6 +878,13 @@ def warmup_vector_service(
             if provided_budget is None
             else min(provided_budget, bootstrap_budget_cap)
         )
+
+    if (
+        provided_budget is None
+        and not stage_timeouts_supplied
+        and initial_budget_remaining is not None
+    ):
+        provided_budget = initial_budget_remaining
 
     resolved_timeouts = _distribute_budget(resolved_timeouts, provided_budget)
     stage_budget_ceiling = {stage: resolved_timeouts.get(stage) for stage in base_timeouts}
@@ -952,6 +960,8 @@ def warmup_vector_service(
         return _coerce_timeout(stage_timeouts)
 
     stage_budget_cap = _stage_budget_cap()
+    if stage_budget_cap is None and provided_budget is not None:
+        stage_budget_cap = provided_budget
     heavy_budget_needed = 0.0
     if download_model:
         heavy_budget_needed += base_stage_cost["model"]
@@ -1022,6 +1032,32 @@ def warmup_vector_service(
     fast_heavy_allowed = fast_heavy_allowed and (
         not run_vectorise or _has_stage_budget("vectorise")
     )
+
+    budget_missing_gate = (
+        heavy_requested
+        and not force_heavy
+        and not stage_timeouts_supplied
+        and provided_budget is None
+        and initial_budget_remaining is None
+    )
+
+    if budget_missing_gate:
+        budget_gate_reason = "deferred-no-budget"
+        if download_model or model_probe_only:
+            _record_background("model", budget_gate_reason)
+            background_stage_timeouts = background_stage_timeouts or {
+                stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+                for stage in base_timeouts
+            }
+            download_model = False
+            probe_model = False
+        if hydrate_handlers:
+            _defer_handler_chain(budget_gate_reason, stage_timeout=_effective_timeout("handlers"))
+        if run_vectorise:
+            _record_deferred_background("vectorise", budget_gate_reason)
+            _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+            run_vectorise = False
+        warmup_lite = True
 
     if bootstrap_fast and not fast_heavy_allowed:
         if hydrate_handlers:
