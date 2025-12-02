@@ -2032,6 +2032,15 @@ def _bootstrap_embedder(
                 max_wait_reason = "warmup_cap_exceeded"
         except TypeError:
             pass
+    hard_join_deadline = None
+    hard_join_caps: list[float] = []
+    for cap_candidate in (warmup_cap, presence_cap):
+        if cap_candidate is None:
+            continue
+        if cap_candidate > 0:
+            hard_join_caps.append(cap_candidate)
+    if hard_join_caps:
+        hard_join_deadline = start_time + min(hard_join_caps)
 
     hard_timeout_triggered = threading.Event()
 
@@ -2153,6 +2162,55 @@ def _bootstrap_embedder(
         if bootstrap_fast:
             _enqueue_background_download()
         return placeholder
+
+    if thread.is_alive() and hard_join_deadline is not None:
+        remaining = hard_join_deadline - perf_counter()
+        if remaining > 0:
+            try:
+                thread.join(remaining)
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("embedder hard join window failed", exc_info=True)
+        if thread.is_alive():
+            join_reason = "embedder_join_cap"
+            result.update(
+                {
+                    "embedder": placeholder,
+                    "placeholder_reason": join_reason,
+                    "deferred": True,
+                }
+            )
+            if _BOOTSTRAP_EMBEDDER_JOB is not None:
+                _BOOTSTRAP_EMBEDDER_JOB.update(
+                    {
+                        "result": placeholder,
+                        "placeholder_reason": join_reason,
+                        "deferred": True,
+                    }
+                )
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=join_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{join_reason}"
+            )
+            LOGGER.info(
+                "embedder warmup join capped; returning placeholder",  # pragma: no cover - telemetry
+                extra={
+                    "presence_cap": presence_cap,
+                    "warmup_cap": warmup_cap,
+                    "stage_budget": stage_budget,
+                },
+            )
+            _signal_stop(join_reason)
+            try:
+                thread.join(0.05)
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("embedder hard join follow-up failed", exc_info=True)
+            _finalize_embedder_job(
+                placeholder,
+                placeholder_reason=join_reason,
+                aborted=False,
+                deferred=True,
+            )
+            return placeholder
 
     if thread.is_alive() and stage_wall_cap is not None:
         _record_abort(
@@ -2409,6 +2467,7 @@ def initialize_bootstrap_context(
     )
 
     def _task_embedder(_: dict[str, Any]) -> None:
+        global _BOOTSTRAP_EMBEDDER_JOB
         _mark_bootstrap_step("embedder_preload")
         embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
             "embedder_preload", vector_heavy=True, heavy=True
@@ -2420,6 +2479,7 @@ def initialize_bootstrap_context(
         force_full_preload = force_vector_warmup or force_embedder_preload
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
         presence_first = bootstrap_fast_context or not force_full_preload
+        presence_only = presence_first
         skip_heavy = gate_constrained or budget_constrained or embedder_deferred
         presence_reason = embedder_deferral_reason or "embedder_presence_probe"
         if gate_constrained:
@@ -2429,7 +2489,7 @@ def initialize_bootstrap_context(
         elif bootstrap_fast_context and not force_full_preload:
             presence_reason = "bootstrap_fast_embedder_probe"
 
-        if presence_first or skip_heavy:
+        if presence_only or skip_heavy:
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
                 extra={
@@ -2446,19 +2506,18 @@ def initialize_bootstrap_context(
                 "vectorizer_preload", reason=presence_reason
             )
             _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=presence_reason)
-            _bootstrap_embedder(
-                timeout=embedder_timeout,
-                stop_event=stop_event,
-                stage_budget=embedder_stage_budget,
-                budget=shared_timeout_coordinator,
-                budget_label="vector_seeding",
-                presence_probe=True,
-                presence_reason=presence_reason,
-                bootstrap_fast=bootstrap_fast_context,
-                schedule_background=True,
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{presence_reason}"
             )
+            _BOOTSTRAP_EMBEDDER_JOB = {
+                "result": _BOOTSTRAP_PLACEHOLDER,
+                "placeholder": _BOOTSTRAP_PLACEHOLDER,
+                "placeholder_reason": presence_reason,
+                "deferred": True,
+            }
+            _set_component_state("vector_seeding", "deferred")
             stage_controller.complete_step("embedder_preload", 0.0)
-            return
+            return _BOOTSTRAP_PLACEHOLDER
 
         _run_with_timeout(
             _bootstrap_embedder,
