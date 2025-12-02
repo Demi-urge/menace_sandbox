@@ -1123,16 +1123,52 @@ def warmup_vector_service(
                 log.info("Vectorise warmup skipped: no remaining budget")
             elif _has_estimated_budget("vectorise", budget_cap=vectorise_timeout):
                 try:
+                    from governed_embeddings import (
+                        apply_bootstrap_timeout_caps,
+                        get_embedder,
+                    )
+
+                    embedder_timeout = (
+                        vectorise_timeout
+                        if vectorise_timeout is not None
+                        else apply_bootstrap_timeout_caps()
+                    )
+
+                    def _vectorise(stop_event: threading.Event) -> Any:
+                        embedder = get_embedder(
+                            timeout=embedder_timeout,
+                            bootstrap_timeout=embedder_timeout,
+                            bootstrap_mode=True,
+                            stop_event=stop_event,
+                        )
+                        placeholder_reason = getattr(
+                            embedder, "_placeholder_reason", None
+                        )
+                        if embedder is None or placeholder_reason in {
+                            "timeout",
+                            "stop_requested",
+                            "bootstrap_cancelled",
+                        }:
+                            if stop_event is not None:
+                                stop_event.set()
+                            raise TimeoutError("embedder warmup deferred")
+                        return svc.vectorise(
+                            "text", {"text": "warmup"}, stop_event=stop_event
+                        )
+
                     completed, _, elapsed = _run_with_budget(
                         "vectorise",
-                        lambda stop_event: svc.vectorise(
-                            "text", {"text": "warmup"}, stop_event=stop_event
-                        ),
+                        _vectorise,
                         timeout=vectorise_timeout,
                     )
                     _record_elapsed("vectorise", elapsed)
                     if completed:
                         _record("vectorise", "ok")
+                except TimeoutError:
+                    _record_deferred_background("vectorise", "deferred-embedder")
+                    log.info(
+                        "Vector warmup vectorise stage deferred after embedder budget exhaustion"
+                    )
                 except Exception:  # pragma: no cover - allow partial warmup
                     log.debug("vector warmup transform failed; continuing", exc_info=True)
                     _record("vectorise", "failed")
