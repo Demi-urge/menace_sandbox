@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 _DB_ROUTER_MODULE: "_db_router_module | None" = None
 _DYNAMIC_PATH_ROUTER: "_dynamic_path_router | None" = None
 
+_VECTOR_DB_INSTANCE: "VectorMetricsDB | None" = None
+_VECTOR_DB_LOCK = threading.Lock()
+_PENDING_WEIGHT_NAMES: set[str] = set()
+
 _BOOTSTRAP_TIMER_ENVS = (
     "MENACE_BOOTSTRAP_WAIT_SECS",
     "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
@@ -64,6 +68,79 @@ def _dynamic_path_router():
 
         _DYNAMIC_PATH_ROUTER = dynamic_path_router_module
     return _DYNAMIC_PATH_ROUTER
+
+
+def _record_pending_weights(names: Sequence[str]) -> None:
+    clean_names = {str(n) for n in names if n}
+    if not clean_names:
+        return
+    with _VECTOR_DB_LOCK:
+        _PENDING_WEIGHT_NAMES.update(clean_names)
+
+
+def _pending_weight_mapping() -> dict[str, float]:
+    with _VECTOR_DB_LOCK:
+        return {name: 1.0 for name in _PENDING_WEIGHT_NAMES}
+
+
+def _consume_pending_weights() -> list[str]:
+    with _VECTOR_DB_LOCK:
+        return sorted(_PENDING_WEIGHT_NAMES)
+
+
+def _clear_pending_weights(names: Sequence[str]) -> None:
+    if not names:
+        return
+    with _VECTOR_DB_LOCK:
+        _PENDING_WEIGHT_NAMES.difference_update(set(names))
+
+
+def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
+    pending = _consume_pending_weights()
+    if not pending:
+        return
+    if getattr(vdb, "_boot_stub_active", False):
+        return
+
+    try:
+        existing = vdb.get_db_weights(default=_pending_weight_mapping())
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.info(
+            "vector_metrics_db.bootstrap.pending_weights_cached",
+            extra={"count": len(pending), "reason": str(exc)},
+        )
+        return
+
+    if not existing:
+        try:
+            vdb.set_db_weights({name: 1.0 for name in pending})
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning(
+                "vector_metrics_db.bootstrap.pending_weights_failed",
+                exc_info=exc,
+                extra={"count": len(pending)},
+            )
+            return
+        _clear_pending_weights(pending)
+        return
+
+    missing = [name for name in pending if name not in existing]
+    if not missing:
+        _clear_pending_weights(existing.keys())
+        return
+
+    try:
+        merged = dict(existing)
+        merged.update({name: 1.0 for name in missing})
+        vdb.set_db_weights(merged)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning(
+            "vector_metrics_db.bootstrap.pending_weights_partial_failure",
+            exc_info=exc,
+            extra={"count": len(missing)},
+        )
+        return
+    _clear_pending_weights(merged.keys())
 
 
 def _ensure_prometheus_objects() -> tuple:
@@ -213,6 +290,61 @@ def resolve_vector_bootstrap_flags(
     resolved_warmup = bool(warmup_requested and warmup is not False)
 
     return resolved_bootstrap_fast, resolved_warmup, env_requested, env["bootstrap_env"]
+
+
+def get_shared_vector_metrics_db(
+    *, bootstrap_fast: bool | None = None, warmup: bool | None = None
+) -> "VectorMetricsDB":
+    """Return a lazily initialised shared :class:`VectorMetricsDB` instance."""
+
+    global _VECTOR_DB_INSTANCE
+    with _VECTOR_DB_LOCK:
+        if _VECTOR_DB_INSTANCE is None:
+            _VECTOR_DB_INSTANCE = VectorMetricsDB(
+                "vector_metrics.db",
+                bootstrap_fast=bootstrap_fast,
+                warmup=warmup,
+            )
+
+    _apply_pending_weights(_VECTOR_DB_INSTANCE)
+    return _VECTOR_DB_INSTANCE
+
+
+def ensure_vector_db_weights(
+    db_names: Sequence[str], *, bootstrap_fast: bool | None = None
+) -> None:
+    """Seed vector DB ranking weights without forcing SQLite initialisation."""
+
+    names = [str(n) for n in db_names if n]
+    if not names:
+        return
+
+    _record_pending_weights(names)
+
+    if bootstrap_fast is None:
+        bootstrap_fast, _, env_requested, bootstrap_env = resolve_vector_bootstrap_flags()
+    else:
+        env_requested = False
+        bootstrap_env = False
+
+    if bootstrap_fast:
+        logger.info(
+            "vector_metrics_db.bootstrap.fast_weights_skipped",
+            extra={
+                "count": len(names),
+                "menace_bootstrap": bootstrap_env,
+                "env_bootstrap_requested": env_requested,
+            },
+        )
+        return
+
+    try:
+        vdb = get_shared_vector_metrics_db(
+            bootstrap_fast=bootstrap_fast, warmup=True
+        )
+        _apply_pending_weights(vdb)
+    except Exception as exc:  # pragma: no cover - log only
+        logger.warning("vector_metrics_db.bootstrap.weight_seed_failed", exc_info=exc)
 
 
 class _StubCursor:
@@ -1229,7 +1361,8 @@ class VectorMetricsDB:
     ) -> dict[str, float]:
         """Return mapping of origin database to current ranking weight."""
 
-        default_weights = dict(default or self._cached_weights)
+        pending_weights = _pending_weight_mapping()
+        default_weights = dict(default or self._cached_weights or pending_weights)
         if _noop_logging(self.bootstrap_fast, self._warmup_mode):
             return default_weights
 
@@ -1268,6 +1401,8 @@ class VectorMetricsDB:
             return default_weights
         weights = {str(db): float(weight) for db, weight in rows}
         self._cached_weights = dict(weights)
+        if pending_weights:
+            _clear_pending_weights(weights.keys())
         return weights
 
     # ------------------------------------------------------------------
@@ -1809,4 +1944,6 @@ __all__ = [
     "VectorMetric",
     "VectorMetricsDB",
     "resolve_vector_bootstrap_flags",
+    "get_shared_vector_metrics_db",
+    "ensure_vector_db_weights",
 ]

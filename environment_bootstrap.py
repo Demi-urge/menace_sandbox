@@ -1979,12 +1979,13 @@ class EnvironmentBootstrapper:
 
         if names:
             try:
-                from .vector_metrics_db import VectorMetricsDB
+                from .vector_metrics_db import (
+                    ensure_vector_db_weights,
+                    resolve_vector_bootstrap_flags,
+                )
 
-                vdb = VectorMetricsDB("vector_metrics.db", warmup=True)
-                if not vdb.get_db_weights():
-                    vdb.set_db_weights({n: 1.0 for n in names})
-                vdb.conn.close()
+                bootstrap_fast, _, _, _ = resolve_vector_bootstrap_flags()
+                ensure_vector_db_weights(names, bootstrap_fast=bootstrap_fast)
             except Exception as exc:  # pragma: no cover - log only
                 self.logger.warning("VectorMetricsDB bootstrap failed: %s", exc)
 
