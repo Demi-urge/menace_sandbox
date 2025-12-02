@@ -19,7 +19,7 @@ vector DB migrations need extra breathing room.
 from __future__ import annotations
 
 import contextlib
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import io
 import inspect
 import logging
@@ -2786,16 +2786,134 @@ def start_embedder_warmup(
     if stage_budget is not None and stage_budget > 0 and resolved_timeout > 0:
         resolved_timeout = min(resolved_timeout, stage_budget)
 
-    return _bootstrap_embedder(
-        resolved_timeout,
-        stop_event=stop_event,
-        stage_budget=stage_budget,
-        budget=budget,
-        budget_label=budget_label,
-        bootstrap_fast=tight_budget,
-        force_placeholder=tight_budget,
-        bootstrap_deadline=bootstrap_deadline,
+    stage_budget_cap_candidates = [
+        candidate
+        for candidate in (
+            stage_budget if stage_budget is not None and stage_budget > 0 else None,
+            deadline_remaining if deadline_remaining is not None and deadline_remaining > 0 else None,
+        )
+        if candidate is not None
+    ]
+    stage_budget_cap = min(stage_budget_cap_candidates) if stage_budget_cap_candidates else None
+
+    def _run_bootstrap_embedder(local_stop_event: threading.Event | None) -> Any:
+        return _bootstrap_embedder(
+            resolved_timeout,
+            stop_event=local_stop_event,
+            stage_budget=stage_budget,
+            budget=budget,
+            budget_label=budget_label,
+            bootstrap_fast=tight_budget,
+            force_placeholder=tight_budget,
+            bootstrap_deadline=bootstrap_deadline,
+        )
+
+    if stage_budget_cap is None:
+        return _run_bootstrap_embedder(stop_event)
+
+    def _remaining_stage_budget() -> float:
+        elapsed = time.monotonic() - warmup_started
+        return stage_budget_cap - elapsed
+
+    budget_remaining = _remaining_stage_budget()
+    if budget_remaining <= 0:
+        timeout_reason = "embedder_stage_budget_timeout"
+        LOGGER.info(
+            "embedder preload budget exhausted before launch; deferring",  # pragma: no cover - telemetry
+            extra={
+                "event": "embedder-preload-stage-timeout",
+                "elapsed": round(time.monotonic() - warmup_started, 3),
+                "stage_budget": stage_budget,
+                "bootstrap_window": deadline_remaining,
+                "budget_remaining": budget_remaining,
+                "presence_only": presence_only,
+                "budget_guarded": True,
+            },
+        )
+        job_snapshot = _schedule_background_preload(timeout_reason)
+        job_snapshot.update(
+            {
+                "timed_out": True,
+                "elapsed": round(time.monotonic() - warmup_started, 3),
+                "stage_budget": stage_budget,
+                "bootstrap_window": deadline_remaining,
+                "budget_remaining": budget_remaining,
+            }
+        )
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        stage_controller.defer_step("embedder_preload", reason=timeout_reason)
+        stage_controller.complete_step("embedder_preload", 0.0)
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=timeout_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{timeout_reason}"
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "vectorizer_preload", reason=timeout_reason
+        )
+        return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+
+    embedder_stop_event = threading.Event()
+    if stop_event is not None:
+        def _propagate_stop_to_embedder() -> None:
+            stop_event.wait()
+            if stop_event.is_set():
+                embedder_stop_event.set()
+
+        threading.Thread(
+            target=_propagate_stop_to_embedder,
+            name="embedder-stage-stop",
+            daemon=True,
+        ).start()
+
+    embedder_future = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(
+        _run_bootstrap_embedder, embedder_stop_event
     )
+
+    try:
+        return embedder_future.result(timeout=budget_remaining)
+    except FuturesTimeoutError:
+        timeout_reason = presence_reason or "embedder_stage_budget_timeout"
+        elapsed = time.monotonic() - warmup_started
+        embedder_stop_event.set()
+        with contextlib.suppress(Exception):
+            from menace_sandbox.governed_embeddings import cancel_embedder_initialisation
+
+            cancel_embedder_initialisation(
+                embedder_stop_event, reason=timeout_reason, join_timeout=0.0
+            )
+        LOGGER.info(
+            "embedder preload timed out against stage budget; deferring",  # pragma: no cover - telemetry
+            extra={
+                "event": "embedder-preload-stage-timeout",
+                "elapsed": round(elapsed, 3),
+                "stage_budget": stage_budget,
+                "bootstrap_window": deadline_remaining,
+                "budget_remaining": round(_remaining_stage_budget(), 3),
+                "presence_only": presence_only,
+                "budget_guarded": True,
+                "timeout_reason": timeout_reason,
+            },
+        )
+        stage_controller.defer_step("embedder_preload", reason=timeout_reason)
+        stage_controller.complete_step("embedder_preload", 0.0)
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=timeout_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{timeout_reason}"
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=timeout_reason)
+        job_snapshot = _schedule_background_preload(timeout_reason)
+        job_snapshot.update(
+            {
+                "timed_out": True,
+                "elapsed": round(elapsed, 3),
+                "stage_budget": stage_budget,
+                "bootstrap_window": deadline_remaining,
+                "budget_remaining": round(_remaining_stage_budget(), 3),
+                "timeout_reason": timeout_reason,
+            }
+        )
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
 
 
 def initialize_bootstrap_context(
