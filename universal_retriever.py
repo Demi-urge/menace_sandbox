@@ -19,6 +19,8 @@ from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import build_scope_clause
 from dynamic_path_router import get_project_roots, resolve_path
 
+logger = logging.getLogger(__name__)
+
 _ALIASES = (
     "universal_retriever",
     "menace.universal_retriever",
@@ -49,8 +51,9 @@ except Exception:  # pragma: no cover - fallback when module unavailable
     MetricsDB = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from .vector_metrics_db import VectorMetricsDB
+    from .vector_metrics_db import VectorMetricsDB, resolve_vector_bootstrap_flags
 except Exception:  # pragma: no cover - fallback when module unavailable
+    resolve_vector_bootstrap_flags = None  # type: ignore
     VectorMetricsDB = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
@@ -59,6 +62,21 @@ except Exception:  # pragma: no cover - fallback when event bus unavailable
     UnifiedEventBus = None  # type: ignore
 
 MENACE_ID = "universal_retriever"
+
+_VECTOR_BOOTSTRAP_FAST = False
+_VECTOR_WARMUP_STUB = False
+_VECTOR_ENV_REQUESTED = False
+_VECTOR_BOOTSTRAP_ENV = False
+if resolve_vector_bootstrap_flags is not None:
+    (
+        _VECTOR_BOOTSTRAP_FAST,
+        warmup_mode,
+        _VECTOR_ENV_REQUESTED,
+        _VECTOR_BOOTSTRAP_ENV,
+    ) = resolve_vector_bootstrap_flags()
+    _VECTOR_WARMUP_STUB = bool(
+        warmup_mode or _VECTOR_ENV_REQUESTED or _VECTOR_BOOTSTRAP_ENV or _VECTOR_BOOTSTRAP_FAST
+    )
 
 def _default_local_db_path(menace_id: str) -> str:
     """Return a writable fallback path for the local sqlite database.
@@ -105,7 +123,24 @@ SHARED_DB_PATH = os.getenv(
     "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
 )
 router: DBRouter = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
-_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+if _VECTOR_WARMUP_STUB:
+    logger.info(
+        "universal_retriever.vector_metrics.stubbed",
+        extra={
+            "bootstrap_fast": _VECTOR_BOOTSTRAP_FAST,
+            "warmup_mode": bool(_VECTOR_WARMUP_STUB),
+            "env_bootstrap_requested": _VECTOR_ENV_REQUESTED,
+            "menace_bootstrap": _VECTOR_BOOTSTRAP_ENV,
+        },
+    )
+_VEC_METRICS = (
+    VectorMetricsDB(
+        bootstrap_fast=_VECTOR_BOOTSTRAP_FAST,
+        warmup=_VECTOR_WARMUP_STUB,
+    )
+    if VectorMetricsDB is not None
+    else None
+)
 
 try:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -148,8 +183,6 @@ _RETRIEVAL_HIT_RATE = _me.Gauge(
     "Fraction of retrieved results included in final prompt",
     [],
 )
-
-logger = logging.getLogger(__name__)
 
 
 def log_retrieval_metrics(
