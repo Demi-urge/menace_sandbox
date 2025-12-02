@@ -2529,29 +2529,93 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "background_loops", reason=f"embedder_placeholder:{presence_reason}"
             )
-            _run_with_timeout(
-                _bootstrap_embedder,
-                timeout=embedder_timeout,
-                bootstrap_deadline=bootstrap_deadline,
-                description="bootstrap_embedder_presence",
-                abort_on_timeout=False,
-                heavy_bootstrap=True,
-                budget=shared_timeout_coordinator,
-                budget_label="vector_seeding",
-                stop_event=stop_event,
-                stage_budget=embedder_stage_budget,
-                presence_probe=True,
-                presence_reason=presence_reason,
-                bootstrap_fast=bootstrap_fast_context,
-                schedule_background=True,
-            )
+            probe_timeout = min(max(embedder_timeout or 0.0, 0.0), 0.75) or 0.75
+            probe_stop_event = threading.Event()
+            presence_available = False
+            probe_timed_out = False
+
+            try:
+                from menace_sandbox.governed_embeddings import embedder_cache_present
+            except Exception:
+                LOGGER.debug(
+                    "embedder presence probe unavailable; skipping cache check",
+                    exc_info=True,
+                )
+            else:
+                def _probe_worker() -> None:
+                    nonlocal presence_available
+                    if stop_event and stop_event.is_set():
+                        return
+                    try:
+                        presence_available = bool(embedder_cache_present())
+                    except Exception:  # pragma: no cover - diagnostics only
+                        LOGGER.debug("embedder presence probe failed", exc_info=True)
+
+                probe_thread = threading.Thread(
+                    target=_probe_worker,
+                    name="embedder-presence-probe",
+                    daemon=True,
+                )
+                probe_thread.start()
+
+                if stop_event is not None:
+                    def _propagate_stop() -> None:
+                        stop_event.wait(probe_timeout)
+                        if stop_event.is_set():
+                            probe_stop_event.set()
+
+                    threading.Thread(
+                        target=_propagate_stop,
+                        name="embedder-presence-probe-stop",
+                        daemon=True,
+                    ).start()
+
+                probe_thread.join(probe_timeout)
+                if probe_thread.is_alive() or probe_stop_event.is_set():
+                    probe_timed_out = True
+                    probe_stop_event.set()
+
             job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
-            if job_snapshot is not None:
-                job_snapshot.setdefault("deferred", True)
-                job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
-                job_snapshot.setdefault("placeholder_reason", presence_reason)
-                job_snapshot["ready_after_bootstrap"] = True
-                _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
+            job_snapshot.setdefault("placeholder_reason", presence_reason)
+            job_snapshot.update(
+                {
+                    "deferred": True,
+                    "ready_after_bootstrap": True,
+                    "presence_available": presence_available,
+                    "presence_probe_timeout": probe_timed_out,
+                }
+            )
+
+            def _queue_deferred_embedder_warmup() -> None:
+                _BOOTSTRAP_EMBEDDER_READY.wait()
+                if stop_event is not None and stop_event.is_set():
+                    LOGGER.info(
+                        "skipping deferred embedder warmup due to stop signal",
+                        extra={"presence_reason": presence_reason},
+                    )
+                    return
+                _run_with_timeout(
+                    _bootstrap_embedder,
+                    timeout=embedder_timeout,
+                    bootstrap_deadline=bootstrap_deadline,
+                    description="bootstrap_embedder_deferred",
+                    abort_on_timeout=False,
+                    heavy_bootstrap=True,
+                    budget=shared_timeout_coordinator,
+                    budget_label="vector_seeding",
+                    stop_event=stop_event,
+                    stage_budget=embedder_stage_budget,
+                    schedule_background=True,
+                )
+
+            if not job_snapshot.get("warmup_scheduled"):
+                job_snapshot["warmup_scheduled"] = True
+                _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(
+                    _queue_deferred_embedder_warmup
+                )
+
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
             _set_component_state("vector_seeding", "deferred")
             stage_controller.complete_step("embedder_preload", 0.0)
             return _BOOTSTRAP_PLACEHOLDER
