@@ -341,12 +341,18 @@ def warmup_vector_service(
         stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     budget_start = time.monotonic()
+    timebox_deadline: float | None = None
 
     def _default_budget_remaining() -> float | None:
         if env_budget is None:
             return None
         remaining = env_budget - (time.monotonic() - budget_start)
         return max(0.0, remaining)
+
+    def _timebox_remaining() -> float | None:
+        if timebox_deadline is None:
+            return None
+        return max(0.0, timebox_deadline - time.monotonic())
 
     def _default_check_budget(_evt: threading.Event | None = None) -> None:
         remaining = _default_budget_remaining()
@@ -548,12 +554,19 @@ def warmup_vector_service(
         return True
 
     budget_exhausted = False
+    timebox_skipped: set[str] = set()
 
     def _remaining_budget() -> float | None:
         if budget_remaining is None:
-            return None
+            return _timebox_remaining()
         try:
-            return budget_remaining()
+            remaining = budget_remaining()
+            timebox_remaining = _timebox_remaining()
+            if timebox_remaining is None:
+                return remaining
+            if remaining is None:
+                return timebox_remaining
+            return min(remaining, timebox_remaining)
         except Exception:  # pragma: no cover - budget hint is advisory
             log.debug("budget_remaining callback failed", exc_info=True)
             return None
@@ -584,6 +597,17 @@ def warmup_vector_service(
             budget_gate_reason = budget_gate_reason or status
             log.info(
                 "Vector warmup budget exhausted before %s; skipping heavy stages", stage
+            )
+            return False
+        timebox_remaining = _timebox_remaining()
+        if timebox_remaining is not None and timebox_remaining <= 0:
+            budget_exhausted = True
+            status = "deferred-timebox"
+            timebox_skipped.add(stage)
+            _record_deferred_background(stage, status)
+            budget_gate_reason = budget_gate_reason or status
+            log.info(
+                "Vector warmup timebox exhausted before %s; deferring remaining stages", stage
             )
             return False
         if check_budget is None:
@@ -651,16 +675,25 @@ def warmup_vector_service(
             return None
         return max(0.0, stage_budget_cap - cumulative_elapsed)
 
+    def _timebox_or_budget_remaining() -> float | None:
+        budget_remaining = _remaining_budget()
+        if budget_remaining is None:
+            return _timebox_remaining()
+        return budget_remaining
+
     def _available_budget_hint(
         stage: str, stage_timeout: float | None = None
     ) -> float | None:
         hints: list[float] = []
         remaining = _remaining_budget()
         shared_remaining = _remaining_shared_budget()
+        timebox_remaining = _timebox_remaining()
         if remaining is not None:
             hints.append(remaining)
         if shared_remaining is not None:
             hints.append(shared_remaining)
+        if timebox_remaining is not None:
+            hints.append(timebox_remaining)
         if stage_timeout is None:
             stage_timeout = resolved_timeouts.get(stage)
         if stage_timeout is not None:
@@ -711,6 +744,10 @@ def warmup_vector_service(
             summary[f"shared_budget_remaining_after_{stage}"] = f"{remaining_shared:.3f}"
         if stage_budget_cap is not None and cumulative_elapsed >= stage_budget_cap:
             budget_exhausted = True
+        remaining_timebox = _timebox_remaining()
+        if remaining_timebox is not None and remaining_timebox <= 0:
+            budget_exhausted = True
+            timebox_skipped.add(stage)
 
     def _defer_handler_chain(
         status: str,
@@ -750,6 +787,10 @@ def warmup_vector_service(
         remaining = _remaining_budget()
         if remaining is not None:
             summary["remaining_budget"] = f"{remaining:.3f}"
+        if timebox_deadline is not None:
+            summary["warmup_timebox"] = f"{stage_budget_cap:.3f}"
+        if timebox_skipped:
+            summary["timebox_skipped"] = ",".join(sorted(timebox_skipped))
         hook_dispatched = False
         if budget_gate_reason is not None:
             summary["budget_gate"] = budget_gate_reason
@@ -1058,6 +1099,11 @@ def warmup_vector_service(
             timeout for timeout in _CONSERVATIVE_STAGE_TIMEOUTS.values() if timeout is not None
         )
         stage_budget_cap = conservative_ceiling if conservative_ceiling > 0 else None
+    if stage_budget_cap is not None:
+        initial_remaining = _remaining_budget()
+        if initial_remaining is not None:
+            stage_budget_cap = min(stage_budget_cap, initial_remaining)
+        timebox_deadline = budget_start + stage_budget_cap
     heavy_budget_needed = 0.0
     if download_model:
         heavy_budget_needed += base_stage_cost["model"]
@@ -1153,11 +1199,18 @@ def warmup_vector_service(
         warmup_lite = True
 
     def _effective_timeout(stage: str) -> float | None:
-        remaining = _remaining_budget()
+        remaining = _timebox_or_budget_remaining()
         stage_timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
         fallback_budget = provided_budget if provided_budget is not None else None
+        timebox_remaining = _timebox_remaining()
         if remaining is None:
-            timeout = stage_timeout if stage_timeout is not None else fallback_budget
+            timeout_candidates = [timebox_remaining]
+            if stage_timeout is not None:
+                timeout_candidates.append(stage_timeout)
+            elif fallback_budget is not None:
+                timeout_candidates.append(fallback_budget)
+            timeout_candidates = [t for t in timeout_candidates if t is not None]
+            timeout = min(timeout_candidates) if timeout_candidates else None
             effective_timeouts[stage] = timeout
             return timeout
         if stage_timeout is None:
@@ -1165,9 +1218,13 @@ def warmup_vector_service(
                 timeout = remaining
             else:
                 timeout = max(0.0, min(remaining, fallback_budget))
+            if timebox_remaining is not None:
+                timeout = min(timeout, timebox_remaining)
             effective_timeouts[stage] = timeout
             return timeout
         timeout = max(0.0, min(stage_timeout, remaining))
+        if timebox_remaining is not None:
+            timeout = min(timeout, timebox_remaining)
         effective_timeouts[stage] = timeout
         return timeout
 
