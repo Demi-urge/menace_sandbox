@@ -292,11 +292,132 @@ try:  # pragma: no cover - optional dependency
     _vector_metrics_module = load_internal("vector_metrics_db")
 except Exception:
     VectorMetricsDB = None  # type: ignore
+    resolve_vector_bootstrap_flags = None  # type: ignore
 else:
     VectorMetricsDB = _vector_metrics_module.VectorMetricsDB
+    resolve_vector_bootstrap_flags = _vector_metrics_module.resolve_vector_bootstrap_flags
 
 
-_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+_VECTOR_SERVICE_WARMUP = _env_flag("VECTOR_SERVICE_WARMUP")
+_VECTOR_METRICS_DISABLED = _env_flag("VECTOR_METRICS_DISABLED")
+_VEC_METRICS_LOCK = threading.RLock()
+_VEC_METRICS: "VectorMetricsDB | _VectorMetricsWarmupStub | None" = None
+
+
+class _VectorMetricsWarmupStub:
+    """Lightweight stand-in deferring :class:`VectorMetricsDB` creation."""
+
+    class _StubCursor:
+        def fetchall(self):
+            return []
+
+        def fetchone(self):
+            return None
+
+    class _StubConnection:
+        def execute(self, *_args, **_kwargs):
+            return _VectorMetricsWarmupStub._StubCursor()
+
+        def executemany(self, *args, **kwargs):
+            return self.execute(*args, **kwargs)
+
+        def commit(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    def __init__(self, create_db: Callable[[], "VectorMetricsDB | None"], *, on_activate: Callable[["VectorMetricsDB"], None]):
+        self._create_db = create_db
+        self._on_activate = on_activate
+        self._real: "VectorMetricsDB | None" = None
+        self._boot_stub_active = True
+        self.conn = self._StubConnection()
+
+    def activate_persistence(self, *, reason: str = "vector_metrics.activate"):
+        if self._real is not None:
+            return self._real
+        vm = self._create_db()
+        if vm is None:
+            return None
+        self._real = vm
+        self._boot_stub_active = False
+        try:
+            self._on_activate(vm)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("vector metrics activation callback failed", exc_info=True)
+        return vm
+
+    def get_db_weights(self, *args, **kwargs):  # pragma: no cover - warmup stub
+        if self._real is not None:
+            return self._real.get_db_weights(*args, **kwargs)
+        return {}
+
+    def __getattr__(self, item):
+        if self._real is not None:
+            return getattr(self._real, item)
+
+        def _noop(*_args, **_kwargs):  # pragma: no cover - warmup stub
+            return None
+
+        return _noop
+
+
+def _get_vector_metrics(
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    activate_persistence: bool = False,
+) -> "VectorMetricsDB | _VectorMetricsWarmupStub | None":
+    """Return a lazily initialised vector metrics database instance."""
+
+    if _VECTOR_METRICS_DISABLED or VectorMetricsDB is None or resolve_vector_bootstrap_flags is None:
+        return None
+
+    bootstrap_context = _bootstrap_active()
+    resolved_fast, resolved_warmup, env_requested, _ = resolve_vector_bootstrap_flags(
+        bootstrap_fast=bootstrap_fast if bootstrap_fast is not None else bootstrap_context,
+        warmup=warmup if warmup is not None else (bootstrap_context or _VECTOR_SERVICE_WARMUP),
+    )
+    warmup_flag = bool(resolved_warmup or bootstrap_context)
+    bootstrap_flag = bool(resolved_fast or bootstrap_context or env_requested)
+    reason = "data_bot.vector_metrics"
+    with _VEC_METRICS_LOCK:
+        if isinstance(_VEC_METRICS, _VectorMetricsWarmupStub):
+            if activate_persistence and not warmup_flag:
+                activated = _VEC_METRICS.activate_persistence(reason=reason)
+                if activated is not None:
+                    globals()["_VEC_METRICS"] = activated
+                    return activated
+            return _VEC_METRICS
+
+        if _VEC_METRICS is not None:
+            return _VEC_METRICS
+
+        if warmup_flag:
+            stub = _VectorMetricsWarmupStub(
+                lambda: VectorMetricsDB(
+                    bootstrap_fast=False,
+                    warmup=False,
+                ),
+                on_activate=lambda vm: globals().__setitem__("_VEC_METRICS", vm),
+            )
+            _VEC_METRICS = stub
+            return stub
+
+        vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
+        if activate_persistence and hasattr(vm, "activate_persistence") and (
+            bootstrap_flag or warmup_flag
+        ):
+            try:
+                vm.activate_persistence(reason=reason)
+            except Exception:  # pragma: no cover - best effort
+                logger.debug("vector metrics activation failed", exc_info=True)
+        _VEC_METRICS = vm
+        return vm
 
 
 _self_coding_thresholds_module = load_internal("self_coding_thresholds")
@@ -1327,9 +1448,14 @@ class MetricsDB:
                     ),
                 )
             conn.commit()
-        if _VEC_METRICS is not None and entries:
+        vector_metrics = _get_vector_metrics(
+            bootstrap_fast=self.bootstrap,
+            warmup=_bootstrap_active(self),
+            activate_persistence=not _bootstrap_active(self),
+        )
+        if vector_metrics is not None and entries:
             try:
-                _VEC_METRICS.update_outcome(
+                vector_metrics.update_outcome(
                     session_id,
                     list(entries),
                     contribution=0.0,
