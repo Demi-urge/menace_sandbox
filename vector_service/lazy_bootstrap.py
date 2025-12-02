@@ -52,6 +52,13 @@ VECTOR_WARMUP_STAGE_TOTAL = getattr(
 )
 
 
+def _coerce_timeout(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _warmup_cache_path() -> Path:
     base_dir = os.getenv("VECTOR_WARMUP_CACHE_DIR", "").strip()
     base = Path(base_dir) if base_dir else Path(tempfile.gettempdir())
@@ -132,19 +139,46 @@ def ensure_embedding_model(
     global _MODEL_READY
     log = logger or logging.getLogger(__name__)
 
-    def _coerce_timeout(value: object) -> float | None:
-        try:
-            return float(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+    def _stage_budget_deadline() -> float | None:
+        deadline = getattr(stop_event, "_stage_deadline", None)
+        if deadline is None:
             return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return 0.0
+        return remaining
+
+    def _timebox_error(reason: str, timeout_hint: float | None) -> TimeoutError:
+        err = TimeoutError(reason)
+        setattr(err, "_warmup_timebox", True)
+        if timeout_hint is not None:
+            setattr(err, "_timebox_timeout", timeout_hint)
+        return err
 
     def _result(path: Path | None, status: str | None = None):
         if warmup_lite:
             return path, status
         return path
+
+    stage_budget_remaining = _stage_budget_deadline()
+    effective_timeout = _coerce_timeout(download_timeout)
+    if stage_budget_remaining is not None:
+        if stage_budget_remaining <= 0:
+            raise _timebox_error("embedding model stage budget exhausted", 0.0)
+        if effective_timeout is None:
+            effective_timeout = stage_budget_remaining
+        else:
+            effective_timeout = max(0.0, min(effective_timeout, stage_budget_remaining))
+
     def _check_cancelled(context: str) -> None:
         if stop_event is not None and stop_event.is_set():
             raise TimeoutError(f"embedding model download cancelled during {context}")
+        remaining_budget = _stage_budget_deadline()
+        if remaining_budget is not None and remaining_budget <= 0:
+            raise _timebox_error(
+                f"embedding model download timed out during {context}",
+                effective_timeout,
+            )
         if budget_check is not None:
             budget_check(stop_event)
 
@@ -185,10 +219,21 @@ def ensure_embedding_model(
                 dest,
                 stop_event=stop_event,
                 budget_check=budget_check,
-                timeout=download_timeout,
+                timeout=effective_timeout,
             )
             _MODEL_READY = True
             return _result(dest, "ready")
+        except TimeoutError as exc:
+            log.info(
+                "embedding model download deferred after timeout",  # best effort signal for future warmups
+                extra={
+                    "event": "vector-warmup",
+                    "stage": "model",
+                    "status": "deferred-timebox",
+                    "timeout": effective_timeout,
+                },
+            )
+            raise _timebox_error(str(exc), effective_timeout) from exc
         except Exception as exc:  # pragma: no cover - best effort during warmup
             log.warning("embedding model bootstrap failed: %s", exc)
             if warmup:
@@ -601,6 +646,9 @@ def warmup_vector_service(
         nonlocal budget_exhausted
         stop_event = threading.Event()
         start = time.monotonic()
+        stage_deadline = start + timeout if timeout is not None else None
+        if stage_deadline is not None:
+            setattr(stop_event, "_stage_deadline", stage_deadline)
         if check_budget is None and timeout is None:
             result = func(stop_event)
             return True, result, time.monotonic() - start
@@ -685,8 +733,24 @@ def warmup_vector_service(
             if isinstance(err, TimeoutError):
                 _stop_thread("cancelled")
                 budget_exhausted = True
-                log.info("Vector warmup %s cancelled: %s", stage, err)
-                _record_deferred_background(stage, "deferred-budget")
+                timeboxed = getattr(err, "_warmup_timebox", False)
+                status = "deferred-timebox" if timeboxed else "deferred-budget"
+                timeout_hint = getattr(err, "_timebox_timeout", None)
+                if timeboxed:
+                    _record_timeout(stage)
+                log.info(
+                    "Vector warmup %s cancelled%s: %s",
+                    stage,
+                    " after timebox" if timeboxed else "",
+                    err,
+                    extra={
+                        "event": "vector-warmup",
+                        "stage": stage,
+                        "status": status,
+                        "timeout": timeout_hint,
+                    },
+                )
+                _record_deferred_background(stage, status)
                 return False, None, time.monotonic() - start
             raise err
 
