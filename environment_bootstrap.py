@@ -2575,8 +2575,21 @@ class EnvironmentBootstrapper:
                     bg_summary: Mapping[str, str] | None = None
                     try:
                         from .vector_service.lazy_bootstrap import warmup_vector_service
+                        try:
+                            from .vector_service.lazy_bootstrap import _CONSERVATIVE_STAGE_TIMEOUTS
+                        except Exception:
+                            _CONSERVATIVE_STAGE_TIMEOUTS = {
+                                "model": 9.0,
+                                "handlers": 9.0,
+                                "scheduler": 4.5,
+                                "vectorise": 4.5,
+                            }
 
-                        effective_stage_timeouts = background_stage_timeouts or stage_timeouts
+                        effective_stage_timeouts = (
+                            background_stage_timeouts
+                            or stage_timeouts
+                            or dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+                        )
                         bg_summary = warmup_vector_service(
                             logger=self.logger,
                             download_model=heavy_model_requested,
@@ -2645,12 +2658,23 @@ class EnvironmentBootstrapper:
                                 stage="vector_warmup",
                                 budget_hint=vector_budget_hint,
                             )
+                capped_hint = None
+                if isinstance(stage_timeouts, Mapping):
+                    capped_hint = ",".join(
+                        sorted(
+                            stage
+                            for stage, timeout in stage_timeouts.items()
+                            if stage != "budget" and timeout is not None
+                        )
+                    )
                 summary = {
                     "bootstrap": "deferred",
                     "budget_exhausted": "true",
                     "background": background_status or "pending",
                     "deferred": ",".join(sorted(deferred_stages)) if deferred_stages else "",
                 }
+                if capped_hint is not None:
+                    summary["stage_caps"] = capped_hint
                 self._persist_vector_warmup_state(
                     deferred=deferred_stages,
                     summary=summary,
