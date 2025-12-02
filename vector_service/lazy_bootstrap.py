@@ -30,6 +30,12 @@ _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
 _WARMUP_STAGE_MEMO: dict[str, str] = {}
 
+_CONSERVATIVE_STAGE_TIMEOUTS = {
+    "model": 12.0,
+    "handlers": 12.0,
+    "vectorise": 6.0,
+}
+
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
     _metrics,
     "vector_warmup_stage_total",
@@ -372,6 +378,8 @@ def warmup_vector_service(
         "handlers": 10.0,
         "vectorise": 5.0,
     }
+    if stage_timeouts is None and check_budget is None:
+        base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     def _coerce_timeout(value: object) -> float | None:
         try:
@@ -469,7 +477,7 @@ def warmup_vector_service(
 
     def _effective_timeout(stage: str) -> float | None:
         remaining = _remaining_budget()
-        stage_timeout = resolved_timeouts.get(stage)
+        stage_timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
         fallback_budget = provided_budget if provided_budget is not None else None
         if remaining is None:
             return stage_timeout if stage_timeout is not None else fallback_budget
