@@ -2,6 +2,7 @@ import logging
 import sys
 import time
 import types
+import threading
 
 import importlib.util
 from pathlib import Path
@@ -41,6 +42,7 @@ def test_load_handlers_times_out(monkeypatch, caplog):
 
     assert "slow" in handlers
     assert getattr(handlers["slow"], "is_patch_stub", False)
+    assert handlers.deferral_statuses.get("slow") == "timeout"
     assert any(getattr(record, "reason", None) == "timeout" for record in caplog.records)
 
 
@@ -66,5 +68,45 @@ def test_budget_cap_defers_without_import(monkeypatch, caplog):
 
     assert "budgeted" in handlers
     assert getattr(handlers["budgeted"], "is_patch_stub", False)
+    assert handlers.deferral_statuses.get("budgeted") == "budget"
     assert not called
+    assert any(getattr(record, "reason", None) == "budget" for record in caplog.records)
+
+
+def test_global_budget_short_circuits(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    registry = _load_registry()
+
+    def _import(name):
+        module = types.ModuleType(name)
+
+        class SlowVectorizer:
+            def __init__(self, *_, **__):
+                time.sleep(0.02)
+
+            def transform(self, _record):  # pragma: no cover - behaviour only
+                return [2.0]
+
+        module.SlowVectorizer = SlowVectorizer
+        return module
+
+    monkeypatch.setattr(registry, "importlib", types.SimpleNamespace(import_module=_import))
+    monkeypatch.setattr(
+        registry,
+        "_VECTOR_REGISTRY",
+        {
+            "first": ("vector_service.first", "SlowVectorizer", None, None),
+            "second": ("vector_service.second", "SlowVectorizer", None, None),
+        },
+    )
+
+    stop_event = threading.Event()
+    handlers = registry.load_handlers(
+        handler_timeouts={"budget": 0.01}, stop_event=stop_event, bootstrap_fast=False
+    )
+
+    assert stop_event.is_set()
+    assert set(handlers.keys()) == {"first", "second"}
+    assert handlers.deferral_statuses.get("first") in {"timeout", "budget"}
+    assert handlers.deferral_statuses.get("second") == "budget"
     assert any(getattr(record, "reason", None) == "budget" for record in caplog.records)
