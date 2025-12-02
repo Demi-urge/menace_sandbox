@@ -935,7 +935,12 @@ def warmup_vector_service(
         return True, result[0] if result else None, time.monotonic() - start, None
 
     base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
-    base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0, "scheduler": 5.0}
+    base_stage_cost = {
+        "model": 20.0,
+        "handlers": 25.0,
+        "vectorise": 8.0,
+        "scheduler": 5.0,
+    }
     if bootstrap_context or bootstrap_fast or not stage_timeouts_supplied:
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
@@ -952,8 +957,9 @@ def warmup_vector_service(
             coerced = _coerce_timeout(timeout)
             if coerced is None:
                 continue
-            resolved_timeouts[name] = coerced
-            explicit_timeouts.add(name)
+            target_name = "handlers" if name == "legacy-handlers" else name
+            resolved_timeouts[target_name] = coerced
+            explicit_timeouts.add(target_name)
 
     def _distribute_budget(timeouts: dict[str, float | None], budget: float | None) -> dict[str, float | None]:
         if budget is None:
@@ -1534,11 +1540,29 @@ def warmup_vector_service(
     else:
         handler_timeout = _effective_timeout("handlers")
         vectorise_timeout = _effective_timeout("vectorise")
+        handler_budget_window = _stage_budget_window(handler_timeout)
         if _gate_conservative_budget("handlers", hydrate_handlers, handler_timeout):
             if _should_defer_upfront(
                 "handlers", stage_timeout=handler_timeout, stage_enabled=hydrate_handlers
             ):
                 _record_cancelled("handlers", "budget")
+                return _finalise()
+            elif (
+                hydrate_handlers
+                and handler_budget_window is not None
+                and handler_budget_window <= 0
+            ):
+                status = "deferred-budget"
+                cancelled_reason = "budget"
+                if handler_timeout is not None and handler_timeout <= 0:
+                    status = "deferred-ceiling"
+                    cancelled_reason = "ceiling"
+                _defer_handler_chain(
+                    status,
+                    stage_timeout=handler_timeout,
+                    vectorise_timeout=vectorise_timeout,
+                )
+                _record_cancelled("handlers", cancelled_reason)
                 return _finalise()
             elif not _guard("handlers"):
                 handler_status = summary.get("handlers", "deferred-budget")
@@ -1667,6 +1691,7 @@ def warmup_vector_service(
         pass
     else:
         vectorise_timeout = _effective_timeout("vectorise")
+        vectorise_budget_window = _stage_budget_window(vectorise_timeout)
         if _gate_conservative_budget(
             "vectorise", should_vectorise, vectorise_timeout
         ):
@@ -1674,6 +1699,20 @@ def warmup_vector_service(
                 "vectorise", stage_timeout=vectorise_timeout, stage_enabled=should_vectorise
             ):
                 _record_cancelled("vectorise", "budget")
+                return _finalise()
+            elif (
+                should_vectorise
+                and vectorise_budget_window is not None
+                and vectorise_budget_window <= 0
+            ):
+                status = "deferred-budget"
+                cancelled_reason = "budget"
+                if vectorise_timeout is not None and vectorise_timeout <= 0:
+                    status = "deferred-ceiling"
+                    cancelled_reason = "ceiling"
+                _record_deferred_background("vectorise", status)
+                _hint_background_budget("vectorise", vectorise_timeout)
+                _record_cancelled("vectorise", cancelled_reason)
                 return _finalise()
             elif _guard("vectorise"):
                 if should_vectorise and svc is not None:
