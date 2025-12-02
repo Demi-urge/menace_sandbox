@@ -137,7 +137,7 @@ def test_embedder_cancellation_signals_budget_and_fallback():
     assert elapsed < 0.5
 
 
-def test_embedder_presence_probe_uses_cache_check_and_schedules_background():
+def test_embedder_presence_probe_records_placeholder_without_background_download():
     preseed_bootstrap = _load_preseed_bootstrap_module()
 
     calls: dict[str, object] = {}
@@ -185,8 +185,8 @@ def test_embedder_presence_probe_uses_cache_check_and_schedules_background():
     assert job.get("deferred") is True
     assert job.get("placeholder_reason") == "embedder_presence_probe"
     assert job.get("presence_available") is True
-    assert job.get("background_scheduled") is True
-    assert calls.get("background_get") is not None
+    assert job.get("background_scheduled") is None
+    assert calls.get("background_get") is None
 
 
 def test_embedder_stage_budget_sets_deferral_token():

@@ -1724,7 +1724,20 @@ def _bootstrap_embedder(
         LOGGER.debug("signalling embedder stop (%s)", reason)
         embedder_stop_event.set()
 
+    background_download_requested = schedule_background or force_placeholder
+    background_budget_available = stage_budget is None or stage_budget > 0
+
     def _enqueue_background_download() -> None:
+        if not background_budget_available:
+            LOGGER.debug("embedder background download blocked by stage budget")
+            return
+
+        if presence_probe and not background_download_requested:
+            LOGGER.debug(
+                "presence probe requested; skipping embedder background download"
+            )
+            return
+
         if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("background_scheduled"):
             LOGGER.debug("embedder background download already scheduled")
             return
@@ -1902,7 +1915,7 @@ def _bootstrap_embedder(
             "background_loops", reason=f"embedder_placeholder:{probe_reason}"
         )
         _set_component_state("vector_seeding", "ready")
-        if cache_available or schedule_background:
+        if background_download_requested:
             _enqueue_background_download()
         _finalize_embedder_job(
             placeholder,
