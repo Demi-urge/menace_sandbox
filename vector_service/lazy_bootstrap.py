@@ -452,7 +452,10 @@ def warmup_vector_service(
     so callers can enqueue follow-up tasks with the same ceilings.  A
     ``bootstrap_lite`` flag allows bootstrap callers to explicitly defer handler
     hydration and vectorisation while still probing model presence, even when
-    generous budgets are available.
+    generous budgets are available.  When neither environment nor caller
+    timeouts are supplied, the conservative per-stage defaults are applied
+    automatically and enforced before heavy work begins to avoid uncapped
+    warmups.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -1570,6 +1573,33 @@ def warmup_vector_service(
             return True
         return False
 
+    def _abort_missing_timeout(
+        stage: str,
+        stage_timeout: float | None,
+        *,
+        stage_enabled: bool,
+        chain_vectorise: bool = False,
+    ) -> bool:
+        nonlocal hydrate_handlers, start_scheduler, run_vectorise, budget_gate_reason
+        if not stage_enabled or stage_timeout is not None:
+            return False
+
+        status = "deferred-no-budget"
+        budget_gate_reason = budget_gate_reason or status
+        _record_deferred_background(stage, status)
+        _hint_background_budget(stage, stage_timeout)
+        if stage == "handlers":
+            hydrate_handlers = False
+        elif stage == "scheduler":
+            start_scheduler = False
+        if chain_vectorise and run_vectorise:
+            _record_deferred_background("vectorise", status)
+            _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+            run_vectorise = False
+
+        log.info("No stage budget available for %s; deferring to background", stage)
+        return True
+
     def _shared_budget_preflight() -> None:
         nonlocal hydrate_handlers, start_scheduler, run_vectorise, budget_gate_reason, heavy_admission
 
@@ -1633,6 +1663,9 @@ def warmup_vector_service(
     else:
         model_timeout = _effective_timeout("model")
         model_enabled = download_model or probe_model or model_probe_only
+        if _abort_missing_timeout("model", model_timeout, stage_enabled=model_enabled):
+            _record_cancelled("model", "budget")
+            return _finalise()
         if _gate_conservative_budget("model", model_enabled, model_timeout):
             if _should_defer_upfront(
                 "model", stage_timeout=model_timeout, stage_enabled=model_enabled
@@ -1754,6 +1787,14 @@ def warmup_vector_service(
         handler_timeout = _effective_timeout("handlers")
         vectorise_timeout = _effective_timeout("vectorise")
         handler_budget_window = _stage_budget_window(handler_timeout)
+        if _abort_missing_timeout(
+            "handlers",
+            handler_timeout,
+            stage_enabled=hydrate_handlers,
+            chain_vectorise=bool(run_vectorise),
+        ):
+            _record_cancelled("handlers", "budget")
+            return _finalise()
         if _gate_conservative_budget("handlers", hydrate_handlers, handler_timeout):
             if _should_defer_upfront(
                 "handlers", stage_timeout=handler_timeout, stage_enabled=hydrate_handlers
@@ -1868,6 +1909,11 @@ def warmup_vector_service(
         pass
     else:
         scheduler_timeout = _effective_timeout("scheduler")
+        if _abort_missing_timeout(
+            "scheduler", scheduler_timeout, stage_enabled=start_scheduler
+        ):
+            _record_cancelled("scheduler", "budget")
+            return _finalise()
         if _gate_conservative_budget("scheduler", start_scheduler, scheduler_timeout):
             if _guard("scheduler"):
                 if start_scheduler:
@@ -1905,6 +1951,11 @@ def warmup_vector_service(
     else:
         vectorise_timeout = _effective_timeout("vectorise")
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
+        if _abort_missing_timeout(
+            "vectorise", vectorise_timeout, stage_enabled=should_vectorise
+        ):
+            _record_cancelled("vectorise", "budget")
+            return _finalise()
         if _gate_conservative_budget(
             "vectorise", should_vectorise, vectorise_timeout
         ):
