@@ -446,6 +446,19 @@ def warmup_vector_service(
         error: list[BaseException] = []
         done = threading.Event()
 
+        def _detach_runner(reason: str) -> None:
+            def _cleanup() -> None:
+                if done.wait(timeout=0.5):
+                    return
+                if thread.is_alive():
+                    log.debug(
+                        "vector warmup %s thread still active after %s; leaving detached",
+                        stage,
+                        reason,
+                    )
+
+            threading.Thread(target=_cleanup, daemon=True).start()
+
         def _runner() -> None:
             try:
                 result.append(func(stop_event))
@@ -466,8 +479,7 @@ def warmup_vector_service(
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
                 )
-                if not done.wait(timeout=0.25):
-                    log.debug("vector warmup %s still cancelling after timeout", stage)
+                _detach_runner("timeout")
                 return False, None
 
             if check_budget is not None:
