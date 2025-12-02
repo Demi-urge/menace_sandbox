@@ -753,6 +753,25 @@ def _resolve_local_snapshot(model_cache: Path) -> Optional[Path]:
     return None
 
 
+def embedder_cache_present() -> bool:
+    """Return ``True`` when a cached embedder snapshot is available."""
+
+    global _EMBEDDER
+    if _EMBEDDER is not None:
+        return True
+
+    cache_dir = _cache_base()
+    if cache_dir is None:
+        return False
+
+    model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
+    if not model_cache.exists():
+        return False
+
+    snapshot_path = _resolve_local_snapshot(model_cache)
+    return snapshot_path is not None
+
+
 def _is_meta_tensor_loading_error(exc: Exception) -> bool:
     """Return ``True`` when *exc* indicates the snapshot still has meta tensors."""
 

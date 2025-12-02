@@ -1567,6 +1567,7 @@ def _bootstrap_embedder(
     budget: SharedTimeoutCoordinator | None = None,
     budget_label: str | None = None,
     presence_probe: bool = False,
+    presence_reason: str | None = None,
     bootstrap_fast: bool = False,
 ) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
@@ -1607,6 +1608,7 @@ def _bootstrap_embedder(
             _activate_bundled_fallback,
             apply_bootstrap_timeout_caps,
             cancel_embedder_initialisation,
+            embedder_cache_present,
             get_embedder,
         )
     except Exception:  # pragma: no cover - optional dependency
@@ -1713,6 +1715,13 @@ def _bootstrap_embedder(
         embedder_stop_event.set()
 
     def _enqueue_background_download() -> None:
+        if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("background_scheduled"):
+            LOGGER.debug("embedder background download already scheduled")
+            return
+
+        if _BOOTSTRAP_EMBEDDER_JOB is not None:
+            _BOOTSTRAP_EMBEDDER_JOB["background_scheduled"] = True
+
         def _background_worker() -> None:
             try:
                 get_embedder(
@@ -1823,6 +1832,51 @@ def _bootstrap_embedder(
             aborted=True,
             deferred=deferred,
         )
+
+    if presence_probe:
+        probe_reason = presence_reason or "embedder_presence_probe"
+        budget_deadline = (
+            start_time + stage_budget if stage_budget is not None and stage_budget > 0 else None
+        )
+        try:
+            cache_available = embedder_cache_present()
+        except Exception:  # pragma: no cover - diagnostics only
+            cache_available = False
+            LOGGER.debug("embedder presence probe failed", exc_info=True)
+
+        if budget_deadline is not None and perf_counter() >= budget_deadline:
+            probe_reason = "embedder_presence_budget_exhausted"
+
+        result.update(
+            {
+                "embedder": placeholder,
+                "placeholder_reason": probe_reason,
+                "deferred": True,
+                "presence_available": cache_available,
+            }
+        )
+        if _BOOTSTRAP_EMBEDDER_JOB is not None:
+            _BOOTSTRAP_EMBEDDER_JOB.update(
+                {
+                    "result": placeholder,
+                    "placeholder_reason": probe_reason,
+                    "deferred": True,
+                    "presence_available": cache_available,
+                }
+            )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=probe_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{probe_reason}"
+        )
+        if cache_available:
+            _enqueue_background_download()
+        _finalize_embedder_job(
+            placeholder,
+            placeholder_reason=probe_reason,
+            aborted=False,
+            deferred=True,
+        )
+        return placeholder
 
     def _worker() -> None:
         try:
@@ -1944,14 +1998,15 @@ def _bootstrap_embedder(
     def _hard_timeout_watchdog() -> None:
         if thread is None:
             return
-        hard_timeout = None
-        timeout_candidates = []
+        hard_timeout: float | None = None
+        hard_timeout_reason = "embedder_hard_timeout"
+        timeout_candidates: list[tuple[float, str]] = []
         if stage_wall_cap is not None and stage_wall_cap > 0:
-            timeout_candidates.append(stage_wall_cap)
+            timeout_candidates.append((stage_wall_cap, "bootstrap_wall_clock_exceeded"))
         if timeout is not None and timeout > 0:
-            timeout_candidates.append(timeout)
+            timeout_candidates.append((timeout, hard_timeout_reason))
         if timeout_candidates:
-            hard_timeout = min(timeout_candidates)
+            hard_timeout, hard_timeout_reason = min(timeout_candidates, key=lambda item: item[0])
 
         if hard_timeout is None:
             return
@@ -1966,7 +2021,7 @@ def _bootstrap_embedder(
         if thread.is_alive():
             hard_timeout_triggered.set()
             _record_abort(
-                "embedder_hard_timeout", deferred=True, schedule_background=True
+                hard_timeout_reason, deferred=True, schedule_background=True
             )
 
     def _stop_event_watchdog() -> None:
@@ -2322,6 +2377,7 @@ def initialize_bootstrap_context(
                 budget=shared_timeout_coordinator,
                 budget_label="vector_seeding",
                 presence_probe=True,
+                presence_reason=presence_reason,
                 bootstrap_fast=bootstrap_fast_context,
             )
             return
