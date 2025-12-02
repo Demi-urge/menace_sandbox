@@ -919,6 +919,45 @@ def warmup_vector_service(
         effective_timeouts[stage] = timeout
         return timeout
 
+    def _stage_budget_window(stage_timeout: float | None) -> float | None:
+        shared_remaining = _remaining_shared_budget()
+        if shared_remaining is None:
+            return stage_timeout
+        if stage_timeout is None:
+            return shared_remaining
+        return min(shared_remaining, stage_timeout)
+
+    def _should_defer_upfront(
+        stage: str, *, stage_timeout: float | None, stage_enabled: bool
+    ) -> bool:
+        if not stage_enabled:
+            return False
+        if force_heavy:
+            return False
+
+        available_budget = _stage_budget_window(stage_timeout)
+        estimate = base_stage_cost.get(stage)
+
+        if warmup_lite:
+            _record_background(stage, "deferred-budget")
+            log.info("Warmup-lite deferring %s prior to budget guard", stage)
+            return True
+
+        if estimate is None or available_budget is None:
+            return False
+
+        if available_budget >= estimate:
+            return False
+
+        _record_background(stage, "deferred-budget")
+        log.info(
+            "Vector warmup %s deferred before guard; budget %.2fs below estimate %.2fs",
+            stage,
+            available_budget,
+            estimate,
+        )
+        return True
+
     def _has_estimated_budget(stage: str, *, budget_cap: float | None = None) -> bool:
         remaining = _remaining_budget()
         estimate = base_stage_cost.get(stage)
@@ -1030,63 +1069,68 @@ def warmup_vector_service(
     svc = None
     if _reuse("handlers"):
         pass
-    elif not _guard("handlers"):
-        if _should_abort("handlers"):
-            return _finalise()
     else:
         handler_timeout = _effective_timeout("handlers")
-        if hydrate_handlers:
-            if handler_timeout is not None and handler_timeout <= 0:
-                budget_exhausted = True
-                _record_deferred_background("handlers", "skipped-budget")
-                log.info("Vector warmup handler hydration skipped: no remaining budget")
+        if _should_defer_upfront(
+            "handlers", stage_timeout=handler_timeout, stage_enabled=hydrate_handlers
+        ):
+            pass
+        elif not _guard("handlers"):
+            if _should_abort("handlers"):
                 return _finalise()
-            if not _has_estimated_budget("handlers", budget_cap=handler_timeout):
-                return _finalise()
-            try:
-                from .vectorizer import SharedVectorService
-
-                completed, svc, elapsed = _run_with_budget(
-                    "handlers",
-                    lambda stop_event: SharedVectorService(
-                        bootstrap_fast=bootstrap_fast,
-                        warmup_lite=warmup_lite,
-                        stop_event=stop_event,
-                        budget_check=lambda evt: _cooperative_budget_check(
-                            "handlers", evt
-                        ),
-                    ),
-                    timeout=handler_timeout,
-                )
-                _record_elapsed("handlers", elapsed)
-                if completed:
-                    _record("handlers", "hydrated")
-                elif budget_exhausted:
-                    if "handlers" not in summary:
-                        _record_deferred("handlers", "deferred-budget")
-                    log.info(
-                        "Vector warmup handler hydration deferred after budget exhaustion",
-                    )
-                    return _finalise()
-            except Exception as exc:  # pragma: no cover - best effort logging
-                log.warning("SharedVectorService warmup failed: %s", exc)
-                _record("handlers", "failed")
         else:
-            if "handlers" in deferred_bootstrap:
-                status = "deferred-bootstrap"
-                log.info("Vector handler hydration deferred for bootstrap-lite")
-                _record_background("handlers", status)
-            elif "handlers" in lite_deferrals:
-                status = "deferred-lite"
-                log.info("Vector handler hydration deferred for warmup-lite")
-                _record_background("handlers", status)
+            if hydrate_handlers:
+                if handler_timeout is not None and handler_timeout <= 0:
+                    budget_exhausted = True
+                    _record_deferred_background("handlers", "skipped-budget")
+                    log.info("Vector warmup handler hydration skipped: no remaining budget")
+                    return _finalise()
+                if not _has_estimated_budget("handlers", budget_cap=handler_timeout):
+                    return _finalise()
+                try:
+                    from .vectorizer import SharedVectorService
+
+                    completed, svc, elapsed = _run_with_budget(
+                        "handlers",
+                        lambda stop_event: SharedVectorService(
+                            bootstrap_fast=bootstrap_fast,
+                            warmup_lite=warmup_lite,
+                            stop_event=stop_event,
+                            budget_check=lambda evt: _cooperative_budget_check(
+                                "handlers", evt
+                            ),
+                        ),
+                        timeout=handler_timeout,
+                    )
+                    _record_elapsed("handlers", elapsed)
+                    if completed:
+                        _record("handlers", "hydrated")
+                    elif budget_exhausted:
+                        if "handlers" not in summary:
+                            _record_deferred("handlers", "deferred-budget")
+                        log.info(
+                            "Vector warmup handler hydration deferred after budget exhaustion",
+                        )
+                        return _finalise()
+                except Exception as exc:  # pragma: no cover - best effort logging
+                    log.warning("SharedVectorService warmup failed: %s", exc)
+                    _record("handlers", "failed")
             else:
-                status = "deferred" if ("handlers" in deferred or warmup_handlers) else "skipped"
-                log.info("Vector handler hydration skipped")
-                if status.startswith("deferred"):
+                if "handlers" in deferred_bootstrap:
+                    status = "deferred-bootstrap"
+                    log.info("Vector handler hydration deferred for bootstrap-lite")
+                    _record_background("handlers", status)
+                elif "handlers" in lite_deferrals:
+                    status = "deferred-lite"
+                    log.info("Vector handler hydration deferred for warmup-lite")
                     _record_background("handlers", status)
                 else:
-                    _record("handlers", status)
+                    status = "deferred" if ("handlers" in deferred or warmup_handlers) else "skipped"
+                    log.info("Vector handler hydration skipped")
+                    if status.startswith("deferred"):
+                        _record_background("handlers", status)
+                    else:
+                        _record("handlers", status)
 
     if _reuse("scheduler"):
         pass
@@ -1114,97 +1158,102 @@ def warmup_vector_service(
     should_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
     if _reuse("vectorise"):
         pass
-    elif _guard("vectorise"):
+    else:
         vectorise_timeout = _effective_timeout("vectorise")
-        if should_vectorise and svc is not None:
-            if vectorise_timeout is not None and vectorise_timeout <= 0:
-                budget_exhausted = True
-                _record_deferred_background("vectorise", "skipped-budget")
-                log.info("Vectorise warmup skipped: no remaining budget")
-            elif _has_estimated_budget("vectorise", budget_cap=vectorise_timeout):
-                try:
-                    from governed_embeddings import (
-                        apply_bootstrap_timeout_caps,
-                        get_embedder,
-                    )
-
-                    embedder_timeout = (
-                        vectorise_timeout
-                        if vectorise_timeout is not None
-                        else apply_bootstrap_timeout_caps()
-                    )
-
-                    def _vectorise(stop_event: threading.Event) -> Any:
-                        embedder = get_embedder(
-                            timeout=embedder_timeout,
-                            bootstrap_timeout=embedder_timeout,
-                            bootstrap_mode=True,
-                            stop_event=stop_event,
-                        )
-                        placeholder_reason = getattr(
-                            embedder, "_placeholder_reason", None
-                        )
-                        if embedder is None or placeholder_reason in {
-                            "timeout",
-                            "stop_requested",
-                            "bootstrap_cancelled",
-                        }:
-                            if stop_event is not None:
-                                stop_event.set()
-                            raise TimeoutError("embedder warmup deferred")
-                        return svc.vectorise(
-                            "text", {"text": "warmup"}, stop_event=stop_event
+        if _should_defer_upfront(
+            "vectorise", stage_timeout=vectorise_timeout, stage_enabled=should_vectorise
+        ):
+            pass
+        elif _guard("vectorise"):
+            if should_vectorise and svc is not None:
+                if vectorise_timeout is not None and vectorise_timeout <= 0:
+                    budget_exhausted = True
+                    _record_deferred_background("vectorise", "skipped-budget")
+                    log.info("Vectorise warmup skipped: no remaining budget")
+                elif _has_estimated_budget("vectorise", budget_cap=vectorise_timeout):
+                    try:
+                        from governed_embeddings import (
+                            apply_bootstrap_timeout_caps,
+                            get_embedder,
                         )
 
-                    completed, _, elapsed = _run_with_budget(
-                        "vectorise",
-                        _vectorise,
-                        timeout=vectorise_timeout,
-                    )
-                    _record_elapsed("vectorise", elapsed)
-                    if completed:
-                        _record("vectorise", "ok")
-                except TimeoutError:
-                    _record_deferred_background("vectorise", "deferred-embedder")
-                    log.info(
-                        "Vector warmup vectorise stage deferred after embedder budget exhaustion"
-                    )
-                except Exception:  # pragma: no cover - allow partial warmup
-                    log.debug("vector warmup transform failed; continuing", exc_info=True)
-                    _record("vectorise", "failed")
-        else:
-            if should_vectorise:
-                if "vectorise" in deferred_bootstrap:
-                    status = "deferred-bootstrap"
-                    log.info("Vectorise warmup deferred for bootstrap-lite")
-                    _record_background("vectorise", status)
-                elif "vectorise" in lite_deferrals:
-                    status = "deferred-lite"
-                    log.info("Vectorise warmup deferred for warmup-lite")
-                    _record_background("vectorise", status)
-                else:
-                    status = "deferred" if ("vectorise" in deferred or "handlers" in deferred) else "skipped-no-service"
-                    log.info("Vectorise warmup skipped: service unavailable")
-                    if status.startswith("deferred"):
-                        _record_background("vectorise", status)
-                    else:
-                        _record("vectorise", status)
+                        embedder_timeout = (
+                            vectorise_timeout
+                            if vectorise_timeout is not None
+                            else apply_bootstrap_timeout_caps()
+                        )
+
+                        def _vectorise(stop_event: threading.Event) -> Any:
+                            embedder = get_embedder(
+                                timeout=embedder_timeout,
+                                bootstrap_timeout=embedder_timeout,
+                                bootstrap_mode=True,
+                                stop_event=stop_event,
+                            )
+                            placeholder_reason = getattr(
+                                embedder, "_placeholder_reason", None
+                            )
+                            if embedder is None or placeholder_reason in {
+                                "timeout",
+                                "stop_requested",
+                                "bootstrap_cancelled",
+                            }:
+                                if stop_event is not None:
+                                    stop_event.set()
+                                raise TimeoutError("embedder warmup deferred")
+                            return svc.vectorise(
+                                "text", {"text": "warmup"}, stop_event=stop_event
+                            )
+
+                        completed, _, elapsed = _run_with_budget(
+                            "vectorise",
+                            _vectorise,
+                            timeout=vectorise_timeout,
+                        )
+                        _record_elapsed("vectorise", elapsed)
+                        if completed:
+                            _record("vectorise", "ok")
+                    except TimeoutError:
+                        _record_deferred_background("vectorise", "deferred-embedder")
+                        log.info(
+                            "Vector warmup vectorise stage deferred after embedder budget exhaustion",
+                        )
+                    except Exception:  # pragma: no cover - allow partial warmup
+                        log.debug("vector warmup transform failed; continuing", exc_info=True)
+                        _record("vectorise", "failed")
             else:
-                if "vectorise" in deferred_bootstrap:
-                    status = "deferred-bootstrap"
-                elif "vectorise" in lite_deferrals:
-                    status = "deferred-lite"
-                    _record_background("vectorise", status)
-                    log.info("Vectorise warmup deferred for warmup-lite")
-                else:
-                    status = "deferred" if "vectorise" in deferred else "skipped"
-                    if status.startswith("deferred"):
+                if should_vectorise:
+                    if "vectorise" in deferred_bootstrap:
+                        status = "deferred-bootstrap"
+                        log.info("Vectorise warmup deferred for bootstrap-lite")
+                        _record_background("vectorise", status)
+                    elif "vectorise" in lite_deferrals:
+                        status = "deferred-lite"
+                        log.info("Vectorise warmup deferred for warmup-lite")
                         _record_background("vectorise", status)
                     else:
-                        _record("vectorise", status)
-                if status == "deferred-bootstrap":
-                    log.info("Vectorise warmup deferred for bootstrap-lite")
-                log.info("Vectorise warmup skipped")
+                        status = "deferred" if ("vectorise" in deferred or "handlers" in deferred) else "skipped-no-service"
+                        log.info("Vectorise warmup skipped: service unavailable")
+                        if status.startswith("deferred"):
+                            _record_background("vectorise", status)
+                        else:
+                            _record("vectorise", status)
+                else:
+                    if "vectorise" in deferred_bootstrap:
+                        status = "deferred-bootstrap"
+                    elif "vectorise" in lite_deferrals:
+                        status = "deferred-lite"
+                        _record_background("vectorise", status)
+                        log.info("Vectorise warmup deferred for warmup-lite")
+                    else:
+                        status = "deferred" if "vectorise" in deferred else "skipped"
+                        if status.startswith("deferred"):
+                            _record_background("vectorise", status)
+                        else:
+                            _record("vectorise", status)
+                    if status == "deferred-bootstrap":
+                        log.info("Vectorise warmup deferred for bootstrap-lite")
+                    log.info("Vectorise warmup skipped")
 
     return _finalise()
 

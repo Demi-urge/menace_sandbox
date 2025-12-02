@@ -263,3 +263,48 @@ def test_vectorise_timeout_aborts_work(caplog, monkeypatch):
     assert warmup_summary.get("vectorise") == "deferred-timeout"
     assert started.is_set()
     assert stopped.wait(0.5)
+
+
+def test_upfront_budget_deferral_memoised(caplog, monkeypatch):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+
+    instantiations = 0
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class CountingSharedVectorService:
+        def __init__(self, *_args, **_kwargs):
+            nonlocal instantiations
+            instantiations += 1
+
+        def vectorise(self, *_args, **_kwargs):
+            raise AssertionError("vectorise should be deferred before starting")
+
+    vectorizer_stub.SharedVectorService = CountingSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    warmup_kwargs = dict(
+        hydrate_handlers=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        stage_timeouts={"handlers": 0.1, "vectorise": 0.1},
+        logger=logging.getLogger("test"),
+    )
+
+    lazy_bootstrap.warmup_vector_service(**warmup_kwargs)
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["handlers"] == "deferred-budget"
+    assert warmup_summary["vectorise"] == "deferred-budget"
+    assert instantiations == 0
+    assert "handlers" in warmup_summary.get("background", "")
+
+    caplog.clear()
+
+    lazy_bootstrap.warmup_vector_service(**warmup_kwargs)
+
+    retry_summary = _get_warmup_summary(caplog)
+    assert retry_summary["handlers"] == "deferred-budget"
+    assert retry_summary["vectorise"] == "deferred-budget"
+    assert instantiations == 0
