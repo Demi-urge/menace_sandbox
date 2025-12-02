@@ -1551,6 +1551,7 @@ def _bootstrap_embedder(
     budget: SharedTimeoutCoordinator | None = None,
     budget_label: str | None = None,
     presence_probe: bool = False,
+    bootstrap_fast: bool = False,
 ) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
@@ -1987,6 +1988,8 @@ def _bootstrap_embedder(
     join_window = stage_wall_cap if stage_wall_cap is not None else 0.1
     if presence_deadline is not None:
         join_window = min(join_window, presence_cap) if join_window is not None else presence_cap
+    if bootstrap_fast:
+        join_window = min(join_window or 0.0, 0.05)
     try:
         thread.join(join_window)
     except Exception:
@@ -2002,11 +2005,14 @@ def _bootstrap_embedder(
                 "stage_budget": stage_budget,
                 "timeout": timeout,
                 "probe": presence_probe,
+                "bootstrap_fast": bootstrap_fast,
             },
         )
         _BOOTSTRAP_SCHEDULER.mark_partial(
             "background_loops", reason="embedder_presence_check_deferred"
         )
+        if bootstrap_fast:
+            _enqueue_background_download()
         return placeholder
 
     if thread.is_alive() and stage_wall_cap is not None:
@@ -2239,13 +2245,18 @@ def initialize_bootstrap_context(
         gate_constrained = bool(embedder_gate.get("contention"))
         budget_constrained = embedder_stage_budget is not None and embedder_stage_budget < 5.0
         force_full_preload = force_vector_warmup or force_embedder_preload
-        if (gate_constrained or budget_constrained) and not force_full_preload:
+        if (
+            gate_constrained
+            or budget_constrained
+            or (bootstrap_fast_context and not force_full_preload)
+        ) and not force_full_preload:
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
                 extra={
                     "gate": embedder_gate,
                     "budget": embedder_stage_budget,
                     "force_preload": force_full_preload,
+                    "bootstrap_fast": bootstrap_fast_context,
                 },
             )
             stage_controller.defer_step(
@@ -2261,6 +2272,7 @@ def initialize_bootstrap_context(
                 budget=shared_timeout_coordinator,
                 budget_label="vector_seeding",
                 presence_probe=True,
+                bootstrap_fast=bootstrap_fast_context,
             )
             return
         _run_with_timeout(
