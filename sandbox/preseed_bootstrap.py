@@ -3514,7 +3514,62 @@ def initialize_bootstrap_context(
 
             def _background_preload() -> None:
                 try:
-                    _BOOTSTRAP_EMBEDDER_READY.wait()
+                    background_cap = (
+                        strict_timebox
+                        if strict_timebox is not None
+                        else embedder_stage_budget
+                    )
+                    cap_deadline = (
+                        time.monotonic() + background_cap
+                        if background_cap is not None and background_cap > 0
+                        else None
+                    )
+
+                    def _record_background_placeholder(reason: str) -> None:
+                        nonlocal job_snapshot
+                        placeholder_obj = job_snapshot.get(
+                            "placeholder", _BOOTSTRAP_PLACEHOLDER
+                        )
+                        job_snapshot.update(
+                            {
+                                "result": placeholder_obj,
+                                "placeholder_reason": reason,
+                                "warmup_placeholder_reason": job_snapshot.get(
+                                    "warmup_placeholder_reason", reason
+                                ),
+                                "background_full_warmup": False,
+                                "strict_timebox": background_cap
+                                if background_cap is not None
+                                else strict_timebox,
+                            }
+                        )
+                        _BOOTSTRAP_SCHEDULER.mark_partial(
+                            "background_loops", reason=f"embedder_placeholder:{reason}"
+                        )
+
+                    if background_cap is not None and background_cap <= 0:
+                        _record_background_placeholder("embedder_background_cap_exhausted")
+                        return
+
+                    shared_budget_remaining = getattr(
+                        shared_timeout_coordinator, "remaining_budget", None
+                    )
+                    if (
+                        shared_budget_remaining is not None
+                        and shared_budget_remaining <= 0
+                    ):
+                        _record_background_placeholder(
+                            "embedder_background_shared_budget_exhausted"
+                        )
+                        return
+
+                    ready_timeout = background_cap if background_cap is not None else None
+                    ready = _BOOTSTRAP_EMBEDDER_READY.wait(ready_timeout)
+                    if not ready:
+                        _record_background_placeholder(
+                            "embedder_background_cap_exhausted"
+                        )
+                        return
                     if stop_event is not None and stop_event.is_set():
                         return
                     resolved_timeout = embedder_timeout
@@ -3530,7 +3585,7 @@ def initialize_bootstrap_context(
                             "reason": reason,
                         },
                     )
-                    _bootstrap_embedder(
+                    background_result = _bootstrap_embedder(
                         resolved_timeout,
                         stop_event=stop_event,
                         stage_budget=embedder_stage_budget,
@@ -3541,7 +3596,17 @@ def initialize_bootstrap_context(
                         bootstrap_fast=False,
                         schedule_background=True,
                         bootstrap_deadline=bootstrap_deadline,
+                        precomputed_caps={
+                            "stage_budget": embedder_stage_budget,
+                            "stage_deadline": cap_deadline,
+                            "stage_wall_cap": background_cap,
+                        },
                     )
+                    placeholder_obj = job_snapshot.get(
+                        "placeholder", _BOOTSTRAP_PLACEHOLDER
+                    )
+                    if background_result is None or background_result is placeholder_obj:
+                        job_snapshot["background_full_warmup"] = False
                 except Exception:  # pragma: no cover - background safety
                     LOGGER.debug("deferred embedder preload failed", exc_info=True)
 
@@ -3686,10 +3751,10 @@ def initialize_bootstrap_context(
                         "warmup_summary": warmup_summary
                     }
 
-        def _schedule_background_preload(
-            reason: str, *, strict_timebox: float | None = None
-        ) -> dict[str, Any]:
-            job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+            def _schedule_background_preload(
+                reason: str, *, strict_timebox: float | None = None
+            ) -> dict[str, Any]:
+                job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
             job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
             job_snapshot.setdefault("placeholder_reason", reason)
             job_snapshot.update(
@@ -3706,7 +3771,62 @@ def initialize_bootstrap_context(
 
             def _background_preload() -> None:
                 try:
-                    _BOOTSTRAP_EMBEDDER_READY.wait()
+                    background_cap = (
+                        strict_timebox
+                        if strict_timebox is not None
+                        else embedder_stage_budget
+                    )
+                    cap_deadline = (
+                        time.monotonic() + background_cap
+                        if background_cap is not None and background_cap > 0
+                        else None
+                    )
+
+                    def _record_background_placeholder(reason: str) -> None:
+                        nonlocal job_snapshot
+                        placeholder_obj = job_snapshot.get(
+                            "placeholder", _BOOTSTRAP_PLACEHOLDER
+                        )
+                        job_snapshot.update(
+                            {
+                                "result": placeholder_obj,
+                                "placeholder_reason": reason,
+                                "warmup_placeholder_reason": job_snapshot.get(
+                                    "warmup_placeholder_reason", reason
+                                ),
+                                "background_full_warmup": False,
+                                "strict_timebox": background_cap
+                                if background_cap is not None
+                                else strict_timebox,
+                            }
+                        )
+                        _BOOTSTRAP_SCHEDULER.mark_partial(
+                            "background_loops", reason=f"embedder_placeholder:{reason}"
+                        )
+
+                    if background_cap is not None and background_cap <= 0:
+                        _record_background_placeholder("embedder_background_cap_exhausted")
+                        return
+
+                    shared_budget_remaining = getattr(
+                        shared_timeout_coordinator, "remaining_budget", None
+                    )
+                    if (
+                        shared_budget_remaining is not None
+                        and shared_budget_remaining <= 0
+                    ):
+                        _record_background_placeholder(
+                            "embedder_background_shared_budget_exhausted"
+                        )
+                        return
+
+                    ready_timeout = background_cap if background_cap is not None else None
+                    ready = _BOOTSTRAP_EMBEDDER_READY.wait(ready_timeout)
+                    if not ready:
+                        _record_background_placeholder(
+                            "embedder_background_cap_exhausted"
+                        )
+                        return
                     if stop_event is not None and stop_event.is_set():
                         return
                     resolved_timeout = embedder_timeout
@@ -3733,7 +3853,7 @@ def initialize_bootstrap_context(
                             "reason": reason,
                         },
                     )
-                    _bootstrap_embedder(
+                    background_result = _bootstrap_embedder(
                         resolved_timeout,
                         stop_event=stop_event,
                         stage_budget=embedder_stage_budget,
@@ -3744,8 +3864,18 @@ def initialize_bootstrap_context(
                         bootstrap_fast=False,
                         schedule_background=True,
                         bootstrap_deadline=bootstrap_deadline,
-                        precomputed_caps=resolved_caps,
+                        precomputed_caps={
+                            **resolved_caps,
+                            "stage_budget": embedder_stage_budget,
+                            "stage_deadline": cap_deadline,
+                            "stage_wall_cap": background_cap,
+                        },
                     )
+                    placeholder_obj = job_snapshot.get(
+                        "placeholder", _BOOTSTRAP_PLACEHOLDER
+                    )
+                    if background_result is None or background_result is placeholder_obj:
+                        job_snapshot["background_full_warmup"] = False
                 except Exception:  # pragma: no cover - background safety
                     LOGGER.debug("deferred embedder preload failed", exc_info=True)
 
