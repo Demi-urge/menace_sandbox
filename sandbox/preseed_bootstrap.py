@@ -3249,6 +3249,14 @@ def initialize_bootstrap_context(
             if candidate is not None and candidate > 0
         ]
         strict_timebox = min(timebox_candidates) if timebox_candidates else None
+        hard_cap_candidates = [
+            candidate
+            for candidate in (embedder_stage_budget, embedder_timeout)
+            if candidate is not None and candidate > 0
+        ]
+        warmup_hard_cap = min(hard_cap_candidates) if hard_cap_candidates else None
+        if warmup_hard_cap is not None:
+            strict_timebox = warmup_hard_cap if strict_timebox is None else min(strict_timebox, warmup_hard_cap)
         warmup_summary: dict[str, Any] | None = None
         minimum_presence_window = 5.0
         if (
@@ -3737,29 +3745,19 @@ def initialize_bootstrap_context(
             join_timeout=warmup_budget_remaining
         )
         if warmup_timeout_reason:
-            stage_controller.defer_step("embedder_preload", reason=warmup_timeout_reason)
-            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=warmup_timeout_reason)
-            _BOOTSTRAP_SCHEDULER.mark_partial(
-                "vector_seeding", reason=warmup_timeout_reason
+            warmup_deferral_reason = (
+                warmup_timeout_reason
+                if warmup_timeout_reason != "embedder_preload_timebox_expired"
+                else "embedder_preload_warmup_cap_exceeded"
             )
-            _BOOTSTRAP_SCHEDULER.mark_partial(
-                "background_loops", reason=f"embedder_placeholder:{warmup_timeout_reason}"
+            return _defer_to_presence(
+                warmup_deferral_reason,
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=full_preload_requested,
+                strict_timebox=warmup_hard_cap or strict_timebox,
+                non_blocking_probe=non_blocking_presence_probe,
             )
-            job_snapshot = _schedule_background_preload(warmup_timeout_reason)
-            job_snapshot.update(
-                {
-                    "presence_only": False,
-                    "budget_guarded": True,
-                    "strict_timebox": strict_timebox,
-                    "background_full_warmup": True,
-                }
-            )
-            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
-            _set_component_state("vector_seeding", "deferred")
-            stage_controller.complete_step(
-                "embedder_preload", time.monotonic() - warmup_started
-            )
-            return warmup_result or _BOOTSTRAP_PLACEHOLDER
 
         _BOOTSTRAP_EMBEDDER_JOB = (_BOOTSTRAP_EMBEDDER_JOB or {}) | {
             "result": warmup_result
