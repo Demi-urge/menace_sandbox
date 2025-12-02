@@ -19,6 +19,7 @@ vector DB migrations need extra breathing room.
 from __future__ import annotations
 
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 import io
 import inspect
 import logging
@@ -101,6 +102,8 @@ _BOOTSTRAP_TIMELINE_START: float | None = None
 _BOOTSTRAP_TIMELINE_LOCK = threading.Lock()
 _STEP_START_OBSERVER: Callable[[str], None] | None = None
 _STEP_END_OBSERVER: Callable[[str, float], None] | None = None
+_BOOTSTRAP_BACKGROUND_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+_BOOTSTRAP_EMBEDDER_READY = threading.Event()
 _BOOTSTRAP_TIMEOUT_FLOOR = getattr(_coding_bot_interface, "_BOOTSTRAP_TIMEOUT_FLOOR", 720.0)
 _PREPARE_STANDARD_TIMEOUT_FLOOR = 720.0
 _PREPARE_VECTOR_TIMEOUT_FLOOR = 900.0
@@ -1729,9 +1732,11 @@ def _bootstrap_embedder(
         if _BOOTSTRAP_EMBEDDER_JOB is not None:
             _BOOTSTRAP_EMBEDDER_JOB["background_scheduled"] = True
             _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
+            _BOOTSTRAP_EMBEDDER_JOB["awaiting_full_preload"] = True
 
         def _background_worker() -> None:
             try:
+                _BOOTSTRAP_EMBEDDER_READY.wait()
                 with contextlib.suppress(Exception):
                     os.nice(5)
                 embedder_obj = get_embedder(
@@ -1748,9 +1753,9 @@ def _bootstrap_embedder(
             except Exception:
                 LOGGER.debug("background embedder download failed", exc_info=True)
 
-        threading.Thread(
-            target=_background_worker, name="embedder-background-download", daemon=True
-        ).start()
+        future = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(_background_worker)
+        if _BOOTSTRAP_EMBEDDER_JOB is not None:
+            _BOOTSTRAP_EMBEDDER_JOB["background_future"] = future
 
     def _finalize_embedder_job(
         embedder_obj: Any,
@@ -2478,8 +2483,10 @@ def initialize_bootstrap_context(
         budget_constrained = embedder_stage_budget is not None and embedder_stage_budget < 5.0
         force_full_preload = force_vector_warmup or force_embedder_preload
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
-        presence_first = bootstrap_fast_context or not force_full_preload
-        presence_only = presence_first
+        presence_first = True
+        presence_only = presence_first or gate_constrained or budget_constrained
+        if force_full_preload and not gate_constrained and not budget_constrained:
+            presence_only = False
         skip_heavy = gate_constrained or budget_constrained or embedder_deferred
         presence_reason = embedder_deferral_reason or "embedder_presence_probe"
         if gate_constrained:
@@ -2509,12 +2516,29 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "background_loops", reason=f"embedder_placeholder:{presence_reason}"
             )
-            _BOOTSTRAP_EMBEDDER_JOB = {
-                "result": _BOOTSTRAP_PLACEHOLDER,
-                "placeholder": _BOOTSTRAP_PLACEHOLDER,
-                "placeholder_reason": presence_reason,
-                "deferred": True,
-            }
+            _run_with_timeout(
+                _bootstrap_embedder,
+                timeout=embedder_timeout,
+                bootstrap_deadline=bootstrap_deadline,
+                description="bootstrap_embedder_presence",
+                abort_on_timeout=False,
+                heavy_bootstrap=True,
+                budget=shared_timeout_coordinator,
+                budget_label="vector_seeding",
+                stop_event=stop_event,
+                stage_budget=embedder_stage_budget,
+                presence_probe=True,
+                presence_reason=presence_reason,
+                bootstrap_fast=bootstrap_fast_context,
+                schedule_background=True,
+            )
+            job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+            if job_snapshot is not None:
+                job_snapshot.setdefault("deferred", True)
+                job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                job_snapshot.setdefault("placeholder_reason", presence_reason)
+                job_snapshot["ready_after_bootstrap"] = True
+                _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
             _set_component_state("vector_seeding", "deferred")
             stage_controller.complete_step("embedder_preload", 0.0)
             return _BOOTSTRAP_PLACEHOLDER
@@ -2643,6 +2667,9 @@ def initialize_bootstrap_context(
                 "bootstrap_fast": bootstrap_fast_context,
                 "force_vector_warmup": force_vector_warmup,
             },
+        )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+            reason="embedder_preload_deferred_bootstrap_fast"
         )
         stage_controller.defer_step(
             "embedder_preload", reason="embedder_preload_deferred_bootstrap_fast"
@@ -3383,6 +3410,7 @@ def initialize_bootstrap_context(
             "background_loops", reason="bootstrap_complete"
         )
         _publish_online_state()
+        _BOOTSTRAP_EMBEDDER_READY.set()
         LOGGER.info(
             "bootstrap online state", extra={"online_state": online_snapshot}
         )
