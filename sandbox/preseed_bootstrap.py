@@ -1569,6 +1569,7 @@ def _bootstrap_embedder(
     presence_probe: bool = False,
     presence_reason: str | None = None,
     bootstrap_fast: bool = False,
+    force_placeholder: bool = False,
 ) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
@@ -1678,6 +1679,11 @@ def _bootstrap_embedder(
     presence_deadline = (
         start_time + presence_cap if presence_cap and presence_cap > 0 else None
     )
+    if stage_wall_cap is not None:
+        cap_deadline = start_time + stage_wall_cap
+        presence_deadline = cap_deadline if presence_deadline is None else min(
+            presence_deadline, cap_deadline
+        )
     _BOOTSTRAP_EMBEDDER_JOB = {
         "thread": None,
         "stop_event": embedder_stop_event,
@@ -1721,15 +1727,23 @@ def _bootstrap_embedder(
 
         if _BOOTSTRAP_EMBEDDER_JOB is not None:
             _BOOTSTRAP_EMBEDDER_JOB["background_scheduled"] = True
+            _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
 
         def _background_worker() -> None:
             try:
-                get_embedder(
+                with contextlib.suppress(Exception):
+                    os.nice(5)
+                embedder_obj = get_embedder(
                     timeout=_MAX_EMBEDDER_WAIT,
-                    stop_event=None,
+                    stop_event=embedder_stop_event,
                     bootstrap_timeout=None,
                     bootstrap_mode=True,
                 )
+                if _BOOTSTRAP_EMBEDDER_JOB is not None:
+                    _BOOTSTRAP_EMBEDDER_JOB["result"] = embedder_obj
+                    _BOOTSTRAP_EMBEDDER_JOB.setdefault(
+                        "placeholder_reason", "background_download"
+                    )
             except Exception:
                 LOGGER.debug("background embedder download failed", exc_info=True)
 
@@ -1846,6 +1860,12 @@ def _bootstrap_embedder(
 
         if budget_deadline is not None and perf_counter() >= budget_deadline:
             probe_reason = "embedder_presence_budget_exhausted"
+            try:
+                placeholder = _activate_bundled_fallback(probe_reason) or placeholder
+            except Exception:  # pragma: no cover - advisory only
+                LOGGER.debug(
+                    "failed to promote fallback embedder during presence probe", exc_info=True
+                )
 
         result.update(
             {
@@ -1880,6 +1900,8 @@ def _bootstrap_embedder(
 
     def _worker() -> None:
         try:
+            with contextlib.suppress(Exception):
+                os.nice(5)
             result["embedder"] = get_embedder(
                 timeout=timeout,
                 stop_event=embedder_stop_event,
@@ -1965,6 +1987,15 @@ def _bootstrap_embedder(
     thread = threading.Thread(target=_worker, name="bootstrap-embedder", daemon=True)
     thread.start()
     _BOOTSTRAP_EMBEDDER_JOB["thread"] = thread
+
+    if force_placeholder:
+        _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
+        _BOOTSTRAP_EMBEDDER_JOB["placeholder_reason"] = "embedder_tight_budget"
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason="embedder_tight_budget")
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason="embedder_placeholder:embedder_tight_budget"
+        )
+        return placeholder
 
     budget_window = stage_budget if stage_budget is not None and stage_budget >= 0 else None
     if stage_wall_cap is not None:
@@ -2085,6 +2116,13 @@ def _bootstrap_embedder(
         LOGGER.debug("embedder warmup join probe failed", exc_info=True)
 
     if thread.is_alive() and presence_deadline is not None:
+        if perf_counter() >= presence_deadline:
+            try:
+                placeholder = _activate_bundled_fallback(
+                    "embedder_presence_timeout"
+                ) or placeholder
+            except Exception:  # pragma: no cover - advisory only
+                LOGGER.debug("failed to promote fallback after presence probe timeout", exc_info=True)
         _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
         _BOOTSTRAP_EMBEDDER_JOB["placeholder_reason"] = "presence_check_deferred"
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
@@ -2117,6 +2155,40 @@ def _bootstrap_embedder(
         return placeholder
 
     return placeholder
+
+
+def start_embedder_warmup(
+    *,
+    timeout: float | None = None,
+    stage_budget: float | None = None,
+    stop_event: threading.Event | None = None,
+    budget: SharedTimeoutCoordinator | None = None,
+    budget_label: str | None = None,
+) -> Any:
+    """Launch embedder warmup quickly and defer heavy downloads when budgets are tight."""
+
+    resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT if timeout is None else timeout
+    presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
+    if presence_cap < 0:
+        presence_cap = 0.0
+    tight_budget = (
+        stage_budget is not None
+        and stage_budget > 0
+        and presence_cap > 0
+        and stage_budget <= presence_cap
+    )
+    if stage_budget is not None and stage_budget > 0 and resolved_timeout > 0:
+        resolved_timeout = min(resolved_timeout, stage_budget)
+
+    return _bootstrap_embedder(
+        resolved_timeout,
+        stop_event=stop_event,
+        stage_budget=stage_budget,
+        budget=budget,
+        budget_label=budget_label,
+        bootstrap_fast=tight_budget,
+        force_placeholder=tight_budget,
+    )
 
 
 def initialize_bootstrap_context(

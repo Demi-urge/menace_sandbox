@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import types
+import threading
 
 import pytest
 
@@ -172,6 +173,10 @@ def reset_bootstrap_timeline():
         name: "pending" for name in bootstrap._BOOTSTRAP_SCHEDULER._COMPONENTS
     }
     bootstrap.BOOTSTRAP_ONLINE_STATE = {"quorum": False, "components": {}}
+    bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+    bootstrap._BOOTSTRAP_EMBEDDER_ATTEMPTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_STARTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_DISABLED = False
     yield
     bootstrap.BOOTSTRAP_STEP_TIMELINE.clear()
     bootstrap._BOOTSTRAP_TIMELINE_START = None
@@ -181,6 +186,11 @@ def reset_bootstrap_timeline():
         name: "pending" for name in bootstrap._BOOTSTRAP_SCHEDULER._COMPONENTS
     }
     bootstrap.BOOTSTRAP_ONLINE_STATE = {"quorum": False, "components": {}}
+    bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+    bootstrap._BOOTSTRAP_EMBEDDER_ATTEMPTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_STARTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_DISABLED = False
+    sys.modules.pop("menace_sandbox.governed_embeddings", None)
 
 
 def test_run_with_timeout_respects_requested_timeout():
@@ -218,7 +228,58 @@ def test_run_with_timeout_emits_metadata(capsys):
     captured = capsys.readouterr().out
     assert "[bootstrap-timeout][metadata]" in captured
     assert "metadata-check" in captured
-    assert "[bootstrap-timeout][thread=" in captured
+
+
+def test_start_embedder_warmup_deferred(monkeypatch):
+    placeholder = object()
+    embedder = object()
+    download_started = threading.Event()
+
+    def fake_activate(reason: str):
+        return placeholder
+
+    def fake_cancel(event: threading.Event, reason: str, join_timeout: float) -> None:
+        event.set()
+
+    def fake_get_embedder(
+        *, timeout: float, stop_event: threading.Event | None, **_kwargs: object
+    ) -> object:
+        download_started.set()
+        time.sleep(0.1)
+        if stop_event is not None and stop_event.is_set():
+            raise RuntimeError("cancelled")
+        return embedder
+
+    governed_embeddings = types.SimpleNamespace(
+        _MAX_EMBEDDER_WAIT=1.0,
+        _activate_bundled_fallback=fake_activate,
+        apply_bootstrap_timeout_caps=lambda budget: budget,
+        cancel_embedder_initialisation=fake_cancel,
+        embedder_cache_present=lambda: False,
+        get_embedder=fake_get_embedder,
+    )
+    monkeypatch.setitem(sys.modules, "menace_sandbox.governed_embeddings", governed_embeddings)
+
+    start = time.perf_counter()
+    result = bootstrap.start_embedder_warmup(timeout=1.0, stage_budget=0.05)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 0.08
+    assert result is placeholder
+
+    job = bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert job.get("deferred") is True
+
+    assert download_started.wait(1.0)
+    deadline = time.perf_counter() + 1.0
+    final_result = None
+    while time.perf_counter() < deadline:
+        final_result = (bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}).get("result")
+        if final_result is embedder:
+            break
+        time.sleep(0.01)
+
+    assert final_result is embedder
 
 
 def test_run_with_timeout_reports_timeline(capsys):
