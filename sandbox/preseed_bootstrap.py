@@ -2350,6 +2350,13 @@ def initialize_bootstrap_context(
     bootstrap_fast_env = _env_flag("MENACE_BOOTSTRAP_FAST")
     bootstrap_lite_mode = bootstrap_mode_env in {"lite", "fast"}
     bootstrap_fast_context = bootstrap_fast_env or bootstrap_lite_mode
+    warmup_lite_context = False
+    try:
+        warmup_lite_context = bool(
+            getattr(getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None), "warmup_lite", False)
+        )
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("unable to resolve warmup_lite flag from bootstrap state", exc_info=True)
     force_vector_warmup = _env_flag("MENACE_FORCE_HEAVY_VECTOR_WARMUP")
     force_embedder_preload = _env_flag("MENACE_FORCE_EMBEDDER_PRELOAD")
     vector_bootstrap_hint = False
@@ -2497,17 +2504,28 @@ def initialize_bootstrap_context(
         force_full_preload = force_vector_warmup or force_embedder_preload
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
         presence_first = True
-        presence_only = presence_first or gate_constrained or budget_constrained
+        fast_or_lite = bootstrap_fast_context or warmup_lite_context
+        presence_only = (
+            presence_first
+            or gate_constrained
+            or budget_constrained
+            or fast_or_lite
+        )
         if force_full_preload and not gate_constrained and not budget_constrained:
             presence_only = False
-        skip_heavy = gate_constrained or budget_constrained or embedder_deferred
+        skip_heavy = (
+            gate_constrained
+            or budget_constrained
+            or embedder_deferred
+            or fast_or_lite
+        )
         presence_reason = embedder_deferral_reason or "embedder_presence_probe"
         if gate_constrained:
             presence_reason = "embedder_preload_guarded"
         elif budget_constrained:
             presence_reason = "embedder_budget_guarded"
-        elif bootstrap_fast_context and not force_full_preload:
-            presence_reason = "bootstrap_fast_embedder_probe"
+        elif fast_or_lite and not force_full_preload:
+            presence_reason = "bootstrap_fast_embedder_probe" if bootstrap_fast_context else "warmup_lite_embedder_probe"
 
         if presence_only or skip_heavy:
             LOGGER.info(
@@ -2517,6 +2535,7 @@ def initialize_bootstrap_context(
                     "budget": embedder_stage_budget,
                     "force_preload": force_full_preload,
                     "bootstrap_fast": bootstrap_fast_context,
+                    "warmup_lite": warmup_lite_context,
                     "embedder_deferred": embedder_deferred,
                     "presence_reason": presence_reason,
                 },
@@ -2584,6 +2603,7 @@ def initialize_bootstrap_context(
                     "ready_after_bootstrap": True,
                     "presence_available": presence_available,
                     "presence_probe_timeout": probe_timed_out,
+                    "background_enqueue_reason": presence_reason,
                 }
             )
 
@@ -2593,6 +2613,29 @@ def initialize_bootstrap_context(
                     LOGGER.info(
                         "skipping deferred embedder warmup due to stop signal",
                         extra={"presence_reason": presence_reason},
+                    )
+                    return
+                background_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+                    "embedder_preload_background", vector_heavy=True, heavy=True
+                )
+                background_budget = _BOOTSTRAP_SCHEDULER.default_budget(
+                    vector_heavy=True
+                )
+                background_budget_guarded = (
+                    embedder_stage_budget is not None and embedder_stage_budget < 5.0
+                ) and (background_budget is None or background_budget < 5.0)
+                if background_gate.get("contention") or background_budget_guarded or fast_or_lite:
+                    LOGGER.info(
+                        "embedder preload deferred after bootstrap",
+                        extra={
+                            "gate": background_gate,
+                            "background_budget": background_budget,
+                            "fast_or_lite": fast_or_lite,
+                            "presence_reason": presence_reason,
+                        },
+                    )
+                    _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+                        reason=presence_reason
                     )
                     return
                 _run_with_timeout(
@@ -2605,12 +2648,13 @@ def initialize_bootstrap_context(
                     budget=shared_timeout_coordinator,
                     budget_label="vector_seeding",
                     stop_event=stop_event,
-                    stage_budget=embedder_stage_budget,
+                    stage_budget=background_budget,
                     schedule_background=True,
                 )
 
             if not job_snapshot.get("warmup_scheduled"):
                 job_snapshot["warmup_scheduled"] = True
+                job_snapshot["background_enqueued"] = True
                 _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(
                     _queue_deferred_embedder_warmup
                 )
