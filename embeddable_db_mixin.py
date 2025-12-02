@@ -350,7 +350,12 @@ _VEC_METRICS: VectorMetricsDB | None = None
 _EMBED_STATS_DB = EmbeddingStatsDB("metrics.db")
 
 
-def _vector_metrics_db() -> VectorMetricsDB | None:
+def _vector_metrics_db(
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    warmup_lite: bool | None = None,
+) -> VectorMetricsDB | None:
     global _VEC_METRICS
     if _VEC_METRICS is not None:
         return _VEC_METRICS
@@ -358,49 +363,78 @@ def _vector_metrics_db() -> VectorMetricsDB | None:
         return None
 
     warmup_kwargs = {}
+    callsite_requested = bool(
+        (bootstrap_fast is True)
+        or (warmup is True)
+        or (warmup_lite is True)
+    )
+    warmup_mode = bool(warmup)
+    warmup_lite_flag = bool(warmup_lite)
+    env_requested = False
+    bootstrap_env = False
+    bootstrap_fast_flag = bool(bootstrap_fast)
     if resolve_vector_bootstrap_flags is not None:
         (
-            bootstrap_fast,
+            bootstrap_fast_flag,
             warmup_mode,
             env_requested,
             bootstrap_env,
-        ) = resolve_vector_bootstrap_flags()
-        warmup_stub = bool(
-            warmup_mode or env_requested or bootstrap_env or bootstrap_fast
+        ) = resolve_vector_bootstrap_flags(
+            bootstrap_fast=bootstrap_fast, warmup=warmup
         )
-        warmup_kwargs = {
-            "bootstrap_fast": bootstrap_fast,
-            "warmup": warmup_stub,
-        }
-        if warmup_stub and get_bootstrap_vector_metrics_db is not None:
-            warmup_kwargs.update({"ensure_exists": False, "read_only": True})
-            _VEC_METRICS = get_bootstrap_vector_metrics_db(**warmup_kwargs)
-            try:
-                _VEC_METRICS.activate_on_first_write()
-            except Exception:
-                logger.debug("failed to arm lazy activation for vector metrics", exc_info=True)
-            logger.info(
-                "embeddable_db_mixin.vector_metrics.stubbed",
-                extra={
-                    "bootstrap_fast": bootstrap_fast,
-                    "warmup_mode": warmup_mode,
-                    "env_bootstrap_requested": env_requested,
-                    "menace_bootstrap": bootstrap_env,
-                    "lazy_activation": True,
-                },
+    warmup_mode = bool(warmup_mode or warmup_lite_flag)
+    warmup_stub = bool(
+        warmup_mode or env_requested or bootstrap_env or bootstrap_fast_flag
+    )
+    warmup_kwargs = {
+        "bootstrap_fast": bootstrap_fast_flag,
+        "warmup": warmup_mode,
+    }
+    stub_trigger = "+".join(
+        [
+            trigger
+            for trigger, active in (
+                ("call", callsite_requested),
+                ("env", env_requested or bootstrap_env),
             )
-            return _VEC_METRICS
-        elif warmup_stub:
-            logger.info(
-                "embeddable_db_mixin.vector_metrics.stubbed",
-                extra={
-                    "bootstrap_fast": bootstrap_fast,
-                    "warmup_mode": warmup_mode,
-                    "env_bootstrap_requested": env_requested,
-                    "menace_bootstrap": bootstrap_env,
-                    "lazy_activation": False,
-                },
-            )
+            if active
+        ]
+    )
+    stub_trigger = stub_trigger or "implicit"
+
+    if warmup_stub and get_bootstrap_vector_metrics_db is not None:
+        warmup_kwargs.update({"ensure_exists": False, "read_only": True})
+        _VEC_METRICS = get_bootstrap_vector_metrics_db(**warmup_kwargs)
+        try:
+            _VEC_METRICS.activate_on_first_write()
+        except Exception:
+            logger.debug("failed to arm lazy activation for vector metrics", exc_info=True)
+        logger.info(
+            "embeddable_db_mixin.vector_metrics.stubbed",
+            extra={
+                "bootstrap_fast": bootstrap_fast_flag,
+                "warmup_mode": warmup_mode,
+                "warmup_lite": warmup_lite_flag,
+                "env_bootstrap_requested": env_requested,
+                "menace_bootstrap": bootstrap_env,
+                "lazy_activation": True,
+                "stub_trigger": stub_trigger,
+            },
+        )
+        return _VEC_METRICS
+    elif warmup_stub:
+        logger.info(
+            "embeddable_db_mixin.vector_metrics.stubbed",
+            extra={
+                "bootstrap_fast": bootstrap_fast_flag,
+                "warmup_mode": warmup_mode,
+                "warmup_lite": warmup_lite_flag,
+                "env_bootstrap_requested": env_requested,
+                "menace_bootstrap": bootstrap_env,
+                "lazy_activation": False,
+                "stub_trigger": stub_trigger,
+            },
+        )
 
     _VEC_METRICS = VectorMetricsDB(**warmup_kwargs)
     return _VEC_METRICS
