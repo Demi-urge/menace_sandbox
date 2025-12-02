@@ -305,7 +305,9 @@ class VectorMetricsDB:
         self._bootstrap_context = bool(
             resolved_bootstrap_fast or resolved_warmup or env_bootstrap
         )
-        self._warmup_override_disabled = warmup is False
+        self._warmup_override_disabled = bool(
+            warmup is False and not self._bootstrap_context
+        )
         self.bootstrap_fast = resolved_bootstrap_fast
         self._warmup_mode = (
             False if self._warmup_override_disabled else resolved_warmup
@@ -314,7 +316,11 @@ class VectorMetricsDB:
         self._boot_stub_active = (
             False
             if self._warmup_override_disabled
-            else bool(self.bootstrap_fast or self._warmup_mode)
+            else bool(
+                self._bootstrap_context
+                or self.bootstrap_fast
+                or self._warmup_mode
+            )
         )
         self._lazy_primed = self._boot_stub_active
         self._commit_required = False
@@ -356,6 +362,18 @@ class VectorMetricsDB:
                     stub_mode=True,
                     menace_bootstrap=bootstrap_context,
                     env_bootstrap_requested=env_bootstrap,
+                ),
+            )
+        if self._boot_stub_active and self._bootstrap_context:
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_armed",
+                extra=_timestamp_payload(
+                    init_start,
+                    menace_bootstrap=True,
+                    activation_hook="activate_persistence",
+                    configured_path=str(path),
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
                 ),
             )
 
@@ -504,6 +522,8 @@ class VectorMetricsDB:
                     warmup_mode=self._warmup_mode,
                     bootstrap_fast=self.bootstrap_fast,
                     configured_path=str(self._configured_path),
+                    activation_hook="activate_persistence",
+                    menace_bootstrap=self._bootstrap_context,
                 ),
             )
             self._lazy_primed = False
