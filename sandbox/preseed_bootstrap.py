@@ -3333,9 +3333,46 @@ def initialize_bootstrap_context(
             presence_only = True
             budget_guarded = True
             presence_reason = fast_presence_reason
+        minimum_presence_window = 5.0
         if budget_window_missing:
             presence_only = True
-            presence_reason = "embedder_budget_unavailable"
+            budget_guarded = True
+            non_blocking_presence_probe = True
+            presence_reason = presence_reason or "embedder_budget_unavailable"
+        explicit_budget_available = any(
+            candidate is not None and candidate > 0
+            for candidate in (
+                embedder_stage_budget,
+                embedder_timeout,
+                embedder_stage_deadline_remaining,
+                remaining_bootstrap_window,
+            )
+        )
+        if full_preload_requested and not explicit_budget_available:
+            presence_only = True
+            budget_guarded = True
+            non_blocking_presence_probe = True
+            presence_reason = presence_reason or "embedder_full_preload_budget_required"
+        near_deadline = False
+        for deadline_value, deadline_reason in (
+            (
+                embedder_stage_deadline_remaining,
+                "embedder_stage_deadline_near_exhaustion",
+            ),
+            (
+                remaining_bootstrap_window,
+                "embedder_bootstrap_deadline_near_exhaustion",
+            ),
+        ):
+            if deadline_value is not None and deadline_value <= max(
+                minimum_presence_window, estimated_preload_cost
+            ):
+                near_deadline = True
+                presence_reason = presence_reason or deadline_reason
+        if near_deadline:
+            presence_only = True
+            budget_guarded = True
+            non_blocking_presence_probe = True
         deadline_shortfall = (
             remaining_bootstrap_window is None
             or remaining_bootstrap_window < estimated_preload_cost
@@ -3386,7 +3423,6 @@ def initialize_bootstrap_context(
         if budget_window_missing and strict_timebox is None:
             strict_timebox = default_missing_budget_timebox
         warmup_summary: dict[str, Any] | None = None
-        minimum_presence_window = 5.0
         if (
             (embedder_stage_budget is not None and embedder_stage_budget < minimum_presence_window)
             or (strict_timebox is not None and strict_timebox < minimum_presence_window)
