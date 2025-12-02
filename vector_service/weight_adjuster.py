@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Tuple
+import logging
 
 try:  # pragma: no cover - optional dependency
     import yaml  # type: ignore
@@ -17,6 +18,8 @@ from vector_metrics_db import (
 )
 from .roi_tags import RoiTag
 from dynamic_path_router import resolve_path
+
+logger = logging.getLogger(__name__)
 
 
 def _load_tag_sentiment() -> Dict[RoiTag, float]:
@@ -118,11 +121,27 @@ class WeightAdjuster:
             invert the sign of the adjustment.
         """
 
+        normalized_vectors = list(vectors)
+
         if self.vector_metrics is None:
             return {}
 
+        if hasattr(self.vector_metrics, "persistence_probe"):
+            try:
+                if not self.vector_metrics.persistence_probe():
+                    logger.info(
+                        "weight_adjuster.vector_metrics.deferred",
+                        extra={
+                            "vector_count": len(normalized_vectors),
+                            "bootstrap_fast": bool(self.bootstrap_fast),
+                        },
+                    )
+                    return {}
+            except Exception:
+                return {}
+
         entries: list[Tuple[str, str, float, RoiTag]] = []
-        for origin, rid, enh, tag in vectors:
+        for origin, rid, enh, tag in normalized_vectors:
             entries.append(
                 (
                     str(origin or ""),

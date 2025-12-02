@@ -214,6 +214,21 @@ def _vector_metrics(*, for_write: bool = False) -> "VectorMetricsDB | None":
         )
         if not _VECTOR_WARMUP_STUB:
             vm.activate_on_first_write()
+        elif for_write and hasattr(vm, "persistence_probe"):
+            if not vm.persistence_probe():
+                try:
+                    vm._log_deferred_activation(  # type: ignore[attr-defined]
+                        reason="warmup_lite_deferred"
+                    )
+                except Exception:
+                    logger.info(
+                        "universal_retriever.vector_metrics.deferred",
+                        extra={
+                            "bootstrap_fast": _VECTOR_BOOTSTRAP_FAST,
+                            "warmup_mode": _VECTOR_WARMUP_STUB,
+                        },
+                    )
+                return None
 
         _VEC_METRICS = vm
 
