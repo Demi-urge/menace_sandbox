@@ -38,7 +38,7 @@ def test_normal_operation_exits_lazy_mode(monkeypatch, tmp_path):
     assert vm._lazy_mode is False
 
 
-def test_warmup_auto_activates_on_first_write(monkeypatch, tmp_path):
+def test_warmup_requires_explicit_activation(monkeypatch, tmp_path):
     orig_prepare = vector_metrics_db.VectorMetricsDB._prepare_connection
     calls = []
 
@@ -51,7 +51,25 @@ def test_warmup_auto_activates_on_first_write(monkeypatch, tmp_path):
     vm = vector_metrics_db.VectorMetricsDB(tmp_path / "warm_write.db", warmup=True)
     vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
 
+    assert calls == []
+    vm.activate_persistence(reason="warmup_complete")
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+
     assert calls == ["prepare"]
     assert vm._conn is not None
     assert vm._boot_stub_active is False
     assert vm._warmup_mode is False
+
+
+def test_warmup_stub_skips_filesystem(tmp_path):
+    path = tmp_path / "warm.db"
+
+    vm = vector_metrics_db.VectorMetricsDB(path, warmup=True)
+
+    assert vm._schema_defaults_initialized is False
+    assert vm._schema_cache == {}
+    assert vm._default_columns == {}
+    assert not path.exists()
+    assert vm.ready_probe() == str(path)
+    assert not path.exists()
+
