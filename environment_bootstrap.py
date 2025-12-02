@@ -444,6 +444,18 @@ class _PhaseBudgetContext:
         self._mark_online(self.elapsed, reason, True if self._allow_partial_online else False)
 
     @property
+    def remaining(self) -> float | None:
+        try:
+            limit = self.budget.get("limit")
+            fallback = self.budget.get("budget")
+            ceiling = limit if limit is not None else fallback
+            if ceiling is None:
+                return None
+            return max(0.0, ceiling - self.elapsed)
+        except Exception:
+            return None
+
+    @property
     def elapsed(self) -> float:
         return self._clock() - self._start
 
@@ -2225,6 +2237,9 @@ class EnvironmentBootstrapper:
                     "Applying fallback vector warmup budget: %.1fs", fallback_warmup_budget
                 )
             warmup_budget = fallback_warmup_budget
+            phase_remaining = phase_budget.remaining if phase_budget is not None else None
+            if warmup_budget is not None and phase_remaining is not None:
+                warmup_budget = min(warmup_budget, phase_remaining)
             stage_timeouts = {"budget": warmup_budget} if warmup_budget is not None else None
             base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
             if warmup_budget is not None:
@@ -2232,6 +2247,15 @@ class EnvironmentBootstrapper:
                     **({"budget": warmup_budget} if warmup_budget is not None else {}),
                     **{stage: min(warmup_budget, cost) for stage, cost in base_stage_cost.items()},
                 }
+            if isinstance(stage_timeouts, Mapping) and phase_remaining is not None:
+                stage_timeouts = {
+                    **stage_timeouts,
+                    "budget": min(stage_timeouts.get("budget") or phase_remaining, phase_remaining),
+                }
+                for _stage in ("model", "handlers", "vectorise"):
+                    timeout = stage_timeouts.get(_stage)
+                    if timeout is not None:
+                        stage_timeouts[_stage] = min(timeout, phase_remaining)
             if raw == "":
                 warmup_probe = warmup_budget is not None and warmup_budget >= 1.0
                 warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
@@ -2384,12 +2408,20 @@ class EnvironmentBootstrapper:
                     self._persist_vector_warmup_state(deferred=deferred_stages)
                 summary: Mapping[str, str] | None = None
                 warmup_background: set[str] = set()
+
+                def _vector_budget_remaining() -> float | None:
+                    try:
+                        return phase_budget.remaining if phase_budget is not None else None
+                    except Exception:
+                        return None
+
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
 
                     summary = warmup_vector_service(
                         logger=self.logger,
                         check_budget=check_budget,
+                        budget_remaining=_vector_budget_remaining,
                         download_model=warmup_model,
                         probe_model=warmup_probe,
                         hydrate_handlers=False,
