@@ -59,6 +59,17 @@ def _patch_stub_handler(record: Dict[str, any]) -> list[float]:
 _patch_stub_handler.is_patch_stub = True  # type: ignore[attr-defined]
 
 
+class HandlerLoadResult(dict[str, Callable[[Dict[str, any]], list[float]]]):
+    """Dictionary-like container that tracks handler deferral state."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.deferral_statuses: dict[str, str] = {}
+
+    def record_status(self, kind: str, status: str) -> None:
+        self.deferral_statuses[kind] = status
+
+
 def _env_flag(name: str) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -86,10 +97,10 @@ def load_handlers(
     handler_timeouts: dict[str, float] | float | None = None,
     stop_event: threading.Event | None = None,
     budget_check: Callable[[threading.Event | None], None] | None = None,
-) -> Dict[str, Callable[[Dict[str, any]], list[float]]]:
+) -> HandlerLoadResult:
     """Instantiate all registered vectorisers and return transform callables."""
 
-    handlers: Dict[str, Callable[[Dict[str, any]], list[float]]] = {}
+    handlers = HandlerLoadResult()
     bootstrap_fast, bootstrap_context, defaulted_fast = _resolve_bootstrap_fast(
         bootstrap_fast
     )
@@ -144,20 +155,29 @@ def load_handlers(
 
     resolved_timeouts = _apply_budget_caps(resolved_timeouts, provided_budget)
 
-    def _check_cancelled(context: str) -> None:
-        if stop_event is not None and stop_event.is_set():
+    def _check_cancelled(context: str, *, event: threading.Event | None = None) -> None:
+        event = event or stop_event
+        if event is not None and event.is_set():
             raise TimeoutError(f"handler hydration cancelled during {context}")
         if budget_check is not None:
-            budget_check(stop_event)
+            budget_check(event)
 
-    def _instantiate_handler_with_timeout(kind: str, mod_name: str, cls_name: str, timeout: float | None):
+    def _instantiate_handler_with_timeout(
+        kind: str,
+        mod_name: str,
+        cls_name: str,
+        timeout: float | None,
+        *,
+        effective_budget: float | None,
+        cancel_event: threading.Event | None = None,
+    ):
         result: list[Callable[[Dict[str, any]], list[float]]] = []
         error: list[Exception] = []
         done = threading.Event()
 
         def _target() -> None:
             try:
-                _check_cancelled(f"{kind}-target")
+                _check_cancelled(f"{kind}-target", event=cancel_event)
                 mod = importlib.import_module(mod_name)
                 cls = getattr(mod, cls_name)
                 kwargs = {}
@@ -173,12 +193,18 @@ def load_handlers(
         thread = threading.Thread(target=_target, daemon=True)
         thread.start()
         start = time.perf_counter()
+        deadline = None if effective_budget is None else start + effective_budget
         while not done.wait(timeout=0.05):
             try:
-                _check_cancelled(f"{kind}-wait")
+                _check_cancelled(f"{kind}-wait", event=cancel_event)
             except TimeoutError as exc:
                 return None, exc
-            if timeout is not None and time.perf_counter() - start >= timeout:
+            now = time.perf_counter()
+            if deadline is not None and now >= deadline:
+                if stop_event is not None:
+                    stop_event.set()
+                return None, TimeoutError("handler init exceeded global budget")
+            if timeout is not None and now - start >= timeout:
                 if stop_event is not None:
                     stop_event.set()
                 return None, TimeoutError(f"handler init exceeded budget ({timeout}s)")
@@ -188,6 +214,55 @@ def load_handlers(
         return result[0] if result else None, None
 
     start = time.perf_counter()
+    deadline = None if provided_budget is None else start + provided_budget
+
+    def _remaining_budget() -> float | None:
+        if deadline is None:
+            return None
+        return deadline - time.perf_counter()
+
+    def _record_deferred(kind: str, reason: str, *, as_stub: bool = True) -> None:
+        handlers.record_status(kind, reason)
+        if as_stub:
+            handlers[kind] = _patch_stub_handler
+
+    def _schedule_background(kind: str, mod_name: str, cls_name: str) -> None:
+        def _background() -> None:
+            background_event = threading.Event()
+            try:
+                handler, _ = _instantiate_handler_with_timeout(
+                    kind,
+                    mod_name,
+                    cls_name,
+                    None,
+                    effective_budget=None,
+                    cancel_event=background_event,
+                )
+                if handler is None:
+                    return
+                logger.info(
+                    "vector_registry.handler.background_loaded",
+                    extra={"kind": kind},
+                )
+            except Exception:  # pragma: no cover - best effort
+                logger.exception(
+                    "vector_registry.handler.background_failed", extra={"kind": kind}
+                )
+
+        thread = threading.Thread(target=_background, daemon=True)
+        thread.start()
+
+    def _cancel_remaining_budget(
+        pending: list[tuple[str, tuple[str, str, Optional[str], Optional[str]]]]
+    ) -> None:
+        for remaining_kind, _ in pending:
+            logger.info(
+                "vector_registry.handler.deferred",
+                extra={"kind": remaining_kind, "reason": "budget", "bootstrap_fast": bootstrap_fast},
+            )
+            _record_deferred(remaining_kind, "budget")
+
+    registry_items = list(_VECTOR_REGISTRY.items())
     logger.debug(
         "vector_registry.load_handlers.start",
         extra={"registered": len(_VECTOR_REGISTRY)},
@@ -210,7 +285,17 @@ def load_handlers(
                 "defaulted": defaulted_fast,
             },
         )
-    for kind, (mod_name, cls_name, _, _) in _VECTOR_REGISTRY.items():
+    for index, (kind, (mod_name, cls_name, _, _)) in enumerate(registry_items):
+        remaining = _remaining_budget()
+        if remaining is not None and remaining <= 0:
+            logger.info(
+                "vector_registry.handler.budget_exhausted",
+                extra={"kind": kind, "remaining_s": round(remaining, 6)},
+            )
+            if stop_event is not None:
+                stop_event.set()
+            _cancel_remaining_budget(registry_items[index:])
+            break
         handler_start = time.perf_counter()
         logger.debug(
             "vector_registry.handler.init",
@@ -230,7 +315,7 @@ def load_handlers(
                     "bootstrap_fast_defaulted": defaulted_fast,
                 },
             )
-            handlers[kind] = _patch_stub_handler
+            _record_deferred(kind, "bootstrap_fast")
             continue
         timeout = resolved_timeouts.get(kind, base_timeout)
         if timeout is not None and timeout <= 0.0:
@@ -243,7 +328,7 @@ def load_handlers(
                     "bootstrap_fast": bootstrap_fast,
                 },
             )
-            handlers[kind] = _patch_stub_handler
+            _record_deferred(kind, "budget")
             continue
         if warmup_lite:
             logger.info(
@@ -254,10 +339,18 @@ def load_handlers(
                     "bootstrap_fast": bootstrap_fast,
                 },
             )
+            _record_deferred(kind, "warmup_lite", as_stub=False)
             continue
         try:
+            effective_timeout = timeout
+            remaining_budget = _remaining_budget()
+            if remaining_budget is not None:
+                effective_timeout = min(
+                    filter(lambda value: value is not None, [timeout, remaining_budget]),
+                    default=remaining_budget,
+                )
             handler, timeout_error = _instantiate_handler_with_timeout(
-                kind, mod_name, cls_name, timeout
+                kind, mod_name, cls_name, effective_timeout, effective_budget=remaining_budget
             )
             if timeout_error:
                 logger.info(
@@ -269,11 +362,14 @@ def load_handlers(
                         "bootstrap_fast": bootstrap_fast,
                     },
                 )
-                handlers[kind] = _patch_stub_handler
+                _record_deferred(kind, "timeout")
+                _schedule_background(kind, mod_name, cls_name)
                 continue
             if handler is None:
+                _record_deferred(kind, "cancelled")
                 continue
             handlers[kind] = handler
+            handlers.record_status(kind, "loaded")
             logger.info(
                 "vector_registry.handler.loaded kind=%s duration=%.6fs",
                 kind,
@@ -293,6 +389,7 @@ def load_handlers(
                     "duration_s": round(time.perf_counter() - handler_start, 6),
                 },
             )
+            _record_deferred(kind, "error")
             continue
     logger.info(
         "vector_registry.load_handlers.complete count=%s duration=%.6fs",
