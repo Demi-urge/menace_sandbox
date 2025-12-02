@@ -3378,8 +3378,11 @@ def initialize_bootstrap_context(
             if warmup_summary is not None:
                 warmup_summary.setdefault("deferred", True)
                 warmup_summary.setdefault("deferred_reason", reason)
+                job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+                job_snapshot["warmup_summary"] = warmup_summary
+            else:
+                job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
 
-            job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
             job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
             job_snapshot.setdefault("placeholder_reason", reason)
             job_snapshot.update(
@@ -3452,6 +3455,16 @@ def initialize_bootstrap_context(
                 if strict_timebox is None
                 else "embedder_preload_timebox_short"
             )
+            warmup_summary = warmup_summary or {}
+            warmup_summary.update(
+                {
+                    "deferred": True,
+                    "deferral_reason": presence_reason,
+                    "deferred_reason": presence_reason,
+                    "strict_timebox": strict_timebox,
+                    "stage_budget": embedder_stage_budget_hint,
+                }
+            )
             return _defer_to_presence(
                 presence_reason,
                 budget_guarded=True,
@@ -3462,6 +3475,7 @@ def initialize_bootstrap_context(
             )
 
         warmup_started = time.monotonic()
+        warmup_stop_reason: str | None = None
 
         def _warmup_budget_remaining() -> float | None:
             remaining_candidates = []
@@ -3473,6 +3487,8 @@ def initialize_bootstrap_context(
                 remaining_candidates.append(embedder_timeout - (time.monotonic() - warmup_started))
             if bootstrap_deadline is not None:
                 remaining_candidates.append(bootstrap_deadline - time.monotonic())
+            if strict_timebox is not None:
+                remaining_candidates.append(strict_timebox - (time.monotonic() - warmup_started))
 
             remaining_filtered = [candidate for candidate in remaining_candidates if candidate is not None]
             if not remaining_filtered:
@@ -3490,6 +3506,13 @@ def initialize_bootstrap_context(
                 else embedder_timeout,
                 "model": embedder_timeout,
             }
+        if isinstance(warmup_stage_timeouts, dict) and strict_timebox is not None:
+            for key in ("budget", "model"):
+                existing = warmup_stage_timeouts.get(key)
+                if existing is None or existing <= 0:
+                    warmup_stage_timeouts[key] = strict_timebox
+                else:
+                    warmup_stage_timeouts[key] = min(existing, strict_timebox)
 
         try:
             from menace_sandbox.vector_service.lazy_bootstrap import warmup_vector_service
@@ -3695,6 +3718,40 @@ def initialize_bootstrap_context(
                     daemon=True,
                 ).start()
 
+            deadlines: list[tuple[float, str]] = []
+            now = time.monotonic()
+            if strict_timebox is not None:
+                deadlines.append((now + strict_timebox, "embedder_preload_timebox_expired"))
+            if embedder_stage_budget_hint is not None and embedder_stage_budget_hint > 0:
+                deadlines.append(
+                    (
+                        warmup_started + embedder_stage_budget_hint,
+                        "embedder_stage_budget_deadline",
+                    )
+                )
+            if bootstrap_deadline is not None:
+                deadlines.append((bootstrap_deadline, "embedder_bootstrap_deadline"))
+
+            if deadlines:
+
+                def _deadline_guard() -> None:
+                    nonlocal warmup_stop_reason
+                    while not combined_stop_event.is_set():
+                        deadline, reason = min(deadlines, key=lambda item: item[0])
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            warmup_stop_reason = warmup_stop_reason or reason
+                            combined_stop_event.set()
+                            return
+                        if combined_stop_event.wait(min(remaining, 0.1)):
+                            return
+
+                threading.Thread(
+                    target=_deadline_guard,
+                    name="embedder-preload-stop-deadline",
+                    daemon=True,
+                ).start()
+
             return combined_stop_event
 
         def _guarded_embedder_warmup(
@@ -3728,8 +3785,9 @@ def initialize_bootstrap_context(
 
             if warmup_thread.is_alive():
                 combined_stop_event.set()
+                warmup_stop_reason = warmup_stop_reason or "embedder_preload_timebox_expired"
                 warmup_thread.join(0.05)
-                return None, "embedder_preload_timebox_expired"
+                return None, warmup_stop_reason
 
             if warmup_exc:
                 raise warmup_exc[0]
@@ -3745,6 +3803,12 @@ def initialize_bootstrap_context(
             join_timeout=warmup_budget_remaining
         )
         if warmup_timeout_reason:
+            warmup_summary = warmup_summary or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault("deferral_reason", warmup_timeout_reason)
+            warmup_summary.setdefault("deferred_reason", warmup_timeout_reason)
+            warmup_summary.setdefault("strict_timebox", strict_timebox)
+            warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
             warmup_deferral_reason = (
                 warmup_timeout_reason
                 if warmup_timeout_reason != "embedder_preload_timebox_expired"
