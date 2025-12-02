@@ -274,6 +274,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 try:
     _vector_metrics_db = load_internal("vector_metrics_db")
     VectorMetricsDB = _vector_metrics_db.VectorMetricsDB
+    get_bootstrap_vector_metrics_db = _vector_metrics_db.get_bootstrap_vector_metrics_db
     resolve_vector_bootstrap_flags = _vector_metrics_db.resolve_vector_bootstrap_flags
 except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dependency
 
@@ -281,6 +282,7 @@ except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dep
         def log_embedding(self, *args, **kwargs):
             return None
 
+    get_bootstrap_vector_metrics_db = None  # type: ignore
     resolve_vector_bootstrap_flags = None  # type: ignore
 
 try:
@@ -370,7 +372,13 @@ def _vector_metrics_db() -> VectorMetricsDB | None:
             "bootstrap_fast": bootstrap_fast,
             "warmup": warmup_stub,
         }
-        if warmup_stub:
+        if warmup_stub and get_bootstrap_vector_metrics_db is not None:
+            warmup_kwargs.update({"ensure_exists": False, "read_only": True})
+            _VEC_METRICS = get_bootstrap_vector_metrics_db(**warmup_kwargs)
+            try:
+                _VEC_METRICS.activate_on_first_write()
+            except Exception:
+                logger.debug("failed to arm lazy activation for vector metrics", exc_info=True)
             logger.info(
                 "embeddable_db_mixin.vector_metrics.stubbed",
                 extra={
@@ -378,6 +386,19 @@ def _vector_metrics_db() -> VectorMetricsDB | None:
                     "warmup_mode": warmup_mode,
                     "env_bootstrap_requested": env_requested,
                     "menace_bootstrap": bootstrap_env,
+                    "lazy_activation": True,
+                },
+            )
+            return _VEC_METRICS
+        elif warmup_stub:
+            logger.info(
+                "embeddable_db_mixin.vector_metrics.stubbed",
+                extra={
+                    "bootstrap_fast": bootstrap_fast,
+                    "warmup_mode": warmup_mode,
+                    "env_bootstrap_requested": env_requested,
+                    "menace_bootstrap": bootstrap_env,
+                    "lazy_activation": False,
                 },
             )
 
