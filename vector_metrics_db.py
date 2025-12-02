@@ -35,6 +35,18 @@ logger = logging.getLogger(__name__)
 _DB_ROUTER_MODULE: "_db_router_module | None" = None
 _DYNAMIC_PATH_ROUTER: "_dynamic_path_router | None" = None
 
+_BOOTSTRAP_TIMER_ENVS = (
+    "MENACE_BOOTSTRAP_WAIT_SECS",
+    "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
+    "BOOTSTRAP_STEP_TIMEOUT",
+    "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
+    "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS",
+    "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS",
+    "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS",
+    "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS",
+    "PREPARE_PIPELINE_CONFIG_BUDGET_SECS",
+)
+
 
 def _db_router():
     global _DB_ROUTER_MODULE
@@ -121,6 +133,12 @@ def _noop_logging(bootstrap_fast: bool, warmup_mode: bool) -> bool:
     return bool(bootstrap_fast or warmup_mode)
 
 
+def _bootstrap_timers_active() -> bool:
+    if _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False):
+        return True
+    return any(os.getenv(name) for name in _BOOTSTRAP_TIMER_ENVS)
+
+
 def _detect_bootstrap_environment() -> dict[str, bool]:
     vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
     patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
@@ -141,6 +159,7 @@ def _detect_bootstrap_environment() -> dict[str, bool]:
         "vector_service_warmup": vector_service_warmup,
         "vector_warmup_env": vector_warmup_env,
         "bootstrap_env": bootstrap_env,
+        "bootstrap_timers": _bootstrap_timers_active(),
     }
 
 
@@ -163,6 +182,7 @@ def resolve_vector_bootstrap_flags(
         or env["patch_bootstrap_env"]
         or env["vector_warmup_env"]
         or env["bootstrap_env"]
+        or env["bootstrap_timers"]
     )
     warmup_requested = bool(
         warmup
@@ -171,6 +191,7 @@ def resolve_vector_bootstrap_flags(
             env_requested
             or env["vector_warmup_env"]
             or _env_flag("VECTOR_METRICS_WARMUP", False)
+            or env["bootstrap_timers"]
         )
     )
     resolved_bootstrap_fast = bool(
@@ -180,10 +201,14 @@ def resolve_vector_bootstrap_flags(
             env["vector_bootstrap_env"]
             or env["patch_bootstrap_env"]
             or env["bootstrap_env"]
+            or env["bootstrap_timers"]
         )
     )
     resolved_bootstrap_fast = bool(
-        resolved_bootstrap_fast or warmup_requested or env["bootstrap_env"]
+        resolved_bootstrap_fast
+        or warmup_requested
+        or env["bootstrap_env"]
+        or env["bootstrap_timers"]
     )
     resolved_warmup = bool(warmup_requested and warmup is not False)
 
@@ -335,10 +360,14 @@ class VectorMetricsDB:
         ) = resolve_vector_bootstrap_flags(
             bootstrap_fast=bootstrap_fast, warmup=warmup
         )
+        self._bootstrap_timers_active = _bootstrap_timers_active()
         self._menace_bootstrap_env = bootstrap_context
         self._bootstrap_env_requested = env_bootstrap
         self._bootstrap_context = bool(
-            resolved_bootstrap_fast or resolved_warmup or env_bootstrap
+            resolved_bootstrap_fast
+            or resolved_warmup
+            or env_bootstrap
+            or self._bootstrap_timers_active
         )
         if self._bootstrap_context and warmup is None:
             resolved_warmup = True
@@ -354,6 +383,7 @@ class VectorMetricsDB:
             or env_bootstrap
             or resolved_warmup
             or resolved_bootstrap_fast
+            or self._bootstrap_timers_active
         )
         self._lazy_mode = True
         self._boot_stub_active = (
@@ -363,6 +393,7 @@ class VectorMetricsDB:
                 self._bootstrap_context
                 or self.bootstrap_fast
                 or self._warmup_mode
+                or self._bootstrap_timers_active
             )
         )
         self._lazy_primed = self._boot_stub_active

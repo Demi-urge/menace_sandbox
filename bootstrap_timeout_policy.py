@@ -3212,6 +3212,11 @@ def enforce_bootstrap_timeout_policy(
         "prompt_override": bool(prompt_override),
     }
 
+    # Ensure downstream metrics stores remain in warmup mode while bootstrap
+    # timers are enforced so that bootstrap callers do not touch persistent
+    # VectorMetricsDB storage until persistence is explicitly activated.
+    os.environ.setdefault("VECTOR_METRICS_BOOTSTRAP_WARMUP", "1")
+
     return bootstrap_manager.run_once(
         "bootstrap_timeout_policy.enforce",
         _run,
