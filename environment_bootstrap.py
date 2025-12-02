@@ -2267,16 +2267,21 @@ class EnvironmentBootstrapper:
 
             def _build_stage_timeouts() -> dict[str, float]:
                 timeouts: dict[str, float] = {}
-                if warmup_budget is not None:
-                    timeouts["budget"] = warmup_budget
+                budget_ceiling = warmup_budget
+                if phase_remaining is not None:
+                    budget_ceiling = (
+                        min(budget_ceiling, phase_remaining)
+                        if budget_ceiling is not None
+                        else phase_remaining
+                    )
+                if budget_ceiling is not None:
+                    timeouts["budget"] = budget_ceiling
                 for _stage, cost in base_stage_cost.items():
-                    stage_cap = warmup_budget if warmup_budget is not None else cost
+                    stage_cap = budget_ceiling if budget_ceiling is not None else cost
                     if phase_remaining is not None and stage_cap is not None:
                         stage_cap = min(stage_cap, phase_remaining)
                     if stage_cap is not None:
                         timeouts[_stage] = stage_cap
-                if phase_remaining is not None and "budget" in timeouts:
-                    timeouts["budget"] = min(timeouts.get("budget", phase_remaining), phase_remaining)
                 return timeouts
 
             stage_timeouts: dict[str, float] | None = _build_stage_timeouts() if warmup_budget is not None else None
@@ -2288,6 +2293,39 @@ class EnvironmentBootstrapper:
                 except Exception:
                     stage_timeouts = {"model": 9.0, "handlers": 9.0, "vectorise": 4.5}
             vector_state = self._phase_readiness.get("vector_warmup")
+            budget_ceiling = None
+            if isinstance(stage_timeouts, Mapping):
+                budget_ceiling = _coerce_timeout(stage_timeouts.get("budget"))
+            if budget_ceiling is None:
+                budget_ceiling = warmup_budget if warmup_budget is not None else phase_remaining
+            preflight_skipped: set[str] = set()
+            for _stage, enabled in (
+                ("handlers", warmup_handlers),
+                ("vectorise", run_vectorise),
+            ):
+                if not enabled:
+                    continue
+                stage_cap = None
+                if isinstance(stage_timeouts, Mapping):
+                    stage_cap = _coerce_timeout(stage_timeouts.get(_stage))
+                if stage_cap is None:
+                    stage_cap = budget_ceiling
+                estimate = base_stage_cost.get(_stage)
+                if stage_cap is not None and estimate is not None and estimate > stage_cap:
+                    preflight_skipped.add(_stage)
+                    self.logger.info(
+                        "Vector %s warmup deferred upfront; estimate %.1fs exceeds remaining budget %.1fs",
+                        _stage,
+                        estimate,
+                        stage_cap,
+                        extra=log_record(event="vector-warmup-guard", stage=_stage),
+                    )
+                    if _stage == "handlers":
+                        warmup_handlers = False
+                    if _stage == "vectorise":
+                        run_vectorise = False
+            if preflight_skipped:
+                budget_guard_deferred |= preflight_skipped
             if budget_guard_deferred:
                 if "handlers" in budget_guard_deferred and warmup_handlers:
                     self.logger.info(
@@ -2505,6 +2543,11 @@ class EnvironmentBootstrapper:
                     deferred_stages.update(stages)
                     warmup_background.update(stages)
                     return _schedule_heavy_background(stages, budget_hints)
+                if preflight_skipped:
+                    _background_resume_hook(
+                        preflight_skipped,
+                        stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
+                    )
                 budget_deferred = bool(budget_guard_deferred)
                 if defer_heavy:
                     if warmup_handlers:
