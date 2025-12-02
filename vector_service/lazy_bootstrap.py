@@ -36,9 +36,9 @@ _WARMUP_CACHE_LOADED = False
 _PROCESS_START = int(time.time())
 
 _CONSERVATIVE_STAGE_TIMEOUTS = {
-    "model": 12.0,
-    "handlers": 12.0,
-    "vectorise": 6.0,
+    "model": 9.0,
+    "handlers": 9.0,
+    "vectorise": 4.5,
 }
 
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
@@ -428,6 +428,10 @@ def warmup_vector_service(
 
     background_warmup: set[str] = set()
 
+    if deferred:
+        background_warmup.update(deferred)
+        background_candidates.update(deferred)
+
     def _record(stage: str, status: str) -> None:
         summary[stage] = status
         if status.startswith("deferred"):
@@ -489,6 +493,14 @@ def warmup_vector_service(
 
     def _guard(stage: str) -> bool:
         nonlocal budget_exhausted
+        shared_remaining = _remaining_shared_budget()
+        if shared_remaining is not None and shared_remaining <= 0:
+            budget_exhausted = True
+            _record_deferred_background(stage, "skipped-shared-budget")
+            log.info(
+                "Vector warmup shared budget exhausted; deferring %s", stage
+            )
+            return False
         if budget_exhausted:
             _record_deferred_background(stage, "skipped-budget")
             log.info("Vector warmup budget already exhausted; deferring %s", stage)
@@ -540,6 +552,22 @@ def warmup_vector_service(
                 stop_event.set()
             raise
 
+    cumulative_elapsed = 0.0
+
+    def _remaining_shared_budget() -> float | None:
+        if stage_budget_cap is None:
+            return None
+        return max(0.0, stage_budget_cap - cumulative_elapsed)
+
+    def _record_elapsed(stage: str, elapsed: float) -> None:
+        nonlocal cumulative_elapsed, budget_exhausted
+        cumulative_elapsed += max(0.0, elapsed)
+        remaining_shared = _remaining_shared_budget()
+        if remaining_shared is not None:
+            summary[f"shared_budget_remaining_after_{stage}"] = f"{remaining_shared:.3f}"
+        if stage_budget_cap is not None and cumulative_elapsed >= stage_budget_cap:
+            budget_exhausted = True
+
     def _finalise() -> Mapping[str, str]:
         deferred_record = deferred | recorded_deferred
         if deferred_record:
@@ -554,6 +582,12 @@ def warmup_vector_service(
             summary[f"budget_{stage}"] = (
                 f"{timeout:.3f}" if timeout is not None else "none"
             )
+        shared_remaining = _remaining_shared_budget()
+        if shared_remaining is not None:
+            summary["shared_budget_remaining"] = f"{shared_remaining:.3f}"
+        remaining = _remaining_budget()
+        if remaining is not None:
+            summary["remaining_budget"] = f"{remaining:.3f}"
         hook_dispatched = False
         if background_candidates and background_hook is not None:
             try:
@@ -576,11 +610,13 @@ def warmup_vector_service(
         func: Callable[[threading.Event], Any],
         *,
         timeout: float | None = None,
-    ) -> tuple[bool, Any | None]:
+    ) -> tuple[bool, Any | None, float]:
         nonlocal budget_exhausted
         stop_event = threading.Event()
+        start = time.monotonic()
         if check_budget is None and timeout is None:
-            return True, func(stop_event)
+            result = func(stop_event)
+            return True, result, time.monotonic() - start
 
         result: list[Any | None] = []
         error: list[BaseException] = []
@@ -635,8 +671,6 @@ def warmup_vector_service(
 
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
-
-        start = time.monotonic()
         while not done.wait(timeout=0.05):
             if timeout is not None and time.monotonic() - start >= timeout:
                 _stop_thread("timeout")
@@ -646,7 +680,7 @@ def warmup_vector_service(
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
                 )
-                return False, None
+                return False, None, time.monotonic() - start
 
             if check_budget is not None:
                 try:
@@ -657,7 +691,7 @@ def warmup_vector_service(
                     _record_timeout(stage)
                     _record_deferred_background(stage, "deferred-budget")
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
-                    return False, None
+                    return False, None, time.monotonic() - start
 
         if error:
             err = error[0]
@@ -666,15 +700,15 @@ def warmup_vector_service(
                 budget_exhausted = True
                 log.info("Vector warmup %s cancelled: %s", stage, err)
                 _record_deferred_background(stage, "deferred-budget")
-                return False, None
+                return False, None, time.monotonic() - start
             raise err
 
-        return True, result[0] if result else None
+        return True, result[0] if result else None, time.monotonic() - start
 
     base_timeouts = {
-        "model": 10.0,
-        "handlers": 10.0,
-        "vectorise": 5.0,
+        "model": 8.0,
+        "handlers": 9.0,
+        "vectorise": 4.0,
     }
     base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
     if bootstrap_context or bootstrap_fast or not stage_timeouts_supplied:
@@ -937,7 +971,7 @@ def warmup_vector_service(
                 return _finalise()
             if not _has_estimated_budget("model", budget_cap=model_timeout):
                 return _finalise()
-            completed, path = _run_with_budget(
+            completed, path, elapsed = _run_with_budget(
                 "model",
                 lambda stop_event: ensure_embedding_model(
                     logger=log,
@@ -951,6 +985,7 @@ def warmup_vector_service(
                 ),
                 timeout=model_timeout,
             )
+            _record_elapsed("model", elapsed)
             if completed:
                 if path:
                     _record("model", f"ready:{path}" if path.exists() else "ready")
@@ -972,7 +1007,8 @@ def warmup_vector_service(
                     )
                 return _model_bundle_path()
 
-            completed, dest = _run_with_budget("model", _probe)
+            completed, dest, elapsed = _run_with_budget("model", _probe)
+            _record_elapsed("model", elapsed)
             if completed and dest:
                 probe_path, status = (
                     dest if isinstance(dest, tuple) else (dest, None)
@@ -999,7 +1035,10 @@ def warmup_vector_service(
             else:
                 status = "deferred" if ("model" in deferred or warmup_model) else "skipped"
                 log.info("Skipping embedding model download (disabled)")
-            _record("model", status)
+            if status.startswith("deferred"):
+                _record_background("model", status)
+            else:
+                _record("model", status)
 
     svc = None
     if _reuse("handlers"):
@@ -1020,7 +1059,7 @@ def warmup_vector_service(
             try:
                 from .vectorizer import SharedVectorService
 
-                completed, svc = _run_with_budget(
+                completed, svc, elapsed = _run_with_budget(
                     "handlers",
                     lambda stop_event: SharedVectorService(
                         bootstrap_fast=bootstrap_fast,
@@ -1032,6 +1071,7 @@ def warmup_vector_service(
                     ),
                     timeout=handler_timeout,
                 )
+                _record_elapsed("handlers", elapsed)
                 if completed:
                     _record("handlers", "hydrated")
                 elif budget_exhausted:
@@ -1048,7 +1088,7 @@ def warmup_vector_service(
             if "handlers" in deferred_bootstrap:
                 status = "deferred-bootstrap"
                 log.info("Vector handler hydration deferred for bootstrap-lite")
-                _record("handlers", status)
+                _record_background("handlers", status)
             elif "handlers" in lite_deferrals:
                 status = "deferred-lite"
                 log.info("Vector handler hydration deferred for warmup-lite")
@@ -1056,7 +1096,10 @@ def warmup_vector_service(
             else:
                 status = "deferred" if ("handlers" in deferred or warmup_handlers) else "skipped"
                 log.info("Vector handler hydration skipped")
-                _record("handlers", status)
+                if status.startswith("deferred"):
+                    _record_background("handlers", status)
+                else:
+                    _record("handlers", status)
 
     if _reuse("scheduler"):
         pass
@@ -1067,7 +1110,7 @@ def warmup_vector_service(
         else:
             if "scheduler" in deferred_bootstrap:
                 status = "deferred-bootstrap"
-                _record("scheduler", status)
+                _record_background("scheduler", status)
             elif "scheduler" in lite_deferrals:
                 status = "deferred-lite"
                 _record_background("scheduler", status)
@@ -1093,13 +1136,14 @@ def warmup_vector_service(
                 log.info("Vectorise warmup skipped: no remaining budget")
             elif _has_estimated_budget("vectorise", budget_cap=vectorise_timeout):
                 try:
-                    completed, _ = _run_with_budget(
+                    completed, _, elapsed = _run_with_budget(
                         "vectorise",
                         lambda stop_event: svc.vectorise(
                             "text", {"text": "warmup"}, stop_event=stop_event
                         ),
                         timeout=vectorise_timeout,
                     )
+                    _record_elapsed("vectorise", elapsed)
                     if completed:
                         _record("vectorise", "ok")
                 except Exception:  # pragma: no cover - allow partial warmup
@@ -1110,7 +1154,7 @@ def warmup_vector_service(
                 if "vectorise" in deferred_bootstrap:
                     status = "deferred-bootstrap"
                     log.info("Vectorise warmup deferred for bootstrap-lite")
-                    _record("vectorise", status)
+                    _record_background("vectorise", status)
                 elif "vectorise" in lite_deferrals:
                     status = "deferred-lite"
                     log.info("Vectorise warmup deferred for warmup-lite")
@@ -1118,7 +1162,10 @@ def warmup_vector_service(
                 else:
                     status = "deferred" if ("vectorise" in deferred or "handlers" in deferred) else "skipped-no-service"
                     log.info("Vectorise warmup skipped: service unavailable")
-                    _record("vectorise", status)
+                    if status.startswith("deferred"):
+                        _record_background("vectorise", status)
+                    else:
+                        _record("vectorise", status)
             else:
                 if "vectorise" in deferred_bootstrap:
                     status = "deferred-bootstrap"
@@ -1128,7 +1175,10 @@ def warmup_vector_service(
                     log.info("Vectorise warmup deferred for warmup-lite")
                 else:
                     status = "deferred" if "vectorise" in deferred else "skipped"
-                    _record("vectorise", status)
+                    if status.startswith("deferred"):
+                        _record_background("vectorise", status)
+                    else:
+                        _record("vectorise", status)
                 if status == "deferred-bootstrap":
                     log.info("Vectorise warmup deferred for bootstrap-lite")
                 log.info("Vectorise warmup skipped")
