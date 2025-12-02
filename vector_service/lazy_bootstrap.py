@@ -478,6 +478,7 @@ def warmup_vector_service(
     background_warmup: set[str] = set()
     background_stage_timeouts: dict[str, float | None] | None = None
     budget_gate_reason: str | None = None
+    heavy_admission: str | None = None
 
     if deferred:
         background_warmup.update(deferred)
@@ -665,6 +666,8 @@ def warmup_vector_service(
             summary["deferred"] = ",".join(sorted(deferred_record))
         if background_candidates:
             summary["background"] = ",".join(sorted(background_candidates))
+        if heavy_admission is not None:
+            summary["heavy_admission"] = heavy_admission
         for stage, ceiling in stage_budget_ceiling.items():
             summary[f"budget_ceiling_{stage}"] = (
                 f"{ceiling:.3f}" if ceiling is not None else "none"
@@ -822,7 +825,7 @@ def warmup_vector_service(
         "handlers": 9.0,
         "vectorise": 4.0,
     }
-    base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
+    base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0, "scheduler": 5.0}
     if bootstrap_context or bootstrap_fast or not stage_timeouts_supplied:
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
@@ -967,6 +970,8 @@ def warmup_vector_service(
         heavy_budget_needed += base_stage_cost["model"]
     if hydrate_handlers:
         heavy_budget_needed += base_stage_cost["handlers"]
+    if start_scheduler:
+        heavy_budget_needed += base_stage_cost["scheduler"]
     if run_vectorise:
         heavy_budget_needed += base_stage_cost["vectorise"]
 
@@ -1159,6 +1164,75 @@ def warmup_vector_service(
         )
         return False
 
+    def _needs_stage_estimate(stage: str, enabled: bool) -> bool:
+        if not enabled:
+            return False
+        status = memoised_results.get(stage)
+        if status is None:
+            return True
+        if status.startswith("deferred") or status in {
+            "failed",
+            "absent-probe",
+            "skipped-budget",
+            "skipped-cap",
+        }:
+            return True
+        return False
+
+    def _shared_budget_preflight() -> None:
+        nonlocal hydrate_handlers, start_scheduler, run_vectorise, budget_gate_reason, heavy_admission
+
+        remaining_shared = _remaining_shared_budget()
+        if remaining_shared is None:
+            heavy_admission = "admitted"
+            return
+
+        planned_stages = [
+            stage
+            for stage, enabled in (
+                ("handlers", hydrate_handlers),
+                ("scheduler", start_scheduler),
+                ("vectorise", run_vectorise if run_vectorise is not None else hydrate_handlers),
+            )
+            if _needs_stage_estimate(stage, enabled)
+        ]
+
+        if not planned_stages:
+            heavy_admission = "admitted"
+            return
+
+        estimate_total = sum(base_stage_cost.get(stage, 0.0) for stage in planned_stages)
+        if remaining_shared >= estimate_total:
+            heavy_admission = "admitted"
+            return
+
+        heavy_admission = "deferred-shared-budget"
+        budget_gate_reason = budget_gate_reason or heavy_admission
+        log.info(
+            "Vector warmup heavy stages deferred up front; shared budget %.2fs below estimated %.2fs",
+            remaining_shared,
+            estimate_total,
+        )
+
+        if "handlers" in planned_stages:
+            _defer_handler_chain(
+                heavy_admission,
+                stage_timeout=_effective_timeout("handlers"),
+            )
+            memoised_results["handlers"] = heavy_admission
+
+        if "scheduler" in planned_stages:
+            _record_background("scheduler", heavy_admission)
+            _hint_background_budget("scheduler", _effective_timeout("scheduler"))
+            start_scheduler = False
+            memoised_results["scheduler"] = heavy_admission
+
+        if "vectorise" in planned_stages and "handlers" not in planned_stages:
+            _record_background("vectorise", heavy_admission)
+            _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+            run_vectorise = False
+            memoised_results["vectorise"] = heavy_admission
+
     if not _guard("init"):
         log.info("Vector warmup aborted before start: insufficient bootstrap budget")
         return _finalise()
@@ -1257,6 +1331,8 @@ def warmup_vector_service(
                 _record_background("model", status)
             else:
                 _record("model", status)
+
+    _shared_budget_preflight()
 
     svc = None
     if _reuse("handlers"):
@@ -1432,34 +1508,36 @@ def warmup_vector_service(
                 if "vectorise" in deferred_bootstrap:
                     status = "deferred-bootstrap"
                     log.info("Vectorise warmup deferred for bootstrap-lite")
-                        _record_background("vectorise", status)
-                    elif "vectorise" in lite_deferrals:
-                        status = "deferred-lite"
-                        log.info("Vectorise warmup deferred for warmup-lite")
-                        _record_background("vectorise", status)
-                    else:
-                        status = "deferred" if ("vectorise" in deferred or "handlers" in deferred) else "skipped-no-service"
-                        log.info("Vectorise warmup skipped: service unavailable")
-                        if status.startswith("deferred"):
-                            _record_background("vectorise", status)
-                        else:
-                            _record("vectorise", status)
+                    _record_background("vectorise", status)
+                elif "vectorise" in lite_deferrals:
+                    status = "deferred-lite"
+                    log.info("Vectorise warmup deferred for warmup-lite")
+                    _record_background("vectorise", status)
                 else:
-                    if "vectorise" in deferred_bootstrap:
-                        status = "deferred-bootstrap"
-                    elif "vectorise" in lite_deferrals:
-                        status = "deferred-lite"
+                    status = (
+                        "deferred"
+                        if ("vectorise" in deferred or "handlers" in deferred)
+                        else "skipped-no-service"
+                    )
+                    log.info("Vectorise warmup skipped: service unavailable")
+                    if status.startswith("deferred"):
                         _record_background("vectorise", status)
-                        log.info("Vectorise warmup deferred for warmup-lite")
                     else:
-                        status = "deferred" if "vectorise" in deferred else "skipped"
-                        if status.startswith("deferred"):
-                            _record_background("vectorise", status)
-                        else:
-                            _record("vectorise", status)
-                    if status == "deferred-bootstrap":
-                        log.info("Vectorise warmup deferred for bootstrap-lite")
-                    log.info("Vectorise warmup skipped")
+                        _record("vectorise", status)
+            else:
+                if "vectorise" in deferred_bootstrap:
+                    status = "deferred-bootstrap"
+                elif "vectorise" in lite_deferrals:
+                    status = "deferred-lite"
+                else:
+                    status = "deferred" if "vectorise" in deferred else "skipped"
+                if status.startswith("deferred"):
+                    _record_background("vectorise", status)
+                else:
+                    _record("vectorise", status)
+                if status == "deferred-bootstrap":
+                    log.info("Vectorise warmup deferred for bootstrap-lite")
+            log.info("Vectorise warmup skipped")
 
     return _finalise()
 
