@@ -78,6 +78,7 @@ class _BootstrapVectorMetricsStub:
             self._activation_kwargs["warmup"] = bool(warmup)
         self._delegate: "VectorMetricsDB | None" = None
         self._activate_on_first_write = False
+        self._deferred_summary_emitted = False
 
     @property
     def _boot_stub_active(self) -> bool:  # pragma: no cover - passthrough flag
@@ -99,14 +100,41 @@ class _BootstrapVectorMetricsStub:
     ) -> None:
         if self._delegate is not None:
             return
+        warmup_context = bool(
+            self._activation_kwargs.get("bootstrap_fast")
+            or self._activation_kwargs.get("warmup")
+        )
         if bootstrap_fast is not None:
             self._activation_kwargs["bootstrap_fast"] = bool(bootstrap_fast)
         if warmup is not None:
-            self._activation_kwargs["warmup"] = bool(warmup)
+            if warmup_context and warmup:
+                self._log_deferred_activation(reason="warmup_request")
+            else:
+                self._activation_kwargs["warmup"] = bool(warmup)
         if ensure_exists is not None:
-            self._activation_kwargs["ensure_exists"] = ensure_exists
+            if warmup_context and ensure_exists:
+                self._log_deferred_activation(reason="ensure_exists_request")
+            else:
+                self._activation_kwargs["ensure_exists"] = ensure_exists
         if read_only is not None:
             self._activation_kwargs["read_only"] = read_only
+
+    def _log_deferred_activation(self, *, reason: str) -> None:
+        if self._delegate is not None:
+            return
+        if self._deferred_summary_emitted:
+            return
+        self._deferred_summary_emitted = True
+        logger.info(
+            "vector_metrics_db.bootstrap.activation_deferred",
+            extra={
+                "reason": reason,
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+                "read_only": bool(self._activation_kwargs.get("read_only")),
+                "ensure_exists": self._activation_kwargs.get("ensure_exists"),
+            },
+        )
 
     def _activate(self) -> "VectorMetricsDB":
         if self._delegate is not None:
