@@ -8,6 +8,7 @@ rely on the on-demand helpers (which cache results) or invoke the warmup
 routine to pre-populate caches before the first real request.
 """
 
+import ctypes
 import importlib.util
 import json
 import logging
@@ -585,18 +586,44 @@ def warmup_vector_service(
         error: list[BaseException] = []
         done = threading.Event()
 
-        def _detach_runner(reason: str) -> None:
-            def _cleanup() -> None:
-                if done.wait(timeout=0.5):
-                    return
-                if thread.is_alive():
-                    log.debug(
-                        "vector warmup %s thread still active after %s; leaving detached",
+        def _force_terminate_thread(thread: threading.Thread) -> bool:
+            ident = thread.ident
+            if ident is None:
+                return False
+            try:
+                res = ctypes.pythonapi.PyThreadState_SetAsyncExc(  # type: ignore[attr-defined]
+                    ctypes.c_long(ident), ctypes.py_object(SystemExit)
+                )
+            except Exception:
+                return False
+            if res > 1:
+                try:
+                    ctypes.pythonapi.PyThreadState_SetAsyncExc(  # type: ignore[attr-defined]
+                        ctypes.c_long(ident), None
+                    )
+                except Exception:
+                    pass
+                return False
+            return res == 1
+
+        def _stop_thread(reason: str) -> None:
+            stop_event.set()
+            join_deadline = time.monotonic() + 1.0
+            while thread.is_alive() and time.monotonic() < join_deadline:
+                thread.join(timeout=0.05)
+            if thread.is_alive():
+                forced = _force_terminate_thread(thread)
+                if forced:
+                    log.warning(
+                        "Vector warmup %s thread forcibly terminated after %s", stage, reason
+                    )
+                else:
+                    log.warning(
+                        "Vector warmup %s thread still active after %s despite stop signal",
                         stage,
                         reason,
                     )
-
-            threading.Thread(target=_cleanup, daemon=True).start()
+            done.set()
 
         def _runner() -> None:
             try:
@@ -612,32 +639,30 @@ def warmup_vector_service(
         start = time.monotonic()
         while not done.wait(timeout=0.05):
             if timeout is not None and time.monotonic() - start >= timeout:
-                stop_event.set()
+                _stop_thread("timeout")
                 _record_timeout(stage)
                 budget_exhausted = True
                 _record_deferred_background(stage, "deferred-timeout")
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
                 )
-                _detach_runner("timeout")
                 return False, None
 
             if check_budget is not None:
                 try:
                     check_budget()
                 except TimeoutError as exc:
-                    stop_event.set()
+                    _stop_thread("budget deadline")
                     budget_exhausted = True
                     _record_timeout(stage)
                     _record_deferred_background(stage, "deferred-budget")
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
-                    done.wait(timeout=0.25)
                     return False, None
 
         if error:
             err = error[0]
             if isinstance(err, TimeoutError):
-                stop_event.set()
+                _stop_thread("cancelled")
                 budget_exhausted = True
                 log.info("Vector warmup %s cancelled: %s", stage, err)
                 _record_deferred_background(stage, "deferred-budget")

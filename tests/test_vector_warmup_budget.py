@@ -1,5 +1,6 @@
 import importlib.util
 import logging
+import threading
 import sys
 import time
 import types
@@ -177,3 +178,88 @@ def test_timeout_defers_remaining_stages(caplog, monkeypatch, tmp_path):
     assert warmup_summary["scheduler"] == "skipped-budget"
     assert warmup_summary.get("vectorise") == "skipped-budget"
     assert deferred.issuperset({"model", "handlers", "scheduler", "vectorise"})
+
+
+def test_handler_timeout_stops_background(caplog, monkeypatch):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    monkeypatch.setattr(
+        lazy_bootstrap,
+        "_CONSERVATIVE_STAGE_TIMEOUTS",
+        {"model": 0.1, "handlers": 0.05, "vectorise": 0.05},
+    )
+
+    stop_seen = threading.Event()
+    finished = threading.Event()
+
+    class SlowSharedVectorService:
+        def __init__(self, *, stop_event=None, budget_check=None, **_kwargs):  # noqa: ARG002
+            stop_seen.set()
+            while stop_event is not None and not stop_event.is_set():
+                if budget_check is not None:
+                    try:
+                        budget_check(stop_event)
+                    except TimeoutError:
+                        if stop_event is not None:
+                            stop_event.set()
+                        break
+                time.sleep(0.01)
+            finished.set()
+
+        def vectorise(self, *_args, **_kwargs):
+            return []
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+    vectorizer_stub.SharedVectorService = SlowSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    lazy_bootstrap.warmup_vector_service(
+        hydrate_handlers=True,
+        stage_timeouts=None,
+        logger=logging.getLogger("test"),
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["handlers"] == "deferred-timeout"
+    assert stop_seen.is_set()
+    assert finished.wait(0.5)
+
+
+def test_vectorise_timeout_aborts_work(caplog, monkeypatch):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    monkeypatch.setattr(
+        lazy_bootstrap,
+        "_CONSERVATIVE_STAGE_TIMEOUTS",
+        {"model": 0.1, "handlers": 0.2, "vectorise": 0.05},
+    )
+
+    started = threading.Event()
+    stopped = threading.Event()
+
+    class CooperativeVectorService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def vectorise(self, *_args, stop_event=None, **_kwargs):
+            started.set()
+            while stop_event is not None and not stop_event.is_set():
+                time.sleep(0.01)
+            stopped.set()
+            return []
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+    vectorizer_stub.SharedVectorService = CooperativeVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    lazy_bootstrap.warmup_vector_service(
+        hydrate_handlers=True,
+        run_vectorise=True,
+        stage_timeouts=None,
+        logger=logging.getLogger("test"),
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary.get("vectorise") == "deferred-timeout"
+    assert started.is_set()
+    assert stopped.wait(0.5)
