@@ -37,7 +37,7 @@ _DYNAMIC_PATH_ROUTER: "_dynamic_path_router | None" = None
 
 _VECTOR_DB_INSTANCE: "VectorMetricsDB | _BootstrapVectorMetricsStub | None" = None
 _VECTOR_DB_LOCK = threading.Lock()
-_PENDING_WEIGHT_NAMES: set[str] = set()
+_PENDING_WEIGHTS: dict[str, float] = {}
 _READINESS_HOOK_ARMED = False
 
 _BOOTSTRAP_TIMER_ENVS = (
@@ -79,6 +79,16 @@ class _BootstrapVectorMetricsStub:
         self._delegate: "VectorMetricsDB | None" = None
         self._activate_on_first_write = False
         self._deferred_summary_emitted = False
+        self._pending_weights: dict[str, float] = {}
+        logger.info(
+            "vector_metrics_db.bootstrap.stub_created",
+            extra={
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+                "read_only": bool(self._activation_kwargs.get("read_only")),
+                "ensure_exists": self._activation_kwargs.get("ensure_exists"),
+            },
+        )
 
     @property
     def _boot_stub_active(self) -> bool:  # pragma: no cover - passthrough flag
@@ -89,6 +99,15 @@ class _BootstrapVectorMetricsStub:
             self._delegate.activate_on_first_write()
             return
         self._activate_on_first_write = True
+        logger.info(
+            "vector_metrics_db.bootstrap.activation_deferred",
+            extra={
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+                "read_only": bool(self._activation_kwargs.get("read_only")),
+                "ensure_exists": self._activation_kwargs.get("ensure_exists"),
+            },
+        )
 
     def configure_activation(
         self,
@@ -136,9 +155,14 @@ class _BootstrapVectorMetricsStub:
             },
         )
 
-    def _activate(self) -> "VectorMetricsDB":
+    def activate(self, *, reason: str = "explicit") -> "VectorMetricsDB":
+        return self._activate(reason=reason)
+
+    def _activate(self, *, reason: str = "attribute_access") -> "VectorMetricsDB":
         if self._delegate is not None:
             return self._delegate
+        if self._pending_weights:
+            _record_pending_weight_values(self._pending_weights)
         activation_kwargs = dict(self._activation_kwargs)
         activation_kwargs.setdefault("bootstrap_fast", False)
         activation_kwargs.setdefault("warmup", False)
@@ -149,6 +173,15 @@ class _BootstrapVectorMetricsStub:
         self._delegate = vdb
         global _VECTOR_DB_INSTANCE
         _VECTOR_DB_INSTANCE = vdb
+        logger.info(
+            "vector_metrics_db.bootstrap.stub_activated",
+            extra={
+                "reason": reason,
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+                "read_only": bool(self._activation_kwargs.get("read_only")),
+            },
+        )
         return vdb
 
     def planned_path(self) -> Path:
@@ -158,7 +191,8 @@ class _BootstrapVectorMetricsStub:
         return False
 
     def set_db_weights(self, weights: Mapping[str, float]):
-        _record_pending_weights(weights.keys())
+        _record_pending_weight_values(weights)
+        self._pending_weights.update({str(k): float(v) for k, v in weights.items()})
         if self._delegate is None:
             return None
         return self._delegate.set_db_weights(weights)
@@ -172,7 +206,7 @@ class _BootstrapVectorMetricsStub:
         return self._delegate.get_db_weights(default=default)
 
     def __getattr__(self, name: str):
-        delegate = self._activate()
+        delegate = self._activate(reason=f"attr:{name}")
         return getattr(delegate, name)
 
 
@@ -194,29 +228,40 @@ def _dynamic_path_router():
     return _DYNAMIC_PATH_ROUTER
 
 
-def _record_pending_weights(names: Sequence[str]) -> None:
-    clean_names = {str(n) for n in names if n}
+def _record_pending_weights(names: Sequence[str], *, value: float = 1.0) -> None:
+    clean_names = {str(n): float(value) for n in names if n}
     if not clean_names:
         return
     with _VECTOR_DB_LOCK:
-        _PENDING_WEIGHT_NAMES.update(clean_names)
+        _PENDING_WEIGHTS.update(clean_names)
+
+
+def _record_pending_weight_values(weights: Mapping[str, float]) -> None:
+    if not weights:
+        return
+    with _VECTOR_DB_LOCK:
+        for name, val in weights.items():
+            if name:
+                _PENDING_WEIGHTS[str(name)] = float(val)
 
 
 def _pending_weight_mapping() -> dict[str, float]:
     with _VECTOR_DB_LOCK:
-        return {name: 1.0 for name in _PENDING_WEIGHT_NAMES}
+        return dict(_PENDING_WEIGHTS)
 
 
-def _consume_pending_weights() -> list[str]:
+def _consume_pending_weights() -> dict[str, float]:
     with _VECTOR_DB_LOCK:
-        return sorted(_PENDING_WEIGHT_NAMES)
+        pending = dict(_PENDING_WEIGHTS)
+        return pending
 
 
 def _clear_pending_weights(names: Sequence[str]) -> None:
     if not names:
         return
     with _VECTOR_DB_LOCK:
-        _PENDING_WEIGHT_NAMES.difference_update(set(names))
+        for name in names:
+            _PENDING_WEIGHTS.pop(str(name), None)
 
 
 def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
@@ -237,7 +282,7 @@ def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
 
     if not existing:
         try:
-            vdb.set_db_weights({name: 1.0 for name in pending})
+            vdb.set_db_weights(dict(pending))
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning(
                 "vector_metrics_db.bootstrap.pending_weights_failed",
@@ -245,17 +290,17 @@ def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
                 extra={"count": len(pending)},
             )
             return
-        _clear_pending_weights(pending)
+        _clear_pending_weights(pending.keys())
         return
 
-    missing = [name for name in pending if name not in existing]
+    missing = {name: weight for name, weight in pending.items() if name not in existing}
     if not missing:
         _clear_pending_weights(existing.keys())
         return
 
     try:
         merged = dict(existing)
-        merged.update({name: 1.0 for name in missing})
+        merged.update(missing)
         vdb.set_db_weights(merged)
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning(
