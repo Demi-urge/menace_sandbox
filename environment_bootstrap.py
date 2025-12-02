@@ -2316,6 +2316,8 @@ class EnvironmentBootstrapper:
             )
             background_status: str | None = "pending" if background_pending else None
             pending_background_stages: set[str] = set()
+            background_stage_timeouts: dict[str, float | None] | None = None
+            warmup_background: set[str] = set()
             background_ticket_only = False
             if budget_guard_deferred:
                 pending_background_stages |= budget_guard_deferred
@@ -2461,8 +2463,23 @@ class EnvironmentBootstrapper:
                 if deferred_stages:
                     defer_heavy = True
 
-                def _schedule_heavy_background(additional: Iterable[str] = ()) -> set[str]:
-                    nonlocal background_status, pending_background_stages
+                def _schedule_heavy_background(
+                    additional: Iterable[str] = (),
+                    budget_hints: Mapping[str, float | None] | None = None,
+                ) -> set[str]:
+                    nonlocal background_status, pending_background_stages, background_stage_timeouts
+                    if budget_hints:
+                        merged = dict(background_stage_timeouts or {})
+                        merged.update({k: v for k, v in budget_hints.items()})
+                        background_stage_timeouts = merged
+
+                    def _stage_allowed(stage: str) -> bool:
+                        if stage == "handlers":
+                            return bool(heavy_handlers_requested and not background_ticket_only)
+                        if stage == "vectorise":
+                            return bool(heavy_vectorise_requested and not background_ticket_only)
+                        return True
+
                     heavy_to_schedule = {
                         stage
                         for stage, enabled in (
@@ -2470,14 +2487,24 @@ class EnvironmentBootstrapper:
                             ("handlers", heavy_handlers_requested),
                             ("vectorise", heavy_vectorise_requested),
                         )
-                        if enabled and stage not in persisted_deferred
+                        if enabled
+                        and stage not in persisted_deferred
+                        and _stage_allowed(stage)
                     }
-                    heavy_to_schedule |= set(additional)
+                    additional_set = set(additional)
+                    pending_background_stages |= additional_set
                     heavy_to_schedule |= pending_background_stages
-                    if heavy_to_schedule:
+                    heavy_to_schedule = {stage for stage in heavy_to_schedule if _stage_allowed(stage)}
+                    if pending_background_stages:
                         background_status = background_status or "pending"
-                        pending_background_stages |= set(heavy_to_schedule)
                     return set(heavy_to_schedule)
+
+                def _background_resume_hook(
+                    stages: set[str], budget_hints: Mapping[str, float | None] | None = None
+                ) -> set[str]:
+                    deferred_stages.update(stages)
+                    warmup_background.update(stages)
+                    return _schedule_heavy_background(stages, budget_hints)
                 budget_deferred = bool(budget_guard_deferred)
                 if defer_heavy:
                     if warmup_handlers:
@@ -2506,6 +2533,7 @@ class EnvironmentBootstrapper:
                     try:
                         from .vector_service.lazy_bootstrap import warmup_vector_service
 
+                        effective_stage_timeouts = background_stage_timeouts or stage_timeouts
                         bg_summary = warmup_vector_service(
                             logger=self.logger,
                             download_model=heavy_model_requested,
@@ -2519,13 +2547,14 @@ class EnvironmentBootstrapper:
                             warmup_model=heavy_model_requested,
                             warmup_handlers=heavy_handlers_requested,
                             warmup_probe=warmup_probe,
-                            stage_timeouts=stage_timeouts,
+                            stage_timeouts=effective_stage_timeouts,
                             background_hook=_schedule_heavy_background,
+                            bootstrap_lite=False,
                         )
                     except Exception as exc:  # pragma: no cover - defensive logging
                         self.logger.warning("vector warmup background failed: %s", exc)
                         self._persist_vector_warmup_state(
-                            deferred=_schedule_heavy_background(),
+                            deferred=set(pending_background_stages) | _schedule_heavy_background(),
                             summary={
                                 "background": "failed",
                                 "bootstrap": "deferred",
@@ -2551,6 +2580,7 @@ class EnvironmentBootstrapper:
                     budget_exhausted = budget_exhausted
                 if budget_exhausted:
                     heavy_to_schedule = _schedule_heavy_background()
+                    deferred_stages |= set(pending_background_stages)
                     deferred_stages |= heavy_to_schedule
                     self.logger.info(
                         "Vector warmup budget exhausted; deferring heavy stages to background",
@@ -2573,20 +2603,19 @@ class EnvironmentBootstrapper:
                                 budget_hint=vector_budget_hint,
                             )
                 summary = {
-                        "bootstrap": "deferred",
-                        "budget_exhausted": "true",
-                        "background": background_status or "pending",
-                        "deferred": ",".join(sorted(deferred_stages)) if deferred_stages else "",
-                    }
-                    self._persist_vector_warmup_state(
-                        deferred=deferred_stages,
-                        summary=summary,
-                        mode="deferred",
-                    )
-                    check_budget()
-                    return
+                    "bootstrap": "deferred",
+                    "budget_exhausted": "true",
+                    "background": background_status or "pending",
+                    "deferred": ",".join(sorted(deferred_stages)) if deferred_stages else "",
+                }
+                self._persist_vector_warmup_state(
+                    deferred=deferred_stages,
+                    summary=summary,
+                    mode="deferred",
+                )
+                check_budget()
+                return
                 summary: Mapping[str, str] | None = None
-                warmup_background: set[str] = set()
 
                 def _vector_budget_remaining() -> float | None:
                     try:
@@ -2609,12 +2638,13 @@ class EnvironmentBootstrapper:
                         force_heavy=False,
                         bootstrap_fast=True,
                         warmup_lite=True,
+                        bootstrap_lite=True,
                         warmup_model=warmup_model,
                         warmup_handlers=warmup_handlers,
                         warmup_probe=warmup_probe,
                         stage_timeouts=stage_timeouts,
                         deferred_stages=deferred_stages,
-                        background_hook=warmup_background.update,
+                        background_hook=_background_resume_hook,
                     )
                     self.logger.info(
                         "Vector warmup invoked with flags: %s", selected_flags
