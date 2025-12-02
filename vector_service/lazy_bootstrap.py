@@ -269,6 +269,10 @@ def warmup_vector_service(
     if env_budget is None:
         env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_TIMEOUT"))
     env_budget = env_budget if env_budget is not None and env_budget > 0 else None
+
+    if stage_timeouts is None and env_budget is None:
+        stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+
     budget_start = time.monotonic()
 
     def _default_budget_remaining() -> float | None:
@@ -397,23 +401,6 @@ def warmup_vector_service(
         hydrate_handlers = False
         start_scheduler = False
         run_vectorise = False
-
-    no_timeout_deferrals: set[str] = set()
-    if not stage_timeouts_supplied and not force_heavy:
-        no_timeout_deferrals.update({"handlers", "scheduler", "vectorise"})
-        if hydrate_handlers or start_scheduler or run_vectorise:
-            log.info(
-                "Stage timeouts not provided; deferring heavy vector warmup (force_heavy to override)",
-                extra={
-                    "hydrate_handlers": hydrate_handlers,
-                    "start_scheduler": start_scheduler,
-                    "run_vectorise": run_vectorise,
-                },
-            )
-        hydrate_handlers = False
-        start_scheduler = False
-        run_vectorise = False
-    lite_deferrals.update(no_timeout_deferrals)
 
     summary: dict[str, str] = {"bootstrap": summary_flag, "warmup_lite": str(warmup_lite)}
     deferred = set(deferred_stages or ()) | deferred_bootstrap | lite_deferrals
