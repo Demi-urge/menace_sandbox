@@ -137,6 +137,8 @@ _VEC_METRICS = (
     VectorMetricsDB(
         bootstrap_fast=_VECTOR_BOOTSTRAP_FAST,
         warmup=_VECTOR_WARMUP_STUB,
+        ensure_exists=False,
+        read_only=_VECTOR_WARMUP_STUB,
     )
     if VectorMetricsDB is not None
     else None
