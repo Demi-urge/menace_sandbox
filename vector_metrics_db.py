@@ -71,6 +71,10 @@ class _BootstrapVectorMetricsStub:
             "ensure_exists": ensure_exists,
             "read_only": read_only,
         }
+        if bootstrap_fast is not None:
+            self._activation_kwargs["bootstrap_fast"] = bool(bootstrap_fast)
+        if warmup is not None:
+            self._activation_kwargs["warmup"] = bool(warmup)
         self._delegate: "VectorMetricsDB | None" = None
         self._activate_on_first_write = False
 
@@ -393,17 +397,28 @@ def get_shared_vector_metrics_db(
     """Return a lazily initialised shared :class:`VectorMetricsDB` instance."""
 
     if bootstrap_fast is None or warmup is None:
-        resolved_bootstrap_fast, resolved_warmup, _, _ = resolve_vector_bootstrap_flags(
-            bootstrap_fast=bootstrap_fast, warmup=warmup
+        resolved_bootstrap_fast, resolved_warmup, env_requested, _ = (
+            resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast, warmup=warmup)
         )
     else:
         resolved_bootstrap_fast = bool(bootstrap_fast)
         resolved_warmup = bool(warmup)
+        env_requested = False
+
+    bootstrap_requested = bool(resolved_bootstrap_fast or resolved_warmup or env_requested)
+    if bootstrap_requested and warmup is None:
+        resolved_warmup = True
+
+    stub_defaults = bootstrap_requested
+    if stub_defaults and ensure_exists is None:
+        ensure_exists = False
+    if stub_defaults and read_only is None:
+        read_only = True
 
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
         if _VECTOR_DB_INSTANCE is None:
-            if resolved_bootstrap_fast or resolved_warmup:
+            if resolved_bootstrap_fast or resolved_warmup or env_requested:
                 _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
                     path="vector_metrics.db",
                     bootstrap_fast=resolved_bootstrap_fast,
@@ -714,7 +729,6 @@ class VectorMetricsDB:
             and (self._warmup_mode or self.bootstrap_fast or self._bootstrap_context)
         )
         if self._bootstrap_guard_active:
-            self._pending_readiness_hook = False
             self._default_ensure_exists = False
             logger.info(
                 "vector_metrics_db.bootstrap.stub_guard",
@@ -809,6 +823,8 @@ class VectorMetricsDB:
                     menace_bootstrap=self._bootstrap_context,
                 ),
             )
+            if self._pending_readiness_hook:
+                self._register_readiness_hook()
             self._conn = self._stub_conn
             return
 
@@ -892,6 +908,7 @@ class VectorMetricsDB:
                 )
                 return
             try:
+                self._mark_warmup_complete(reason="bootstrap_ready")
                 if self._warmup_mode and not self._warmup_complete.is_set():
                     logger.info(
                         "vector_metrics_db.bootstrap.persistence_deferred",
@@ -1236,6 +1253,17 @@ class VectorMetricsDB:
     def _prepare_connection(self, init_start: float | None = None) -> None:
         init_start = init_start or time.perf_counter()
         if self._conn is not None:
+            return
+        if not self._persistence_activated:
+            logger.info(
+                "vector_metrics_db.bootstrap.persistence_suspended",
+                extra=_timestamp_payload(
+                    init_start,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    stub_mode=self._boot_stub_active,
+                ),
+            )
             return
         if self._bootstrap_context and not self._warmup_mode:
             logger.info(
