@@ -326,13 +326,17 @@ class VectorMetricsDB:
         self._resolved_path: Path | None = None
         self._default_path: Path | None = None
         eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
-        if eager_resolve:
+        if eager_resolve and not self._boot_stub_active:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path, ensure_exists=eager_resolve
             )
         self.router = None
         self._conn = None
-        if self._warmup_mode and (bootstrap_env or vector_service_warmup):
+        if (
+            self._warmup_mode
+            and not self.bootstrap_fast
+            and (bootstrap_env or vector_service_warmup)
+        ):
             self._register_readiness_hook()
 
     def _register_readiness_hook(self) -> None:
