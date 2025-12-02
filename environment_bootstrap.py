@@ -2364,6 +2364,7 @@ class EnvironmentBootstrapper:
                     run_vectorise = False
                     self._persist_vector_warmup_state(deferred=deferred_stages)
                 summary: Mapping[str, str] | None = None
+                warmup_background: set[str] = set()
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
 
@@ -2383,6 +2384,7 @@ class EnvironmentBootstrapper:
                         warmup_probe=warmup_probe,
                         stage_timeouts=stage_timeouts,
                         deferred_stages=deferred_stages,
+                        background_hook=warmup_background.update,
                     )
                     self.logger.info(
                         "Vector warmup invoked with flags: %s", selected_flags
@@ -2396,6 +2398,7 @@ class EnvironmentBootstrapper:
                         )
                         if enabled and stage not in persisted_deferred
                     }
+                    heavy_to_schedule |= warmup_background
                     if heavy_to_schedule:
                         self._queue_background_task(
                             "vector-warmup-heavy",
