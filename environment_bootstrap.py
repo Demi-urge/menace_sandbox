@@ -2263,6 +2263,13 @@ class EnvironmentBootstrapper:
                 return timeouts
 
             stage_timeouts: dict[str, float] | None = _build_stage_timeouts() if warmup_budget is not None else None
+            if stage_timeouts is None:
+                try:
+                    from .vector_service.lazy_bootstrap import _CONSERVATIVE_STAGE_TIMEOUTS
+
+                    stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+                except Exception:
+                    stage_timeouts = {"model": 9.0, "handlers": 9.0, "vectorise": 4.5}
             if raw == "":
                 warmup_probe = warmup_budget is not None and warmup_budget >= 1.0
                 warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
@@ -2566,6 +2573,11 @@ class EnvironmentBootstrapper:
                         for stage in pending_background_stages:
                             final_summary.setdefault(stage, "pending")
                         final_summary.setdefault("bootstrap", "deferred")
+                    if warmup_background:
+                        final_summary.setdefault("background", "pending")
+                        final_summary.setdefault("deferred", ",".join(sorted(warmup_background)))
+                        for stage in warmup_background:
+                            final_summary.setdefault(stage, (summary or {}).get(stage, "deferred"))
                     self._persist_vector_warmup_state(
                         deferred=deferred_stages,
                         summary=final_summary,
