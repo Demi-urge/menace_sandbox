@@ -2036,15 +2036,38 @@ def get_embedder(
     requester = _identify_embedder_requester()
     wait_override = timeout
     bootstrap_wait_cap: float | None = None
+    bootstrap_deadline: float | None = None
     if bootstrap_mode or bootstrap_timeout is not None:
         cap_budget = bootstrap_timeout if bootstrap_timeout is not None else timeout
         bootstrap_wait_cap = apply_bootstrap_timeout_caps(cap_budget)
+        bootstrap_deadline = bootstrap_wait_cap
         if wait_override is None and bootstrap_wait_cap is not None:
             wait_override = bootstrap_wait_cap
         elif bootstrap_wait_cap is not None and wait_override is not None:
             wait_override = min(wait_override, bootstrap_wait_cap)
         elif bootstrap_wait_cap is not None:
             wait_override = bootstrap_wait_cap
+
+    if bootstrap_deadline is not None and stop_event is None:
+        stop_event = threading.Event()
+
+    if bootstrap_deadline is not None and bootstrap_deadline > 0:
+        def _budget_guard(evt: threading.Event, budget: float) -> None:
+            deadline = time.perf_counter() + budget
+            while not evt.is_set():
+                if time.perf_counter() >= deadline:
+                    evt.set()
+                    break
+                time.sleep(0.1)
+
+        budget_event = stop_event or threading.Event()
+        stop_event = budget_event
+        threading.Thread(
+            target=_budget_guard,
+            args=(budget_event, bootstrap_deadline),
+            name="embedder-budget-guard",
+            daemon=True,
+        ).start()
 
     if bootstrap_mode and stop_event is not None and stop_event.is_set():
         if _activate_bundled_fallback("bootstrap_cancelled") and _EMBEDDER is not None:
