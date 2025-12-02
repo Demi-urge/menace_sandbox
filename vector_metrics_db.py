@@ -293,7 +293,11 @@ def resolve_vector_bootstrap_flags(
 
 
 def get_shared_vector_metrics_db(
-    *, bootstrap_fast: bool | None = None, warmup: bool | None = None
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    ensure_exists: bool | None = None,
+    read_only: bool | None = None,
 ) -> "VectorMetricsDB":
     """Return a lazily initialised shared :class:`VectorMetricsDB` instance."""
 
@@ -304,6 +308,8 @@ def get_shared_vector_metrics_db(
                 "vector_metrics.db",
                 bootstrap_fast=bootstrap_fast,
                 warmup=warmup,
+                ensure_exists=ensure_exists,
+                read_only=bool(read_only) if read_only is not None else False,
             )
 
     _apply_pending_weights(_VECTOR_DB_INSTANCE)
@@ -311,7 +317,12 @@ def get_shared_vector_metrics_db(
 
 
 def ensure_vector_db_weights(
-    db_names: Sequence[str], *, bootstrap_fast: bool | None = None
+    db_names: Sequence[str],
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    ensure_exists: bool | None = None,
+    read_only: bool | None = None,
 ) -> None:
     """Seed vector DB ranking weights without forcing SQLite initialisation."""
 
@@ -321,9 +332,12 @@ def ensure_vector_db_weights(
 
     _record_pending_weights(names)
 
-    if bootstrap_fast is None:
-        bootstrap_fast, _, env_requested, bootstrap_env = resolve_vector_bootstrap_flags()
+    if bootstrap_fast is None or warmup is None:
+        bootstrap_fast, resolved_warmup, env_requested, bootstrap_env = (
+            resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast, warmup=warmup)
+        )
     else:
+        resolved_warmup = bool(warmup)
         env_requested = False
         bootstrap_env = False
 
@@ -340,7 +354,10 @@ def ensure_vector_db_weights(
 
     try:
         vdb = get_shared_vector_metrics_db(
-            bootstrap_fast=bootstrap_fast, warmup=True
+            bootstrap_fast=bootstrap_fast,
+            warmup=resolved_warmup,
+            ensure_exists=ensure_exists,
+            read_only=read_only,
         )
         _apply_pending_weights(vdb)
     except Exception as exc:  # pragma: no cover - log only
@@ -565,7 +582,9 @@ class VectorMetricsDB:
         self._persistence_ready_logged = False
         self._stub_usage_logged = False
         self._persistence_activated = not self._boot_stub_active
+        self._persistence_activation_pending = bool(self._boot_stub_active)
         self._activate_on_first_write = False
+        self._prometheus_ready = False
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -774,6 +793,7 @@ class VectorMetricsDB:
         self._lazy_mode = False
         self._lazy_primed = False
         self._persistence_activated = True
+        self._persistence_activation_pending = False
         self._initialize_schema_defaults()
         self._prepare_connection(init_start)
         self._flush_stub_buffer()
@@ -809,9 +829,26 @@ class VectorMetricsDB:
         """Exit warmup/bootstrap mode and initialise SQLite lazily."""
 
         if not self._boot_stub_active:
+            self._persistence_activation_pending = False
             return
         if self._pending_readiness_hook and not self._readiness_hook_registered:
             self._register_readiness_hook()
+        if (
+            (self._warmup_mode or self.bootstrap_fast or self._bootstrap_context)
+            and reason != "first_write"
+        ):
+            self._persistence_activation_pending = True
+            logger.info(
+                "vector_metrics_db.bootstrap.persistence_pending",
+                extra=_timestamp_payload(
+                    None,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    stub_mode=self._boot_stub_active,
+                    menace_bootstrap=self._bootstrap_context,
+                ),
+            )
+            return
         logger.info(
             "vector_metrics_db.bootstrap.activate_persistence",
             extra=_timestamp_payload(
@@ -822,6 +859,7 @@ class VectorMetricsDB:
                 stub_mode=self._boot_stub_active,
             ),
         )
+        self._persistence_activation_pending = False
         self._exit_lazy_mode(reason=reason)
         if not self._persistence_ready_logged:
             self._persistence_ready_logged = True
@@ -919,6 +957,7 @@ class VectorMetricsDB:
             "bootstrap_deadlines": self._bootstrap_timers_active,
             "env_bootstrap_requested": self._bootstrap_env_requested,
             "menace_bootstrap": self._menace_bootstrap_env,
+            "persistence_pending": self._persistence_activation_pending,
         }
         if not self._ready_probe_logged:
             self._ready_probe_logged = True
@@ -1277,7 +1316,6 @@ class VectorMetricsDB:
             )
             self._schema_cache.update(self._default_columns)
 
-        _ensure_prometheus_objects()
         self._lazy_primed = False
         self._lazy_mode = False
         logger.info(
@@ -1288,6 +1326,17 @@ class VectorMetricsDB:
                 using_global_router=using_global_router,
             ),
         )
+
+    def _ensure_prometheus_ready(self) -> None:
+        if self._prometheus_ready:
+            return
+        if self._boot_stub_active or self._warmup_mode:
+            return
+        try:
+            _ensure_prometheus_objects()
+            self._prometheus_ready = True
+        except Exception:  # pragma: no cover - best effort registration
+            logger.debug("vector_metrics_db.prometheus.init_failed", exc_info=True)
 
     def _table_columns(self, table: str) -> list[str]:
         """Return column names for ``table`` using non-blocking pragmas."""
@@ -1593,6 +1642,7 @@ class VectorMetricsDB:
             self._buffer_stub_metric(rec)
         if self._should_skip_logging():
             return
+        self._ensure_prometheus_ready()
         conn = self._conn_for(reason="add_metric")
         conn.execute(
             """
@@ -1788,6 +1838,7 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def retriever_win_rate_by_db(self) -> dict[str, float]:
+        self._ensure_prometheus_ready()
         conn = self._conn_for(reason="retriever_win_rate_by_db", commit_required=False)
         cur = conn.execute(
             """
@@ -1808,6 +1859,7 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def retriever_regret_rate_by_db(self) -> dict[str, float]:
+        self._ensure_prometheus_ready()
         conn = self._conn_for(
             reason="retriever_regret_rate_by_db", commit_required=False
         )
@@ -1934,6 +1986,7 @@ class VectorMetricsDB:
 
     # ------------------------------------------------------------------
     def _update_retrieval_hit_rate(self) -> None:
+        self._ensure_prometheus_ready()
         try:  # best-effort metrics
             _RETRIEVAL_HIT_RATE.set(self.retrieval_hit_rate())
         except Exception:

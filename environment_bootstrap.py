@@ -1984,8 +1984,14 @@ class EnvironmentBootstrapper:
                     resolve_vector_bootstrap_flags,
                 )
 
-                bootstrap_fast, _, _, _ = resolve_vector_bootstrap_flags()
-                ensure_vector_db_weights(names, bootstrap_fast=bootstrap_fast)
+                bootstrap_fast, warmup, _, _ = resolve_vector_bootstrap_flags()
+                ensure_vector_db_weights(
+                    names,
+                    bootstrap_fast=bootstrap_fast,
+                    warmup=warmup,
+                    ensure_exists=False,
+                    read_only=True,
+                )
             except Exception as exc:  # pragma: no cover - log only
                 self.logger.warning("VectorMetricsDB bootstrap failed: %s", exc)
 
