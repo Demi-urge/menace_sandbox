@@ -1687,8 +1687,6 @@ def _bootstrap_embedder(
             stage_budget,
         )
 
-    _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
-
     try:
         from menace_sandbox.governed_embeddings import (
             _MAX_EMBEDDER_WAIT,
@@ -1764,6 +1762,9 @@ def _bootstrap_embedder(
         presence_deadline = cap_deadline if presence_deadline is None else min(
             presence_deadline, cap_deadline
         )
+
+    _ensure_not_stopped(stop_event)
+    _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
 
     if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("thread"):
         existing = _BOOTSTRAP_EMBEDDER_JOB["thread"]
@@ -1986,6 +1987,78 @@ def _bootstrap_embedder(
             aborted=True,
             deferred=deferred,
         )
+
+    tight_budget_threshold = float(
+        os.getenv("BOOTSTRAP_EMBEDDER_DEFERRAL_THRESHOLD", "1.0")
+    )
+    tight_budget = False
+    if tight_budget_threshold > 0:
+        tight_budget = any(
+            candidate is not None and candidate < tight_budget_threshold
+            for candidate in (stage_budget, warmup_cap)
+        )
+
+    cache_available = False
+    try:
+        cache_available = bool(embedder_cache_present())
+    except Exception:  # pragma: no cover - diagnostics only
+        LOGGER.debug("embedder cache presence probe failed", exc_info=True)
+
+    deferral_reason = None
+    if cache_available:
+        deferral_reason = "embedder_cache_present"
+    elif tight_budget:
+        deferral_reason = "embedder_budget_short_circuit"
+
+    if deferral_reason:
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=deferral_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{deferral_reason}"
+        )
+        placeholder_path = summarise_value(
+            getattr(placeholder, "model_path", None)
+            or getattr(placeholder, "path", None)
+            or getattr(placeholder, "name", None)
+            or placeholder
+        )
+        result.update(
+            {
+                "embedder": placeholder,
+                "placeholder_reason": deferral_reason,
+                "placeholder_path": placeholder_path,
+                "deferred": True,
+                "presence_available": cache_available,
+            }
+        )
+        _BOOTSTRAP_EMBEDDER_JOB.update(
+            {
+                "result": placeholder,
+                "placeholder_reason": deferral_reason,
+                "placeholder_path": placeholder_path,
+                "deferred": True,
+                "presence_available": cache_available,
+                "background_enqueue_reason": deferral_reason,
+            }
+        )
+        LOGGER.info(
+            "embedder warmup deferred prior to thread launch",  # pragma: no cover - telemetry
+            extra={
+                "stage_budget": stage_budget,
+                "warmup_cap": warmup_cap,
+                "deferral_reason": deferral_reason,
+                "placeholder_path": placeholder_path,
+                "cache_available": cache_available,
+                "deferral_threshold": tight_budget_threshold,
+            },
+        )
+        _enqueue_background_download()
+        _finalize_embedder_job(
+            placeholder,
+            placeholder_reason=deferral_reason,
+            aborted=False,
+            deferred=True,
+        )
+        return placeholder
 
     if presence_probe:
         probe_reason = presence_reason or "embedder_presence_probe"
