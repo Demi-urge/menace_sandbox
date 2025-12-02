@@ -46,7 +46,7 @@ def test_model_download_times_out(caplog, monkeypatch, tmp_path):
     )
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["model"] == "skipped-budget"
+    assert warmup_summary["model"] == "deferred-budget"
 
 
 def test_handler_hydration_times_out(caplog, monkeypatch):
@@ -78,7 +78,7 @@ def test_handler_hydration_times_out(caplog, monkeypatch):
     )
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["handlers"] == "skipped-budget"
+    assert warmup_summary["handlers"] == "deferred-budget"
 
 
 def test_stage_skipped_when_budget_below_estimate(caplog):

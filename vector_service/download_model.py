@@ -32,17 +32,34 @@ FILES = [
 MODEL_ARCHIVE = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
 
 
-def bundle(dest: Path) -> None:
+def _check_cancelled(
+    *, stop_event, budget_check
+) -> None:  # pragma: no cover - trivial helper
+    if stop_event is not None and stop_event.is_set():
+        raise TimeoutError("embedding model download cancelled")
+    if budget_check is not None:
+        budget_check(stop_event)
+
+
+def bundle(
+    dest: Path,
+    *,
+    stop_event=None,
+    budget_check=None,
+) -> None:
     """Download ``MODEL_ID`` and write a compressed archive to ``dest``."""
 
+    _check_cancelled(stop_event=stop_event, budget_check=budget_check)
     model_dir = Path(snapshot_download(MODEL_ID))
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         for name in FILES:
+            _check_cancelled(stop_event=stop_event, budget_check=budget_check)
             shutil.copy(model_dir / name, tmp / name)
         dest.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(dest, "w:xz") as tar:
             for name in FILES:
+                _check_cancelled(stop_event=stop_event, budget_check=budget_check)
                 tar.add(tmp / name, arcname=name)
 
 
