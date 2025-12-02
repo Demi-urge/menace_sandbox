@@ -274,6 +274,7 @@ def test_embedder_stage_budget_sets_deferral_token():
         "bootstrap_budget_exceeded",
         "bootstrap_wall_clock_exceeded",
         "stage_wall_cap_exceeded",
+        "embedder_max_duration_guard",
     }
     assert job.get("result") == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
     for _ in range(10):
