@@ -485,6 +485,7 @@ def warmup_vector_service(
             if timeout is not None and time.monotonic() - start >= timeout:
                 stop_event.set()
                 _record_timeout(stage)
+                budget_exhausted = True
                 _record_deferred(stage, "deferred-timeout")
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout

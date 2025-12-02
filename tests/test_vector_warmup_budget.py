@@ -136,3 +136,44 @@ def test_default_stage_timeouts_enforced_without_budget(caplog, monkeypatch, tmp
 
     warmup_summary = _get_warmup_summary(caplog)
     assert warmup_summary["model"] == "deferred-timeout"
+
+
+def test_timeout_defers_remaining_stages(caplog, monkeypatch, tmp_path):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._MODEL_READY = False
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+
+    monkeypatch.setattr(
+        lazy_bootstrap,
+        "_CONSERVATIVE_STAGE_TIMEOUTS",
+        {"model": 0.05, "handlers": 0.05, "vectorise": 0.05},
+    )
+
+    def slow_download(*, logger=None, warmup=False, stop_event=None):  # noqa: ARG001
+        time.sleep(0.1)
+        if stop_event is not None:
+            stop_event.set()
+        return tmp_path / "model.tar"
+
+    monkeypatch.setattr(lazy_bootstrap, "ensure_embedding_model", slow_download)
+
+    deferred: set[str] = set()
+
+    lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        check_budget=None,
+        logger=logging.getLogger("test"),
+        probe_model=False,
+        stage_timeouts=None,
+        background_hook=deferred.update,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["model"] == "deferred-timeout"
+    assert warmup_summary["handlers"] == "skipped-budget"
+    assert warmup_summary["scheduler"] == "skipped-budget"
+    assert warmup_summary.get("vectorise") == "skipped-budget"
+    assert deferred.issuperset({"model", "handlers", "scheduler", "vectorise"})
