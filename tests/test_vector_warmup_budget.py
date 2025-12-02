@@ -199,6 +199,44 @@ def test_timeout_defers_remaining_stages(caplog, monkeypatch, tmp_path):
     assert deferred.issuperset({"model", "handlers", "scheduler", "vectorise"})
 
 
+def test_missing_budget_marks_deferred(caplog):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+
+    deferred: set[str] = set()
+
+    lazy_bootstrap.warmup_vector_service(
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        logger=logging.getLogger("test"),
+        background_hook=deferred.update,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["handlers"] == "deferred-no-budget"
+    assert warmup_summary["scheduler"] == "deferred-no-budget"
+    assert warmup_summary["vectorise"] == "deferred-no-budget"
+    assert warmup_summary.get("budget_gate") == "deferred-no-budget"
+    assert deferred == {"handlers", "scheduler", "vectorise"}
+
+    caplog.clear()
+
+    lazy_bootstrap.warmup_vector_service(
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        logger=logging.getLogger("test"),
+    )
+
+    retry_summary = _get_warmup_summary(caplog)
+    assert retry_summary["handlers"] == "deferred-no-budget"
+    assert retry_summary["scheduler"] == "deferred-no-budget"
+    assert retry_summary["vectorise"] == "deferred-no-budget"
+
+
 def test_handler_timeout_stops_background(caplog, monkeypatch):
     caplog.set_level(logging.INFO)
     lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
