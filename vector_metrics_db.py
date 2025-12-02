@@ -487,6 +487,9 @@ class VectorMetricsDB:
     def _resolve_requested_path(
         self, path: Path, *, ensure_exists: bool
     ) -> tuple[Path, Path]:
+        if self._boot_stub_active and self._warmup_mode:
+            requested = Path(path).expanduser()
+            return requested, requested
         default_path = default_vector_metrics_path(ensure_exists=ensure_exists)
         requested = Path(path).expanduser()
         if str(requested.as_posix()) == "vector_metrics.db":
@@ -504,6 +507,16 @@ class VectorMetricsDB:
     def _prepare_connection(self, init_start: float | None = None) -> None:
         init_start = init_start or time.perf_counter()
         if self._conn is not None:
+            return
+        if self._boot_stub_active or self._warmup_mode:
+            logger.info(
+                "vector_metrics_db.bootstrap.fast_return",
+                extra=_timestamp_payload(
+                    init_start,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                ),
+            )
             return
 
         logger.info(
