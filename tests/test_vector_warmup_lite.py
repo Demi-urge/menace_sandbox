@@ -26,7 +26,14 @@ def _get_warmup_summary(caplog):
 
 
 def _reset_state():
+    lazy_bootstrap._clear_warmup_cache()
+    lazy_bootstrap._SCHEDULER = None
+    lazy_bootstrap._MODEL_READY = False
+
+
+def _clear_cache_only():
     lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._WARMUP_CACHE_LOADED = False
     lazy_bootstrap._SCHEDULER = None
     lazy_bootstrap._MODEL_READY = False
 
@@ -113,3 +120,59 @@ def test_bootstrap_deferral_memoised(monkeypatch, caplog):
     assert retry_summary["vectorise"] == "deferred-bootstrap"
     assert {"handlers", "scheduler", "vectorise"}.issubset(set(retry_summary["deferred"].split(",")))
     assert not scheduler_calls
+
+
+def test_warmup_cache_reused(monkeypatch, caplog, tmp_path):
+    caplog.set_level(logging.INFO)
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setenv("VECTOR_WARMUP_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+
+    _reset_state()
+
+    scheduler_calls: list[str] = []
+
+    def fake_scheduler(**_kwargs):
+        scheduler_calls.append("scheduler")
+
+    monkeypatch.setattr(lazy_bootstrap, "ensure_scheduler_started", fake_scheduler)
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class NoOpSharedVectorService:
+        def __init__(self, *args, **kwargs):  # noqa: ARG002
+            raise AssertionError("SharedVectorService should be deferred during bootstrap")
+
+    vectorizer_stub.SharedVectorService = NoOpSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        warmup_lite=False,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+    )
+
+    cache_file = next(cache_dir.glob("*.json"))
+    assert cache_file.exists()
+
+    _clear_cache_only()
+
+    deferred: set[str] = set()
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        warmup_lite=False,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        background_hook=deferred.update,
+    )
+
+    retry_summary = _get_warmup_summary(caplog)
+    assert retry_summary["handlers"] == "deferred-bootstrap"
+    assert retry_summary["scheduler"] == "deferred-bootstrap"
+    assert retry_summary["vectorise"] == "deferred-bootstrap"
+    assert {"handlers", "scheduler", "vectorise"}.issubset(set(retry_summary["deferred"].split(",")))
+    assert not scheduler_calls
+    assert deferred.issuperset({"handlers", "scheduler", "vectorise"})

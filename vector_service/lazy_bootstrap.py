@@ -9,8 +9,10 @@ routine to pre-populate caches before the first real request.
 """
 
 import importlib.util
+import json
 import logging
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -29,6 +31,8 @@ _MODEL_READY = False
 _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
 _WARMUP_STAGE_MEMO: dict[str, str] = {}
+_WARMUP_CACHE_LOADED = False
+_PROCESS_START = int(time.time())
 
 _CONSERVATIVE_STAGE_TIMEOUTS = {
     "model": 12.0,
@@ -45,6 +49,59 @@ VECTOR_WARMUP_STAGE_TOTAL = getattr(
         ["stage", "status"],
     ),
 )
+
+
+def _warmup_cache_path() -> Path:
+    base_dir = os.getenv("VECTOR_WARMUP_CACHE_DIR", "").strip()
+    base = Path(base_dir) if base_dir else Path(tempfile.gettempdir())
+    return base / f"vector_warmup_{os.getpid()}_{_PROCESS_START}.json"
+
+
+def _load_warmup_cache(logger: logging.Logger) -> None:
+    global _WARMUP_CACHE_LOADED
+    if _WARMUP_CACHE_LOADED:
+        return
+    _WARMUP_CACHE_LOADED = True
+    cache_path = _warmup_cache_path()
+    try:
+        content = cache_path.read_text()
+    except FileNotFoundError:
+        return
+    except Exception:  # pragma: no cover - advisory cache
+        logger.debug("Failed reading warmup cache", exc_info=True)
+        return
+    try:
+        cached = json.loads(content)
+    except Exception:  # pragma: no cover - advisory cache
+        logger.debug("Invalid warmup cache content", exc_info=True)
+        return
+    if not isinstance(cached, dict):
+        return
+    for stage, status in cached.items():
+        if isinstance(stage, str) and isinstance(status, str):
+            _WARMUP_STAGE_MEMO.setdefault(stage, status)
+
+
+def _persist_warmup_cache(logger: logging.Logger) -> None:
+    cache_path = _warmup_cache_path()
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(_WARMUP_STAGE_MEMO))
+    except Exception:  # pragma: no cover - advisory cache
+        logger.debug("Failed persisting warmup cache", exc_info=True)
+
+
+def _clear_warmup_cache() -> None:
+    global _WARMUP_CACHE_LOADED
+    _WARMUP_CACHE_LOADED = False
+    _WARMUP_STAGE_MEMO.clear()
+    cache_path = _warmup_cache_path()
+    try:
+        cache_path.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:  # pragma: no cover - advisory cache
+        logging.getLogger(__name__).debug("Failed clearing warmup cache", exc_info=True)
 
 
 def _model_bundle_path() -> Path:
@@ -203,6 +260,7 @@ def warmup_vector_service(
     """
 
     log = logger or logging.getLogger(__name__)
+    _load_warmup_cache(log)
     stage_timeouts_supplied = stage_timeouts is not None
     env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"))
     if env_budget is None:
@@ -374,6 +432,7 @@ def warmup_vector_service(
         if status.startswith("deferred"):
             recorded_deferred.add(stage)
         _WARMUP_STAGE_MEMO[stage] = status
+        _persist_warmup_cache(log)
         try:
             VECTOR_WARMUP_STAGE_TOTAL.labels(stage, status).inc()
         except Exception:  # pragma: no cover - metrics best effort
@@ -409,6 +468,11 @@ def warmup_vector_service(
         summary[stage] = status
         if status.startswith("deferred"):
             recorded_deferred.add(stage)
+            background_candidates.add(stage)
+            background_warmup.add(stage)
+        elif status in {"failed", "absent-probe", "skipped-budget"}:
+            background_candidates.add(stage)
+            background_warmup.add(stage)
         return True
 
     budget_exhausted = False
