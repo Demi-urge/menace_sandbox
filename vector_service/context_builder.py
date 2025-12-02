@@ -904,7 +904,6 @@ class ContextBuilder:
                         VectorMetricsDB.warmup_path_probe()
                 except Exception:  # pragma: no cover - best effort probe
                     logger.debug("vector metrics warmup probe failed", exc_info=True)
-                return None
 
             vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
             self._vector_metrics = vm
