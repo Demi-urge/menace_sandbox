@@ -141,22 +141,20 @@ def resolve_vector_bootstrap_flags(
 
     env = _detect_bootstrap_environment()
 
-    requested_warmup = bool(
-        warmup
-        if warmup is not None
-        else (
-            env["vector_warmup_env"]
-            or env["vector_bootstrap_env"]
-            or env["patch_bootstrap_env"]
-            or env["bootstrap_env"]
-            or _env_flag("VECTOR_METRICS_WARMUP", False)
-        )
-    )
     env_requested = bool(
         env["vector_bootstrap_env"]
         or env["patch_bootstrap_env"]
         or env["vector_warmup_env"]
         or env["bootstrap_env"]
+    )
+    warmup_requested = bool(
+        warmup
+        if warmup is not None
+        else (
+            env_requested
+            or env["vector_warmup_env"]
+            or _env_flag("VECTOR_METRICS_WARMUP", False)
+        )
     )
     resolved_bootstrap_fast = bool(
         bootstrap_fast
@@ -168,9 +166,9 @@ def resolve_vector_bootstrap_flags(
         )
     )
     resolved_bootstrap_fast = bool(
-        resolved_bootstrap_fast or requested_warmup or env["bootstrap_env"]
+        resolved_bootstrap_fast or warmup_requested or env["bootstrap_env"]
     )
-    resolved_warmup = bool(requested_warmup or env["vector_warmup_env"])
+    resolved_warmup = bool(warmup_requested and warmup is not False)
 
     return resolved_bootstrap_fast, resolved_warmup, env_requested, env["bootstrap_env"]
 
@@ -294,7 +292,6 @@ class VectorMetricsDB:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
         )
-        env = _detect_bootstrap_environment()
         (
             resolved_bootstrap_fast,
             resolved_warmup,
@@ -308,10 +305,17 @@ class VectorMetricsDB:
         self._bootstrap_context = bool(
             resolved_bootstrap_fast or resolved_warmup or env_bootstrap
         )
+        self._warmup_override_disabled = warmup is False
         self.bootstrap_fast = resolved_bootstrap_fast
-        self._warmup_mode = resolved_warmup
+        self._warmup_mode = (
+            False if self._warmup_override_disabled else resolved_warmup
+        )
         self._lazy_mode = True
-        self._boot_stub_active = bool(self.bootstrap_fast or self._warmup_mode)
+        self._boot_stub_active = (
+            False
+            if self._warmup_override_disabled
+            else bool(self.bootstrap_fast or self._warmup_mode)
+        )
         self._lazy_primed = self._boot_stub_active
         self._commit_required = False
         self._commit_reason = "first_use"
@@ -320,7 +324,11 @@ class VectorMetricsDB:
         self._pending_readiness_hook = bool(
             self._warmup_mode
             and not self.bootstrap_fast
-            and (bootstrap_context or env["vector_service_warmup"])
+            and (
+                bootstrap_context
+                or _env_flag("VECTOR_SERVICE_WARMUP", False)
+                or _env_flag("VECTOR_WARMUP", False)
+            )
         )
         self._ready_probe_logged = False
         init_start = time.perf_counter()
@@ -333,6 +341,21 @@ class VectorMetricsDB:
                     lazy_mode=self._lazy_mode,
                     bootstrap_fast=self.bootstrap_fast,
                     warmup_mode=self._warmup_mode,
+                    stub_mode=self._boot_stub_active,
+                ),
+            )
+        elif self._boot_stub_active:
+            logger.info(
+                "vector_metrics_db.init.stub",
+                extra=_timestamp_payload(
+                    init_start,
+                    configured_path=str(path),
+                    lazy_mode=self._lazy_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    warmup_mode=self._warmup_mode,
+                    stub_mode=True,
+                    menace_bootstrap=bootstrap_context,
+                    env_bootstrap_requested=env_bootstrap,
                 ),
             )
 
@@ -449,6 +472,7 @@ class VectorMetricsDB:
                 reason=reason,
                 warmup_mode=self._warmup_mode,
                 bootstrap_fast=self.bootstrap_fast,
+                stub_mode=self._boot_stub_active,
             ),
         )
         if self._warmup_mode or self.bootstrap_fast:
@@ -499,6 +523,7 @@ class VectorMetricsDB:
                 warmup_mode=self._warmup_mode,
                 bootstrap_fast=self.bootstrap_fast,
                 reason=reason,
+                stub_mode=self._boot_stub_active,
             ),
         )
         self._exit_lazy_mode(reason=reason)
@@ -567,6 +592,8 @@ class VectorMetricsDB:
                     "warmup_mode": self._warmup_mode,
                     "configured_path": str(self._configured_path),
                     "bootstrap_env": self._menace_bootstrap_env,
+                    "stub_mode": True,
+                    "env_bootstrap_requested": self._bootstrap_env_requested,
                 },
             )
         if self._boot_stub_active and self._resolved_path is None:
@@ -619,6 +646,7 @@ class VectorMetricsDB:
                     init_start,
                     warmup_mode=self._warmup_mode,
                     bootstrap_fast=self.bootstrap_fast,
+                    stub_mode=self._boot_stub_active,
                 ),
             )
             return
