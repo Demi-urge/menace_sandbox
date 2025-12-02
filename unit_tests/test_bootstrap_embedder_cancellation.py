@@ -187,6 +187,43 @@ def test_embedder_presence_probe_records_placeholder_without_background_download
     assert job.get("presence_available") is True
     assert job.get("background_scheduled") is None
     assert calls.get("background_get") is None
+    assert job.get("thread") is None
+
+
+def test_presence_probe_returns_placeholder_immediately():
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    def embedder_cache_present():
+        return True
+
+    _install_stub_module(
+        "menace_sandbox.governed_embeddings",
+        {
+            "_MAX_EMBEDDER_WAIT": 0.2,
+            "_activate_bundled_fallback": lambda *_args, **_kwargs: False,
+            "apply_bootstrap_timeout_caps": lambda *_args, **_kwargs: 0.1,
+            "cancel_embedder_initialisation": lambda *_args, **_kwargs: None,
+            "embedder_cache_present": embedder_cache_present,
+            "get_embedder": lambda *_args, **_kwargs: object(),
+        },
+    )
+
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+    placeholder = preseed_bootstrap._bootstrap_embedder(
+        timeout=0.05,
+        stage_budget=0.1,
+        presence_probe=True,
+        presence_reason="embedder_presence_guard",
+        bootstrap_fast=True,
+    )
+
+    job = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert placeholder == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert job.get("result") == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert job.get("placeholder_reason") == "embedder_presence_guard"
+    assert job.get("thread") is None
+    assert job.get("deferred") is True
+    assert job.get("presence_available") is True
 
 
 def test_embedder_stage_budget_sets_deferral_token():
@@ -245,4 +282,48 @@ def test_embedder_stage_budget_sets_deferral_token():
         time.sleep(0.05)
 
     assert calls.get("cancel_called") is not None
+
+
+def test_existing_download_cancelled_with_stage_caps():
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    stop_event = threading.Event()
+    join_calls: dict[str, object] = {}
+
+    def cancel_embedder_initialisation(stop_event: threading.Event, **kwargs):
+        join_calls["cancel_args"] = kwargs
+        stop_event.set()
+
+    _install_stub_module(
+        "menace_sandbox.governed_embeddings",
+        {
+            "_MAX_EMBEDDER_WAIT": 0.5,
+            "_activate_bundled_fallback": lambda *_args, **_kwargs: False,
+            "apply_bootstrap_timeout_caps": lambda *_args, **_kwargs: 0.25,
+            "cancel_embedder_initialisation": cancel_embedder_initialisation,
+            "embedder_cache_present": lambda *_args, **_kwargs: False,
+            "get_embedder": lambda *_args, **_kwargs: object(),
+        },
+    )
+
+    def _background_worker():
+        stop_event.wait(5)
+
+    existing_thread = threading.Thread(target=_background_worker)
+    existing_thread.start()
+
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = {
+        "thread": existing_thread,
+        "stop_event": stop_event,
+        "placeholder": preseed_bootstrap._BOOTSTRAP_PLACEHOLDER,
+    }
+
+    placeholder = preseed_bootstrap._bootstrap_embedder(timeout=0.2, stage_budget=0.1)
+
+    existing_thread.join(0.5)
+    assert not existing_thread.is_alive()
+    assert stop_event.is_set()
+    assert join_calls["cancel_args"].get("join_timeout") == 0.1
+    assert placeholder == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB is None
 
