@@ -534,6 +534,8 @@ class VectorMetricsDB:
         )
         if self._bootstrap_context and warmup is None:
             resolved_warmup = True
+        if self._bootstrap_timers_active and warmup is None:
+            resolved_warmup = True
         explicit_bootstrap_stub_opt_out = warmup is False
         self._warmup_override_disabled = bool(explicit_bootstrap_stub_opt_out)
         self.bootstrap_fast = resolved_bootstrap_fast
@@ -651,7 +653,16 @@ class VectorMetricsDB:
         self._conn = None
 
         if self._boot_stub_active or self._warmup_mode:
-            self._register_readiness_hook()
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_path_active",
+                extra=_timestamp_payload(
+                    init_start,
+                    configured_path=str(path),
+                    menace_bootstrap=self._bootstrap_context,
+                    bootstrap_deadlines=self._bootstrap_timers_active,
+                    warmup_mode=self._warmup_mode,
+                ),
+            )
             self._conn = self._stub_conn
             return
 
@@ -917,6 +928,16 @@ class VectorMetricsDB:
         )
         self._persistence_activation_pending = False
         self._exit_lazy_mode(reason=reason)
+        logger.info(
+            "vector_metrics_db.bootstrap.persistence_activated",
+            extra=_timestamp_payload(
+                None,
+                resolved_path=str(self._resolved_path) if self._resolved_path else None,
+                default_path=str(self._default_path) if self._default_path else None,
+                stub_mode=self._boot_stub_active,
+                warmup_mode=self._warmup_mode,
+            ),
+        )
         if not self._persistence_ready_logged:
             self._persistence_ready_logged = True
             logger.info(
