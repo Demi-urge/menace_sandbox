@@ -55,16 +55,20 @@ def ensure_embedding_model(
     *,
     logger: logging.Logger | None = None,
     warmup: bool = False,
+    warmup_lite: bool = False,
     stop_event: threading.Event | None = None,
     budget_check: Callable[[threading.Event | None], None] | None = None,
     download_timeout: float | None = None,
-) -> Path | None:
+) -> Path | tuple[Path | None, str | None] | None:
     """Ensure the bundled embedding model archive exists.
 
     The download is performed at most once per process and only when the model
     is missing.  When ``warmup`` is False the function favours fast failure so
     first-use callers can fall back gracefully; during warmup we log and swallow
-    errors to avoid breaking bootstrap flows.
+    errors to avoid breaking bootstrap flows.  When ``warmup_lite`` is True the
+    function performs a presence probe only and defers the download if the
+    bundle is absent, returning a ``(path, status)`` tuple so callers can
+    propagate the deferral state.
     """
 
     global _MODEL_READY
@@ -75,6 +79,11 @@ def ensure_embedding_model(
             return float(value)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
+
+    def _result(path: Path | None, status: str | None = None):
+        if warmup_lite:
+            return path, status
+        return path
     def _check_cancelled(context: str) -> None:
         if stop_event is not None and stop_event.is_set():
             raise TimeoutError(f"embedding model download cancelled during {context}")
@@ -84,15 +93,23 @@ def ensure_embedding_model(
     _check_cancelled("init")
 
     if _MODEL_READY:
-        return _model_bundle_path()
+        return _result(_model_bundle_path(), "ready")
 
     with _MODEL_LOCK:
         if _MODEL_READY:
-            return _model_bundle_path()
+            return _result(_model_bundle_path(), "ready")
         dest = _model_bundle_path()
         if dest.exists():
             _MODEL_READY = True
-            return dest
+            return _result(dest, "ready")
+
+        if warmup_lite:
+            status = "deferred-absent-probe"
+            log.info(
+                "embedding model warmup-lite probe: archive missing; deferring download",
+                extra={"event": "vector-warmup", "model_status": status},
+            )
+            return _result(None, status)
 
         _check_cancelled("init")
 
@@ -100,7 +117,7 @@ def ensure_embedding_model(
             log.info(
                 "embedding model download skipped (huggingface-hub unavailable); will retry on demand"
             )
-            return None
+            return _result(None, "missing")
 
         try:
             from . import download_model as _dm
@@ -113,11 +130,11 @@ def ensure_embedding_model(
                 timeout=download_timeout,
             )
             _MODEL_READY = True
-            return dest
+            return _result(dest, "ready")
         except Exception as exc:  # pragma: no cover - best effort during warmup
             log.warning("embedding model bootstrap failed: %s", exc)
             if warmup:
-                return None
+                return _result(None, "failed")
             raise
 
 
@@ -247,6 +264,7 @@ def warmup_vector_service(
         run_vectorise = False
 
     bootstrap_lite = bootstrap_context and not force_heavy
+    model_probe_only = False
     heavy_requested = any(
         flag
         for flag in (
@@ -276,7 +294,9 @@ def warmup_vector_service(
         run_vectorise = False
         if download_model:
             log.info("Bootstrap context detected; skipping embedding model download")
+            model_probe_only = True
             download_model = False
+            probe_model = True
             deferred_bootstrap.add("model")
         if hydrate_handlers:
             log.info("Bootstrap context detected; deferring handler hydration")
@@ -296,15 +316,25 @@ def warmup_vector_service(
     lite_deferrals: set[str] = set()
     if warmup_lite and not force_heavy:
         lite_deferrals.update({"handlers", "scheduler", "vectorise"})
-        if hydrate_handlers or start_scheduler or run_vectorise:
+        if download_model:
+            model_probe_only = True
+            probe_model = True
+            lite_deferrals.add("model")
+        if download_model or hydrate_handlers or start_scheduler or run_vectorise:
             log.info(
                 "Warmup-lite enabled; deferring heavy vector warmup stages (force_heavy to override)",
                 extra={
+                    "download_model": download_model,
                     "hydrate_handlers": hydrate_handlers,
                     "start_scheduler": start_scheduler,
                     "run_vectorise": run_vectorise,
                 },
             )
+            if model_probe_only:
+                log.info(
+                    "Warmup-lite model probe enabled; skipping download thread",
+                    extra={"event": "vector-warmup", "model_status": "probe-only"},
+                )
         hydrate_handlers = False
         start_scheduler = False
         run_vectorise = False
@@ -823,6 +853,7 @@ def warmup_vector_service(
                 lambda stop_event: ensure_embedding_model(
                     logger=log,
                     warmup=True,
+                    warmup_lite=False,
                     stop_event=stop_event,
                     budget_check=lambda evt: _cooperative_budget_check(
                         "model", evt
@@ -841,17 +872,37 @@ def warmup_vector_service(
                     _record_deferred("model", "deferred-budget")
                 log.info("Vector warmup model download deferred after budget exhaustion")
                 return _finalise()
-        elif probe_model:
-            completed, dest = _run_with_budget(
-                "model", lambda _stop: _model_bundle_path()
-            )
+        elif probe_model or model_probe_only:
+            def _probe(stop_event: threading.Event) -> tuple[Path | None, str | None] | Path:
+                if warmup_lite and model_probe_only and not force_heavy:
+                    return ensure_embedding_model(
+                        logger=log,
+                        warmup=True,
+                        warmup_lite=True,
+                        stop_event=stop_event,
+                    )
+                return _model_bundle_path()
+
+            completed, dest = _run_with_budget("model", _probe)
             if completed and dest:
-                if dest.exists():
-                    log.info("embedding model already present at %s (probe only)", dest)
+                probe_path, status = (
+                    dest if isinstance(dest, tuple) else (dest, None)
+                )
+                if probe_path and isinstance(probe_path, Path) and probe_path.exists():
+                    log.info("embedding model already present at %s (probe only)", probe_path)
                     _record("model", "present")
                 else:
-                    log.info("embedding model probe: archive missing; will fetch on demand")
-                    _record("model", "absent-probe")
+                    status = status or (
+                        "deferred-absent-probe" if model_probe_only else "absent-probe"
+                    )
+                    log.info(
+                        "embedding model probe detected absent archive; deferring download",
+                        extra={"event": "vector-warmup", "model_status": status},
+                    )
+                    if status.startswith("deferred"):
+                        _record_background("model", status)
+                    else:
+                        _record("model", status)
         else:
             if "model" in deferred_bootstrap:
                 status = "deferred-bootstrap"
