@@ -295,7 +295,7 @@ def warmup_vector_service(
     warmup_probe: bool | None = None,
     stage_timeouts: dict[str, float] | float | None = None,
     deferred_stages: set[str] | None = None,
-    background_hook: Callable[[set[str]], None] | None = None,
+    background_hook: Callable[[set[str]], None] | Callable[[set[str], Mapping[str, float | None] | None], None] | None = None,
 ) -> Mapping[str, str]:
     """Eagerly initialise vector assets and caches.
 
@@ -319,7 +319,8 @@ def warmup_vector_service(
     thresholds.  Callers that intentionally defer stages can supply
     ``deferred_stages`` so the warmup summary reflects the deferral rather than
     a silent skip.  ``background_hook`` is invoked with any stages proactively
-    deferred for background execution so callers can enqueue follow-up tasks.
+    deferred for background execution (and optional ``budget_hints`` per stage)
+    so callers can enqueue follow-up tasks with the same ceilings.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -748,7 +749,12 @@ def warmup_vector_service(
             summary["budget_gate"] = budget_gate_reason
         if background_candidates and background_hook is not None:
             try:
-                background_hook(set(background_candidates))
+                hook_kwargs = {"budget_hints": background_stage_timeouts}
+                hook_code = getattr(background_hook, "__code__", None)
+                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                    background_hook(set(background_candidates), **hook_kwargs)
+                else:
+                    background_hook(set(background_candidates))
                 hook_dispatched = True
             except Exception:  # pragma: no cover - advisory hook
                 log.debug("background hook failed", exc_info=True)
@@ -1009,8 +1015,6 @@ def warmup_vector_service(
 
         def _run_background() -> None:
             try:
-                for stage in stages:
-                    _WARMUP_STAGE_MEMO.pop(stage, None)
                 warmup_vector_service(
                     download_model=download_model,
                     probe_model=probe_model,
@@ -1235,7 +1239,11 @@ def warmup_vector_service(
         if available_budget >= estimate:
             return False
 
-        _record_background(stage, "deferred-budget")
+        status = "deferred-budget"
+        if stage_timeout is not None and stage_timeout < estimate:
+            status = "deferred-ceiling"
+        _record_background(stage, status)
+        _hint_background_budget(stage, stage_timeout)
         log.info(
             "Vector warmup %s deferred before guard; budget %.2fs below estimate %.2fs",
             stage,
@@ -1340,11 +1348,24 @@ def warmup_vector_service(
         return _finalise()
     if _reuse("model"):
         pass
-    elif not _guard("model"):
-        if _should_abort("model"):
-            return _finalise()
     else:
         model_timeout = _effective_timeout("model")
+        model_enabled = download_model or probe_model or model_probe_only
+        if _gate_conservative_budget("model", model_enabled, model_timeout):
+            if _should_defer_upfront(
+                "model", stage_timeout=model_timeout, stage_enabled=model_enabled
+            ):
+                _record_cancelled("model", "budget")
+                return _finalise()
+            elif not _guard("model"):
+                if _should_abort("model"):
+                    return _finalise()
+        elif _should_abort("model"):
+            return _finalise()
+        else:
+            _record_cancelled("model", "ceiling")
+            return _finalise()
+
         if download_model:
             if model_timeout is not None and model_timeout <= 0:
                 budget_exhausted = True

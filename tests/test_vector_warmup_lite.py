@@ -176,3 +176,51 @@ def test_warmup_cache_reused(monkeypatch, caplog, tmp_path):
     assert {"handlers", "scheduler", "vectorise"}.issubset(set(retry_summary["deferred"].split(",")))
     assert not scheduler_calls
     assert deferred.issuperset({"handlers", "scheduler", "vectorise"})
+
+
+def test_ceiling_deferral_persisted(monkeypatch, caplog, tmp_path):
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("VECTOR_WARMUP_CACHE_DIR", str(tmp_path))
+    _reset_state()
+
+    calls: list[str] = []
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class NoOpSharedVectorService:
+        def __init__(self, *args, **kwargs):  # noqa: ARG002
+            calls.append("handlers")
+            raise AssertionError("SharedVectorService should be deferred under ceiling")
+
+    vectorizer_stub.SharedVectorService = NoOpSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        warmup_lite=False,
+        hydrate_handlers=True,
+        run_vectorise=True,
+        stage_timeouts={"handlers": 0.5},
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["handlers"] == "deferred-ceiling"
+    assert warmup_summary["vectorise"] == "deferred-ceiling"
+    assert not calls
+
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._WARMUP_CACHE_LOADED = False
+    caplog.clear()
+
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        warmup_lite=False,
+        hydrate_handlers=True,
+        run_vectorise=True,
+        stage_timeouts={"handlers": 0.5},
+    )
+
+    retry_summary = _get_warmup_summary(caplog)
+    assert retry_summary["handlers"] == "deferred-ceiling"
+    assert retry_summary["vectorise"] == "deferred-ceiling"
+    assert not calls
