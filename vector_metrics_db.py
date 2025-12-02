@@ -294,6 +294,7 @@ class VectorMetricsDB:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
         )
+        env = _detect_bootstrap_environment()
         (
             resolved_bootstrap_fast,
             resolved_warmup,
@@ -316,6 +317,11 @@ class VectorMetricsDB:
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
         self._readiness_hook_registered = False
+        self._pending_readiness_hook = bool(
+            self._warmup_mode
+            and not self.bootstrap_fast
+            and (bootstrap_context or env["vector_service_warmup"])
+        )
         self._ready_probe_logged = False
         init_start = time.perf_counter()
         if not self._warmup_mode:
@@ -389,12 +395,6 @@ class VectorMetricsDB:
             )
         self.router = None
         self._conn = None
-        if (
-            self._warmup_mode
-            and not self.bootstrap_fast
-            and (bootstrap_env or vector_service_warmup)
-        ):
-            self._register_readiness_hook()
 
     def _register_readiness_hook(self) -> None:
         if self._readiness_hook_registered:
@@ -479,6 +479,8 @@ class VectorMetricsDB:
 
         if not self._boot_stub_active:
             return
+        if self._pending_readiness_hook and not self._readiness_hook_registered:
+            self._register_readiness_hook()
         logger.info(
             "vector_metrics_db.bootstrap.activate_persistence",
             extra=_timestamp_payload(
