@@ -63,3 +63,40 @@ def test_vectorise_alone_deferred_when_ceiling_below_estimate(caplog):
     assert warmup_summary["vectorise"] == "deferred-ceiling"
     assert deferred == {"vectorise"}
 
+
+def test_model_download_honours_stage_timeout(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+
+    called: list[str] = []
+
+    def fake_download(**_kwargs):  # noqa: ARG001
+        called.append("model")
+        raise AssertionError("model download should be deferred")
+
+    monkeypatch.setattr(lazy_bootstrap, "ensure_embedding_model", fake_download)
+
+    background: list[set[str]] = []
+    budget_hints_list: list[dict[str, float | None]] = []
+
+    def capture_hook(stages, budget_hints=None):  # type: ignore[override]
+        background.append(set(stages))
+        sanitized: dict[str, float | None] = {}
+        if isinstance(budget_hints, dict):
+            sanitized.update({k: v for k, v in budget_hints.items() if isinstance(k, str)})
+        budget_hints_list.append(sanitized)
+
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        download_model=True,
+        warmup_lite=False,
+        stage_timeouts={"model": 0.5},
+        background_hook=capture_hook,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["model"] == "deferred-ceiling"
+    assert not called
+    assert background and {"model"}.issubset(background[0])
+    assert budget_hints_list and budget_hints_list[0].get("model") == 0.5
+
