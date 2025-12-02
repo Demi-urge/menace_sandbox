@@ -408,7 +408,11 @@ def _get_vector_metrics(
             _VEC_METRICS = stub
             return stub
 
-        vm = VectorMetricsDB(bootstrap_fast=bootstrap_flag, warmup=warmup_flag)
+        vm = VectorMetricsDB(
+            bootstrap_fast=bootstrap_flag,
+            warmup=warmup_flag,
+            read_only=bool(bootstrap_flag or warmup_flag),
+        )
         if activate_persistence and hasattr(vm, "activate_persistence") and (
             bootstrap_flag or warmup_flag
         ):

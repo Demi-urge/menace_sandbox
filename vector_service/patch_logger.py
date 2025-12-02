@@ -280,6 +280,7 @@ class PatchLogger:
                 self.vector_metrics = VectorMetricsDB(
                     bootstrap_fast=resolved_fast,
                     warmup=warmup_flag,
+                    read_only=bool(resolved_fast or warmup_flag),
                 )
             except Exception:
                 self.vector_metrics = None

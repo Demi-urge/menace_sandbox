@@ -120,6 +120,7 @@ class CognitionLayer:
         self.vector_metrics = vector_metrics or VectorMetricsDB(
             bootstrap_fast=resolved_fast,
             warmup=warmup_mode,
+            read_only=bool(resolved_fast or warmup_mode),
         )
         self.roi_tracker = roi_tracker
         self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)
