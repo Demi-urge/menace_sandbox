@@ -886,9 +886,22 @@ def warmup_vector_service(
         if threshold is None:
             return True
         available = _available_budget_hint(stage, stage_timeout)
-        if available is None or available >= threshold:
-            return True
+        budget_window = _stage_budget_window(stage_timeout)
+        shared_remaining = _remaining_shared_budget()
+
+        shared_conservative = (
+            stage in {"handlers", "vectorise"}
+            and budget_window is not None
+            and threshold is not None
+            and budget_window < threshold
+            and (shared_remaining is not None or bootstrap_context)
+        )
         status = "deferred-ceiling"
+        if shared_conservative:
+            status = "deferred-shared-budget" if shared_remaining is not None else "deferred-bootstrap-budget"
+        elif available is None or available >= threshold:
+            return True
+
         _record_deferred_background(stage, status)
         _hint_background_budget(stage, stage_timeout)
         budget_gate_reason = budget_gate_reason or status
@@ -904,7 +917,7 @@ def warmup_vector_service(
             run_vectorise = False
         log.info(
             "Remaining budget %.2fs below conservative ceiling for %s; deferring",
-            available,
+            available if available is not None else budget_window,
             stage,
         )
         return False
@@ -1518,10 +1531,15 @@ def warmup_vector_service(
             background_warmup.update(bootstrap_deferred_records)
             background_candidates.update(bootstrap_deferred_records)
 
-        if warmup_lite and not force_heavy and "vectorise" in lite_deferrals - bootstrap_deferred_records:
-            if not summary.get("vectorise"):
-                _record_background("vectorise", "deferred-lite")
-                _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+        if warmup_lite and not force_heavy:
+            if "handlers" in lite_deferrals - bootstrap_deferred_records:
+                if not summary.get("handlers"):
+                    _record_background("handlers", "deferred-lite")
+                    _hint_background_budget("handlers", _effective_timeout("handlers"))
+            if "vectorise" in lite_deferrals - bootstrap_deferred_records:
+                if not summary.get("vectorise"):
+                    _record_background("vectorise", "deferred-lite")
+                    _hint_background_budget("vectorise", _effective_timeout("vectorise"))
 
     _apply_bootstrap_deferrals()
 
