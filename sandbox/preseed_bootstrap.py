@@ -3422,6 +3422,35 @@ def initialize_bootstrap_context(
             )
         if budget_window_missing and strict_timebox is None:
             strict_timebox = default_missing_budget_timebox
+        background_dispatch_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+            "embedder_background_dispatch", vector_heavy=True, heavy=True
+        )
+        guard_timebox = (
+            strict_timebox or embedder_stage_budget or embedder_stage_budget_hint
+        )
+        guard_forced_background = (
+            (bootstrap_fast_context or warmup_lite_context)
+            or (
+                embedder_stage_budget_hint is not None
+                and math.isfinite(embedder_stage_budget_hint)
+            )
+        )
+        if guard_forced_background and not full_preload_requested:
+            guard_reason = "embedder_backgrounded_guard"
+            if bootstrap_fast_context:
+                guard_reason = "embedder_backgrounded_bootstrap_fast"
+            elif warmup_lite_context:
+                guard_reason = "embedder_backgrounded_warmup_lite"
+            elif embedder_stage_budget_hint is not None:
+                guard_reason = "embedder_backgrounded_finite_budget"
+            return _defer_to_presence(
+                guard_reason,
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=True,
+                strict_timebox=guard_timebox,
+                non_blocking_probe=True,
+            )
         warmup_summary: dict[str, Any] | None = None
         if (
             (embedder_stage_budget is not None and embedder_stage_budget < minimum_presence_window)
@@ -3457,6 +3486,8 @@ def initialize_bootstrap_context(
                     "presence_reason": reason,
                     "budget_window_missing": budget_window_missing,
                     "forced_background": forced_background,
+                    "background_gate": background_dispatch_gate,
+                    "background_dispatch": True,
                     "strict_timebox": strict_timebox,
                     "resume_download": resume_download,
                     "event": "embedder-preload-presence-only",
@@ -3562,6 +3593,8 @@ def initialize_bootstrap_context(
                     "presence_probe_timeout": probe_timed_out,
                     "background_enqueue_reason": reason,
                     "background_join_timeout": background_join_timeout,
+                    "background_gate": background_dispatch_gate,
+                    "background_dispatch": True,
                     "budget_guarded": budget_guarded,
                     "warmup_placeholder_reason": reason,
                     "presence_only": True,
@@ -3644,6 +3677,7 @@ def initialize_bootstrap_context(
                             "bootstrap_fast": bootstrap_fast_context,
                             "warmup_lite": warmup_lite_context,
                             "reason": reason,
+                            "background_gate": background_dispatch_gate,
                         },
                     )
                     background_result = _bootstrap_embedder(
@@ -3879,6 +3913,8 @@ def initialize_bootstrap_context(
                         "deferral_reason": reason,
                         "background_full_warmup": True,
                         "strict_timebox": strict_timebox,
+                        "background_gate": background_dispatch_gate,
+                        "background_dispatch": True,
                     }
                 )
 
@@ -3964,6 +4000,7 @@ def initialize_bootstrap_context(
                             "bootstrap_fast": bootstrap_fast_context,
                             "warmup_lite": warmup_lite_context,
                             "reason": reason,
+                            "background_gate": background_dispatch_gate,
                         },
                     )
                     background_result = _bootstrap_embedder(
