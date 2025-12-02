@@ -28,6 +28,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
     _flag(parser, "light", default=False, help="Validate scheduler/model presence without hydrating handlers")
     _flag(parser, "all", default=False, help="Enable every warmup action")
     _flag(parser, "force-heavy", default=False, help="Bypass bootstrap guards and run heavy warmup steps")
+    _flag(parser, "no-lite", default=False, help="Disable warmup-lite deferrals (explicit heavy opt-in)")
     args = parser.parse_args(argv)
 
     if args.all:
@@ -37,6 +38,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
         vectorise = True
         scheduler = True
         force = True
+        lite = False
     elif args.light:
         download = False
         probe = True
@@ -44,6 +46,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
         vectorise = False
         scheduler = True
         force = False
+        lite = True
     else:
         download = args.download_model
         probe = args.probe_model
@@ -51,6 +54,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
         vectorise = args.run_vectorise
         scheduler = args.start_scheduler
         force = args.force_heavy
+        lite = not args.no_lite
 
     logger = logging.getLogger(__name__)
     warmup_vector_service(
@@ -61,6 +65,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
         run_vectorise=vectorise,
         logger=logger,
         force_heavy=force,
+        warmup_lite=lite,
     )
     return 0
 
