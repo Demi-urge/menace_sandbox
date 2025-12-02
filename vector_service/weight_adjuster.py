@@ -10,7 +10,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - PyYAML missing
     yaml = None  # type: ignore
 
-from vector_metrics_db import VectorMetricsDB
+from vector_metrics_db import VectorMetricsDB, resolve_vector_bootstrap_flags
 from .roi_tags import RoiTag
 from dynamic_path_router import resolve_path
 
@@ -64,6 +64,7 @@ class WeightAdjuster:
     """Adjust ranking weights for vector origins and individual vectors."""
 
     vector_metrics: VectorMetricsDB | None = None
+    bootstrap_fast: bool | None = None
     db_success_delta: float = 0.1
     db_failure_delta: float = 0.1
     vector_success_delta: float = 0.1
@@ -73,9 +74,16 @@ class WeightAdjuster:
     )
 
     def __post_init__(self) -> None:  # pragma: no cover - best effort init
+        resolved_fast, warmup_mode, _, _ = resolve_vector_bootstrap_flags(
+            bootstrap_fast=self.bootstrap_fast
+        )
+        if self.bootstrap_fast is None:
+            self.bootstrap_fast = resolved_fast
         if self.vector_metrics is None:
             try:
-                self.vector_metrics = VectorMetricsDB()
+                self.vector_metrics = VectorMetricsDB(
+                    bootstrap_fast=resolved_fast, warmup=warmup_mode
+                )
             except Exception:
                 self.vector_metrics = None
 

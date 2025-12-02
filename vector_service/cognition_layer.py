@@ -43,7 +43,7 @@ from dynamic_path_router import resolve_path
 from .retriever import Retriever, PatchRetriever
 from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
-from vector_metrics_db import VectorMetricsDB
+from vector_metrics_db import VectorMetricsDB, resolve_vector_bootstrap_flags
 from .decorators import log_and_measure
 from .embedding_backfill import schedule_backfill
 
@@ -88,17 +88,25 @@ class CognitionLayer:
         event_bus: "UnifiedEventBus" | None = None,
         roi_tracker: ROITracker | None = None,
         ranking_model: Any | None = None,
-        bootstrap_fast: bool = False,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
+        resolved_fast, warmup_mode, env_bootstrap, bootstrap_env = (
+            resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast)
+        )
+        if bootstrap_fast is None and env_bootstrap:
+            logger.info(
+                "cognition_layer.bootstrap_fast.defaulted",
+                extra={"bootstrap_env": bootstrap_env},
+            )
         self.context_builder = context_builder
         self.retriever = retriever or getattr(
             self.context_builder,
             "retriever",
             Retriever(
                 context_builder=self.context_builder,
-                bootstrap_fast=bootstrap_fast,
+                bootstrap_fast=resolved_fast,
             ),
         )
         self.patch_retriever = patch_retriever or getattr(
@@ -106,17 +114,17 @@ class CognitionLayer:
             "patch_retriever",
             PatchRetriever(
                 context_builder=self.context_builder,
-                bootstrap_fast=bootstrap_fast,
+                bootstrap_fast=resolved_fast,
             ),
         )
         self.vector_metrics = vector_metrics or VectorMetricsDB(
-            bootstrap_fast=bootstrap_fast,
-            warmup=bootstrap_fast,
+            bootstrap_fast=resolved_fast,
+            warmup=warmup_mode,
         )
         self.roi_tracker = roi_tracker
         self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)
         db_weights = None
-        self.bootstrap_fast = bootstrap_fast
+        self.bootstrap_fast = resolved_fast
         if self.vector_metrics is not None:
             try:
                 db_weights = self.vector_metrics.get_db_weights()
