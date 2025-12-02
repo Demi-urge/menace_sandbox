@@ -319,6 +319,8 @@ def warmup_vector_service(
     background_candidates: set[str] = set()
     effective_timeouts: dict[str, float | None] = {}
 
+    background_warmup: set[str] = set()
+
     def _record(stage: str, status: str) -> None:
         summary[stage] = status
         if status.startswith("deferred"):
@@ -332,6 +334,10 @@ def warmup_vector_service(
     def _record_deferred(stage: str, status: str) -> None:
         background_candidates.add(stage)
         _record(stage, status)
+
+    def _record_background(stage: str, status: str) -> None:
+        background_warmup.add(stage)
+        _record_deferred(stage, status)
 
     def _reuse(stage: str) -> bool:
         status = memoised_results.get(stage)
@@ -418,11 +424,15 @@ def warmup_vector_service(
             summary[f"budget_{stage}"] = (
                 f"{timeout:.3f}" if timeout is not None else "none"
             )
-        if background_hook is not None:
+        hook_dispatched = False
+        if background_candidates and background_hook is not None:
             try:
                 background_hook(set(background_candidates))
+                hook_dispatched = True
             except Exception:  # pragma: no cover - advisory hook
                 log.debug("background hook failed", exc_info=True)
+        if background_warmup and not hook_dispatched:
+            _launch_background_warmup(set(background_warmup))
 
         log.info(
             "vector warmup stages recorded", extra={"event": "vector-warmup", "warmup": summary}
@@ -564,6 +574,40 @@ def warmup_vector_service(
         )
 
     resolved_timeouts = _apply_budget_caps(resolved_timeouts, provided_budget)
+
+    def _launch_background_warmup(stages: set[str]) -> None:
+        if not stages:
+            return
+
+        background_timeouts: dict[str, float | None] = dict(resolved_timeouts)
+        if provided_budget is not None:
+            background_timeouts["budget"] = provided_budget
+
+        def _run_background() -> None:
+            try:
+                warmup_vector_service(
+                    download_model=download_model,
+                    probe_model=probe_model,
+                    hydrate_handlers="handlers" in stages,
+                    start_scheduler="scheduler" in stages,
+                    run_vectorise="vectorise" in stages,
+                    check_budget=None,
+                    budget_remaining=None,
+                    logger=log,
+                    force_heavy=True,
+                    bootstrap_fast=bootstrap_fast,
+                    warmup_lite=False,
+                    warmup_model=warmup_model,
+                    warmup_handlers=True,
+                    warmup_probe=warmup_probe,
+                    stage_timeouts=background_timeouts,
+                    deferred_stages=set(),
+                    background_hook=None,
+                )
+            except Exception:  # pragma: no cover - background best effort
+                log.debug("background vector warmup failed", exc_info=True)
+
+        threading.Thread(target=_run_background, daemon=True).start()
 
     def _stage_budget_cap() -> float | None:
         if isinstance(stage_timeouts, Mapping):
@@ -782,13 +826,15 @@ def warmup_vector_service(
             if "handlers" in deferred_bootstrap:
                 status = "deferred-bootstrap"
                 log.info("Vector handler hydration deferred for bootstrap-lite")
+                _record("handlers", status)
             elif "handlers" in lite_deferrals:
                 status = "deferred-lite"
                 log.info("Vector handler hydration deferred for warmup-lite")
+                _record_background("handlers", status)
             else:
                 status = "deferred" if ("handlers" in deferred or warmup_handlers) else "skipped"
                 log.info("Vector handler hydration skipped")
-            _record("handlers", status)
+                _record("handlers", status)
 
     if _reuse("scheduler"):
         pass
@@ -799,17 +845,19 @@ def warmup_vector_service(
         else:
             if "scheduler" in deferred_bootstrap:
                 status = "deferred-bootstrap"
+                _record("scheduler", status)
             elif "scheduler" in lite_deferrals:
                 status = "deferred-lite"
+                _record_background("scheduler", status)
             else:
                 status = "skipped"
+                _record("scheduler", status)
             log.info(
                 "Scheduler warmup %s",
                 "deferred for bootstrap-lite"
                 if status == "deferred-bootstrap"
                 else ("deferred for warmup-lite" if status == "deferred-lite" else "skipped"),
             )
-            _record("scheduler", status)
 
     should_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
     if _reuse("vectorise"):
@@ -840,21 +888,27 @@ def warmup_vector_service(
                 if "vectorise" in deferred_bootstrap:
                     status = "deferred-bootstrap"
                     log.info("Vectorise warmup deferred for bootstrap-lite")
+                    _record("vectorise", status)
                 elif "vectorise" in lite_deferrals:
                     status = "deferred-lite"
                     log.info("Vectorise warmup deferred for warmup-lite")
+                    _record_background("vectorise", status)
                 else:
                     status = "deferred" if ("vectorise" in deferred or "handlers" in deferred) else "skipped-no-service"
                     log.info("Vectorise warmup skipped: service unavailable")
-                _record("vectorise", status)
+                    _record("vectorise", status)
             else:
                 if "vectorise" in deferred_bootstrap:
                     status = "deferred-bootstrap"
                 elif "vectorise" in lite_deferrals:
                     status = "deferred-lite"
+                    _record_background("vectorise", status)
+                    log.info("Vectorise warmup deferred for warmup-lite")
                 else:
                     status = "deferred" if "vectorise" in deferred else "skipped"
-                _record("vectorise", status)
+                    _record("vectorise", status)
+                if status == "deferred-bootstrap":
+                    log.info("Vectorise warmup deferred for bootstrap-lite")
                 log.info("Vectorise warmup skipped")
 
     return _finalise()
