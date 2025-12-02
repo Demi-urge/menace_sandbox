@@ -16,7 +16,7 @@ import hashlib
 import shutil
 import threading
 from datetime import datetime
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Mapping
 
 from pathlib import Path
 import json
@@ -219,14 +219,19 @@ class SharedVectorService:
     warmup_lite: bool | None = None
     stop_event: threading.Event | None = None
     budget_check: Callable[[threading.Event | None], None] | None = None
+    handler_timeouts: Mapping[str, float] | float | None = None
     _handlers: Dict[str, Callable[[Dict[str, Any]], List[float]]] = field(init=False)
     _handler_requires_store: Dict[str, bool] = field(init=False)
     _handler_bootstrap_flag: bool = field(init=False, default=False)
     _known_kinds: set[str] = field(init=False, default_factory=set)
     _handler_hydration_deferred: bool = field(init=False, default=False)
     _handler_deferral_reasons: set[str] = field(init=False, default_factory=set)
+    _explicit_hydration_request: bool = field(init=False, default=False)
     _background_hydration_started: bool = field(init=False, default=False)
     _background_hydration_thread: threading.Thread | None = field(
+        init=False, default=None
+    )
+    _background_handler_timeouts: Mapping[str, float] | float | None = field(
         init=False, default=None
     )
 
@@ -246,10 +251,13 @@ class SharedVectorService:
         )
         warmup_lite = bool(self.warmup_lite)
         self.warmup_lite = warmup_lite
+        self._background_handler_timeouts = self.handler_timeouts
         if self.bootstrap_fast is None:
             self.bootstrap_fast = resolved_fast
         if self.hydrate_handlers is None:
             self.hydrate_handlers = False
+        explicit_hydration = self.hydrate_handlers is True
+        self._explicit_hydration_request = explicit_hydration
         if self.lazy_vector_store is None:
             self.lazy_vector_store = bootstrap_context or resolved_fast
         if warmup_lite:
@@ -260,6 +268,9 @@ class SharedVectorService:
         self._handler_lock = threading.RLock()
         self._vector_store_lock = threading.RLock()
         self._known_kinds = set()
+        eager_hydration = bool(self.hydrate_handlers) and not (
+            (warmup_lite or resolved_fast) and not explicit_hydration
+        )
         if bootstrap_context and resolved_fast:
             logger.info(
                 "shared_vector_service.bootstrap_fast.active",
@@ -269,11 +280,18 @@ class SharedVectorService:
                 },
             )
         self._known_kinds = set(_VECTOR_REGISTRY.keys())
-        if self.hydrate_handlers:
-            self.hydrate_all_handlers(stop_event=self.stop_event)
+        if eager_hydration:
+            self.hydrate_all_handlers(
+                stop_event=self.stop_event,
+                handler_timeouts=self.handler_timeouts,
+            )
         else:
             self._mark_handler_deferral(
-                "deferred-init" if not warmup_lite else "warmup-lite",
+                (
+                    "warmup-lite"
+                    if warmup_lite
+                    else "bootstrap-fast" if resolved_fast else "deferred-init"
+                ),
                 schedule_background=True,
             )
             logger.info(
@@ -329,10 +347,32 @@ class SharedVectorService:
         stop_event: threading.Event | None = None,
         timeout: float | None = None,
         budget_check: Callable[[threading.Event | None], None] | None = None,
+        handler_timeouts: Mapping[str, float] | float | None = None,
     ) -> None:
         """Instantiate and cache all registered handlers."""
 
         handler_start = time.perf_counter()
+        handler_timeouts = handler_timeouts if handler_timeouts is not None else self.handler_timeouts
+        self._background_handler_timeouts = handler_timeouts
+        if (self.warmup_lite and not self._explicit_hydration_request) or (
+            self._handler_bootstrap_flag
+            and handler_timeouts is not None
+            and not self._explicit_hydration_request
+        ):
+            self._mark_handler_deferral(
+                "warmup-lite" if self.warmup_lite else "bootstrap-fast",
+                schedule_background=True,
+            )
+            logger.info(
+                "shared_vector_service.handlers.deferred",
+                extra={
+                    "reason": "warmup-lite"
+                    if self.warmup_lite
+                    else "bootstrap-budget",
+                    "bootstrap_fast_active": self._handler_bootstrap_flag,
+                },
+            )
+            return
         try:
             self._check_budget_deadline(
                 "hydrate-handlers", handler_start, timeout, stop_event, budget_check
@@ -340,6 +380,7 @@ class SharedVectorService:
             handlers = load_handlers(
                 bootstrap_fast=self._handler_bootstrap_flag,
                 warmup_lite=bool(self.warmup_lite),
+                handler_timeouts=handler_timeouts,
                 stop_event=stop_event or self.stop_event,
                 budget_check=budget_check or self.budget_check,
             )
@@ -525,7 +566,10 @@ class SharedVectorService:
 
         def _runner() -> None:
             try:
-                self.hydrate_all_handlers(stop_event=self.stop_event)
+                self.hydrate_all_handlers(
+                    stop_event=self.stop_event,
+                    handler_timeouts=self._background_handler_timeouts,
+                )
             except Exception:  # pragma: no cover - best effort background hydration
                 logger.debug(
                     "background handler hydration failed", exc_info=True
