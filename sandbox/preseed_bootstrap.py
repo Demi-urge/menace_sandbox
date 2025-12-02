@@ -3207,6 +3207,7 @@ def initialize_bootstrap_context(
             bootstrap_fast_context=bootstrap_fast_context,
             warmup_lite_context=warmup_lite_context,
         )
+        non_blocking_presence_probe = False
         fast_presence_reason = None
         if bootstrap_fast_context:
             fast_presence_reason = "embedder_presence_bootstrap_fast"
@@ -3249,6 +3250,15 @@ def initialize_bootstrap_context(
         ]
         strict_timebox = min(timebox_candidates) if timebox_candidates else None
         warmup_summary: dict[str, Any] | None = None
+        minimum_presence_window = 5.0
+        if (
+            (embedder_stage_budget is not None and embedder_stage_budget < minimum_presence_window)
+            or (strict_timebox is not None and strict_timebox < minimum_presence_window)
+        ):
+            presence_only = True
+            budget_guarded = True
+            non_blocking_presence_probe = True
+            presence_reason = presence_reason or "embedder_preload_min_budget"
 
         def _defer_to_presence(
             reason: str,
@@ -3257,6 +3267,7 @@ def initialize_bootstrap_context(
             budget_window_missing: bool,
             forced_background: bool = False,
             strict_timebox: float | None = None,
+            non_blocking_probe: bool = False,
         ) -> Any:
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
@@ -3337,23 +3348,24 @@ def initialize_bootstrap_context(
                 )
                 probe_thread.start()
 
-                if stop_event is not None:
+                if not non_blocking_probe:
+                    if stop_event is not None:
 
-                    def _propagate_stop() -> None:
-                        stop_event.wait(probe_timeout)
-                        if stop_event.is_set():
-                            probe_stop_event.set()
+                        def _propagate_stop() -> None:
+                            stop_event.wait(probe_timeout)
+                            if stop_event.is_set():
+                                probe_stop_event.set()
 
-                    threading.Thread(
-                        target=_propagate_stop,
-                        name="embedder-presence-probe-stop",
-                        daemon=True,
-                    ).start()
+                        threading.Thread(
+                            target=_propagate_stop,
+                            name="embedder-presence-probe-stop",
+                            daemon=True,
+                        ).start()
 
-                probe_thread.join(probe_timeout)
-                if probe_thread.is_alive() or probe_stop_event.is_set():
-                    probe_timed_out = True
-                    probe_stop_event.set()
+                    probe_thread.join(probe_timeout)
+                    if probe_thread.is_alive() or probe_stop_event.is_set():
+                        probe_timed_out = True
+                        probe_stop_event.set()
 
             if warmup_summary is not None:
                 warmup_summary.setdefault("deferred", True)
@@ -3376,6 +3388,7 @@ def initialize_bootstrap_context(
                     "budget_window_missing": budget_window_missing,
                     "deferral_reason": reason,
                     "strict_timebox": strict_timebox,
+                    "background_full_warmup": True,
                 }
             )
 
@@ -3403,9 +3416,9 @@ def initialize_bootstrap_context(
                         stage_budget=embedder_stage_budget,
                         budget=shared_timeout_coordinator,
                         budget_label="vector_seeding",
-                        presence_probe=True,
+                        presence_probe=False,
                         presence_reason=reason,
-                        bootstrap_fast=bootstrap_fast_context,
+                        bootstrap_fast=False,
                         schedule_background=True,
                         bootstrap_deadline=bootstrap_deadline,
                     )
@@ -3437,6 +3450,7 @@ def initialize_bootstrap_context(
                 budget_window_missing=budget_window_missing,
                 forced_background=full_preload_requested,
                 strict_timebox=strict_timebox,
+                non_blocking_probe=non_blocking_presence_probe,
             )
 
         warmup_started = time.monotonic()
@@ -3503,6 +3517,7 @@ def initialize_bootstrap_context(
                     "background_enqueue_reason": reason,
                     "warmup_placeholder_reason": reason,
                     "deferral_reason": reason,
+                    "background_full_warmup": True,
                 }
             )
 
@@ -3530,9 +3545,9 @@ def initialize_bootstrap_context(
                         stage_budget=embedder_stage_budget,
                         budget=shared_timeout_coordinator,
                         budget_label="vector_seeding",
-                        presence_probe=True,
+                        presence_probe=False,
                         presence_reason=reason,
-                        bootstrap_fast=bootstrap_fast_context,
+                        bootstrap_fast=False,
                         schedule_background=True,
                         bootstrap_deadline=bootstrap_deadline,
                     )
@@ -3644,6 +3659,7 @@ def initialize_bootstrap_context(
                 budget_window_missing=budget_window_missing,
                 forced_background=full_preload_requested,
                 strict_timebox=strict_timebox,
+                non_blocking_probe=non_blocking_presence_probe,
             )
 
         LOGGER.info(
@@ -3657,56 +3673,103 @@ def initialize_bootstrap_context(
             },
         )
 
-        def _background_preload() -> None:
-            try:
-                _BOOTSTRAP_EMBEDDER_READY.wait()
-                if stop_event is not None and stop_event.is_set():
-                    return
-                _bootstrap_embedder(
-                    embedder_timeout,
-                    stop_event=stop_event,
-                    stage_budget=embedder_stage_budget,
-                    budget=shared_timeout_coordinator,
-                    budget_label="vector_seeding",
-                    bootstrap_fast=bootstrap_fast_context,
-                    schedule_background=True,
-                    bootstrap_deadline=bootstrap_deadline,
-                )
-            except Exception:  # pragma: no cover - background safety
-                LOGGER.debug("deferred embedder preload failed", exc_info=True)
+        def _build_guarded_stop_event() -> threading.Event:
+            combined_stop_event = threading.Event()
+            if stop_event is not None:
 
-        background_reason = "embedder_preload_background_after_ready"
-        job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {"placeholder": _BOOTSTRAP_PLACEHOLDER}
-        job_snapshot.update(
-            {
-                "deferred": True,
-                "ready_after_bootstrap": True,
-                "background_enqueue_reason": background_reason,
-                "warmup_placeholder_reason": job_snapshot.get(
-                    "warmup_placeholder_reason", background_reason
-                ),
-                "awaiting_full_preload": True,
-                "background_join_timeout": embedder_timeout,
-            }
+                def _mirror_stop() -> None:
+                    stop_event.wait()
+                    combined_stop_event.set()
+
+                threading.Thread(
+                    target=_mirror_stop,
+                    name="embedder-preload-stop-forwarder",
+                    daemon=True,
+                ).start()
+
+            return combined_stop_event
+
+        def _guarded_embedder_warmup(
+            *, join_timeout: float | None
+        ) -> tuple[Any, str | None]:
+            combined_stop_event = _build_guarded_stop_event()
+            warmup_result: dict[str, Any] = {}
+            warmup_exc: list[BaseException] = []
+
+            def _run_warmup() -> None:
+                try:
+                    warmup_result["result"] = _bootstrap_embedder(
+                        embedder_timeout,
+                        stop_event=combined_stop_event,
+                        stage_budget=embedder_stage_budget,
+                        budget=shared_timeout_coordinator,
+                        budget_label="vector_seeding",
+                        bootstrap_fast=bootstrap_fast_context,
+                        bootstrap_deadline=bootstrap_deadline,
+                    )
+                except BaseException as exc:  # pragma: no cover - defensive guard
+                    warmup_exc.append(exc)
+
+            warmup_thread = threading.Thread(
+                target=_run_warmup,
+                name="embedder-preload-warmup",
+                daemon=True,
+            )
+            warmup_thread.start()
+            warmup_thread.join(join_timeout)
+
+            if warmup_thread.is_alive():
+                combined_stop_event.set()
+                warmup_thread.join(0.05)
+                return None, "embedder_preload_timebox_expired"
+
+            if warmup_exc:
+                raise warmup_exc[0]
+
+            return warmup_result.get("result"), None
+
+        warmup_budget_remaining = None
+        if strict_timebox is not None:
+            warmup_budget_remaining = max(
+                0.0, strict_timebox - (time.monotonic() - warmup_started)
+            )
+        warmup_result, warmup_timeout_reason = _guarded_embedder_warmup(
+            join_timeout=warmup_budget_remaining
         )
-        job_snapshot.setdefault("placeholder_reason", background_reason)
-        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
-        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=background_reason)
-        _BOOTSTRAP_SCHEDULER.mark_partial(
-            "vector_seeding", reason=background_reason
+        if warmup_timeout_reason:
+            stage_controller.defer_step("embedder_preload", reason=warmup_timeout_reason)
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=warmup_timeout_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vector_seeding", reason=warmup_timeout_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{warmup_timeout_reason}"
+            )
+            job_snapshot = _schedule_background_preload(warmup_timeout_reason)
+            job_snapshot.update(
+                {
+                    "presence_only": False,
+                    "budget_guarded": True,
+                    "strict_timebox": strict_timebox,
+                    "background_full_warmup": True,
+                }
+            )
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            _set_component_state("vector_seeding", "deferred")
+            stage_controller.complete_step(
+                "embedder_preload", time.monotonic() - warmup_started
+            )
+            return warmup_result or _BOOTSTRAP_PLACEHOLDER
+
+        _BOOTSTRAP_EMBEDDER_JOB = (_BOOTSTRAP_EMBEDDER_JOB or {}) | {
+            "result": warmup_result
+        }
+        _BOOTSTRAP_SCHEDULER.mark_ready(
+            "vector_seeding", reason="embedder_preload_complete"
         )
-        _BOOTSTRAP_SCHEDULER.mark_partial(
-            "background_loops", reason=f"embedder_placeholder:{background_reason}"
-        )
-        _set_component_state("vector_seeding", "deferred")
-        background_future = _BOOTSTRAP_SCHEDULER.schedule_embedder_background(
-            _background_preload, reason=background_reason
-        )
-        if background_future is not None:
-            job_snapshot["background_future"] = background_future
-            job_snapshot["background_enqueued"] = True
-        stage_controller.defer_step("embedder_preload", reason=background_reason)
-        stage_controller.complete_step("embedder_preload", 0.0)
+        _set_component_state("vector_seeding", "ready")
+        stage_controller.complete_step("embedder_preload", time.monotonic() - warmup_started)
+        return warmup_result
 
     def _task_context_builder(_: dict[str, Any]) -> Any:
         _ensure_not_stopped(stop_event)
