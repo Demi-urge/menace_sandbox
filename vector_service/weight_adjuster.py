@@ -10,7 +10,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - PyYAML missing
     yaml = None  # type: ignore
 
-from vector_metrics_db import VectorMetricsDB, resolve_vector_bootstrap_flags
+from vector_metrics_db import (
+    VectorMetricsDB,
+    get_bootstrap_vector_metrics_db,
+    resolve_vector_bootstrap_flags,
+)
 from .roi_tags import RoiTag
 from dynamic_path_router import resolve_path
 
@@ -81,10 +85,9 @@ class WeightAdjuster:
             self.bootstrap_fast = resolved_fast
         if self.vector_metrics is None:
             try:
-                self.vector_metrics = VectorMetricsDB(
+                self.vector_metrics = get_bootstrap_vector_metrics_db(
                     bootstrap_fast=resolved_fast,
                     warmup=warmup_mode,
-                    read_only=bool(resolved_fast or warmup_mode),
                 )
             except Exception:
                 self.vector_metrics = None
