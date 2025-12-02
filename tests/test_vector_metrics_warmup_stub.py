@@ -73,3 +73,20 @@ def test_warmup_stub_skips_filesystem(tmp_path):
     assert vm.ready_probe() == str(path)
     assert not path.exists()
 
+
+def test_menace_bootstrap_uses_stub(monkeypatch, tmp_path):
+    path = tmp_path / "bootstrap.db"
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+
+    vm = vector_metrics_db.VectorMetricsDB(path)
+
+    weights = vm.get_db_weights()
+
+    assert vm._boot_stub_active is True
+    assert vm._conn is None
+    assert vm.router is None
+    assert vm._schema_defaults_initialized is False
+    assert weights == {}
+    assert not path.exists()
+

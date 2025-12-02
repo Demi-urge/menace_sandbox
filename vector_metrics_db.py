@@ -964,6 +964,8 @@ class VectorMetricsDB:
         """Return column names for ``table`` using non-blocking pragmas."""
 
         start = time.perf_counter()
+        if self._boot_stub_active:
+            return list(self._default_columns.get(table, []))
         self._initialize_schema_defaults()
         if self.bootstrap_fast:
             columns = self._schema_cache.get(table) or self._default_columns.get(
@@ -1032,6 +1034,9 @@ class VectorMetricsDB:
 
         default_weights = dict(default or self._cached_weights)
         if _noop_logging(self.bootstrap_fast, self._warmup_mode):
+            return default_weights
+
+        if self._boot_stub_active:
             return default_weights
 
         if self.router is None:
