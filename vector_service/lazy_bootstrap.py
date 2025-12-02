@@ -388,6 +388,9 @@ def warmup_vector_service(
     if warmup_probe is not None:
         probe_model = warmup_probe
 
+    bootstrap_hard_timebox: float | None = None
+    bootstrap_deferred_records: set[str] = set()
+
     if fast_vector_env and not force_heavy:
         if download_model:
             log.info("Fast vector warmup requested; skipping embedding model download")
@@ -401,6 +404,8 @@ def warmup_vector_service(
         run_vectorise = False
 
     model_probe_only = False
+    requested_handlers = bool(hydrate_handlers)
+    requested_vectorise = bool(run_vectorise)
     heavy_requested = any(
         flag
         for flag in (
@@ -436,19 +441,25 @@ def warmup_vector_service(
             deferred_bootstrap.add("model")
         if not probe_model:
             probe_model = True
-        if hydrate_handlers:
+        if requested_handlers:
             log.info("Bootstrap context detected; deferring handler hydration")
             hydrate_handlers = False
             deferred_bootstrap.add("handlers")
+            bootstrap_deferred_records.add("handlers")
         if start_scheduler:
             log.info("Bootstrap context detected; scheduler start deferred")
             start_scheduler = False
             deferred_bootstrap.add("scheduler")
-        if run_vectorise:
+            bootstrap_deferred_records.add("scheduler")
+        if requested_vectorise:
             deferred_bootstrap.add("vectorise")
+            bootstrap_deferred_records.add("vectorise")
         summary_flag = "deferred-bootstrap"
     else:
         summary_flag = "normal"
+
+    if bootstrap_context and not force_heavy:
+        bootstrap_hard_timebox = 3.0
 
     warmup_lite = bool(warmup_lite)
     lite_deferrals: set[str] = set()
@@ -499,9 +510,23 @@ def warmup_vector_service(
         background_candidates.update(deferred)
 
     def _record(stage: str, status: str) -> None:
+        current_status = summary.get(stage)
+        if current_status and current_status.startswith("deferred") and status.startswith("deferred"):
+            priority = {
+                "deferred-bootstrap": 5,
+                "deferred-ceiling": 4,
+                "deferred-timebox": 3,
+                "deferred-budget": 2,
+                "deferred-embedder": 2,
+                "deferred-lite": 1,
+                "deferred-no-budget": 1,
+            }
+            if priority.get(current_status, 0) >= priority.get(status, 0):
+                return
         summary[stage] = status
         if status.startswith("deferred"):
             recorded_deferred.add(stage)
+        memoised_results[stage] = status
         _WARMUP_STAGE_MEMO[stage] = status
         _persist_warmup_cache(log)
         try:
@@ -812,7 +837,13 @@ def warmup_vector_service(
             except Exception:  # pragma: no cover - advisory hook
                 log.debug("background hook failed", exc_info=True)
         if background_warmup and not hook_dispatched:
-            _launch_background_warmup(set(background_warmup))
+            if bootstrap_context and bootstrap_deferred_records and background_hook is None:
+                log.info(
+                    "Bootstrap deferrals recorded without background hook; skipping automatic warmup dispatch",
+                    extra={"event": "vector-warmup", "deferred": ",".join(sorted(background_warmup))},
+                )
+            else:
+                _launch_background_warmup(set(background_warmup))
 
         log.info(
             "vector warmup stages recorded", extra={"event": "vector-warmup", "warmup": summary}
@@ -1012,6 +1043,12 @@ def warmup_vector_service(
         provided_budget = initial_budget_remaining
 
     resolved_timeouts = _distribute_budget(resolved_timeouts, provided_budget)
+
+    if bootstrap_hard_timebox is not None:
+        for stage in ("handlers", "vectorise"):
+            timeout = resolved_timeouts.get(stage)
+            if timeout is None or timeout > bootstrap_hard_timebox:
+                resolved_timeouts[stage] = bootstrap_hard_timebox
     stage_budget_ceiling = {stage: resolved_timeouts.get(stage) for stage in base_timeouts}
     capped_stages: set[str] = {
         stage for stage, timeout in stage_budget_ceiling.items() if timeout is not None
@@ -1261,6 +1298,8 @@ def warmup_vector_service(
         not force_heavy
         and not stage_timeouts_supplied
         and not has_budget_signal
+        and not bootstrap_deferred_records
+        and not warmup_lite
     )
 
     if budget_inputs_missing:
@@ -1294,6 +1333,29 @@ def warmup_vector_service(
             download_model = False
             probe_model = False
         warmup_lite = True
+
+    def _apply_bootstrap_deferrals() -> None:
+        for stage in bootstrap_deferred_records:
+            if summary.get(stage):
+                continue
+            _record_background(stage, "deferred-bootstrap")
+            _hint_background_budget(stage, _effective_timeout(stage))
+            memoised_results[stage] = "deferred-bootstrap"
+            if stage == "handlers" and run_vectorise:
+                _record_background("vectorise", "deferred-bootstrap")
+                _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+                memoised_results["vectorise"] = "deferred-bootstrap"
+                background_warmup.add("vectorise")
+        if bootstrap_deferred_records:
+            background_warmup.update(bootstrap_deferred_records)
+            background_candidates.update(bootstrap_deferred_records)
+
+        if warmup_lite and not force_heavy and "vectorise" in lite_deferrals - bootstrap_deferred_records:
+            if not summary.get("vectorise"):
+                _record_background("vectorise", "deferred-lite")
+                _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+
+    _apply_bootstrap_deferrals()
 
     def _should_defer_upfront(
         stage: str, *, stage_timeout: float | None, stage_enabled: bool
