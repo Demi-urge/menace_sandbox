@@ -1908,10 +1908,10 @@ def _bootstrap_embedder(
     background_download_requested = schedule_background or force_placeholder
     background_budget_available = stage_budget is None or stage_budget > 0
 
-        def _enqueue_background_download() -> None:
-            if not background_budget_available:
-                LOGGER.debug("embedder background download blocked by stage budget")
-                return
+    def _enqueue_background_download() -> None:
+        if not background_budget_available:
+            LOGGER.debug("embedder background download blocked by stage budget")
+            return
 
         if presence_probe and not background_download_requested:
             LOGGER.debug(
@@ -2840,9 +2840,29 @@ def initialize_bootstrap_context(
 
     runner = _BootstrapDagRunner(logger=LOGGER)
     vector_bootstrap_hint_holder = {"vector": vector_bootstrap_hint}
+    embedder_stage_budget_hint = stage_controller.stage_budget(
+        step_name="embedder_preload"
+    )
+    embedder_warmup_lite_budget_guard = bool(
+        embedder_stage_budget_hint is not None and embedder_stage_budget_hint < 1.25
+    )
+    if embedder_warmup_lite_budget_guard and not warmup_lite_context:
+        LOGGER.info(
+            "forcing embedder warmup-lite path due to tight stage budget",
+            extra={
+                "event": "embedder-preload-budget-lite",
+                "stage_budget": embedder_stage_budget_hint,
+            },
+        )
+        warmup_lite_context = True
     embedder_preload_enabled = force_embedder_preload or not (
         bootstrap_fast_context and not force_vector_warmup
     )
+    embedder_preload_stage_blocked = bool(
+        embedder_stage_budget_hint is not None and embedder_stage_budget_hint <= 0.0
+    )
+    embedder_preload_skip_reason = None
+    embedder_preload_deferred = False
 
     def _task_embedder(_: dict[str, Any]) -> None:
         global _BOOTSTRAP_EMBEDDER_JOB
@@ -2928,7 +2948,7 @@ def initialize_bootstrap_context(
                     _bootstrap_embedder(
                         resolved_timeout,
                         stop_event=stop_event,
-                        stage_budget=None,
+                        stage_budget=embedder_stage_budget,
                         budget=shared_timeout_coordinator,
                         budget_label="vector_seeding",
                         presence_probe=True,
@@ -3056,11 +3076,37 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "background_loops", reason=f"embedder_placeholder:{presence_reason}"
             )
-            probe_timeout = min(max(embedder_timeout or 0.0, 0.0), 0.75) or 0.75
+            probe_timeout_candidates = [
+                candidate
+                for candidate in (
+                    embedder_timeout,
+                    embedder_stage_budget,
+                    embedder_stage_budget_hint,
+                    0.75,
+                )
+                if candidate is not None and candidate > 0
+            ]
+            probe_timeout = (
+                min(probe_timeout_candidates) if probe_timeout_candidates else 0.75
+            )
             probe_stop_event = threading.Event()
             presence_available = False
             probe_timed_out = False
-            background_join_timeout = min(max(embedder_timeout or 0.0, 0.0), 5.0) or 1.0
+            background_join_timeout_candidates = [
+                candidate
+                for candidate in (
+                    embedder_timeout,
+                    embedder_stage_budget,
+                    embedder_stage_budget_hint,
+                    5.0,
+                )
+                if candidate is not None and candidate > 0
+            ]
+            background_join_timeout = (
+                min(background_join_timeout_candidates)
+                if background_join_timeout_candidates
+                else 1.0
+            )
 
             try:
                 from menace_sandbox.governed_embeddings import embedder_cache_present
@@ -3142,7 +3188,7 @@ def initialize_bootstrap_context(
                     _bootstrap_embedder(
                         resolved_timeout,
                         stop_event=stop_event,
-                        stage_budget=None,
+                        stage_budget=embedder_stage_budget,
                         budget=shared_timeout_coordinator,
                         budget_label="vector_seeding",
                         presence_probe=True,
@@ -3313,6 +3359,30 @@ def initialize_bootstrap_context(
             )
             return cached_context
 
+    if embedder_preload_stage_blocked and embedder_preload_enabled and not force_embedder_preload:
+        embedder_preload_enabled = False
+        embedder_preload_skip_reason = "embedder_preload_stage_budget_exhausted"
+        LOGGER.info(
+            "embedder preload skipped due to exhausted stage budget",
+            extra={
+                "stage_budget": embedder_stage_budget_hint,
+                "event": embedder_preload_skip_reason,
+            },
+        )
+        embedder_preload_deferred = True
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+            reason=embedder_preload_skip_reason
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "vectorizer_preload", reason=embedder_preload_skip_reason
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{embedder_preload_skip_reason}"
+        )
+        stage_controller.defer_step(
+            "embedder_preload", reason=embedder_preload_skip_reason
+        )
+
     if embedder_preload_enabled:
         runner.add(
             _BootstrapTask(
@@ -3324,20 +3394,20 @@ def initialize_bootstrap_context(
             )
         )
     else:
+        skip_reason = embedder_preload_skip_reason or "embedder_preload_deferred_bootstrap_fast"
         LOGGER.info(
-            "bootstrap fast/lite detected; deferring embedder preload to lazy activation",
+            "embedder preload deferred; using lazy activation",
             extra={
                 "bootstrap_mode": bootstrap_mode_env,
                 "bootstrap_fast": bootstrap_fast_context,
                 "force_vector_warmup": force_vector_warmup,
+                "stage_budget": embedder_stage_budget_hint,
+                "skip_reason": skip_reason,
             },
         )
-        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
-            reason="embedder_preload_deferred_bootstrap_fast"
-        )
-        stage_controller.defer_step(
-            "embedder_preload", reason="embedder_preload_deferred_bootstrap_fast"
-        )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=skip_reason)
+        if not embedder_preload_deferred:
+            stage_controller.defer_step("embedder_preload", reason=skip_reason)
     runner.add(
         _BootstrapTask(
             name="context_builder",
