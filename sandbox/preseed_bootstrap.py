@@ -1569,6 +1569,7 @@ def _bootstrap_embedder(
     presence_probe: bool = False,
     presence_reason: str | None = None,
     bootstrap_fast: bool = False,
+    schedule_background: bool = False,
     force_placeholder: bool = False,
 ) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
@@ -1763,6 +1764,7 @@ def _bootstrap_embedder(
         job = _BOOTSTRAP_EMBEDDER_JOB or {}
         job["result"] = embedder_obj
         job["placeholder"] = job.get("placeholder", placeholder)
+        job["ready"] = not aborted or bool(placeholder_reason)
         if placeholder_reason:
             job["placeholder_reason"] = placeholder_reason
         if aborted:
@@ -1775,6 +1777,12 @@ def _bootstrap_embedder(
         job.pop("stop_event", None)
         _BOOTSTRAP_EMBEDDER_JOB = job
         _BOOTSTRAP_EMBEDDER_STARTED = False
+
+        if job.get("ready"):
+            _BOOTSTRAP_SCHEDULER.mark_ready(
+                "background_loops", reason=placeholder_reason or "embedder_ready"
+            )
+            _set_component_state("vector_seeding", "ready")
 
     def _record_abort(
         reason: str, *, deferred: bool = False, schedule_background: bool = False
@@ -1885,10 +1893,11 @@ def _bootstrap_embedder(
                 }
             )
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=probe_reason)
-        _BOOTSTRAP_SCHEDULER.mark_partial(
+        _BOOTSTRAP_SCHEDULER.mark_ready(
             "background_loops", reason=f"embedder_placeholder:{probe_reason}"
         )
-        if cache_available:
+        _set_component_state("vector_seeding", "ready")
+        if cache_available or schedule_background:
             _enqueue_background_download()
         _finalize_embedder_job(
             placeholder,
@@ -2410,13 +2419,8 @@ def initialize_bootstrap_context(
         budget_constrained = embedder_stage_budget is not None and embedder_stage_budget < 5.0
         force_full_preload = force_vector_warmup or force_embedder_preload
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
-        presence_only = not force_full_preload
-        skip_heavy = (
-            gate_constrained
-            or budget_constrained
-            or embedder_deferred
-            or (bootstrap_fast_context and not force_full_preload)
-        )
+        presence_first = bootstrap_fast_context or not force_full_preload
+        skip_heavy = gate_constrained or budget_constrained or embedder_deferred
         presence_reason = embedder_deferral_reason or "embedder_presence_probe"
         if gate_constrained:
             presence_reason = "embedder_preload_guarded"
@@ -2425,7 +2429,7 @@ def initialize_bootstrap_context(
         elif bootstrap_fast_context and not force_full_preload:
             presence_reason = "bootstrap_fast_embedder_probe"
 
-        if presence_only or skip_heavy:
+        if presence_first or skip_heavy:
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
                 extra={
@@ -2451,7 +2455,9 @@ def initialize_bootstrap_context(
                 presence_probe=True,
                 presence_reason=presence_reason,
                 bootstrap_fast=bootstrap_fast_context,
+                schedule_background=True,
             )
+            stage_controller.complete_step("embedder_preload", 0.0)
             return
 
         _run_with_timeout(
