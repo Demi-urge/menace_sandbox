@@ -233,7 +233,9 @@ class VectorMetric:
     ts: str = datetime.utcnow().isoformat()
 
 
-def default_vector_metrics_path(*, ensure_exists: bool = True) -> Path:
+def default_vector_metrics_path(
+    *, ensure_exists: bool = True, bootstrap_read_only: bool | None = None
+) -> Path:
     """Return the default location for the vector metrics database.
 
     The original implementation relied on :func:`resolve_path` which raises a
@@ -245,24 +247,40 @@ def default_vector_metrics_path(*, ensure_exists: bool = True) -> Path:
     repository when it is missing.
 
     When ``ensure_exists`` is ``True`` the parent directory is created and an
-    empty file is touched so subsequent :func:`resolve_path` calls succeed.
-    ``sqlite3`` will initialise the actual database schema on first use.
-    When ``ensure_exists`` is ``False`` no filesystem writes are performed.
+    empty file is touched so subsequent :func:`resolve_path` calls succeed once
+    persistence is permitted.  ``sqlite3`` will initialise the actual database
+    schema on first use.  When ``ensure_exists`` is ``False`` no filesystem
+    writes are performed.
     """
 
-    try:
-        path = resolve_path("vector_metrics.db")
-    except FileNotFoundError:
+    if bootstrap_read_only is None:
+        (
+            resolved_bootstrap_fast,
+            resolved_warmup,
+            env_requested,
+            bootstrap_context,
+        ) = resolve_vector_bootstrap_flags()
+        bootstrap_read_only = bool(
+            resolved_bootstrap_fast or resolved_warmup or env_requested or bootstrap_context
+        )
+
+    allow_fs_changes = bool(ensure_exists and not bootstrap_read_only)
+    path: Path | None = None
+
+    if not bootstrap_read_only:
+        try:
+            path = resolve_path("vector_metrics.db")
+        except FileNotFoundError:
+            path = None
+
+    if path is None:
         path = (get_project_root() / "vector_metrics.db").resolve()
-        if ensure_exists:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if not path.exists():
-                path.touch()
-    else:
-        if ensure_exists:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if not path.exists():
-                path.touch()
+
+    if allow_fs_changes:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.touch()
+
     return path
 
 
@@ -387,7 +405,9 @@ class VectorMetricsDB:
         self._configured_path = Path(path)
         self._resolved_path: Path | None = None
         self._default_path: Path | None = None
-        eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
+        eager_resolve = not (
+            self.bootstrap_fast or self._warmup_mode or self._boot_stub_active
+        )
         if eager_resolve and not self._boot_stub_active:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path, ensure_exists=eager_resolve
@@ -631,7 +651,10 @@ class VectorMetricsDB:
         if self._boot_stub_active and self._warmup_mode:
             requested = Path(path).expanduser()
             return requested, requested
-        default_path = default_vector_metrics_path(ensure_exists=ensure_exists)
+        default_path = default_vector_metrics_path(
+            ensure_exists=ensure_exists,
+            bootstrap_read_only=self._boot_stub_active,
+        )
         requested = Path(path).expanduser()
         if str(requested.as_posix()) == "vector_metrics.db":
             p = default_path
