@@ -180,6 +180,7 @@ def warmup_vector_service(
     """
 
     log = logger or logging.getLogger(__name__)
+    stage_timeouts_supplied = stage_timeouts is not None
     env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"))
     if env_budget is None:
         env_budget = _coerce_timeout(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT"))
@@ -292,6 +293,23 @@ def warmup_vector_service(
         hydrate_handlers = False
         start_scheduler = False
         run_vectorise = False
+
+    no_timeout_deferrals: set[str] = set()
+    if not stage_timeouts_supplied and not force_heavy:
+        no_timeout_deferrals.update({"handlers", "scheduler", "vectorise"})
+        if hydrate_handlers or start_scheduler or run_vectorise:
+            log.info(
+                "Stage timeouts not provided; deferring heavy vector warmup (force_heavy to override)",
+                extra={
+                    "hydrate_handlers": hydrate_handlers,
+                    "start_scheduler": start_scheduler,
+                    "run_vectorise": run_vectorise,
+                },
+            )
+        hydrate_handlers = False
+        start_scheduler = False
+        run_vectorise = False
+    lite_deferrals.update(no_timeout_deferrals)
 
     summary: dict[str, str] = {"bootstrap": summary_flag, "warmup_lite": str(warmup_lite)}
     deferred = set(deferred_stages or ()) | deferred_bootstrap | lite_deferrals
@@ -477,7 +495,7 @@ def warmup_vector_service(
         "vectorise": 5.0,
     }
     base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
-    if bootstrap_context or bootstrap_fast or (stage_timeouts is None and check_budget is None):
+    if bootstrap_context or bootstrap_fast or not stage_timeouts_supplied:
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     provided_budget = _coerce_timeout(stage_timeouts) if not isinstance(stage_timeouts, Mapping) else None
