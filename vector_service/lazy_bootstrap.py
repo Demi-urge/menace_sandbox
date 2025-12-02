@@ -32,6 +32,7 @@ _MODEL_READY = False
 _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
 _WARMUP_STAGE_MEMO: dict[str, str] = {}
+_WARMUP_STAGE_META: dict[str, dict[str, object]] = {}
 _WARMUP_CACHE_LOADED = False
 _PROCESS_START = int(time.time())
 
@@ -62,8 +63,8 @@ def _coerce_timeout(value: object) -> float | None:
 
 def _warmup_cache_path() -> Path:
     base_dir = os.getenv("VECTOR_WARMUP_CACHE_DIR", "").strip()
-    base = Path(base_dir) if base_dir else Path(tempfile.gettempdir())
-    return base / f"vector_warmup_{os.getpid()}_{_PROCESS_START}.json"
+    base = Path(base_dir) if base_dir else Path(tempfile.gettempdir()) / "menace"
+    return base / "vector_warmup_cache.json"
 
 
 def _load_warmup_cache(logger: logging.Logger) -> None:
@@ -84,18 +85,42 @@ def _load_warmup_cache(logger: logging.Logger) -> None:
     except Exception:  # pragma: no cover - advisory cache
         logger.debug("Invalid warmup cache content", exc_info=True)
         return
+    if isinstance(cached, dict) and "stages" in cached:
+        cached = cached.get("stages")
     if not isinstance(cached, dict):
         return
-    for stage, status in cached.items():
+    for stage, payload in cached.items():
+        if isinstance(payload, str):
+            status = payload
+            meta: dict[str, object] = {"status": status}
+        elif isinstance(payload, dict):
+            status = payload.get("status") if isinstance(payload.get("status"), str) else None
+            meta = dict(payload)
+        else:
+            continue
         if isinstance(stage, str) and isinstance(status, str):
             _WARMUP_STAGE_MEMO.setdefault(stage, status)
+            _WARMUP_STAGE_META.setdefault(stage, meta)
 
 
 def _persist_warmup_cache(logger: logging.Logger) -> None:
     cache_path = _warmup_cache_path()
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(_WARMUP_STAGE_MEMO))
+        snapshot: dict[str, dict[str, object]] = {}
+        now = time.time()
+        for stage, status in _WARMUP_STAGE_MEMO.items():
+            meta = dict(_WARMUP_STAGE_META.get(stage, {}))
+            meta.setdefault("recorded_at", now)
+            meta["updated_at"] = now
+            meta["status"] = status
+            meta["source_pid"] = os.getpid()
+            snapshot[stage] = meta
+        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        tmp_path.write_text(
+            json.dumps({"version": 1, "stages": snapshot, "persisted_at": now})
+        )
+        os.replace(tmp_path, cache_path)
     except Exception:  # pragma: no cover - advisory cache
         logger.debug("Failed persisting warmup cache", exc_info=True)
 
@@ -104,6 +129,7 @@ def _clear_warmup_cache() -> None:
     global _WARMUP_CACHE_LOADED
     _WARMUP_CACHE_LOADED = False
     _WARMUP_STAGE_MEMO.clear()
+    _WARMUP_STAGE_META.clear()
     cache_path = _warmup_cache_path()
     try:
         cache_path.unlink()
@@ -526,6 +552,12 @@ def warmup_vector_service(
         summary[stage] = status
         if status.startswith("deferred"):
             recorded_deferred.add(stage)
+        now = time.time()
+        meta = _WARMUP_STAGE_META.setdefault(stage, {})
+        meta.setdefault("recorded_at", now)
+        meta["updated_at"] = now
+        meta["status"] = status
+        meta["source_pid"] = os.getpid()
         memoised_results[stage] = status
         _WARMUP_STAGE_MEMO[stage] = status
         _persist_warmup_cache(log)
