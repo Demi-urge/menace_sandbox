@@ -498,6 +498,8 @@ def warmup_vector_service(
         check_budget = _default_check_budget if env_budget is not None else None
     if stage_timeouts is None and env_budget is not None:
         stage_timeouts = env_budget
+    if stage_timeouts is None:
+        stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     bootstrap_context = any(
         os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -1475,15 +1477,21 @@ def warmup_vector_service(
         value is not None for value in (provided_budget, initial_budget_remaining, env_budget)
     ) or not budget_callback_missing or not check_budget_missing
 
-    budget_inputs_missing = (
+    legacy_budget_missing = (
         not force_heavy
         and not stage_timeouts_supplied
         and not has_budget_signal
-        and not bootstrap_deferred_records
-        and not warmup_lite
     )
 
-    if budget_inputs_missing:
+    heavy_without_budget = legacy_budget_missing and (
+        download_model
+        or hydrate_handlers
+        or start_scheduler
+        or run_vectorise
+        or not warmup_lite
+    )
+
+    if heavy_without_budget:
         status = "deferred-no-budget"
         budget_gate_reason = status
         background_stage_timeouts = background_stage_timeouts or {
@@ -1553,16 +1561,26 @@ def warmup_vector_service(
 
         available_budget = _stage_budget_window(stage_timeout)
         estimate = base_stage_cost.get(stage)
+        budget_hint = _available_budget_hint(stage, stage_timeout)
 
         if warmup_lite:
             _record_background(stage, "deferred-budget")
             log.info("Warmup-lite deferring %s prior to budget guard", stage)
             return True
 
-        if estimate is None or available_budget is None:
+        if estimate is None:
             return False
 
-        if available_budget >= estimate:
+        if available_budget is None:
+            _record_background(stage, "deferred-no-budget")
+            _hint_background_budget(stage, stage_timeout)
+            budget_gate_reason = budget_gate_reason or "deferred-no-budget"
+            log.info("No budget hints provided; deferring %s to background warmup", stage)
+            return True
+
+        remaining_window = budget_hint if budget_hint is not None else available_budget
+
+        if remaining_window is None or remaining_window >= estimate:
             return False
 
         status = "deferred-budget"
