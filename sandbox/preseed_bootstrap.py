@@ -1668,12 +1668,6 @@ def _bootstrap_embedder(
         LOGGER.debug("governed_embeddings unavailable; skipping embedder bootstrap", exc_info=True)
         return
 
-    if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("thread"):
-        existing = _BOOTSTRAP_EMBEDDER_JOB["thread"]
-        if existing.is_alive():
-            LOGGER.info("embedder warmup already running; returning placeholder")
-            return _BOOTSTRAP_EMBEDDER_JOB.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
-
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     timeout_cap = apply_bootstrap_timeout_caps(stage_budget)
@@ -1736,6 +1730,44 @@ def _bootstrap_embedder(
         presence_deadline = cap_deadline if presence_deadline is None else min(
             presence_deadline, cap_deadline
         )
+
+    if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("thread"):
+        existing = _BOOTSTRAP_EMBEDDER_JOB["thread"]
+        existing_stop_event = _BOOTSTRAP_EMBEDDER_JOB.get("stop_event")
+        if existing.is_alive():
+            cancel_caps = [
+                candidate
+                for candidate in (
+                    stage_budget if stage_budget and stage_budget > 0 else None,
+                    warmup_cap,
+                    effective_timeout_cap,
+                )
+                if candidate is not None and candidate > 0
+            ]
+            cancel_timeout = min(cancel_caps) if cancel_caps else 0.0
+            LOGGER.info(
+                "embedder warmup already running; cancelling stalled download",
+                extra={
+                    "cancel_timeout": cancel_timeout,
+                    "stage_budget": stage_budget,
+                    "warmup_cap": warmup_cap,
+                },
+            )
+            try:
+                cancel_embedder_initialisation(
+                    existing_stop_event or embedder_stop_event,
+                    reason="embedder_preexisting_download_cancelled",
+                    join_timeout=cancel_timeout,
+                )
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("failed to cancel running embedder warmup", exc_info=True)
+            try:
+                existing.join(cancel_timeout)
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug("join on stalled embedder warmup failed", exc_info=True)
+            _BOOTSTRAP_EMBEDDER_JOB = None
+            _BOOTSTRAP_EMBEDDER_STARTED = False
+            return placeholder
     _BOOTSTRAP_EMBEDDER_JOB = {
         "thread": None,
         "stop_event": embedder_stop_event,
@@ -2680,58 +2712,6 @@ def initialize_bootstrap_context(
                     "warmup_placeholder_reason": presence_reason,
                 }
             )
-
-            def _queue_deferred_embedder_warmup() -> None:
-                _BOOTSTRAP_EMBEDDER_READY.wait(background_join_timeout)
-                if stop_event is not None and stop_event.is_set():
-                    LOGGER.info(
-                        "skipping deferred embedder warmup due to stop signal",
-                        extra={"presence_reason": presence_reason},
-                    )
-                    return
-                background_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
-                    "embedder_preload_background", vector_heavy=True, heavy=True
-                )
-                background_budget = _BOOTSTRAP_SCHEDULER.default_budget(
-                    vector_heavy=True
-                )
-                background_budget_guarded = (
-                    embedder_stage_budget is not None and embedder_stage_budget < 5.0
-                ) and (background_budget is None or background_budget < 5.0)
-                if background_gate.get("contention") or background_budget_guarded or fast_or_lite:
-                    LOGGER.info(
-                        "embedder preload deferred after bootstrap",
-                        extra={
-                            "gate": background_gate,
-                            "background_budget": background_budget,
-                            "fast_or_lite": fast_or_lite,
-                            "presence_reason": presence_reason,
-                        },
-                    )
-                    _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
-                        reason=presence_reason
-                    )
-                    return
-                _run_with_timeout(
-                    _bootstrap_embedder,
-                    timeout=embedder_timeout,
-                    bootstrap_deadline=bootstrap_deadline,
-                    description="bootstrap_embedder_deferred",
-                    abort_on_timeout=False,
-                    heavy_bootstrap=True,
-                    budget=shared_timeout_coordinator,
-                    budget_label="vector_seeding",
-                    stop_event=stop_event,
-                    stage_budget=background_budget,
-                    schedule_background=True,
-                )
-
-            if not job_snapshot.get("warmup_scheduled"):
-                job_snapshot["warmup_scheduled"] = True
-                job_snapshot["background_enqueued"] = True
-                job_snapshot["background_future"] = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(
-                    _queue_deferred_embedder_warmup
-                )
 
             _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
             _set_component_state("vector_seeding", "deferred")
