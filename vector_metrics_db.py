@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Mapping, Sequence
+from typing import Any, Dict, List, Tuple, Mapping, Sequence, TYPE_CHECKING
 import threading
 import contextlib
 import json
@@ -14,13 +14,9 @@ import os
 import time
 import sqlite3
 
-from db_router import (
-    GLOBAL_ROUTER,
-    LOCAL_TABLES,
-    init_db_router,
-    set_audit_bootstrap_safe_default,
-)
-from dynamic_path_router import resolve_path, get_project_root
+if TYPE_CHECKING:  # pragma: no cover - import hints only
+    import db_router as _db_router_module
+    import dynamic_path_router as _dynamic_path_router
 
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
@@ -35,6 +31,27 @@ _RETRIEVER_REGRET_RATE = None
 
 
 logger = logging.getLogger(__name__)
+
+_DB_ROUTER_MODULE: "_db_router_module | None" = None
+_DYNAMIC_PATH_ROUTER: "_dynamic_path_router | None" = None
+
+
+def _db_router():
+    global _DB_ROUTER_MODULE
+    if _DB_ROUTER_MODULE is None:  # pragma: no cover - lazy import
+        import db_router as db_router_module
+
+        _DB_ROUTER_MODULE = db_router_module
+    return _DB_ROUTER_MODULE
+
+
+def _dynamic_path_router():
+    global _DYNAMIC_PATH_ROUTER
+    if _DYNAMIC_PATH_ROUTER is None:  # pragma: no cover - lazy import
+        import dynamic_path_router as dynamic_path_router_module
+
+        _DYNAMIC_PATH_ROUTER = dynamic_path_router_module
+    return _DYNAMIC_PATH_ROUTER
 
 
 def _ensure_prometheus_objects() -> tuple:
@@ -269,12 +286,12 @@ def default_vector_metrics_path(
 
     if not bootstrap_read_only:
         try:
-            path = resolve_path("vector_metrics.db")
+            path = _dynamic_path_router().resolve_path("vector_metrics.db")
         except FileNotFoundError:
             path = None
 
     if path is None:
-        path = (get_project_root() / "vector_metrics.db").resolve()
+        path = (_dynamic_path_router().get_project_root() / "vector_metrics.db").resolve()
 
     if allow_fs_changes:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -752,10 +769,12 @@ class VectorMetricsDB:
             ),
         )
 
-        LOCAL_TABLES.add("vector_metrics")
+        router_mod = _db_router()
+
+        router_mod.LOCAL_TABLES.add("vector_metrics")
 
         if self._bootstrap_safe:
-            set_audit_bootstrap_safe_default(True)
+            router_mod.set_audit_bootstrap_safe_default(True)
 
         if self._resolved_path is None or self._default_path is None:
             self._resolved_path, self._default_path = self._resolve_requested_path(
@@ -775,14 +794,17 @@ class VectorMetricsDB:
             ),
         )
 
-        if GLOBAL_ROUTER is not None and self._resolved_path == self._default_path:
-            self.router = GLOBAL_ROUTER
+        if (
+            router_mod.GLOBAL_ROUTER is not None
+            and self._resolved_path == self._default_path
+        ):
+            self.router = router_mod.GLOBAL_ROUTER
             using_global_router = True
             if self._bootstrap_safe:
                 self.router.local_conn.audit_bootstrap_safe = True
                 self.router.shared_conn.audit_bootstrap_safe = True
         else:
-            self.router = init_db_router(
+            self.router = router_mod.init_db_router(
                 "vector_metrics_db",
                 str(self._resolved_path),
                 str(self._resolved_path),
