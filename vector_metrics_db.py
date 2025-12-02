@@ -205,8 +205,12 @@ class _BootstrapVectorMetricsStub:
         delegate = self._activate(reason=reason)
         if isinstance(delegate, VectorMetricsDB):
             try:  # pragma: no cover - best effort promotion
-                delegate.end_warmup(reason=reason)
-                delegate.activate_persistence(reason=reason)
+                if reason == "bootstrap_ready":
+                    delegate.end_warmup(reason=reason, activate=False)
+                    delegate.activate_on_first_write()
+                else:
+                    delegate.end_warmup(reason=reason)
+                    delegate.activate_persistence(reason=reason)
             except Exception:
                 logger.debug(
                     "vector metrics stub promotion failed", exc_info=True
@@ -1160,7 +1164,7 @@ class VectorMetricsDB:
             self._conn = self._stub_conn
             return
 
-        eager_resolve = self._default_ensure_exists
+        eager_resolve = bool(ensure_exists)
         if eager_resolve:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path, ensure_exists=eager_resolve
@@ -1240,7 +1244,10 @@ class VectorMetricsDB:
                 )
                 return
             try:
-                self._mark_warmup_complete(reason="bootstrap_ready")
+                self.activate_on_first_write()
+                self._mark_warmup_complete(
+                    reason="bootstrap_ready", activate=False
+                )
                 if self._warmup_mode and not self._warmup_complete.is_set():
                     logger.info(
                         "vector_metrics_db.bootstrap.persistence_deferred",
@@ -1253,10 +1260,9 @@ class VectorMetricsDB:
                         ),
                     )
                     self._warmup_complete.wait()
-                self.activate_persistence(reason="bootstrap_ready")
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
-                    "vector metrics persistence activation failed", exc_info=True
+                    "vector metrics readiness gate handling failed", exc_info=True
                 )
 
         threading.Thread(
@@ -1328,7 +1334,7 @@ class VectorMetricsDB:
             extra=_timestamp_payload(init_start, resolved_path=str(self._resolved_path)),
         )
 
-    def _mark_warmup_complete(self, *, reason: str) -> None:
+    def _mark_warmup_complete(self, *, reason: str, activate: bool = True) -> None:
         if self._warmup_complete.is_set():
             return
         self._warmup_complete.set()
@@ -1345,13 +1351,7 @@ class VectorMetricsDB:
         self._warmup_mode = False
         self.bootstrap_fast = False
 
-    def end_warmup(self, *, reason: str = "warmup_complete") -> None:
-        """Mark warmup as complete and trigger pending activation."""
-
-        if self._warmup_complete.is_set():
-            return
-        self._mark_warmup_complete(reason=reason)
-        if self._persistence_activation_pending:
+        if self._persistence_activation_pending and activate:
             logger.info(
                 "vector_metrics_db.bootstrap.persistence_retry",
                 extra=_timestamp_payload(
@@ -1363,6 +1363,15 @@ class VectorMetricsDB:
                 ),
             )
             self.activate_persistence(reason=reason)
+
+    def end_warmup(
+        self, *, reason: str = "warmup_complete", activate: bool = True
+    ) -> None:
+        """Mark warmup as complete and trigger pending activation."""
+
+        if self._warmup_complete.is_set():
+            return
+        self._mark_warmup_complete(reason=reason, activate=activate)
 
     def _should_skip_logging(self) -> bool:
         if not self._boot_stub_active:

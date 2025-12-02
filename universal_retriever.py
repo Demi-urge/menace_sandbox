@@ -184,6 +184,10 @@ def _vector_metrics(*, for_write: bool = False) -> "VectorMetricsDB | None":
     :meth:`VectorMetricsDB.activate_persistence` once bootstrap readiness is
     confirmed.  Outside bootstrap flows we arm ``activate_on_first_write`` so
     the SQLite database is created only when the first metric is recorded.
+
+    When called while warmup/bootstrapping is active the bootstrap stub is
+    returned even for write paths so callers can buffer metrics without
+    triggering SQLite setup until readiness is signalled.
     """
 
     global _VEC_METRICS
@@ -214,21 +218,6 @@ def _vector_metrics(*, for_write: bool = False) -> "VectorMetricsDB | None":
         )
         if not _VECTOR_WARMUP_STUB:
             vm.activate_on_first_write()
-        elif for_write and hasattr(vm, "persistence_probe"):
-            if not vm.persistence_probe():
-                try:
-                    vm._log_deferred_activation(  # type: ignore[attr-defined]
-                        reason="warmup_lite_deferred"
-                    )
-                except Exception:
-                    logger.info(
-                        "universal_retriever.vector_metrics.deferred",
-                        extra={
-                            "bootstrap_fast": _VECTOR_BOOTSTRAP_FAST,
-                            "warmup_mode": _VECTOR_WARMUP_STUB,
-                        },
-                    )
-                return None
 
         _VEC_METRICS = vm
 
