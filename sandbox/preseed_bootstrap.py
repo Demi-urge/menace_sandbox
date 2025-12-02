@@ -3253,6 +3253,9 @@ def initialize_bootstrap_context(
             if bootstrap_deadline is not None
             else None
         )
+        coordinator_remaining_budget = getattr(
+            shared_timeout_coordinator, "remaining_budget", None
+        )
         bootstrap_context_active = False
         try:
             bootstrap_context_active = bool(
@@ -3355,6 +3358,7 @@ def initialize_bootstrap_context(
                 embedder_warmup_cap,
                 embedder_stage_deadline_remaining,
                 remaining_bootstrap_window,
+                coordinator_remaining_budget,
             )
             if candidate is not None and candidate > 0
         ]
@@ -3644,6 +3648,28 @@ def initialize_bootstrap_context(
             return _BOOTSTRAP_PLACEHOLDER
 
         timebox_insufficient = strict_timebox is None or strict_timebox < estimated_preload_cost
+        if (
+            coordinator_remaining_budget is not None
+            and coordinator_remaining_budget <= 0
+        ):
+            deadline_reason = embedder_deferral_reason or "embedder_bootstrap_budget_exhausted"
+            warmup_summary = warmup_summary or {}
+            warmup_summary.update(
+                {
+                    "deferred": True,
+                    "deferred_reason": deadline_reason,
+                    "deferral_reason": deadline_reason,
+                    "strict_timebox": strict_timebox,
+                }
+            )
+            return _defer_to_presence(
+                deadline_reason,
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=full_preload_requested,
+                strict_timebox=0.0 if strict_timebox is None else strict_timebox,
+                non_blocking_probe=True,
+            )
         if embedder_stage_deadline_remaining is not None and embedder_stage_deadline_remaining <= 0:
             deadline_reason = embedder_deferral_reason or "embedder_stage_deadline_elapsed"
             warmup_summary = warmup_summary or {}
@@ -3682,6 +3708,36 @@ def initialize_bootstrap_context(
                 strict_timebox=0.0 if strict_timebox is None else strict_timebox,
                 non_blocking_probe=True,
             )
+        budget_shortfall_candidates: list[tuple[float, str]] = []
+        for candidate, reason in (
+            (embedder_stage_deadline_remaining, "embedder_stage_budget_shortfall"),
+            (remaining_bootstrap_window, "embedder_bootstrap_budget_shortfall"),
+            (coordinator_remaining_budget, "embedder_bootstrap_budget_shortfall"),
+        ):
+            if candidate is not None and candidate >= 0:
+                budget_shortfall_candidates.append((candidate, reason))
+        if budget_shortfall_candidates:
+            remaining_budget, shortfall_reason = min(
+                budget_shortfall_candidates, key=lambda item: item[0]
+            )
+            if remaining_budget < estimated_preload_cost:
+                warmup_summary = warmup_summary or {}
+                warmup_summary.update(
+                    {
+                        "deferred": True,
+                        "deferred_reason": shortfall_reason,
+                        "deferral_reason": shortfall_reason,
+                        "strict_timebox": strict_timebox,
+                    }
+                )
+                return _defer_to_presence(
+                    shortfall_reason,
+                    budget_guarded=True,
+                    budget_window_missing=budget_window_missing,
+                    forced_background=full_preload_requested,
+                    strict_timebox=remaining_budget,
+                    non_blocking_probe=True,
+                )
         if timebox_insufficient:
             presence_reason = (
                 "embedder_preload_timebox_missing"
@@ -3776,19 +3832,19 @@ def initialize_bootstrap_context(
                 reason: str, *, strict_timebox: float | None = None
             ) -> dict[str, Any]:
                 job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
-            job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
-            job_snapshot.setdefault("placeholder_reason", reason)
-            job_snapshot.update(
-                {
-                    "deferred": True,
-                    "ready_after_bootstrap": True,
-                    "background_enqueue_reason": reason,
-                    "warmup_placeholder_reason": reason,
-                    "deferral_reason": reason,
-                    "background_full_warmup": True,
-                    "strict_timebox": strict_timebox,
-                }
-            )
+                job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                job_snapshot.setdefault("placeholder_reason", reason)
+                job_snapshot.update(
+                    {
+                        "deferred": True,
+                        "ready_after_bootstrap": True,
+                        "background_enqueue_reason": reason,
+                        "warmup_placeholder_reason": reason,
+                        "deferral_reason": reason,
+                        "background_full_warmup": True,
+                        "strict_timebox": strict_timebox,
+                    }
+                )
 
             def _background_preload() -> None:
                 try:
@@ -4081,6 +4137,13 @@ def initialize_bootstrap_context(
             now = time.monotonic()
             if strict_timebox is not None:
                 deadlines.append((now + strict_timebox, "embedder_preload_timebox_expired"))
+            if coordinator_remaining_budget is not None:
+                deadlines.append(
+                    (
+                        now + max(coordinator_remaining_budget, 0.0),
+                        "embedder_bootstrap_budget_exhausted",
+                    )
+                )
             if embedder_stage_budget_hint is not None and embedder_stage_budget_hint > 0:
                 deadlines.append(
                     (
