@@ -720,19 +720,36 @@ def get_shared_vector_metrics_db(
 
 
 def activate_shared_vector_metrics_db(
-    *, reason: str = "warmup_complete"
+    *, reason: str = "warmup_complete", post_warmup: bool = False
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Activate the shared vector metrics database after warmup."""
 
-    vm = get_shared_vector_metrics_db(
-        bootstrap_fast=False,
-        warmup=False,
-        ensure_exists=True,
-        read_only=False,
+    (
+        resolved_fast,
+        resolved_warmup,
+        env_requested,
+        bootstrap_env,
+    ) = resolve_vector_bootstrap_flags()
+
+    bootstrap_context = bool(
+        resolved_fast or resolved_warmup or env_requested or bootstrap_env
     )
+
+    vm = get_shared_vector_metrics_db(
+        bootstrap_fast=resolved_fast,
+        warmup=resolved_warmup if bootstrap_context else False,
+        ensure_exists=None if bootstrap_context else True,
+        read_only=None if bootstrap_context else False,
+    )
+
     if isinstance(vm, _BootstrapVectorMetricsStub):
+        vm.register_readiness_hook()
+        allow_activation = bool(post_warmup or reason == "bootstrap_ready")
+        if not allow_activation:
+            return vm
         vm.configure_activation(warmup=False, ensure_exists=True, read_only=False)
         vm = vm._activate()
+
     if isinstance(vm, VectorMetricsDB):
         vm.end_warmup(reason=reason)
         vm.activate_persistence(reason=reason)
