@@ -37,10 +37,16 @@ def test_shared_db_stub_defers_activation(monkeypatch):
 
     vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
 
-    assert vector_metrics_db._VECTOR_DB_INSTANCE is not None
+    assert vector_metrics_db._VECTOR_DB_INSTANCE is vm
+    assert calls == []
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(
+        post_warmup=True
+    )
+
+    assert isinstance(activated, DummyVectorDB)
+    assert vector_metrics_db._VECTOR_DB_INSTANCE is activated
     assert calls[0][0] == "init"
+    activated.log_embedding("default", tokens=1, wall_time_ms=1.0)
     assert calls[1][0] == "log_embedding"
-    assert getattr(vector_metrics_db._VECTOR_DB_INSTANCE, "weights", {}) == {
-        "alpha": 1.0,
-        "beta": 1.0,
-    }
+    assert getattr(activated, "weights", {}) == {"alpha": 1.0, "beta": 1.0}

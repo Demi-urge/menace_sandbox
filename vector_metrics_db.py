@@ -82,6 +82,10 @@ class _BootstrapVectorMetricsStub:
         self._activate_on_first_write = False
         self._deferred_summary_emitted = False
         self._pending_weights: dict[str, float] = {}
+        self._activation_blocked = bool(
+            self._activation_kwargs.get("bootstrap_fast")
+            or self._activation_kwargs.get("warmup")
+        )
         logger.info(
             "vector_metrics_db.bootstrap.stub_created",
             extra={
@@ -139,6 +143,10 @@ class _BootstrapVectorMetricsStub:
                 self._activation_kwargs["ensure_exists"] = ensure_exists
         if read_only is not None:
             self._activation_kwargs["read_only"] = read_only
+        self._activation_blocked = bool(
+            self._activation_kwargs.get("bootstrap_fast")
+            or self._activation_kwargs.get("warmup")
+        )
 
     def _log_deferred_activation(self, *, reason: str) -> None:
         if self._delegate is not None:
@@ -181,7 +189,14 @@ class _BootstrapVectorMetricsStub:
                     "vector metrics stub readiness gate failed", exc_info=True
                 )
                 return
-            self._promote_from_stub(reason="bootstrap_ready")
+            try:
+                activate_shared_vector_metrics_db(
+                    reason="bootstrap_ready", post_warmup=True
+                )
+            except Exception:  # pragma: no cover - best effort logging
+                logger.debug(
+                    "vector metrics stub readiness activation failed", exc_info=True
+                )
 
         logger.info(
             "vector_metrics_db.bootstrap.stub_readiness_registered",
@@ -202,6 +217,9 @@ class _BootstrapVectorMetricsStub:
         delegate = self._delegate
         if delegate is not None:
             return delegate
+        if self._activation_blocked:
+            self._log_deferred_activation(reason=reason)
+            return None
         delegate = self._activate(reason=reason)
         if isinstance(delegate, VectorMetricsDB):
             try:  # pragma: no cover - best effort promotion
@@ -232,6 +250,9 @@ class _BootstrapVectorMetricsStub:
     def _activate(self, *, reason: str = "attribute_access") -> "VectorMetricsDB":
         if self._delegate is not None:
             return self._delegate
+        if self._activation_blocked:
+            self._log_deferred_activation(reason=reason)
+            return self
         if self._pending_weights:
             _record_pending_weight_values(self._pending_weights)
         activation_kwargs = dict(self._activation_kwargs)
@@ -362,6 +383,8 @@ class _BootstrapVectorMetricsStub:
             "embedding_",
         )
         if name.startswith(noop_prefixes):
+            return lambda *args, **kwargs: self._noop(method=name)
+        if self._activation_blocked:
             return lambda *args, **kwargs: self._noop(method=name)
         delegate = self._activate(reason=f"attr:{name}")
         return getattr(delegate, name)
@@ -675,19 +698,16 @@ def get_shared_vector_metrics_db(
         env_requested = False
 
     bootstrap_requested = bool(resolved_bootstrap_fast or resolved_warmup or env_requested)
-    if bootstrap_requested and warmup is None:
+    warmup_context = bool(bootstrap_requested or _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False))
+    if warmup_context:
         resolved_warmup = True
-
-    stub_defaults = bootstrap_requested
-    if stub_defaults and ensure_exists is None:
         ensure_exists = False
-    if stub_defaults and read_only is None:
         read_only = True
 
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
         if _VECTOR_DB_INSTANCE is None:
-            if resolved_bootstrap_fast or resolved_warmup or env_requested:
+            if warmup_context:
                 _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
                     path="vector_metrics.db",
                     bootstrap_fast=resolved_bootstrap_fast,
@@ -708,11 +728,11 @@ def get_shared_vector_metrics_db(
             _VECTOR_DB_INSTANCE.configure_activation(
                 bootstrap_fast=resolved_bootstrap_fast,
                 warmup=resolved_warmup,
-                ensure_exists=ensure_exists,
-                read_only=read_only,
+                ensure_exists=False if warmup_context else ensure_exists,
+                read_only=True if warmup_context else read_only,
             )
 
-    if resolved_bootstrap_fast or resolved_warmup or env_requested:
+    if warmup_context:
         return _VECTOR_DB_INSTANCE
 
     _apply_pending_weights(_VECTOR_DB_INSTANCE)
