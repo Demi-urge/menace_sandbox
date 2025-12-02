@@ -12,6 +12,7 @@ from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
 import logging
 import sys
 import os
+import threading
 from datetime import datetime
 from governed_retrieval import govern_retrieval
 import joblib
@@ -123,26 +124,8 @@ SHARED_DB_PATH = os.getenv(
     "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
 )
 router: DBRouter = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
-if _VECTOR_WARMUP_STUB:
-    logger.info(
-        "universal_retriever.vector_metrics.stubbed",
-        extra={
-            "bootstrap_fast": _VECTOR_BOOTSTRAP_FAST,
-            "warmup_mode": bool(_VECTOR_WARMUP_STUB),
-            "env_bootstrap_requested": _VECTOR_ENV_REQUESTED,
-            "menace_bootstrap": _VECTOR_BOOTSTRAP_ENV,
-        },
-    )
-_VEC_METRICS = (
-    VectorMetricsDB(
-        bootstrap_fast=_VECTOR_BOOTSTRAP_FAST,
-        warmup=_VECTOR_WARMUP_STUB,
-        ensure_exists=False,
-        read_only=_VECTOR_WARMUP_STUB,
-    )
-    if VectorMetricsDB is not None
-    else None
-)
+_VEC_METRICS_LOCK = threading.RLock()
+_VEC_METRICS: "VectorMetricsDB | None" = None
 
 try:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -187,6 +170,51 @@ _RETRIEVAL_HIT_RATE = _me.Gauge(
 )
 
 
+def _vector_metrics(*, for_write: bool = False) -> "VectorMetricsDB | None":
+    """Lazily construct the vector metrics backend when first needed.
+
+    The returned instance starts in warmup/stub mode when bootstrap or warmup
+    signals are present.  During those phases no automatic persistence
+    activation is attempted; callers should explicitly invoke
+    :meth:`VectorMetricsDB.activate_persistence` once bootstrap readiness is
+    confirmed.  Outside bootstrap flows we arm ``activate_on_first_write`` so
+    the SQLite database is created only when the first metric is recorded.
+    """
+
+    global _VEC_METRICS
+
+    if VectorMetricsDB is None:
+        return None
+
+    with _VEC_METRICS_LOCK:
+        if _VEC_METRICS is not None:
+            return _VEC_METRICS
+
+        if _VECTOR_WARMUP_STUB:
+            logger.info(
+                "universal_retriever.vector_metrics.stubbed",
+                extra={
+                    "bootstrap_fast": _VECTOR_BOOTSTRAP_FAST,
+                    "warmup_mode": bool(_VECTOR_WARMUP_STUB),
+                    "env_bootstrap_requested": _VECTOR_ENV_REQUESTED,
+                    "menace_bootstrap": _VECTOR_BOOTSTRAP_ENV,
+                },
+            )
+
+        vm = VectorMetricsDB(
+            bootstrap_fast=_VECTOR_BOOTSTRAP_FAST,
+            warmup=_VECTOR_WARMUP_STUB,
+            ensure_exists=False,
+            read_only=_VECTOR_WARMUP_STUB,
+        )
+        if not _VECTOR_WARMUP_STUB:
+            vm.activate_on_first_write()
+
+        _VEC_METRICS = vm
+
+    return _VEC_METRICS
+
+
 def log_retrieval_metrics(
     origin_db: str,
     record_id: Any,
@@ -211,9 +239,10 @@ def log_retrieval_metrics(
     except Exception:
         pass  # best effort metrics
 
-    if _VEC_METRICS is not None:
+    vm = _vector_metrics(for_write=True)
+    if vm is not None:
         try:
-            _VEC_METRICS.log_retrieval(
+            vm.log_retrieval(
                 db=origin_db,
                 tokens=tokens,
                 wall_time_ms=0.0,
@@ -342,10 +371,11 @@ def _prior_hit_count(origin_db: str, record_id: Any) -> int:
 def _win_regret_rates(origin_db: str, record_id: Any) -> Tuple[float, float]:
     """Return historical win/regret rates for a vector."""
 
-    if _VEC_METRICS is None:
+    vm = _vector_metrics()
+    if vm is None:
         return 0.0, 0.0
     try:
-        cur = _VEC_METRICS.conn.execute(
+        cur = vm.conn.execute(
             """
             SELECT AVG(win), AVG(regret)
               FROM vector_metrics
@@ -707,12 +737,13 @@ class UniversalRetriever:
         # retrieval cycle.
         self._load_reliability_stats()
 
-        if _VEC_METRICS is None:
+        vm = _vector_metrics()
+        if vm is None:
             return
         for name in list(self._dbs):
             try:
-                _VEC_METRICS.retriever_win_rate(name)
-                _VEC_METRICS.retriever_regret_rate(name)
+                vm.retriever_win_rate(name)
+                vm.retriever_regret_rate(name)
             except Exception:
                 continue
 
@@ -835,10 +866,11 @@ class UniversalRetriever:
         """
 
         stats: Dict[str, Dict[str, float]] = {}
-        if _VEC_METRICS is not None:
+        vm = _vector_metrics()
+        if vm is not None:
             try:
-                win_map = _VEC_METRICS.retriever_win_rate_by_db()
-                regret_map = _VEC_METRICS.retriever_regret_rate_by_db()
+                win_map = vm.retriever_win_rate_by_db()
+                regret_map = vm.retriever_regret_rate_by_db()
                 for name in set(win_map) | set(regret_map):
                     win_rate = float(win_map.get(name, 0.0))
                     regret_rate = float(regret_map.get(name, 0.0))
@@ -920,12 +952,16 @@ class UniversalRetriever:
                         )
                         >= self.reliability_threshold
                     ]
-            elif _VEC_METRICS is not None:
+            elif _vector_metrics() is not None:
                 reliabilities: Dict[str, float] = {}
                 for name, _ in items:
                     try:
-                        win = _VEC_METRICS.retriever_win_rate(name)
-                        regret = _VEC_METRICS.retriever_regret_rate(name)
+                        vm = _vector_metrics()
+                        if vm is None:
+                            reliabilities[name] = 0.0
+                            continue
+                        win = vm.retriever_win_rate(name)
+                        regret = vm.retriever_regret_rate(name)
                         reliabilities[name] = win - regret
                     except Exception:
                         reliabilities[name] = 0.0
@@ -1060,10 +1096,11 @@ class UniversalRetriever:
 
         if self.code_db and len(candidates) < top_k:
             allow = True
-            if _VEC_METRICS is not None:
+            vm = _vector_metrics()
+            if vm is not None:
                 try:
-                    win = _VEC_METRICS.retriever_win_rate("code")
-                    regret = _VEC_METRICS.retriever_regret_rate("code")
+                    win = vm.retriever_win_rate("code")
+                    regret = vm.retriever_regret_rate("code")
                     rel = win - regret
                     if (
                         self.reliability_threshold
