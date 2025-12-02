@@ -35,14 +35,21 @@ from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, Mapping
 
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
-from menace_sandbox.coding_bot_interface import (
-    _bootstrap_dependency_broker,
-    _current_bootstrap_context,
-    _pop_bootstrap_context,
-    _push_bootstrap_context,
-    advertise_bootstrap_placeholder,
-    fallback_helper_manager,
-    prepare_pipeline_for_bootstrap,
+
+_bootstrap_dependency_broker = getattr(
+    _coding_bot_interface, "_bootstrap_dependency_broker", lambda: lambda *_, **__: None
+)
+_current_bootstrap_context = getattr(_coding_bot_interface, "_current_bootstrap_context", lambda: None)
+_pop_bootstrap_context = getattr(_coding_bot_interface, "_pop_bootstrap_context", lambda *_, **__: None)
+_push_bootstrap_context = getattr(_coding_bot_interface, "_push_bootstrap_context", lambda *_, **__: None)
+advertise_bootstrap_placeholder = getattr(
+    _coding_bot_interface, "advertise_bootstrap_placeholder", lambda **_: (object(), object())
+)
+fallback_helper_manager = getattr(
+    _coding_bot_interface, "fallback_helper_manager", contextlib.nullcontext
+)
+prepare_pipeline_for_bootstrap = getattr(
+    _coding_bot_interface, "prepare_pipeline_for_bootstrap", lambda *_, **__: None
 )
 
 _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
@@ -631,16 +638,17 @@ def _embedder_presence_policy(
 
     budget_guarded = False
     low_budget_guard = False
+    default_presence = not force_full_preload
     if stage_budget is not None:
         budget_guarded = stage_budget < 5.0
         tight_budget_threshold = embedder_timeout if embedder_timeout is not None else 0.0
         tight_budget_threshold = max(3.0, min(tight_budget_threshold * 0.75, 15.0))
         low_budget_guard = stage_budget < tight_budget_threshold
 
-    presence_only = fast_or_lite or gate_constrained or embedder_deferred
+    presence_only = default_presence or fast_or_lite or gate_constrained or embedder_deferred
     presence_only = presence_only or budget_guarded or low_budget_guard
 
-    presence_reason = "embedder_presence_probe"
+    presence_reason = "embedder_presence_default" if default_presence else "embedder_presence_probe"
     if gate_constrained:
         presence_reason = "embedder_preload_guarded"
     elif budget_guarded:
@@ -2513,12 +2521,8 @@ def _bootstrap_embedder(
         return placeholder
 
     budget_window = stage_budget if stage_budget is not None and stage_budget >= 0 else None
-    if stage_wall_cap is not None:
-        budget_window = (
-            stage_wall_cap
-            if budget_window is None
-            else min(stage_wall_cap, budget_window)
-        )
+    if stage_wall_cap is not None and budget_window is not None:
+        budget_window = min(stage_wall_cap, budget_window)
     budget_deadline = start_time + budget_window if budget_window is not None else None
     wall_clock_deadline = (
         start_time + stage_wall_cap if stage_wall_cap is not None else None
@@ -3062,6 +3066,15 @@ def initialize_bootstrap_context(
         if full_embedder_preload is not None
         else _env_flag("MENACE_EMBEDDER_FULL_PRELOAD")
     )
+    if not full_embedder_preload and not warmup_lite_context:
+        LOGGER.info(
+            "embedder full preload not requested; enforcing warmup-lite presence path",
+            extra={
+                "event": "embedder-preload-default-lite",
+                "bootstrap_fast": bootstrap_fast_context,
+            },
+        )
+        warmup_lite_context = True
     vector_bootstrap_hint = False
     vector_env_snapshot: dict[str, str | float] = {}
     LOGGER.info(
@@ -3280,11 +3293,11 @@ def initialize_bootstrap_context(
         guard_presence_only = presence_only
         guard_presence_reason = presence_reason
         guard_budget_guarded = budget_guarded
+        presence_default_enforced = False
         full_preload_requested = False
         if not guard_blocks_preload:
-            full_preload_requested = (
-                force_vector_warmup or force_embedder_preload or full_embedder_preload
-            )
+            full_preload_requested = bool(full_embedder_preload or force_embedder_preload)
+            presence_default_enforced = not full_preload_requested
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
         fast_or_lite = bootstrap_fast_context or warmup_lite_context
         gate_constrained = bool(embedder_gate.get("contention"))
@@ -3311,6 +3324,8 @@ def initialize_bootstrap_context(
             presence_only = True
             budget_guarded = True
             presence_reason = presence_reason or "embedder_presence_bootstrap_context_active"
+        if presence_default_enforced and not presence_reason:
+            presence_reason = "embedder_presence_default_enforced"
         if fast_presence_reason:
             presence_only = True
             budget_guarded = True
@@ -3393,10 +3408,12 @@ def initialize_bootstrap_context(
                     "gate": embedder_gate,
                     "budget": embedder_stage_budget,
                     "force_preload": full_preload_requested,
+                    "full_preload_flag": full_embedder_preload,
                     "bootstrap_fast": bootstrap_fast_context,
                     "warmup_lite": warmup_lite_context,
                     "embedder_deferred": embedder_deferred,
                     "budget_guarded": budget_guarded,
+                    "presence_default": presence_default_enforced,
                     "presence_reason": reason,
                     "budget_window_missing": budget_window_missing,
                     "forced_background": forced_background,
@@ -3500,6 +3517,7 @@ def initialize_bootstrap_context(
                 {
                     "deferred": True,
                     "ready_after_bootstrap": True,
+                    "presence_default": presence_default_enforced,
                     "presence_available": presence_available,
                     "presence_probe_timeout": probe_timed_out,
                     "background_enqueue_reason": reason,
