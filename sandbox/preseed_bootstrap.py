@@ -19,7 +19,7 @@ vector DB migrations need extra breathing room.
 from __future__ import annotations
 
 import contextlib
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import io
 import inspect
 import logging
@@ -130,6 +130,8 @@ class _BootstrapStepScheduler:
         }
         self._embedder_deferred: bool = False
         self._embedder_deferral_reason: str | None = None
+        self._embedder_background_future: Future | None = None
+        self._embedder_background_reason: str | None = None
         self._latest_deadlines: dict[str, float] = {}
         self._component_budgets: dict[str, float] = {}
         self._component_ready_at: dict[str, float] = {}
@@ -363,6 +365,8 @@ class _BootstrapStepScheduler:
             "online": self.quorum_met(),
             "embedder_deferred": self._embedder_deferred,
             "embedder_deferral_reason": self._embedder_deferral_reason,
+            "embedder_background_enqueued": self._embedder_background_future is not None,
+            "embedder_background_reason": self._embedder_background_reason,
         }
 
     def mark_embedder_deferred(self, *, reason: str | None = None) -> None:
@@ -375,6 +379,36 @@ class _BootstrapStepScheduler:
 
     def embedder_deferral(self) -> tuple[bool, str | None]:
         return self._embedder_deferred, self._embedder_deferral_reason
+
+    def schedule_embedder_background(
+        self, worker: Callable[[], Any], *, reason: str | None = None
+    ) -> Future | None:
+        if self._embedder_background_future is not None:
+            LOGGER.debug(
+                "embedder background already enqueued",  # pragma: no cover - telemetry
+                extra={
+                    "reason": self._embedder_background_reason,
+                    "requested_reason": reason,
+                },
+            )
+            return self._embedder_background_future
+
+        self._embedder_background_reason = reason
+        try:
+            future = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(worker)
+        except Exception:
+            LOGGER.debug("failed to enqueue embedder background worker", exc_info=True)
+            return None
+
+        self._embedder_background_future = future
+        LOGGER.info(
+            "embedder background preload enqueued",  # pragma: no cover - telemetry
+            extra={
+                "reason": reason,
+                "event": "embedder-background-enqueue",
+            },
+        )
+        return future
 
 
 _BOOTSTRAP_SCHEDULER = _BootstrapStepScheduler()
@@ -2615,6 +2649,10 @@ def initialize_bootstrap_context(
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
         fast_or_lite = bootstrap_fast_context or warmup_lite_context
         gate_constrained = bool(embedder_gate.get("contention"))
+        budget_window_missing = not (
+            (embedder_stage_budget is not None and embedder_stage_budget > 0)
+            and (embedder_timeout is not None and embedder_timeout > 0)
+        )
         presence_only, presence_reason, budget_guarded = _embedder_presence_policy(
             gate_constrained=gate_constrained,
             stage_budget=embedder_stage_budget,
@@ -2625,6 +2663,9 @@ def initialize_bootstrap_context(
             bootstrap_fast_context=bootstrap_fast_context,
             warmup_lite_context=warmup_lite_context,
         )
+        if budget_window_missing and not force_full_preload:
+            presence_only = True
+            presence_reason = "embedder_budget_unavailable"
         skip_heavy = presence_only or embedder_deferred
         presence_reason = embedder_deferral_reason or presence_reason
 
@@ -2640,6 +2681,8 @@ def initialize_bootstrap_context(
                     "embedder_deferred": embedder_deferred,
                     "budget_guarded": budget_guarded,
                     "presence_reason": presence_reason,
+                    "budget_window_missing": budget_window_missing,
+                    "event": "embedder-preload-presence-only",
                 },
             )
             stage_controller.defer_step("embedder_preload", reason=presence_reason)
@@ -2710,13 +2753,65 @@ def initialize_bootstrap_context(
                     "background_join_timeout": background_join_timeout,
                     "budget_guarded": budget_guarded,
                     "warmup_placeholder_reason": presence_reason,
+                    "presence_only": True,
+                    "budget_window_missing": budget_window_missing,
                 }
             )
+
+            def _background_preload() -> None:
+                try:
+                    _BOOTSTRAP_EMBEDDER_READY.wait()
+                    if stop_event is not None and stop_event.is_set():
+                        return
+                    resolved_timeout = embedder_timeout
+                    if resolved_timeout is None or resolved_timeout <= 0:
+                        resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT
+                    LOGGER.info(
+                        "starting deferred embedder preload after readiness",
+                        extra={
+                            "event": "embedder-preload-background",
+                            "presence_only": True,
+                            "bootstrap_fast": bootstrap_fast_context,
+                            "warmup_lite": warmup_lite_context,
+                            "reason": presence_reason,
+                        },
+                    )
+                    _bootstrap_embedder(
+                        resolved_timeout,
+                        stop_event=stop_event,
+                        stage_budget=None,
+                        budget=shared_timeout_coordinator,
+                        budget_label="vector_seeding",
+                        presence_probe=True,
+                        presence_reason=presence_reason,
+                        bootstrap_fast=bootstrap_fast_context,
+                        schedule_background=True,
+                    )
+                except Exception:  # pragma: no cover - background safety
+                    LOGGER.debug("deferred embedder preload failed", exc_info=True)
+
+            background_future = _BOOTSTRAP_SCHEDULER.schedule_embedder_background(
+                _background_preload, reason=presence_reason
+            )
+            if background_future is not None:
+                job_snapshot["background_future"] = background_future
+                job_snapshot["background_enqueued"] = True
 
             _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
             _set_component_state("vector_seeding", "deferred")
             stage_controller.complete_step("embedder_preload", 0.0)
             return _BOOTSTRAP_PLACEHOLDER
+
+        LOGGER.info(
+            "embedder preload proceeding with full warmup",  # pragma: no cover - telemetry
+            extra={
+                "budget": embedder_stage_budget,
+                "timeout": embedder_timeout,
+                "bootstrap_fast": bootstrap_fast_context,
+                "warmup_lite": warmup_lite_context,
+                "event": "embedder-preload-full",
+            },
+        )
 
         _run_with_timeout(
             _bootstrap_embedder,
