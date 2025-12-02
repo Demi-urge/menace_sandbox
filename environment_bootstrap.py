@@ -2501,23 +2501,34 @@ class EnvironmentBootstrapper:
                 if deferred_stages:
                     defer_heavy = True
 
-                def _schedule_heavy_background(
-                    additional: Iterable[str] = (),
-                    budget_hints: Mapping[str, float | None] | None = None,
-                ) -> set[str]:
-                    nonlocal background_status, pending_background_stages, background_stage_timeouts
-                    if budget_hints:
-                        merged = dict(background_stage_timeouts or {})
-                        merged.update({k: v for k, v in budget_hints.items()})
-                        background_stage_timeouts = merged
+            def _schedule_heavy_background(
+                additional: Iterable[str] = (),
+                budget_hints: Mapping[str, float | None] | None = None,
+            ) -> set[str]:
+                nonlocal background_status, pending_background_stages, background_stage_timeouts
+                if budget_hints:
+                    merged = dict(background_stage_timeouts or {})
+                    merged.update({k: v for k, v in budget_hints.items()})
+                    background_stage_timeouts = merged
 
-                    def _stage_allowed(stage: str) -> bool:
-                        if stage == "handlers":
-                            return bool(heavy_handlers_requested and not background_ticket_only)
-                        if stage == "vectorise":
-                            return bool(heavy_vectorise_requested and not background_ticket_only)
-                        return True
+                heavy_opt_in = bool(
+                    heavy_requested
+                    or heavy_model_requested
+                    or heavy_handlers_requested
+                    or heavy_vectorise_requested
+                )
 
+                def _stage_allowed(stage: str) -> bool:
+                    if stage == "handlers":
+                        return bool(heavy_handlers_requested and not background_ticket_only)
+                    if stage == "vectorise":
+                        return bool(heavy_vectorise_requested and not background_ticket_only)
+                    if stage == "model":
+                        return bool(heavy_model_requested and not background_ticket_only)
+                    return False
+
+                heavy_to_schedule: set[str] = set()
+                if heavy_opt_in:
                     heavy_to_schedule = {
                         stage
                         for stage, enabled in (
@@ -2529,13 +2540,17 @@ class EnvironmentBootstrapper:
                         and stage not in persisted_deferred
                         and _stage_allowed(stage)
                     }
-                    additional_set = set(additional)
-                    pending_background_stages |= additional_set
-                    heavy_to_schedule |= pending_background_stages
-                    heavy_to_schedule = {stage for stage in heavy_to_schedule if _stage_allowed(stage)}
+                additional_set = set(additional)
+                pending_background_stages |= additional_set
+                if not heavy_opt_in:
                     if pending_background_stages:
                         background_status = background_status or "pending"
-                    return set(heavy_to_schedule)
+                    return set()
+                heavy_to_schedule |= pending_background_stages
+                heavy_to_schedule = {stage for stage in heavy_to_schedule if _stage_allowed(stage)}
+                if pending_background_stages:
+                    background_status = background_status or "pending"
+                return set(heavy_to_schedule)
 
                 def _background_resume_hook(
                     stages: set[str], budget_hints: Mapping[str, float | None] | None = None
@@ -2573,6 +2588,34 @@ class EnvironmentBootstrapper:
 
                 def _run_heavy_background() -> None:
                     bg_summary: Mapping[str, str] | None = None
+                    heavy_background_allowed = bool(
+                        heavy_requested
+                        or heavy_model_requested
+                        or heavy_handlers_requested
+                        or heavy_vectorise_requested
+                    )
+                    if not heavy_background_allowed:
+                        self._persist_vector_warmup_state(
+                            deferred=set(pending_background_stages) | _schedule_heavy_background(),
+                            summary={
+                                "background": "pending",
+                                "bootstrap": "deferred",
+                                **{stage: "pending" for stage in pending_background_stages or []},
+                            },
+                            mode="deferred",
+                        )
+                        return None
+                    if not self._phase_readiness.get("online"):
+                        self._persist_vector_warmup_state(
+                            deferred=set(pending_background_stages) | _schedule_heavy_background(),
+                            summary={
+                                "background": "pending",
+                                "bootstrap": "deferred",
+                                **{stage: "pending" for stage in pending_background_stages or []},
+                            },
+                            mode="deferred",
+                        )
+                        return None
                     try:
                         from .vector_service.lazy_bootstrap import warmup_vector_service
                         try:
@@ -2597,15 +2640,15 @@ class EnvironmentBootstrapper:
                             hydrate_handlers=heavy_handlers_requested,
                             start_scheduler=True,
                             run_vectorise=heavy_vectorise_requested,
-                            force_heavy=True,
+                            force_heavy=heavy_requested,
                             bootstrap_fast=False,
-                            warmup_lite=False,
+                            warmup_lite=not heavy_requested,
                             warmup_model=heavy_model_requested,
                             warmup_handlers=heavy_handlers_requested,
                             warmup_probe=warmup_probe,
                             stage_timeouts=effective_stage_timeouts,
                             background_hook=_schedule_heavy_background,
-                            bootstrap_lite=False,
+                            bootstrap_lite=not heavy_requested,
                         )
                     except Exception as exc:  # pragma: no cover - defensive logging
                         self.logger.warning("vector warmup background failed: %s", exc)
@@ -2647,17 +2690,16 @@ class EnvironmentBootstrapper:
                             deferred=sorted(deferred_stages),
                         ),
                     )
-                    if heavy_to_schedule:
-                        if not background_ticket_only:
-                            self._queue_background_task(
-                                "vector-warmup-heavy",
-                                _run_heavy_background,
-                                delay_until_ready=True,
-                                join_inner=False,
-                                ready_gate="optional",
-                                stage="vector_warmup",
-                                budget_hint=vector_budget_hint,
-                            )
+                    if heavy_to_schedule and not background_ticket_only:
+                        self._queue_background_task(
+                            "vector-warmup-heavy",
+                            _run_heavy_background,
+                            delay_until_ready=True,
+                            join_inner=False,
+                            ready_gate="online",
+                            stage="vector_warmup",
+                            budget_hint=vector_budget_hint,
+                        )
                 capped_hint = None
                 if isinstance(stage_timeouts, Mapping):
                     capped_hint = ",".join(
@@ -2723,7 +2765,7 @@ class EnvironmentBootstrapper:
                             _run_heavy_background,
                             delay_until_ready=True,
                             join_inner=False,
-                            ready_gate="optional",
+                            ready_gate="online",
                             stage="vector_warmup",
                             budget_hint=vector_budget_hint,
                         )
