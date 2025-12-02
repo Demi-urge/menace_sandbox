@@ -147,11 +147,20 @@ class _VectorMetricsWarmupStub:
         def __exit__(self, *_exc):
             return False
 
-    def __init__(self, create_db: Callable[[], "VectorMetricsDB | None"], *, on_activate: Callable[["VectorMetricsDB"], None]):
+    def __init__(
+        self,
+        create_db: Callable[[], "VectorMetricsDB | None"],
+        *,
+        on_activate: Callable[["VectorMetricsDB"], None],
+        cached_weights: Mapping[str, float] | None = None,
+    ):
         self._create_db = create_db
         self._on_activate = on_activate
+        self._cached_weights = dict(cached_weights or {})
         self._real: "VectorMetricsDB | None" = None
         self._boot_stub_active = True
+        self._activation_lock = threading.Lock()
+        self._activation_thread: threading.Thread | None = None
         self.conn = self._StubConnection()
 
     def activate_persistence(self, *, reason: str = "vector_metrics.activate"):
@@ -168,10 +177,37 @@ class _VectorMetricsWarmupStub:
             logger.debug("vector metrics activation callback failed", exc_info=True)
         return vm
 
+    def activate_async(self, *, reason: str = "vector_metrics.activate_async"):
+        with self._activation_lock:
+            if self._real is not None:
+                return None
+            if self._activation_thread and self._activation_thread.is_alive():
+                return None
+
+            def _runner():
+                logger.info(
+                    "vector_metrics.warmup.async_activation.start",
+                    extra={"reason": reason},
+                )
+                try:
+                    vm = self.activate_persistence(reason=reason)
+                    if vm is not None:
+                        logger.info(
+                            "vector_metrics.warmup.async_activation.complete",
+                            extra={"reason": reason},
+                        )
+                except Exception:
+                    logger.exception("vector metrics async activation failed")
+
+            thread = threading.Thread(target=_runner, daemon=True)
+            thread.start()
+            self._activation_thread = thread
+            return thread
+
     def get_db_weights(self, *args, **kwargs):  # pragma: no cover - warmup stub
         if self._real is not None:
             return self._real.get_db_weights(*args, **kwargs)
-        return {}
+        return dict(self._cached_weights)
 
     def __getattr__(self, item):
         if self._real is not None:
@@ -962,7 +998,15 @@ class ContextBuilder:
 
             existing = ContextBuilder._shared_vector_metrics
 
+            def _install_global(vm: "VectorMetricsDB") -> "VectorMetricsDB":
+                ContextBuilder._shared_vector_metrics = vm
+                if not isinstance(globals().get("_VEC_METRICS"), VectorMetricsDB):
+                    globals()["_VEC_METRICS"] = vm
+                self._vector_metrics = vm
+                return vm
+
             def _activate_real_db(reason: str = "vector_metrics.activate") -> "VectorMetricsDB | None":
+                prior = ContextBuilder._shared_vector_metrics
                 vm = ContextBuilder._shared_vector_metrics
                 if isinstance(vm, VectorMetricsDB) and getattr(
                     vm, "_boot_stub_active", False
@@ -975,34 +1019,47 @@ class ContextBuilder:
                         bootstrap_fast=False,
                         warmup=False,
                     )
-                ContextBuilder._shared_vector_metrics = vm
-                globals()["_VEC_METRICS"] = vm
-                self._vector_metrics = vm
+                vm = _install_global(vm)
+                logger.info(
+                    "vector_metrics.warmup.promoted",
+                    extra={
+                        "reason": reason,
+                        "promoted_from_stub": isinstance(prior, _VectorMetricsWarmupStub),
+                    },
+                )
                 return vm
 
             if warmup_flag:
                 if isinstance(existing, _VectorMetricsWarmupStub):
                     stub = existing
+                elif isinstance(existing, VectorMetricsDB):
+                    self._vector_metrics = existing
+                    return existing
                 else:
+                    cached_weights = dict(self.db_weights)
                     stub = _VectorMetricsWarmupStub(
-                        lambda: existing
-                        if isinstance(existing, VectorMetricsDB)
-                        else VectorMetricsDB(
-                            bootstrap_fast=False,
-                            warmup=False,
-                        ),
+                        lambda: existing,
                         on_activate=lambda vm: _activate_real_db(
                             reason="context_builder.warmup_activate"
                         ),
+                        cached_weights=cached_weights,
                     )
-                ContextBuilder._shared_vector_metrics = stub
-                globals()["_VEC_METRICS"] = stub
+                if ContextBuilder._shared_vector_metrics is None:
+                    ContextBuilder._shared_vector_metrics = stub
+                if not isinstance(globals().get("_VEC_METRICS"), VectorMetricsDB):
+                    globals()["_VEC_METRICS"] = ContextBuilder._shared_vector_metrics
                 self._vector_metrics = stub
                 return stub
 
             existing = ContextBuilder._shared_vector_metrics
             if isinstance(existing, _VectorMetricsWarmupStub):
-                vm = _activate_real_db(reason="context_builder.post_bootstrap")
+                logger.info(
+                    "vector_metrics.warmup.stub_detected",
+                    extra={"reason": "context_builder.post_bootstrap"},
+                )
+                existing.activate_async(reason="context_builder.post_bootstrap")
+                vm = existing
+                self._vector_metrics = vm
             elif existing is not None:
                 if isinstance(existing, VectorMetricsDB) and getattr(
                     existing, "_boot_stub_active", False
@@ -1010,16 +1067,14 @@ class ContextBuilder:
                     existing.activate_router(reason="context_builder.post_bootstrap")
                 vm = existing
                 self._vector_metrics = vm
-                globals()["_VEC_METRICS"] = vm
+                _install_global(vm)
             else:
                 vm = VectorMetricsDB(
                     bootstrap_fast=bootstrap_flag,
                     warmup=warmup_flag,
                     read_only=bool(bootstrap_flag or warmup_flag),
                 )
-                ContextBuilder._shared_vector_metrics = vm
-                globals()["_VEC_METRICS"] = vm
-                self._vector_metrics = vm
+                _install_global(vm)
             return vm
 
     @property
