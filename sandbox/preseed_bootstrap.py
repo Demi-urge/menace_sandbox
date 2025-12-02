@@ -540,6 +540,54 @@ def _set_component_state(component: str, state: str) -> None:
     _publish_online_state()
 
 
+def _embedder_presence_policy(
+    *,
+    gate_constrained: bool,
+    stage_budget: float | None,
+    embedder_timeout: float | None,
+    force_full_preload: bool,
+    fast_or_lite: bool,
+    embedder_deferred: bool,
+    bootstrap_fast_context: bool,
+    warmup_lite_context: bool,
+) -> tuple[bool, str, bool]:
+    """Compute whether embedder preload should fall back to a presence probe.
+
+    Returns a tuple of ``(presence_only, reason, budget_guarded)`` to help upstream
+    callers annotate state for warmup flows.
+    """
+
+    budget_guarded = False
+    low_budget_guard = False
+    if stage_budget is not None:
+        budget_guarded = stage_budget < 5.0
+        tight_budget_threshold = embedder_timeout if embedder_timeout is not None else 0.0
+        tight_budget_threshold = max(3.0, min(tight_budget_threshold * 0.75, 15.0))
+        low_budget_guard = stage_budget < tight_budget_threshold
+
+    presence_only = fast_or_lite or gate_constrained or embedder_deferred
+    presence_only = presence_only or budget_guarded or low_budget_guard
+
+    presence_reason = "embedder_presence_probe"
+    if gate_constrained:
+        presence_reason = "embedder_preload_guarded"
+    elif budget_guarded:
+        presence_reason = "embedder_budget_guarded"
+    elif low_budget_guard:
+        presence_reason = "embedder_budget_tight"
+    elif fast_or_lite and not force_full_preload:
+        presence_reason = (
+            "bootstrap_fast_embedder_probe"
+            if bootstrap_fast_context
+            else "warmup_lite_embedder_probe"
+        )
+
+    if force_full_preload and not presence_only:
+        presence_reason = "embedder_force_preload"
+
+    return presence_only, presence_reason, budget_guarded or low_budget_guard
+
+
 @dataclass
 class _BootstrapTask:
     """Represents a bootstrap action within a dependency DAG."""
@@ -2252,10 +2300,42 @@ def start_embedder_warmup(
 ) -> Any:
     """Launch embedder warmup quickly and defer heavy downloads when budgets are tight."""
 
+    global _BOOTSTRAP_EMBEDDER_ATTEMPTED
+
     resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT if timeout is None else timeout
     presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
     if presence_cap < 0:
         presence_cap = 0.0
+    existing_job = _BOOTSTRAP_EMBEDDER_JOB or {}
+    placeholder_reason = existing_job.get("warmup_placeholder_reason") or existing_job.get(
+        "placeholder_reason"
+    )
+    if existing_job.get("ready_after_bootstrap") and existing_job.get("deferred"):
+        placeholder = existing_job.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+        join_timeout = existing_job.get("background_join_timeout")
+        background_future = existing_job.get("background_future")
+        capped_join: float | None = None
+        try:
+            if join_timeout is not None:
+                capped_join = max(0.0, min(float(join_timeout), 5.0))
+        except (TypeError, ValueError):
+            capped_join = None
+        if background_future is not None and capped_join is not None:
+            with contextlib.suppress(Exception):
+                background_future.result(timeout=capped_join)
+        if not placeholder_reason:
+            placeholder_reason = existing_job.get("background_enqueue_reason")
+        existing_job["warmup_placeholder_reason"] = placeholder_reason
+        _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
+        LOGGER.info(
+            "embedder warmup deferred during bootstrap; returning placeholder",
+            extra={
+                "placeholder_reason": placeholder_reason,
+                "stage_budget": stage_budget,
+                "join_timeout": capped_join,
+            },
+        )
+        return placeholder
     tight_budget = (
         stage_budget is not None
         and stage_budget > 0
@@ -2499,33 +2579,22 @@ def initialize_bootstrap_context(
         )
         embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
         embedder_stage_budget = stage_controller.stage_budget(step_name="embedder_preload")
-        gate_constrained = bool(embedder_gate.get("contention"))
-        budget_constrained = embedder_stage_budget is not None and embedder_stage_budget < 5.0
         force_full_preload = force_vector_warmup or force_embedder_preload
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
-        presence_first = True
         fast_or_lite = bootstrap_fast_context or warmup_lite_context
-        presence_only = (
-            presence_first
-            or gate_constrained
-            or budget_constrained
-            or fast_or_lite
+        gate_constrained = bool(embedder_gate.get("contention"))
+        presence_only, presence_reason, budget_guarded = _embedder_presence_policy(
+            gate_constrained=gate_constrained,
+            stage_budget=embedder_stage_budget,
+            embedder_timeout=embedder_timeout,
+            force_full_preload=force_full_preload,
+            fast_or_lite=fast_or_lite,
+            embedder_deferred=embedder_deferred,
+            bootstrap_fast_context=bootstrap_fast_context,
+            warmup_lite_context=warmup_lite_context,
         )
-        if force_full_preload and not gate_constrained and not budget_constrained:
-            presence_only = False
-        skip_heavy = (
-            gate_constrained
-            or budget_constrained
-            or embedder_deferred
-            or fast_or_lite
-        )
-        presence_reason = embedder_deferral_reason or "embedder_presence_probe"
-        if gate_constrained:
-            presence_reason = "embedder_preload_guarded"
-        elif budget_constrained:
-            presence_reason = "embedder_budget_guarded"
-        elif fast_or_lite and not force_full_preload:
-            presence_reason = "bootstrap_fast_embedder_probe" if bootstrap_fast_context else "warmup_lite_embedder_probe"
+        skip_heavy = presence_only or embedder_deferred
+        presence_reason = embedder_deferral_reason or presence_reason
 
         if presence_only or skip_heavy:
             LOGGER.info(
@@ -2537,6 +2606,7 @@ def initialize_bootstrap_context(
                     "bootstrap_fast": bootstrap_fast_context,
                     "warmup_lite": warmup_lite_context,
                     "embedder_deferred": embedder_deferred,
+                    "budget_guarded": budget_guarded,
                     "presence_reason": presence_reason,
                 },
             )
@@ -2552,6 +2622,7 @@ def initialize_bootstrap_context(
             probe_stop_event = threading.Event()
             presence_available = False
             probe_timed_out = False
+            background_join_timeout = min(max(embedder_timeout or 0.0, 0.0), 5.0) or 1.0
 
             try:
                 from menace_sandbox.governed_embeddings import embedder_cache_present
@@ -2604,11 +2675,14 @@ def initialize_bootstrap_context(
                     "presence_available": presence_available,
                     "presence_probe_timeout": probe_timed_out,
                     "background_enqueue_reason": presence_reason,
+                    "background_join_timeout": background_join_timeout,
+                    "budget_guarded": budget_guarded,
+                    "warmup_placeholder_reason": presence_reason,
                 }
             )
 
             def _queue_deferred_embedder_warmup() -> None:
-                _BOOTSTRAP_EMBEDDER_READY.wait()
+                _BOOTSTRAP_EMBEDDER_READY.wait(background_join_timeout)
                 if stop_event is not None and stop_event.is_set():
                     LOGGER.info(
                         "skipping deferred embedder warmup due to stop signal",
@@ -2655,7 +2729,7 @@ def initialize_bootstrap_context(
             if not job_snapshot.get("warmup_scheduled"):
                 job_snapshot["warmup_scheduled"] = True
                 job_snapshot["background_enqueued"] = True
-                _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(
+                job_snapshot["background_future"] = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(
                     _queue_deferred_embedder_warmup
                 )
 

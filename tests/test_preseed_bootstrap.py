@@ -193,6 +193,23 @@ def reset_bootstrap_timeline():
     sys.modules.pop("menace_sandbox.governed_embeddings", None)
 
 
+def test_embedder_presence_policy_honors_stage_budget():
+    presence_only, reason, budget_guarded = bootstrap._embedder_presence_policy(
+        gate_constrained=False,
+        stage_budget=4.0,
+        embedder_timeout=20.0,
+        force_full_preload=True,
+        fast_or_lite=False,
+        embedder_deferred=False,
+        bootstrap_fast_context=False,
+        warmup_lite_context=False,
+    )
+
+    assert presence_only is True
+    assert budget_guarded is True
+    assert "budget" in reason
+
+
 def test_run_with_timeout_respects_requested_timeout():
     """Ensure bootstrap helpers don't stretch timeouts to the overall deadline."""
 
@@ -280,6 +297,38 @@ def test_start_embedder_warmup_deferred(monkeypatch):
         time.sleep(0.01)
 
     assert final_result is embedder
+
+
+def test_start_embedder_warmup_uses_deferred_placeholder(monkeypatch):
+    placeholder = object()
+    join_seen = threading.Event()
+
+    def background_task():
+        join_seen.set()
+        time.sleep(0.01)
+
+    future = bootstrap._BOOTSTRAP_BACKGROUND_EXECUTOR.submit(background_task)
+
+    bootstrap._BOOTSTRAP_EMBEDDER_JOB = {
+        "placeholder": placeholder,
+        "deferred": True,
+        "ready_after_bootstrap": True,
+        "placeholder_reason": "embedder_budget_guarded",
+        "background_join_timeout": 0.05,
+        "background_future": future,
+    }
+
+    start = time.perf_counter()
+    result = bootstrap.start_embedder_warmup(timeout=1.0, stage_budget=0.5)
+    elapsed = time.perf_counter() - start
+
+    assert result is placeholder
+    assert elapsed < 0.2
+    assert bootstrap._BOOTSTRAP_EMBEDDER_ATTEMPTED is True
+    assert join_seen.wait(1.0)
+    assert (
+        bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    ).get("warmup_placeholder_reason") == "embedder_budget_guarded"
 
 
 def test_run_with_timeout_reports_timeline(capsys):
