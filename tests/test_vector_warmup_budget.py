@@ -50,6 +50,46 @@ def test_model_download_times_out(caplog, monkeypatch, tmp_path):
     assert warmup_summary["model"] == "deferred-budget"
 
 
+def test_deferred_model_download_queues_background(caplog, monkeypatch, tmp_path):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._MODEL_READY = False
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._WARMUP_STAGE_META.clear()
+
+    calls: list[str] = []
+
+    def slow_download(*, logger=None, warmup=False, **_kwargs):  # noqa: ARG001
+        calls.append(threading.current_thread().name)
+        time.sleep(0.1)
+        return tmp_path / "model.tar"
+
+    monkeypatch.setattr(lazy_bootstrap, "ensure_embedding_model", slow_download)
+
+    budget_calls = 0
+
+    def check_budget():
+        nonlocal budget_calls
+        budget_calls += 1
+        if budget_calls > 1:
+            raise TimeoutError("budget expired")
+
+    lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        check_budget=check_budget,
+        logger=logging.getLogger("test"),
+        probe_model=False,
+    )
+
+    background = lazy_bootstrap._MODEL_BACKGROUND_THREAD
+    if background is not None:
+        background.join(timeout=1)
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["model"] == "deferred-budget"
+    assert any("vector-model-warmup" in name for name in calls)
+    assert lazy_bootstrap._WARMUP_STAGE_META.get("model", {}).get("background_state")
+
+
 def test_handler_hydration_times_out(caplog, monkeypatch):
     caplog.set_level(logging.INFO)
 
