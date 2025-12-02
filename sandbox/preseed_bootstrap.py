@@ -2974,6 +2974,60 @@ def initialize_bootstrap_context(
         skip_heavy = presence_only or embedder_deferred
         presence_reason = embedder_deferral_reason or presence_reason
 
+        warmup_started = time.monotonic()
+
+        def _warmup_budget_remaining() -> float | None:
+            remaining_candidates = []
+            if embedder_stage_budget_hint is not None:
+                remaining_candidates.append(
+                    embedder_stage_budget_hint - (time.monotonic() - warmup_started)
+                )
+            if embedder_timeout is not None:
+                remaining_candidates.append(embedder_timeout - (time.monotonic() - warmup_started))
+            if bootstrap_deadline is not None:
+                remaining_candidates.append(bootstrap_deadline - time.monotonic())
+
+            remaining_filtered = [candidate for candidate in remaining_candidates if candidate is not None]
+            if not remaining_filtered:
+                return None
+            return max(0.0, min(remaining_filtered))
+
+        warmup_stage_timeouts: dict[str, float] | float | None = None
+        warmup_budget = _warmup_budget_remaining()
+        if warmup_budget is not None:
+            warmup_stage_timeouts = {"budget": warmup_budget, "model": warmup_budget}
+        elif embedder_stage_budget_hint is not None or embedder_timeout is not None:
+            warmup_stage_timeouts = {
+                "budget": embedder_stage_budget_hint
+                if embedder_stage_budget_hint is not None
+                else embedder_timeout,
+                "model": embedder_timeout,
+            }
+
+        warmup_summary: dict[str, Any] | None = None
+        try:
+            from menace_sandbox.vector_service.lazy_bootstrap import warmup_vector_service
+        except Exception:
+            LOGGER.debug("vector warmup unavailable during embedder preload", exc_info=True)
+        else:
+            try:
+                warmup_summary = dict(
+                    warmup_vector_service(
+                        logger=LOGGER,
+                        probe_model=True,
+                        warmup_lite=True,
+                        stage_timeouts=warmup_stage_timeouts,
+                        budget_remaining=_warmup_budget_remaining,
+                    )
+                )
+            except Exception:  # pragma: no cover - advisory warmup only
+                LOGGER.debug("embedder preload warmup-lite failed", exc_info=True)
+            else:
+                if warmup_summary:
+                    _BOOTSTRAP_EMBEDDER_JOB = (_BOOTSTRAP_EMBEDDER_JOB or {}) | {
+                        "warmup_summary": warmup_summary
+                    }
+
         def _schedule_background_preload(reason: str) -> dict[str, Any]:
             job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
             job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)

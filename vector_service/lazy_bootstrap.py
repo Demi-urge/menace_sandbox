@@ -182,6 +182,22 @@ def ensure_embedding_model(
         if budget_check is not None:
             budget_check(stop_event)
 
+    def _handle_timeout(error: TimeoutError) -> tuple[Path | None, str | None] | None:
+        if not warmup:
+            raise error
+        status = "deferred-timebox" if getattr(error, "_warmup_timebox", False) else "deferred-budget"
+        timeout_hint = getattr(error, "_timebox_timeout", None)
+        log.info(
+            "embedding model warmup deferred after cancellation",
+            extra={
+                "event": "vector-warmup",
+                "stage": "model",
+                "status": status,
+                "timeout": timeout_hint,
+            },
+        )
+        return _result(None, status)
+
     _check_cancelled("init")
 
     if _MODEL_READY:
@@ -203,7 +219,13 @@ def ensure_embedding_model(
             )
             return _result(None, status)
 
-        _check_cancelled("init")
+        try:
+            _check_cancelled("init")
+        except TimeoutError as exc:
+            timed_out = _handle_timeout(exc)
+            if timed_out is not None:
+                return timed_out
+            raise
 
         if importlib.util.find_spec("huggingface_hub") is None:
             log.info(
@@ -224,16 +246,10 @@ def ensure_embedding_model(
             _MODEL_READY = True
             return _result(dest, "ready")
         except TimeoutError as exc:
-            log.info(
-                "embedding model download deferred after timeout",  # best effort signal for future warmups
-                extra={
-                    "event": "vector-warmup",
-                    "stage": "model",
-                    "status": "deferred-timebox",
-                    "timeout": effective_timeout,
-                },
-            )
-            raise _timebox_error(str(exc), effective_timeout) from exc
+            deferred = _handle_timeout(_timebox_error(str(exc), effective_timeout))
+            if deferred is not None:
+                return deferred
+            raise
         except Exception as exc:  # pragma: no cover - best effort during warmup
             log.warning("embedding model bootstrap failed: %s", exc)
             if warmup:
@@ -1133,8 +1149,20 @@ def warmup_vector_service(
             )
             _record_elapsed("model", elapsed)
             if completed:
-                if path:
-                    _record("model", f"ready:{path}" if path.exists() else "ready")
+                resolved_path: Path | None
+                status: str | None
+                if isinstance(path, tuple):
+                    resolved_path, status = path
+                else:
+                    resolved_path, status = path, None
+
+                if status:
+                    _record("model", status)
+                elif resolved_path:
+                    _record(
+                        "model",
+                        f"ready:{resolved_path}" if resolved_path.exists() else "ready",
+                    )
                 else:
                     _record("model", "missing")
             elif budget_exhausted:
