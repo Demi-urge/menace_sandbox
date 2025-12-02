@@ -296,6 +296,7 @@ def warmup_vector_service(
     stage_timeouts: dict[str, float] | float | None = None,
     deferred_stages: set[str] | None = None,
     background_hook: Callable[[set[str]], None] | Callable[[set[str], Mapping[str, float | None] | None], None] | None = None,
+    bootstrap_lite: bool | None = None,
 ) -> Mapping[str, str]:
     """Eagerly initialise vector assets and caches.
 
@@ -320,7 +321,10 @@ def warmup_vector_service(
     ``deferred_stages`` so the warmup summary reflects the deferral rather than
     a silent skip.  ``background_hook`` is invoked with any stages proactively
     deferred for background execution (and optional ``budget_hints`` per stage)
-    so callers can enqueue follow-up tasks with the same ceilings.
+    so callers can enqueue follow-up tasks with the same ceilings.  A
+    ``bootstrap_lite`` flag allows bootstrap callers to explicitly defer handler
+    hydration and vectorisation while still probing model presence, even when
+    generous budgets are available.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -362,6 +366,7 @@ def warmup_vector_service(
     )
 
     bootstrap_fast = bool(bootstrap_fast)
+    bootstrap_lite = bool(bootstrap_context if bootstrap_lite is None else bootstrap_lite)
 
     fast_vector_env = os.getenv("MENACE_VECTOR_WARMUP_FAST", "").strip().lower() in {
         "1",
@@ -389,7 +394,6 @@ def warmup_vector_service(
         hydrate_handlers = False
         run_vectorise = False
 
-    bootstrap_lite = bootstrap_context and not force_heavy
     model_probe_only = False
     heavy_requested = any(
         flag
@@ -402,7 +406,7 @@ def warmup_vector_service(
     )
     deferred_bootstrap: set[str] = set()
 
-    if bootstrap_lite:
+    if bootstrap_lite and not force_heavy:
         heavy_requested = download_model or hydrate_handlers or start_scheduler or run_vectorise
         if heavy_requested:
             log.info(
@@ -424,6 +428,8 @@ def warmup_vector_service(
             download_model = False
             probe_model = True
             deferred_bootstrap.add("model")
+        if not probe_model:
+            probe_model = True
         if hydrate_handlers:
             log.info("Bootstrap context detected; deferring handler hydration")
             hydrate_handlers = False
