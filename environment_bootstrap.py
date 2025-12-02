@@ -2372,12 +2372,12 @@ class EnvironmentBootstrapper:
                         check_budget=check_budget,
                         download_model=warmup_model,
                         probe_model=warmup_probe,
-                        hydrate_handlers=heavy_requested and warmup_handlers and not defer_heavy,
-                        start_scheduler=heavy_requested and not defer_heavy,
-                        run_vectorise=run_vectorise and heavy_requested and not defer_heavy,
-                        force_heavy=heavy_requested and not defer_heavy,
+                        hydrate_handlers=False,
+                        start_scheduler=False,
+                        run_vectorise=False,
+                        force_heavy=False,
                         bootstrap_fast=True,
-                        warmup_lite=warmup_lite,
+                        warmup_lite=True,
                         warmup_model=warmup_model,
                         warmup_handlers=warmup_handlers,
                         warmup_probe=warmup_probe,
@@ -2387,40 +2387,39 @@ class EnvironmentBootstrapper:
                     self.logger.info(
                         "Vector warmup invoked with flags: %s", selected_flags
                     )
-                    if defer_heavy:
-                        heavy_to_schedule = {
-                            stage
-                            for stage, enabled in (
-                                ("model", heavy_model_requested),
-                                ("handlers", heavy_handlers_requested),
-                                ("vectorise", heavy_vectorise_requested),
-                            )
-                            if enabled and stage not in persisted_deferred
-                        }
-                        if heavy_to_schedule:
-                            self._queue_background_task(
-                                "vector-warmup-heavy",
-                                lambda: warmup_vector_service(
-                                    logger=self.logger,
-                                    download_model=heavy_model_requested,
-                                    probe_model=warmup_probe,
-                                    hydrate_handlers=heavy_handlers_requested,
-                                    start_scheduler=True,
-                                    run_vectorise=heavy_vectorise_requested,
-                                    force_heavy=True,
-                                    bootstrap_fast=False,
-                                    warmup_lite=False,
-                                    warmup_model=heavy_model_requested,
-                                    warmup_handlers=heavy_handlers_requested,
-                                    warmup_probe=warmup_probe,
-                                    stage_timeouts=stage_timeouts,
-                                ),
-                                delay_until_ready=True,
-                                join_inner=False,
-                                ready_gate="provisioning",
-                                stage="vector_seeding",
-                                budget_hint=self._stage_budget_hint("vector_seeding"),
-                            )
+                    heavy_to_schedule = {
+                        stage
+                        for stage, enabled in (
+                            ("model", heavy_model_requested),
+                            ("handlers", heavy_handlers_requested),
+                            ("vectorise", heavy_vectorise_requested),
+                        )
+                        if enabled and stage not in persisted_deferred
+                    }
+                    if heavy_to_schedule:
+                        self._queue_background_task(
+                            "vector-warmup-heavy",
+                            lambda: warmup_vector_service(
+                                logger=self.logger,
+                                download_model=heavy_model_requested,
+                                probe_model=warmup_probe,
+                                hydrate_handlers=heavy_handlers_requested,
+                                start_scheduler=True,
+                                run_vectorise=heavy_vectorise_requested,
+                                force_heavy=True,
+                                bootstrap_fast=False,
+                                warmup_lite=False,
+                                warmup_model=heavy_model_requested,
+                                warmup_handlers=heavy_handlers_requested,
+                                warmup_probe=warmup_probe,
+                                stage_timeouts=stage_timeouts,
+                            ),
+                            delay_until_ready=True,
+                            join_inner=False,
+                            ready_gate="provisioning",
+                            stage="vector_seeding",
+                            budget_hint=self._stage_budget_hint("vector_seeding"),
+                        )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)
                 finally:

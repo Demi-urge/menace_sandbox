@@ -177,6 +177,8 @@ def warmup_vector_service(
         for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
     )
 
+    bootstrap_fast = bool(bootstrap_fast)
+
     fast_vector_env = os.getenv("MENACE_VECTOR_WARMUP_FAST", "").strip().lower() in {
         "1",
         "true",
@@ -394,7 +396,7 @@ def warmup_vector_service(
         "vectorise": 5.0,
     }
     base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
-    if stage_timeouts is None and check_budget is None:
+    if bootstrap_context or bootstrap_fast or (stage_timeouts is None and check_budget is None):
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     def _coerce_timeout(value: object) -> float | None:
@@ -489,6 +491,39 @@ def warmup_vector_service(
             stage_budget_cap,
             heavy_budget_needed,
         )
+
+    def _has_stage_budget(stage: str) -> bool:
+        timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
+        return timeout is not None and timeout > 0
+
+    fast_heavy_allowed = force_heavy and all(
+        not flag or _has_stage_budget("handlers")
+        for flag in (hydrate_handlers, start_scheduler)
+    )
+    fast_heavy_allowed = fast_heavy_allowed and (
+        not run_vectorise or _has_stage_budget("vectorise")
+    )
+
+    if bootstrap_fast and not fast_heavy_allowed:
+        if hydrate_handlers:
+            log.info(
+                "Bootstrap-fast mode deferring handler hydration until heavy warmup with budgets available"
+            )
+            hydrate_handlers = False
+            deferred_bootstrap.add("handlers")
+        if start_scheduler:
+            log.info(
+                "Bootstrap-fast mode deferring scheduler start until heavy warmup with budgets available"
+            )
+            start_scheduler = False
+            deferred_bootstrap.add("scheduler")
+        if run_vectorise:
+            log.info(
+                "Bootstrap-fast mode deferring vectorise warmup until heavy warmup with budgets available"
+            )
+            run_vectorise = False
+            deferred_bootstrap.add("vectorise")
+        warmup_lite = True
 
     def _effective_timeout(stage: str) -> float | None:
         remaining = _remaining_budget()
