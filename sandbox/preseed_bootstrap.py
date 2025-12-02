@@ -4300,6 +4300,20 @@ def initialize_bootstrap_context(
             warmup_result: dict[str, Any] = {}
             warmup_exc: list[BaseException] = []
 
+            if bootstrap_context_active:
+                warmup_stop_reason_local = "embedder_preload_bootstrap_context"
+                warmup_stop_reason = warmup_stop_reason or warmup_stop_reason_local
+                return None, warmup_stop_reason
+
+            if (
+                embedder_stage_budget is None
+                and embedder_timeout is None
+                and embedder_stage_budget_hint is not None
+            ):
+                warmup_stop_reason_local = "embedder_preload_budget_hint_only"
+                warmup_stop_reason = warmup_stop_reason or warmup_stop_reason_local
+                return None, warmup_stop_reason
+
             def _run_warmup() -> None:
                 try:
                     warmup_result["result"] = _bootstrap_embedder(
@@ -4349,6 +4363,8 @@ def initialize_bootstrap_context(
             warmup_summary.setdefault("strict_timebox", strict_timebox)
             warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
             warmup_summary.setdefault("stage", "deferred-timebox")
+            warmup_summary.setdefault("presence_available", False)
+            warmup_summary.setdefault("presence_probe_timeout", False)
             resume_download = warmup_timeout_reason in {
                 "embedder_stage_timebox_guard",
                 "embedder_preload_timebox_expired",
