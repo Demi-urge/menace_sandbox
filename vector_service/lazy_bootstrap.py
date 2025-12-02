@@ -459,6 +459,8 @@ def warmup_vector_service(
     effective_timeouts: dict[str, float | None] = {}
 
     background_warmup: set[str] = set()
+    background_stage_timeouts: dict[str, float | None] | None = None
+    budget_gate_reason: str | None = None
 
     if deferred:
         background_warmup.update(deferred)
@@ -507,7 +509,7 @@ def warmup_vector_service(
             recorded_deferred.add(stage)
             background_candidates.add(stage)
             background_warmup.add(stage)
-        elif status in {"failed", "absent-probe", "skipped-budget"}:
+        elif status in {"failed", "absent-probe", "skipped-budget", "skipped-cap"}:
             background_candidates.add(stage)
             background_warmup.add(stage)
         return True
@@ -621,6 +623,8 @@ def warmup_vector_service(
         if remaining is not None:
             summary["remaining_budget"] = f"{remaining:.3f}"
         hook_dispatched = False
+        if budget_gate_reason is not None:
+            summary["budget_gate"] = budget_gate_reason
         if background_candidates and background_hook is not None:
             try:
                 background_hook(set(background_candidates))
@@ -839,12 +843,23 @@ def warmup_vector_service(
         if not stages:
             return
 
-        background_timeouts: dict[str, float | None] = {
-            stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
-            for stage in stages
-        }
-        if provided_budget is not None:
-            background_timeouts["budget"] = provided_budget
+        if background_stage_timeouts is not None:
+            background_timeouts: dict[str, float | None] = dict(background_stage_timeouts)
+        else:
+            background_timeouts = {
+                stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+                for stage in stages
+            }
+            if provided_budget is not None and (
+                stage_budget_cap is None or stage_budget_cap > 0
+            ):
+                background_timeouts["budget"] = provided_budget
+            elif stage_budget_cap is not None and stage_budget_cap <= 0:
+                log.info(
+                    "Skipping background warmup launch; shared budget cap exhausted",
+                    extra={"event": "vector-warmup", "stage": ",".join(sorted(stages))},
+                )
+                return
 
         def _run_background() -> None:
             try:
@@ -888,22 +903,27 @@ def warmup_vector_service(
     if run_vectorise:
         heavy_budget_needed += base_stage_cost["vectorise"]
 
-    if stage_budget_cap is not None and heavy_budget_needed > stage_budget_cap and not force_heavy:
-        deferred.update(
-            {
-                stage
-                for stage, enabled in (
-                    ("model", download_model),
-                    ("handlers", hydrate_handlers),
-                    ("vectorise", run_vectorise),
-                )
-                if enabled
-            }
-        )
+    cap_exceeded = stage_budget_cap is not None and heavy_budget_needed > stage_budget_cap
+    if cap_exceeded:
+        capped_stages = {
+            stage
+            for stage, enabled in (
+                ("model", download_model),
+                ("handlers", hydrate_handlers),
+                ("vectorise", run_vectorise),
+            )
+            if enabled
+        }
+        deferred.update(capped_stages)
         warmup_lite = True
         download_model = False
         hydrate_handlers = False
         run_vectorise = False
+        budget_gate_reason = "skipped-cap"
+        background_stage_timeouts = {
+            stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+            for stage in base_timeouts
+        }
         log.info(
             "Vector warmup budget capped at %.2fs; deferring heavy stages requiring %.2fs",
             stage_budget_cap,
@@ -919,6 +939,9 @@ def warmup_vector_service(
                     "needed": heavy_budget_needed,
                 },
             )
+        for stage in capped_stages:
+            _record_background(stage, "skipped-cap")
+            memoised_results[stage] = "skipped-cap"
         probe_model = False
     elif heavy_requested:
         log.info(
