@@ -1908,10 +1908,10 @@ def _bootstrap_embedder(
     background_download_requested = schedule_background or force_placeholder
     background_budget_available = stage_budget is None or stage_budget > 0
 
-    def _enqueue_background_download() -> None:
-        if not background_budget_available:
-            LOGGER.debug("embedder background download blocked by stage budget")
-            return
+        def _enqueue_background_download() -> None:
+            if not background_budget_available:
+                LOGGER.debug("embedder background download blocked by stage budget")
+                return
 
         if presence_probe and not background_download_requested:
             LOGGER.debug(
@@ -1929,10 +1929,75 @@ def _bootstrap_embedder(
             _BOOTSTRAP_EMBEDDER_JOB["awaiting_full_preload"] = True
 
         def _background_worker() -> None:
+            def _remaining_budget() -> tuple[float | None, str | None]:
+                deadlines: list[tuple[float, str]] = []
+                if budget_deadline is not None:
+                    deadlines.append((budget_deadline, "bootstrap_budget_exceeded"))
+                if wall_clock_deadline is not None:
+                    deadlines.append((wall_clock_deadline, "bootstrap_wall_clock_exceeded"))
+                if max_wait_deadline is not None:
+                    deadlines.append((max_wait_deadline, max_wait_reason))
+                if presence_deadline is not None:
+                    deadlines.append((presence_deadline, "embedder_presence_timeout"))
+
+                if not deadlines:
+                    return None, None
+
+                deadline, reason = min(deadlines, key=lambda item: item[0])
+                return deadline - perf_counter(), reason
+
+            def _abort_background(reason: str) -> None:
+                result["deferred"] = True
+                _signal_stop(reason)
+                try:
+                    cancel_embedder_initialisation(
+                        embedder_stop_event, reason=reason, join_timeout=0.0
+                    )
+                except Exception:  # pragma: no cover - diagnostics only
+                    LOGGER.debug(
+                        "embedder background cancel failed", exc_info=True
+                    )
+
+                result.setdefault("embedder", placeholder)
+                result.setdefault("placeholder_reason", reason)
+                if _BOOTSTRAP_EMBEDDER_JOB is not None:
+                    _BOOTSTRAP_EMBEDDER_JOB["result"] = placeholder
+                    _BOOTSTRAP_EMBEDDER_JOB["placeholder_reason"] = reason
+                    _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
+                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "background_loops", reason=f"embedder_placeholder:{reason}"
+                )
+                _finalize_embedder_job(
+                    placeholder,
+                    placeholder_reason=reason,
+                    aborted=True,
+                    deferred=True,
+                )
+
+            def _budget_guard() -> None:
+                while not embedder_stop_event.is_set():
+                    remaining, reason = _remaining_budget()
+                    if remaining is None:
+                        return
+                    if remaining <= 0:
+                        _abort_background(reason or "embedder_background_timeout")
+                        return
+                    if embedder_stop_event.wait(min(remaining, 0.1)):
+                        return
+
+            threading.Thread(
+                target=_budget_guard, name="embedder-background-guard", daemon=True
+            ).start()
+
             try:
                 ready_timeout = (
                     stage_wall_cap if stage_wall_cap is not None else max_duration_cap
                 )
+                remaining_budget, remaining_reason = _remaining_budget()
+                if remaining_budget is not None and remaining_budget < 0:
+                    _abort_background(remaining_reason or "embedder_background_timeout")
+                    return
                 if ready_timeout is None:
                     _BOOTSTRAP_EMBEDDER_READY.wait()
                 else:
@@ -1944,10 +2009,20 @@ def _bootstrap_embedder(
                         return
                 with contextlib.suppress(Exception):
                     os.nice(5)
+                remaining_budget, remaining_reason = _remaining_budget()
+                embedder_timeout = _MAX_EMBEDDER_WAIT
+                if remaining_budget is not None:
+                    if remaining_budget <= 0:
+                        _abort_background(
+                            remaining_reason or "embedder_background_timeout"
+                        )
+                        return
+                    embedder_timeout = min(embedder_timeout, max(remaining_budget, 0.0))
+
                 embedder_obj = get_embedder(
-                    timeout=_MAX_EMBEDDER_WAIT,
+                    timeout=embedder_timeout,
                     stop_event=embedder_stop_event,
-                    bootstrap_timeout=None,
+                    bootstrap_timeout=bootstrap_timeout,
                     bootstrap_mode=True,
                 )
                 if _BOOTSTRAP_EMBEDDER_JOB is not None:
@@ -1957,7 +2032,9 @@ def _bootstrap_embedder(
                     )
             except Exception:
                 LOGGER.debug("background embedder download failed", exc_info=True)
-
+                if embedder_stop_event.is_set():
+                    _abort_background("embedder_background_cancelled")
+            
         future = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(_background_worker)
         if _BOOTSTRAP_EMBEDDER_JOB is not None:
             _BOOTSTRAP_EMBEDDER_JOB["background_future"] = future
