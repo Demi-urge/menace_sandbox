@@ -357,6 +357,7 @@ class VectorMetricsDB:
             )
         )
         self._ready_probe_logged = False
+        self._persistence_ready_logged = False
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -401,21 +402,22 @@ class VectorMetricsDB:
         self._schema_cache: dict[str, list[str]] = {}
         self._default_columns: dict[str, list[str]] = {}
         self._schema_defaults_initialized = False
-        if not self._boot_stub_active:
-            self._initialize_schema_defaults()
         self._bootstrap_safe = bootstrap_safe
         self._configured_path = Path(path)
         self._resolved_path: Path | None = None
         self._default_path: Path | None = None
-        eager_resolve = not (
-            self.bootstrap_fast or self._warmup_mode or self._boot_stub_active
-        )
-        if eager_resolve and not self._boot_stub_active:
+        self.router = None
+        self._conn = None
+
+        if self._boot_stub_active:
+            return
+
+        self._initialize_schema_defaults()
+        eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
+        if eager_resolve:
             self._resolved_path, self._default_path = self._resolve_requested_path(
                 self._configured_path, ensure_exists=eager_resolve
             )
-        self.router = None
-        self._conn = None
 
     def _initialize_schema_defaults(self) -> None:
         if self._schema_defaults_initialized:
@@ -569,6 +571,16 @@ class VectorMetricsDB:
             ),
         )
         self._exit_lazy_mode(reason=reason)
+        if not self._persistence_ready_logged:
+            self._persistence_ready_logged = True
+            logger.info(
+                "vector_metrics_db.bootstrap.persistence_ready",
+                extra=_timestamp_payload(
+                    None,
+                    resolved_path=str(self._resolved_path),
+                    reason=reason,
+                ),
+            )
 
     def activate_router(self, *, reason: str = "bootstrap_complete") -> "VectorMetricsDB":
         """Convert the bootstrap stub into a real router-backed instance."""

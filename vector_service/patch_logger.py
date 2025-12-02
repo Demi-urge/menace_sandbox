@@ -95,9 +95,13 @@ except Exception:  # pragma: no cover - gauges may already exist
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 try:  # pragma: no cover - optional dependencies
-    from vector_metrics_db import VectorMetricsDB  # type: ignore
+    from vector_metrics_db import (  # type: ignore
+        VectorMetricsDB,
+        resolve_vector_bootstrap_flags,
+    )
 except Exception:  # pragma: no cover
     VectorMetricsDB = None  # type: ignore
+    resolve_vector_bootstrap_flags = None  # type: ignore
 
 try:  # pragma: no cover
     from code_database import PatchHistoryDB  # type: ignore
@@ -248,7 +252,15 @@ class PatchLogger:
         weight_adjuster: WeightAdjuster | None = None,
         bootstrap_fast: bool = False,
     ) -> None:
+        requested_fast = bootstrap_fast
         self.bootstrap_fast = bool(bootstrap_fast)
+        resolved_fast = requested_fast
+        warmup_flag = bool(self.bootstrap_fast)
+        if resolve_vector_bootstrap_flags is not None:
+            resolved_fast, warmup_flag, _, _ = resolve_vector_bootstrap_flags(
+                bootstrap_fast=requested_fast, warmup=requested_fast
+            )
+            self.bootstrap_fast = bool(resolved_fast)
         if patch_db is not None:
             self.patch_db = patch_db
         elif PatchHistoryDB is not None:
@@ -266,8 +278,8 @@ class PatchLogger:
         elif VectorMetricsDB is not None:
             try:
                 self.vector_metrics = VectorMetricsDB(
-                    bootstrap_fast=self.bootstrap_fast,
-                    warmup=self.bootstrap_fast,
+                    bootstrap_fast=resolved_fast,
+                    warmup=warmup_flag,
                 )
             except Exception:
                 self.vector_metrics = None
