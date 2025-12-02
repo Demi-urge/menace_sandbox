@@ -104,6 +104,77 @@ def _noop_logging(bootstrap_fast: bool, warmup_mode: bool) -> bool:
     return bool(bootstrap_fast or warmup_mode)
 
 
+def _detect_bootstrap_environment() -> dict[str, bool]:
+    vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
+    patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
+    vector_service_warmup = _env_flag("VECTOR_SERVICE_WARMUP", False)
+    vector_warmup_env = _env_flag("VECTOR_WARMUP", False) or vector_service_warmup
+    bootstrap_env = any(
+        _env_flag(flag, False)
+        for flag in (
+            "MENACE_BOOTSTRAP",
+            "MENACE_BOOTSTRAP_MODE",
+            "MENACE_BOOTSTRAP_FAST",
+        )
+    )
+
+    return {
+        "vector_bootstrap_env": vector_bootstrap_env,
+        "patch_bootstrap_env": patch_bootstrap_env,
+        "vector_service_warmup": vector_service_warmup,
+        "vector_warmup_env": vector_warmup_env,
+        "bootstrap_env": bootstrap_env,
+    }
+
+
+def resolve_vector_bootstrap_flags(
+    *, bootstrap_fast: bool | None = None, warmup: bool | None = None
+) -> tuple[bool, bool, bool, bool]:
+    """Resolve bootstrap flags using explicit values and environment hints.
+
+    Returns a tuple ``(bootstrap_fast, warmup, env_requested, bootstrap_env)``
+    where ``env_requested`` is ``True`` when any bootstrap or warmup env vars
+    are present and ``bootstrap_env`` reflects the generic MENACE bootstrap
+    flags.  Callers can use these values to avoid touching the filesystem
+    during bootstrap while still allowing explicit overrides via arguments.
+    """
+
+    env = _detect_bootstrap_environment()
+
+    requested_warmup = bool(
+        warmup
+        if warmup is not None
+        else (
+            env["vector_warmup_env"]
+            or env["vector_bootstrap_env"]
+            or env["patch_bootstrap_env"]
+            or env["bootstrap_env"]
+            or _env_flag("VECTOR_METRICS_WARMUP", False)
+        )
+    )
+    env_requested = bool(
+        env["vector_bootstrap_env"]
+        or env["patch_bootstrap_env"]
+        or env["vector_warmup_env"]
+        or env["bootstrap_env"]
+    )
+    resolved_bootstrap_fast = bool(
+        bootstrap_fast
+        if bootstrap_fast is not None
+        else (
+            env["vector_bootstrap_env"]
+            or env["patch_bootstrap_env"]
+            or env["bootstrap_env"]
+        )
+    )
+    resolved_bootstrap_fast = bool(
+        resolved_bootstrap_fast or requested_warmup or env["bootstrap_env"]
+    )
+    resolved_warmup = bool(requested_warmup or env["vector_warmup_env"])
+
+    return resolved_bootstrap_fast, resolved_warmup, env_requested, env["bootstrap_env"]
+
+
 class _StubCursor:
     def __init__(self, logger: logging.Logger):
         self.logger = logger
@@ -217,42 +288,27 @@ class VectorMetricsDB:
         path: Path | str = "vector_metrics.db",
         *,
         bootstrap_safe: bool = False,
-        bootstrap_fast: bool = False,
+        bootstrap_fast: bool | None = None,
         warmup: bool | None = None,
     ) -> None:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
         )
-        vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
-        patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
-        vector_service_warmup = _env_flag("VECTOR_SERVICE_WARMUP", False)
-        vector_warmup_env = _env_flag("VECTOR_WARMUP", False) or vector_service_warmup
-        bootstrap_env = any(
-            _env_flag(flag, False)
-            for flag in (
-                "MENACE_BOOTSTRAP",
-                "MENACE_BOOTSTRAP_MODE",
-                "MENACE_BOOTSTRAP_FAST",
-            )
+        (
+            resolved_bootstrap_fast,
+            resolved_warmup,
+            env_bootstrap,
+            bootstrap_context,
+        ) = resolve_vector_bootstrap_flags(
+            bootstrap_fast=bootstrap_fast, warmup=warmup
         )
-        requested_warmup = warmup if warmup is not None else bool(
-            bootstrap_fast
-            or vector_warmup_env
-            or vector_bootstrap_env
-            or patch_bootstrap_env
-            or bootstrap_env
-            or _env_flag("VECTOR_METRICS_WARMUP", False)
+        self._menace_bootstrap_env = bootstrap_context
+        self._bootstrap_env_requested = env_bootstrap
+        self._bootstrap_context = bool(
+            resolved_bootstrap_fast or resolved_warmup or env_bootstrap
         )
-        warmup = bool(requested_warmup or vector_warmup_env or bootstrap_env)
-        env_bootstrap = bool(
-            vector_bootstrap_env
-            or patch_bootstrap_env
-            or vector_warmup_env
-            or bootstrap_env
-        )
-        self._bootstrap_context = bool(bootstrap_fast or requested_warmup or env_bootstrap)
-        self.bootstrap_fast = bool(bootstrap_fast or warmup or env_bootstrap)
-        self._warmup_mode = bool(warmup or vector_warmup_env or bootstrap_env)
+        self.bootstrap_fast = resolved_bootstrap_fast
+        self._warmup_mode = resolved_warmup
         self._lazy_mode = True
         self._boot_stub_active = bool(self.bootstrap_fast or self._warmup_mode)
         self._lazy_primed = self._boot_stub_active
@@ -260,6 +316,7 @@ class VectorMetricsDB:
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
         self._readiness_hook_registered = False
+        self._ready_probe_logged = False
         init_start = time.perf_counter()
         if not self._warmup_mode:
             logger.info(
@@ -488,6 +545,17 @@ class VectorMetricsDB:
 
     def ready_probe(self) -> str:
         """Return the resolved database path without any I/O."""
+        if self._boot_stub_active and not self._ready_probe_logged:
+            self._ready_probe_logged = True
+            logger.info(
+                "vector_metrics_db.bootstrap.persistence_pending",
+                extra={
+                    "bootstrap_fast": self.bootstrap_fast,
+                    "warmup_mode": self._warmup_mode,
+                    "configured_path": str(self._configured_path),
+                    "bootstrap_env": self._menace_bootstrap_env,
+                },
+            )
         if self._boot_stub_active and self._resolved_path is None:
             return str(Path(self._configured_path).expanduser())
         if self._resolved_path is None or self._default_path is None:
@@ -1468,4 +1536,8 @@ class VectorMetricsDB:
             pass
 
 
-__all__ = ["VectorMetric", "VectorMetricsDB"]
+__all__ = [
+    "VectorMetric",
+    "VectorMetricsDB",
+    "resolve_vector_bootstrap_flags",
+]
