@@ -443,6 +443,10 @@ def warmup_vector_service(
             summary["deferred"] = ",".join(sorted(deferred_record))
         if background_candidates:
             summary["background"] = ",".join(sorted(background_candidates))
+        for stage, ceiling in stage_budget_ceiling.items():
+            summary[f"budget_ceiling_{stage}"] = (
+                f"{ceiling:.3f}" if ceiling is not None else "none"
+            )
         for stage, timeout in effective_timeouts.items():
             summary[f"budget_{stage}"] = (
                 f"{timeout:.3f}" if timeout is not None else "none"
@@ -564,7 +568,7 @@ def warmup_vector_service(
             resolved_timeouts[name] = coerced
             explicit_timeouts.add(name)
 
-    def _apply_budget_caps(timeouts: dict[str, float | None], budget: float | None) -> dict[str, float | None]:
+    def _distribute_budget(timeouts: dict[str, float | None], budget: float | None) -> dict[str, float | None]:
         if budget is None:
             return timeouts
 
@@ -572,21 +576,25 @@ def warmup_vector_service(
             value for key, value in timeouts.items() if key in explicit_timeouts and value is not None
         )
         remaining_budget = budget - explicit_total
-        flexible = [key for key in timeouts if key not in explicit_timeouts and timeouts.get(key) is not None]
 
         if remaining_budget <= 0:
-            for stage in flexible:
-                timeouts[stage] = 0.0
+            for stage in timeouts:
+                if stage not in explicit_timeouts:
+                    timeouts[stage] = 0.0
             return timeouts
 
-        flexible_default = sum(base_timeouts.get(stage, timeouts.get(stage, 0.0)) or 0.0 for stage in flexible)
-        if flexible_default <= 0:
+        weights = {
+            stage: base_stage_cost.get(stage, 1.0)
+            for stage in timeouts
+            if stage not in explicit_timeouts
+        }
+        weight_total = sum(weights.values())
+        if weight_total <= 0:
             return timeouts
 
-        scale = min(1.0, remaining_budget / flexible_default)
-        for stage in flexible:
-            base_default = base_timeouts.get(stage, timeouts.get(stage) or 0.0) or 0.0
-            timeouts[stage] = max(0.0, min(timeouts[stage] or base_default, base_default * scale))
+        for stage, weight in weights.items():
+            share = max(0.0, remaining_budget * (weight / weight_total))
+            timeouts[stage] = share
         return timeouts
 
     bootstrap_budget_cap = _remaining_budget() if bootstrap_lite else None
@@ -597,7 +605,23 @@ def warmup_vector_service(
             else min(provided_budget, bootstrap_budget_cap)
         )
 
-    resolved_timeouts = _apply_budget_caps(resolved_timeouts, provided_budget)
+    resolved_timeouts = _distribute_budget(resolved_timeouts, provided_budget)
+    stage_budget_ceiling = {stage: resolved_timeouts.get(stage) for stage in base_timeouts}
+
+    def _below_conservative_budget(stage: str) -> bool:
+        threshold = _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
+        ceiling = stage_budget_ceiling.get(stage)
+        return threshold is not None and ceiling is not None and ceiling < threshold
+
+    if hydrate_handlers and _below_conservative_budget("handlers"):
+        _record_deferred("handlers", "deferred-ceiling")
+        hydrate_handlers = False
+        if run_vectorise:
+            _record_deferred("vectorise", "deferred-ceiling")
+            run_vectorise = False
+    elif run_vectorise and _below_conservative_budget("vectorise"):
+        _record_deferred("vectorise", "deferred-ceiling")
+        run_vectorise = False
 
     def _launch_background_warmup(stages: set[str]) -> None:
         if not stages:
