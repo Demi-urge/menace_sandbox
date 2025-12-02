@@ -1215,8 +1215,11 @@ class EnvironmentBootstrapper:
         mode: str | None = None,
     ) -> None:
         state = dict(self._phase_readiness.get("vector_warmup", {}) or {})
-        if deferred:
-            state["deferred"] = sorted(set(state.get("deferred", [])) | set(deferred))
+        if deferred is not None:
+            if deferred:
+                state["deferred"] = sorted(set(state.get("deferred", [])) | set(deferred))
+            elif "deferred" in state:
+                state.pop("deferred", None)
             state["ts"] = time.time()
         if summary:
             state["summary"] = dict(summary)
@@ -2238,12 +2241,26 @@ class EnvironmentBootstrapper:
                 if isinstance(vector_state, Mapping)
                 else set()
             )
+            background_pending = (
+                isinstance(vector_state, Mapping)
+                and vector_state.get("background") == "pending"
+            )
+            background_status: str | None = "pending" if background_pending else None
+            pending_background_stages: set[str] = set()
             if raw in {"defer", "later"}:
                 self.logger.info(
                     "Vector warmup explicitly deferred; assets will hydrate on first use",
                 )
                 check_budget()
                 return
+
+            if background_pending:
+                self.logger.info(
+                    "Vector warmup heavy stages already queued; skipping inline hydration until background completes",
+                )
+                warmup_model = False
+                warmup_handlers = False
+                run_vectorise = False
 
             min_remaining_budget = warmup_budget if warmup_budget is not None else remaining_phase_budget
             if min_remaining_budget is not None and min_remaining_budget < 1.0:
@@ -2362,6 +2379,8 @@ class EnvironmentBootstrapper:
                     warmup_model = False
                     warmup_handlers = False
                     run_vectorise = False
+                    background_status = background_status or "pending"
+                    pending_background_stages |= deferred_stages
                     self._persist_vector_warmup_state(deferred=deferred_stages)
                 summary: Mapping[str, str] | None = None
                 warmup_background: set[str] = set()
@@ -2399,36 +2418,73 @@ class EnvironmentBootstrapper:
                         if enabled and stage not in persisted_deferred
                     }
                     heavy_to_schedule |= warmup_background
+                    heavy_to_schedule |= pending_background_stages
                     if heavy_to_schedule:
+                        background_status = background_status or "pending"
+                        pending_background_stages |= set(heavy_to_schedule)
+
+                        def _run_heavy_background() -> None:
+                            bg_summary: Mapping[str, str] | None = None
+                            try:
+                                bg_summary = warmup_vector_service(
+                                    logger=self.logger,
+                                    download_model=heavy_model_requested,
+                                    probe_model=warmup_probe,
+                                    hydrate_handlers=heavy_handlers_requested,
+                                    start_scheduler=True,
+                                    run_vectorise=heavy_vectorise_requested,
+                                    force_heavy=True,
+                                    bootstrap_fast=False,
+                                    warmup_lite=False,
+                                    warmup_model=heavy_model_requested,
+                                    warmup_handlers=heavy_handlers_requested,
+                                    warmup_probe=warmup_probe,
+                                    stage_timeouts=stage_timeouts,
+                                )
+                            except Exception as exc:  # pragma: no cover - defensive logging
+                                self.logger.warning("vector warmup background failed: %s", exc)
+                                self._persist_vector_warmup_state(
+                                    deferred=heavy_to_schedule,
+                                    summary={
+                                        "background": "failed",
+                                        "bootstrap": "deferred",
+                                        **{stage: "failed" for stage in heavy_to_schedule},
+                                    },
+                                    mode="error",
+                                )
+                            else:
+                                merged_summary = {**(bg_summary or {})}
+                                merged_summary["background"] = "complete"
+                                self._persist_vector_warmup_state(
+                                    deferred=set(),
+                                    summary=merged_summary,
+                                    mode="heavy",
+                                )
+                            return None
+
                         self._queue_background_task(
                             "vector-warmup-heavy",
-                            lambda: warmup_vector_service(
-                                logger=self.logger,
-                                download_model=heavy_model_requested,
-                                probe_model=warmup_probe,
-                                hydrate_handlers=heavy_handlers_requested,
-                                start_scheduler=True,
-                                run_vectorise=heavy_vectorise_requested,
-                                force_heavy=True,
-                                bootstrap_fast=False,
-                                warmup_lite=False,
-                                warmup_model=heavy_model_requested,
-                                warmup_handlers=heavy_handlers_requested,
-                                warmup_probe=warmup_probe,
-                                stage_timeouts=stage_timeouts,
-                            ),
+                            _run_heavy_background,
                             delay_until_ready=True,
                             join_inner=False,
-                            ready_gate="provisioning",
-                            stage="vector_seeding",
-                            budget_hint=self._stage_budget_hint("vector_seeding"),
+                            ready_gate="optional",
+                            stage="vector_warmup",
+                            budget_hint=vector_budget_hint,
                         )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)
                 finally:
+                    if pending_background_stages:
+                        deferred_stages |= set(pending_background_stages)
+                    final_summary = dict(summary or {})
+                    if background_status:
+                        final_summary["background"] = background_status
+                        for stage in pending_background_stages:
+                            final_summary.setdefault(stage, "pending")
+                        final_summary.setdefault("bootstrap", "deferred")
                     self._persist_vector_warmup_state(
                         deferred=deferred_stages,
-                        summary=summary,
+                        summary=final_summary,
                         mode="probe-only" if warmup_probe and not heavy_requested else "heavy" if heavy_requested else "light",
                     )
             else:
