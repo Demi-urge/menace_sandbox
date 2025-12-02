@@ -1653,10 +1653,12 @@ def _bootstrap_embedder(
     budget_label: str | None = None,
     presence_probe: bool = False,
     presence_reason: str | None = None,
+    presence_only_guard: bool = False,
     bootstrap_fast: bool = False,
     schedule_background: bool = False,
     force_placeholder: bool = False,
     bootstrap_deadline: float | None = None,
+    precomputed_caps: Mapping[str, float | None] | None = None,
 ) -> None:
     """Attempt to initialise the shared embedder without blocking bootstrap."""
 
@@ -1713,6 +1715,7 @@ def _bootstrap_embedder(
         LOGGER.debug("governed_embeddings unavailable; skipping embedder bootstrap", exc_info=True)
         return
 
+    caps: dict[str, float | None] = dict(precomputed_caps or {})
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     now = time.monotonic()
@@ -1817,9 +1820,12 @@ def _bootstrap_embedder(
         return placeholder
     _BOOTSTRAP_EMBEDDER_STARTED = True
     start_time = perf_counter()
-    presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
+    presence_cap = caps.get("presence_cap")
+    if presence_cap is None:
+        presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
     if presence_cap < 0:
         presence_cap = 0.0
+    caps["presence_cap"] = presence_cap
     presence_deadline = (
         start_time + presence_cap if presence_cap and presence_cap > 0 else None
     )
@@ -1838,6 +1844,19 @@ def _bootstrap_embedder(
         presence_deadline = cap_deadline if presence_deadline is None else min(
             presence_deadline, cap_deadline
         )
+
+    caps.update(
+        {
+            "bootstrap_deadline": bootstrap_deadline,
+            "timeout": timeout,
+            "stage_budget": stage_budget,
+            "warmup_cap": warmup_cap,
+            "max_duration_cap": max_duration_cap,
+            "effective_timeout_cap": effective_timeout_cap,
+            "bootstrap_timeout": bootstrap_timeout,
+            "stage_wall_cap": stage_wall_cap,
+        }
+    )
 
     _ensure_not_stopped(stop_event)
     _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
@@ -1917,6 +1936,45 @@ def _bootstrap_embedder(
             placeholder,
             placeholder_reason="stage_budget_exhausted",
             aborted=True,
+            deferred=True,
+        )
+        return placeholder
+
+    if presence_only_guard:
+        guard_reason = presence_reason or "embedder_presence_guard"
+        result.update(
+            {
+                "embedder": placeholder,
+                "placeholder_reason": guard_reason,
+                "deferred": True,
+            }
+        )
+        _BOOTSTRAP_EMBEDDER_JOB.update(
+            {
+                "result": placeholder,
+                "placeholder_reason": guard_reason,
+                "deferred": True,
+                "warmup_placeholder_reason": guard_reason,
+                "computed_caps": caps,
+            }
+        )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=guard_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{guard_reason}"
+        )
+        LOGGER.info(
+            "embedder warmup guarded; returning placeholder and deferring",  # pragma: no cover - telemetry
+            extra={
+                "stage_budget": stage_budget,
+                "bootstrap_deadline": bootstrap_deadline,
+                "presence_cap": presence_cap,
+                "guard_reason": guard_reason,
+            },
+        )
+        _finalize_embedder_job(
+            placeholder,
+            placeholder_reason=guard_reason,
+            aborted=False,
             deferred=True,
         )
         return placeholder
@@ -2614,7 +2672,11 @@ def start_embedder_warmup(
     presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
     if presence_cap < 0:
         presence_cap = 0.0
+    now = perf_counter()
+    deadline_remaining = (bootstrap_deadline - now) if bootstrap_deadline else None
+    placeholder = _BOOTSTRAP_PLACEHOLDER
     existing_job = _BOOTSTRAP_EMBEDDER_JOB or {}
+    placeholder = existing_job.get("placeholder", placeholder)
     placeholder_reason = existing_job.get("warmup_placeholder_reason") or existing_job.get(
         "placeholder_reason"
     )
@@ -2643,6 +2705,76 @@ def start_embedder_warmup(
                 "join_timeout": capped_join,
             },
         )
+        return placeholder
+    guard_reason = None
+    if stage_budget is None:
+        guard_reason = "embedder_stage_budget_missing"
+    elif stage_budget >= _BOOTSTRAP_TIMEOUT_FLOOR:
+        guard_reason = "embedder_stage_budget_large"
+    if guard_reason is None:
+        if bootstrap_deadline is None:
+            guard_reason = "embedder_deadline_missing"
+        elif deadline_remaining is not None and deadline_remaining >= resolved_timeout:
+            guard_reason = "embedder_deadline_large"
+    if guard_reason:
+        _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=guard_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{guard_reason}"
+        )
+        telemetry = {
+            "stage_budget": stage_budget,
+            "presence_cap": presence_cap,
+            "bootstrap_deadline": bootstrap_deadline,
+            "deadline_remaining": deadline_remaining,
+            "resolved_timeout": resolved_timeout,
+            "guard_reason": guard_reason,
+        }
+        LOGGER.info(
+            "embedder warmup guarded upstream; returning placeholder",  # pragma: no cover - telemetry
+            extra=telemetry,
+        )
+        job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+        job_snapshot.update(
+            {
+                "result": placeholder,
+                "placeholder": placeholder,
+                "placeholder_reason": guard_reason,
+                "warmup_placeholder_reason": guard_reason,
+                "deferred": True,
+                "background_enqueue_reason": guard_reason,
+            }
+        )
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+
+        def _background_presence() -> None:
+            try:
+                _bootstrap_embedder(
+                    resolved_timeout,
+                    stop_event=stop_event,
+                    stage_budget=stage_budget,
+                    budget=budget,
+                    budget_label=budget_label,
+                    presence_probe=True,
+                    presence_reason=guard_reason,
+                    presence_only_guard=True,
+                    bootstrap_fast=True,
+                    force_placeholder=True,
+                    bootstrap_deadline=bootstrap_deadline,
+                    precomputed_caps={
+                        "presence_cap": presence_cap,
+                        "stage_budget": stage_budget,
+                        "bootstrap_deadline": bootstrap_deadline,
+                        "timeout": resolved_timeout,
+                    },
+                )
+            except Exception:  # pragma: no cover - diagnostics only
+                LOGGER.debug(
+                    "background embedder guard presence probe failed", exc_info=True
+                )
+
+        background_future = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(_background_presence)
+        _BOOTSTRAP_EMBEDDER_JOB["background_future"] = background_future
         return placeholder
     tight_budget = (
         stage_budget is not None
