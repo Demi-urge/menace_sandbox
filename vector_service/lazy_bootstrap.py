@@ -45,6 +45,8 @@ _CONSERVATIVE_STAGE_TIMEOUTS = {
     "vectorise": 4.5,
 }
 
+_BOOTSTRAP_STAGE_TIMEOUT = 3.0
+
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
     _metrics,
     "vector_warmup_stage_total",
@@ -590,7 +592,7 @@ def warmup_vector_service(
         summary_flag = "normal"
 
     if bootstrap_context and not force_heavy:
-        bootstrap_hard_timebox = 3.0
+        bootstrap_hard_timebox = _BOOTSTRAP_STAGE_TIMEOUT
 
     warmup_lite = bool(warmup_lite)
     lite_deferrals: set[str] = set()
@@ -690,12 +692,14 @@ def warmup_vector_service(
 
     def _record_background(stage: str, status: str) -> None:
         _record(stage, status)
-        if stage in prior_deferred and stage not in explicit_deferred:
-            return
-        if stage == "model" and status in {"deferred-budget", "deferred-timebox"}:
-            _queue_background_model_download(log, download_timeout=_effective_timeout(stage))
+        if stage == "model" and status.startswith("deferred"):
+            _queue_background_model_download(
+                log, download_timeout=_effective_timeout(stage)
+            )
         background_warmup.add(stage)
         background_candidates.add(stage)
+        if stage in prior_deferred and stage not in explicit_deferred:
+            return
 
     def _reuse(stage: str) -> bool:
         if stage in explicit_deferred and not force_heavy:
@@ -1126,10 +1130,25 @@ def warmup_vector_service(
     if bootstrap_context or bootstrap_fast or not stage_timeouts_supplied:
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
+    stage_hard_cap: float | None = None
+    if bootstrap_hard_timebox is not None:
+        stage_hard_cap = bootstrap_hard_timebox
+    elif (bootstrap_fast or warmup_lite) and not force_heavy:
+        stage_hard_cap = _BOOTSTRAP_STAGE_TIMEOUT
+
     provided_budget = _coerce_timeout(stage_timeouts) if not isinstance(stage_timeouts, Mapping) else None
     initial_budget_remaining = _remaining_budget()
     resolved_timeouts: dict[str, float | None] = dict(base_timeouts)
     explicit_timeouts: set[str] = set()
+
+    def _apply_stage_cap(timeouts: dict[str, float | None]) -> None:
+        if stage_hard_cap is None:
+            return
+        for stage, timeout in list(timeouts.items()):
+            if timeout is None:
+                timeouts[stage] = stage_hard_cap
+            else:
+                timeouts[stage] = min(timeout, stage_hard_cap)
 
     if isinstance(stage_timeouts, Mapping):
         for name, timeout in stage_timeouts.items():
@@ -1142,6 +1161,9 @@ def warmup_vector_service(
             target_name = "handlers" if name == "legacy-handlers" else name
             resolved_timeouts[target_name] = coerced
             explicit_timeouts.add(target_name)
+
+    _apply_stage_cap(base_timeouts)
+    _apply_stage_cap(resolved_timeouts)
 
     def _distribute_budget(timeouts: dict[str, float | None], budget: float | None) -> dict[str, float | None]:
         if budget is None:
@@ -1188,6 +1210,7 @@ def warmup_vector_service(
         provided_budget = initial_budget_remaining
 
     resolved_timeouts = _distribute_budget(resolved_timeouts, provided_budget)
+    _apply_stage_cap(resolved_timeouts)
 
     if bootstrap_hard_timebox is not None:
         for stage in ("handlers", "vectorise"):
