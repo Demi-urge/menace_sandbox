@@ -44,10 +44,12 @@ except Exception:  # pragma: no cover
 try:  # pragma: no cover - optional dependency
     from vector_metrics_db import (  # type: ignore
         VectorMetricsDB,
+        get_bootstrap_vector_metrics_db,
         resolve_vector_bootstrap_flags,
     )
 except Exception:  # pragma: no cover
     VectorMetricsDB = None  # type: ignore
+    get_bootstrap_vector_metrics_db = None  # type: ignore
     resolve_vector_bootstrap_flags = None  # type: ignore
 
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
@@ -633,10 +635,9 @@ class PatchRetriever:
             self.bootstrap_fast = bool(resolved_fast)
         if self.vector_metrics is None and VectorMetricsDB is not None and not self.service_url:
             try:
-                self.vector_metrics = VectorMetricsDB(
+                self.vector_metrics = get_bootstrap_vector_metrics_db(
                     bootstrap_fast=resolved_fast,
                     warmup=warmup_flag,
-                    read_only=bool(resolved_fast or warmup_flag),
                 )
             except Exception:
                 self.vector_metrics = None

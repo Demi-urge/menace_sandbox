@@ -38,6 +38,7 @@ _DYNAMIC_PATH_ROUTER: "_dynamic_path_router | None" = None
 _VECTOR_DB_INSTANCE: "VectorMetricsDB | _BootstrapVectorMetricsStub | None" = None
 _VECTOR_DB_LOCK = threading.Lock()
 _PENDING_WEIGHT_NAMES: set[str] = set()
+_READINESS_HOOK_ARMED = False
 
 _BOOTSTRAP_TIMER_ENVS = (
     "MENACE_BOOTSTRAP_WAIT_SECS",
@@ -236,6 +237,39 @@ def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
         )
         return
     _clear_pending_weights(merged.keys())
+
+
+def _arm_shared_readiness_hook() -> None:
+    """Register a readiness callback to promote the shared DB post-warmup."""
+
+    global _READINESS_HOOK_ARMED
+    if _READINESS_HOOK_ARMED:
+        return
+    try:  # pragma: no cover - optional dependency
+        from bootstrap_readiness import readiness_signal
+    except Exception:
+        return
+
+    _READINESS_HOOK_ARMED = True
+
+    def _await_ready() -> None:
+        try:
+            readiness_signal().await_ready(timeout=None)
+        except Exception:  # pragma: no cover - best effort
+            logger.debug("vector_metrics_db.bootstrap.readiness_gate_failed", exc_info=True)
+            return
+        try:
+            activate_shared_vector_metrics_db(reason="bootstrap_ready")
+        except Exception:  # pragma: no cover - best effort
+            logger.debug(
+                "vector_metrics_db.bootstrap.readiness_activation_failed", exc_info=True
+            )
+
+    threading.Thread(
+        target=_await_ready,
+        name="vector-metrics-shared-readiness",
+        daemon=True,
+    ).start()
 
 
 def _ensure_prometheus_objects() -> tuple:
@@ -444,6 +478,64 @@ def get_shared_vector_metrics_db(
 
     _apply_pending_weights(_VECTOR_DB_INSTANCE)
     return _VECTOR_DB_INSTANCE
+
+
+def activate_shared_vector_metrics_db(
+    *, reason: str = "warmup_complete"
+) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+    """Activate the shared vector metrics database after warmup."""
+
+    vm = get_shared_vector_metrics_db(
+        bootstrap_fast=False,
+        warmup=False,
+        ensure_exists=True,
+        read_only=False,
+    )
+    if isinstance(vm, _BootstrapVectorMetricsStub):
+        vm.configure_activation(warmup=False, ensure_exists=True, read_only=False)
+        vm = vm._activate()
+    if isinstance(vm, VectorMetricsDB):
+        vm.end_warmup(reason=reason)
+        vm.activate_persistence(reason=reason)
+        _apply_pending_weights(vm)
+    return vm
+
+
+def get_bootstrap_vector_metrics_db(
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    ensure_exists: bool | None = None,
+    read_only: bool | None = None,
+) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+    """Return the shared DB with bootstrap-aware warmup defaults."""
+
+    (
+        resolved_fast,
+        warmup_mode,
+        env_requested,
+        bootstrap_context,
+    ) = resolve_vector_bootstrap_flags(
+        bootstrap_fast=bootstrap_fast, warmup=warmup
+    )
+
+    warmup_requested = bool(
+        warmup_mode or env_requested or bootstrap_context or resolved_fast
+    )
+    if warmup_requested:
+        warmup_mode = True
+        if ensure_exists is None:
+            ensure_exists = False
+        if read_only is None:
+            read_only = True
+        _arm_shared_readiness_hook()
+
+    return get_shared_vector_metrics_db(
+        bootstrap_fast=resolved_fast,
+        warmup=warmup_mode,
+        ensure_exists=ensure_exists,
+        read_only=read_only,
+    )
 
 
 def ensure_vector_db_weights(
@@ -2250,6 +2342,8 @@ __all__ = [
     "VectorMetric",
     "VectorMetricsDB",
     "resolve_vector_bootstrap_flags",
+    "get_bootstrap_vector_metrics_db",
     "get_shared_vector_metrics_db",
+    "activate_shared_vector_metrics_db",
     "ensure_vector_db_weights",
 ]

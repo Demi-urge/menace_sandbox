@@ -43,7 +43,11 @@ from dynamic_path_router import resolve_path
 from .retriever import Retriever, PatchRetriever
 from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
-from vector_metrics_db import VectorMetricsDB, resolve_vector_bootstrap_flags
+from vector_metrics_db import (
+    VectorMetricsDB,
+    get_bootstrap_vector_metrics_db,
+    resolve_vector_bootstrap_flags,
+)
 from .decorators import log_and_measure
 from .embedding_backfill import schedule_backfill
 
@@ -117,10 +121,9 @@ class CognitionLayer:
                 bootstrap_fast=resolved_fast,
             ),
         )
-        self.vector_metrics = vector_metrics or VectorMetricsDB(
+        self.vector_metrics = vector_metrics or get_bootstrap_vector_metrics_db(
             bootstrap_fast=resolved_fast,
             warmup=warmup_mode,
-            read_only=bool(resolved_fast or warmup_mode),
         )
         self.roi_tracker = roi_tracker
         self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)

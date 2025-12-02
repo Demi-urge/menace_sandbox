@@ -52,9 +52,14 @@ except Exception:  # pragma: no cover - fallback when module unavailable
     MetricsDB = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from .vector_metrics_db import VectorMetricsDB, resolve_vector_bootstrap_flags
+    from .vector_metrics_db import (
+        VectorMetricsDB,
+        get_bootstrap_vector_metrics_db,
+        resolve_vector_bootstrap_flags,
+    )
 except Exception:  # pragma: no cover - fallback when module unavailable
     resolve_vector_bootstrap_flags = None  # type: ignore
+    get_bootstrap_vector_metrics_db = None  # type: ignore
     VectorMetricsDB = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
@@ -201,7 +206,7 @@ def _vector_metrics(*, for_write: bool = False) -> "VectorMetricsDB | None":
                 },
             )
 
-        vm = VectorMetricsDB(
+        vm = get_bootstrap_vector_metrics_db(
             bootstrap_fast=_VECTOR_BOOTSTRAP_FAST,
             warmup=_VECTOR_WARMUP_STUB,
             ensure_exists=False,
