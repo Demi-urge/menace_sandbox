@@ -276,7 +276,10 @@ class VectorMetric:
 
 
 def default_vector_metrics_path(
-    *, ensure_exists: bool = True, bootstrap_read_only: bool | None = None
+    *,
+    ensure_exists: bool | None = None,
+    bootstrap_read_only: bool | None = None,
+    read_only: bool = False,
 ) -> Path:
     """Return the default location for the vector metrics database.
 
@@ -292,7 +295,10 @@ def default_vector_metrics_path(
     empty file is touched so subsequent :func:`resolve_path` calls succeed once
     persistence is permitted.  ``sqlite3`` will initialise the actual database
     schema on first use.  When ``ensure_exists`` is ``False`` no filesystem
-    writes are performed.
+    writes are performed.  Passing ``read_only=True`` or enabling
+    ``bootstrap_read_only`` forces ``ensure_exists`` to ``False`` unless the
+    caller explicitly sets it, which helps avoid filesystem writes during
+    ambiguous warmup and bootstrap flows.
     """
 
     if bootstrap_read_only is None:
@@ -306,7 +312,10 @@ def default_vector_metrics_path(
             resolved_bootstrap_fast or resolved_warmup or env_requested or bootstrap_context
         )
 
-    allow_fs_changes = bool(ensure_exists and not bootstrap_read_only)
+    if ensure_exists is None:
+        ensure_exists = not (bootstrap_read_only or read_only)
+
+    allow_fs_changes = bool(ensure_exists and not bootstrap_read_only and not read_only)
     path: Path | None = None
 
     if not bootstrap_read_only:
@@ -336,9 +345,12 @@ class VectorMetricsDB:
     The warmup stub is also auto-enabled whenever bootstrap environment flags
     (``MENACE_BOOTSTRAP*``, ``VECTOR_WARMUP``, etc.) are present so that
     bootstrap-time callers get a no-op connection without touching the
-    filesystem.  Once bootstrap completes and real metrics need to be
-    recorded, callers should call :meth:`activate_persistence` to transition
-    into the normal SQLite-backed flow.
+    filesystem.  ``read_only=True`` provides the same stubbed behaviour for
+    callers that cannot confirm bootstrap status; ``ensure_exists`` can be set
+    to ``False`` in those cases to prevent any filesystem writes.  Once
+    bootstrap completes and real metrics need to be recorded, callers should
+    call :meth:`activate_persistence` (or :meth:`activate_router`) to
+    transition into the normal SQLite-backed flow.
     """
 
     def __init__(
@@ -348,6 +360,8 @@ class VectorMetricsDB:
         bootstrap_safe: bool = False,
         bootstrap_fast: bool | None = None,
         warmup: bool | None = None,
+        ensure_exists: bool | None = None,
+        read_only: bool = False,
     ) -> None:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
@@ -377,6 +391,7 @@ class VectorMetricsDB:
         self._warmup_mode = (
             False if self._warmup_override_disabled else resolved_warmup
         )
+        self._read_only = bool(read_only)
         self._env_warmup_opt_in = bool(
             self._bootstrap_context
             or env_bootstrap
@@ -386,7 +401,8 @@ class VectorMetricsDB:
         )
         self._lazy_mode = True
         self._boot_stub_active = bool(
-            not explicit_bootstrap_stub_opt_out
+            self._read_only
+            or not explicit_bootstrap_stub_opt_out
             and (
                 self._bootstrap_context
                 or self.bootstrap_fast
@@ -396,9 +412,15 @@ class VectorMetricsDB:
             )
         )
         self._lazy_primed = self._boot_stub_active
-        self._default_ensure_exists = not (
-            self._boot_stub_active or self.bootstrap_fast or self._warmup_mode
-        )
+        if ensure_exists is None:
+            self._default_ensure_exists = not (
+                self._boot_stub_active
+                or self.bootstrap_fast
+                or self._warmup_mode
+                or self._read_only
+            )
+        else:
+            self._default_ensure_exists = bool(ensure_exists and not self._read_only)
         self._commit_required = False
         self._commit_reason = "first_use"
         self._stub_conn = _StubConnection(logger)
@@ -615,6 +637,7 @@ class VectorMetricsDB:
         if self._warmup_mode or self.bootstrap_fast:
             self.bootstrap_fast = False
             self._warmup_mode = False
+        self._read_only = False
         self._boot_stub_active = False
         self._lazy_mode = False
         self._lazy_primed = False
@@ -799,6 +822,7 @@ class VectorMetricsDB:
         default_path = default_vector_metrics_path(
             ensure_exists=ensure_exists,
             bootstrap_read_only=self._boot_stub_active,
+            read_only=self._read_only,
         )
         requested = Path(path).expanduser()
         if str(requested.as_posix()) == "vector_metrics.db":

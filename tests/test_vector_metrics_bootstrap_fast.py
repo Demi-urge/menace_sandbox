@@ -50,7 +50,9 @@ def test_prepare_pipeline_fast_path_skips_vector_lock(monkeypatch, tmp_path):
     lock_conn.execute("BEGIN EXCLUSIVE")
 
     monkeypatch.setattr(
-        vector_metrics_db, "default_vector_metrics_path", lambda ensure_exists=True: locked_db
+        vector_metrics_db,
+        "default_vector_metrics_path",
+        lambda ensure_exists=True, **_: locked_db,
     )
 
     class FastPipeline:
@@ -148,7 +150,9 @@ def test_shared_vector_service_short_circuits_schema_discovery(monkeypatch, tmp_
     monkeypatch.setenv("VECTOR_SERVICE_LAZY_BOOTSTRAP", "1")
     monkeypatch.setenv("VECTOR_SERVICE_SKIP_DISCOVERY", "1")
     monkeypatch.setattr(
-        vector_metrics_db, "default_vector_metrics_path", lambda ensure_exists=True: locked_db
+        vector_metrics_db,
+        "default_vector_metrics_path",
+        lambda ensure_exists=True, **_: locked_db,
     )
 
     from vector_service import registry as vec_registry
