@@ -125,6 +125,8 @@ class _BootstrapStepScheduler:
         self._component_state: dict[str, str] = {
             name: "pending" for name in self._COMPONENTS
         }
+        self._embedder_deferred: bool = False
+        self._embedder_deferral_reason: str | None = None
         self._latest_deadlines: dict[str, float] = {}
         self._component_budgets: dict[str, float] = {}
         self._component_ready_at: dict[str, float] = {}
@@ -356,7 +358,20 @@ class _BootstrapStepScheduler:
             "component_budgets": dict(self._component_budgets),
             "component_ready_at": dict(self._component_ready_at),
             "online": self.quorum_met(),
+            "embedder_deferred": self._embedder_deferred,
+            "embedder_deferral_reason": self._embedder_deferral_reason,
         }
+
+    def mark_embedder_deferred(self, *, reason: str | None = None) -> None:
+        self._embedder_deferred = True
+        self._embedder_deferral_reason = reason or self._embedder_deferral_reason
+
+    def clear_embedder_deferral(self) -> None:
+        self._embedder_deferred = False
+        self._embedder_deferral_reason = None
+
+    def embedder_deferral(self) -> tuple[bool, str | None]:
+        return self._embedder_deferred, self._embedder_deferral_reason
 
 
 _BOOTSTRAP_SCHEDULER = _BootstrapStepScheduler()
@@ -830,6 +845,7 @@ _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = max(
 )
 BOOTSTRAP_STEP_TIMEOUT = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
+BOOTSTRAP_EMBEDDER_WARMUP_CAP = float(os.getenv("BOOTSTRAP_EMBEDDER_WARMUP_CAP", "90.0"))
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
 )
@@ -1606,9 +1622,11 @@ def _bootstrap_embedder(
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     timeout_cap = apply_bootstrap_timeout_caps(stage_budget)
+    warmup_cap = BOOTSTRAP_EMBEDDER_WARMUP_CAP if BOOTSTRAP_EMBEDDER_WARMUP_CAP > 0 else None
     strict_timeout_candidates = [
         stage_budget if stage_budget is not None and stage_budget > 0 else None,
         BOOTSTRAP_EMBEDDER_TIMEOUT if BOOTSTRAP_EMBEDDER_TIMEOUT > 0 else None,
+        warmup_cap,
     ]
     strict_timeout_cap = min(
         (candidate for candidate in strict_timeout_candidates if candidate is not None),
@@ -1671,6 +1689,7 @@ def _bootstrap_embedder(
         result["embedder"] = placeholder
         result["placeholder_reason"] = "stage_budget_exhausted"
         result["deferred"] = True
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason="stage_budget_exhausted")
         _BOOTSTRAP_EMBEDDER_JOB.update(
             {
                 "result": placeholder,
@@ -1727,6 +1746,8 @@ def _bootstrap_embedder(
             job["aborted"] = True
         if deferred:
             job["deferred"] = True
+        if not aborted and not deferred and not placeholder_reason:
+            _BOOTSTRAP_SCHEDULER.clear_embedder_deferral()
         job.pop("thread", None)
         job.pop("stop_event", None)
         _BOOTSTRAP_EMBEDDER_JOB = job
@@ -1740,6 +1761,8 @@ def _bootstrap_embedder(
         result["aborted"] = True
         result["deferred"] = deferred
         _signal_stop(reason)
+        if deferred:
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
         elapsed = perf_counter() - start_time
         abort_metadata = {
             "elapsed": round(elapsed, 3),
@@ -1900,12 +1923,21 @@ def _bootstrap_embedder(
     wall_clock_deadline = (
         start_time + stage_wall_cap if stage_wall_cap is not None else None
     )
-    max_wait_cap = (
-        min(_MAX_EMBEDDER_WAIT, stage_wall_cap)
-        if stage_wall_cap is not None and _MAX_EMBEDDER_WAIT >= 0
-        else _MAX_EMBEDDER_WAIT
-    )
+    max_wait_cap_candidates = []
+    for candidate in (_MAX_EMBEDDER_WAIT, stage_wall_cap, warmup_cap):
+        if candidate is None:
+            continue
+        if candidate >= 0:
+            max_wait_cap_candidates.append(candidate)
+    max_wait_cap = min(max_wait_cap_candidates) if max_wait_cap_candidates else _MAX_EMBEDDER_WAIT
     max_wait_deadline = start_time + max_wait_cap if max_wait_cap >= 0 else None
+    max_wait_reason = "max_wait_exceeded"
+    if warmup_cap is not None and warmup_cap >= 0:
+        try:
+            if abs(max_wait_cap - warmup_cap) < 1e-6:
+                max_wait_reason = "warmup_cap_exceeded"
+        except TypeError:
+            pass
 
     hard_timeout_triggered = threading.Event()
 
@@ -1967,7 +1999,9 @@ def _bootstrap_embedder(
                 return
             if max_wait_deadline is not None and now >= max_wait_deadline:
                 _record_abort(
-                    "max_wait_exceeded", deferred=True, schedule_background=True
+                    max_wait_reason,
+                    deferred=True,
+                    schedule_background=True,
                 )
                 return
             time.sleep(0.05)
@@ -1998,6 +2032,9 @@ def _bootstrap_embedder(
     if thread.is_alive() and presence_deadline is not None:
         _BOOTSTRAP_EMBEDDER_JOB["deferred"] = True
         _BOOTSTRAP_EMBEDDER_JOB["placeholder_reason"] = "presence_check_deferred"
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+            reason="presence_check_deferred"
+        )
         LOGGER.info(
             "embedder presence check deferred to background",  # pragma: no cover - telemetry
             extra={
@@ -2245,11 +2282,23 @@ def initialize_bootstrap_context(
         gate_constrained = bool(embedder_gate.get("contention"))
         budget_constrained = embedder_stage_budget is not None and embedder_stage_budget < 5.0
         force_full_preload = force_vector_warmup or force_embedder_preload
-        if (
+        embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
+        presence_only = not force_full_preload
+        skip_heavy = (
             gate_constrained
             or budget_constrained
+            or embedder_deferred
             or (bootstrap_fast_context and not force_full_preload)
-        ) and not force_full_preload:
+        )
+        presence_reason = embedder_deferral_reason or "embedder_presence_probe"
+        if gate_constrained:
+            presence_reason = "embedder_preload_guarded"
+        elif budget_constrained:
+            presence_reason = "embedder_budget_guarded"
+        elif bootstrap_fast_context and not force_full_preload:
+            presence_reason = "bootstrap_fast_embedder_probe"
+
+        if presence_only or skip_heavy:
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
                 extra={
@@ -2257,14 +2306,15 @@ def initialize_bootstrap_context(
                     "budget": embedder_stage_budget,
                     "force_preload": force_full_preload,
                     "bootstrap_fast": bootstrap_fast_context,
+                    "embedder_deferred": embedder_deferred,
+                    "presence_reason": presence_reason,
                 },
             )
-            stage_controller.defer_step(
-                "embedder_preload", reason="embedder_preload_guarded"
-            )
+            stage_controller.defer_step("embedder_preload", reason=presence_reason)
             _BOOTSTRAP_SCHEDULER.mark_partial(
-                "vectorizer_preload", reason="embedder_preload_guarded"
+                "vectorizer_preload", reason=presence_reason
             )
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=presence_reason)
             _bootstrap_embedder(
                 timeout=embedder_timeout,
                 stop_event=stop_event,
@@ -2275,6 +2325,7 @@ def initialize_bootstrap_context(
                 bootstrap_fast=bootstrap_fast_context,
             )
             return
+
         _run_with_timeout(
             _bootstrap_embedder,
             timeout=embedder_timeout,
