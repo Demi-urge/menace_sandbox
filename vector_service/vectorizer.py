@@ -12,6 +12,8 @@ using a configurable :class:`~vector_service.vector_store.VectorStore`.
 # ruff: noqa: T201 - module level debug prints are routed via logging
 
 from dataclasses import dataclass, field
+import hashlib
+import shutil
 import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, List
@@ -78,8 +80,10 @@ from .lazy_bootstrap import ensure_embedding_model
 
 
 _BUNDLED_MODEL = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
+_BUNDLED_MODEL_CACHE_ROOT = Path(tempfile.gettempdir()) / "vector_service" / "minilm"
 _LOCAL_TOKENIZER: AutoTokenizer | None = None
 _LOCAL_MODEL: AutoModel | None = None
+_LOCAL_BUNDLE_CHECKSUM: str | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -129,23 +133,65 @@ _REMOTE_DISABLED = False
 def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     """Load the bundled fallback embedding model."""
 
-    global _LOCAL_TOKENIZER, _LOCAL_MODEL
+    global _LOCAL_TOKENIZER, _LOCAL_MODEL, _LOCAL_BUNDLE_CHECKSUM
     if AutoTokenizer is None or AutoModel is None or torch is None:
         raise RuntimeError("local embedding model dependencies unavailable")
     ensure_embedding_model(logger=logger)
+    bundle_checksum = _compute_bundle_checksum()
+    if bundle_checksum != _LOCAL_BUNDLE_CHECKSUM:
+        _trace("local-model.bundle-changed")
+        _LOCAL_TOKENIZER = None
+        _LOCAL_MODEL = None
+        _LOCAL_BUNDLE_CHECKSUM = bundle_checksum
+        _cleanup_stale_bundle_caches(bundle_checksum)
     if _LOCAL_TOKENIZER is None or _LOCAL_MODEL is None:
-        if not _BUNDLED_MODEL.exists():
-            raise FileNotFoundError(
-                f"bundled model archive missing at {_BUNDLED_MODEL} "
-                "- run `python -m vector_service.download_model` to fetch it"
-            )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with tarfile.open(_BUNDLED_MODEL) as tar:
-                tar.extractall(tmpdir)
-            _LOCAL_TOKENIZER = AutoTokenizer.from_pretrained(tmpdir)
-            _LOCAL_MODEL = AutoModel.from_pretrained(tmpdir)
+        cache_dir = _ensure_cached_model(bundle_checksum)
+        _LOCAL_TOKENIZER = AutoTokenizer.from_pretrained(cache_dir)
+        _LOCAL_MODEL = AutoModel.from_pretrained(cache_dir)
         _LOCAL_MODEL.eval()
     return _LOCAL_TOKENIZER, _LOCAL_MODEL
+
+
+def _compute_bundle_checksum() -> str:
+    if not _BUNDLED_MODEL.exists():
+        raise FileNotFoundError(
+            f"bundled model archive missing at {_BUNDLED_MODEL} "
+            "- run `python -m vector_service.download_model` to fetch it"
+        )
+    hasher = hashlib.sha256()
+    with open(_BUNDLED_MODEL, "rb") as bundle:
+        for chunk in iter(lambda: bundle.read(8192), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _cleanup_stale_bundle_caches(active_checksum: str) -> None:
+    if not _BUNDLED_MODEL_CACHE_ROOT.exists():
+        return
+    for entry in _BUNDLED_MODEL_CACHE_ROOT.iterdir():
+        if entry.name != active_checksum and entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+def _ensure_cached_model(checksum: str) -> Path:
+    target_dir = _BUNDLED_MODEL_CACHE_ROOT / checksum
+    if _is_cache_intact(target_dir):
+        _trace("local-model.cache-hit", path=str(target_dir))
+        return target_dir
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(_BUNDLED_MODEL) as tar:
+        tar.extractall(target_dir)
+    return target_dir
+
+
+def _is_cache_intact(target_dir: Path) -> bool:
+    required_files = ["config.json", "tokenizer.json"]
+    has_weights = any(target_dir.glob("*.bin"))
+    return target_dir.exists() and all(
+        (target_dir / file_name).exists() for file_name in required_files
+    ) and has_weights
 
 
 def _local_embed(text: str) -> List[float]:
