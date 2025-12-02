@@ -81,6 +81,19 @@ def test_handler_hydration_times_out(caplog, monkeypatch):
     assert warmup_summary["handlers"] == "skipped-budget"
 
 
+def test_stage_skipped_when_budget_below_estimate(caplog):
+    caplog.set_level(logging.INFO)
+
+    lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        budget_remaining=lambda: 5.0,
+        logger=logging.getLogger("test"),
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["model"] == "skipped-estimate"
+
+
 def test_default_stage_timeouts_enforced_without_budget(caplog, monkeypatch, tmp_path):
     caplog.set_level(logging.INFO)
     lazy_bootstrap._MODEL_READY = False

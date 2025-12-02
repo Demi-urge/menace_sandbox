@@ -1207,11 +1207,22 @@ class EnvironmentBootstrapper:
         )
         self._mark_full_ready(reason="background-complete")
 
-    def _persist_vector_warmup_state(self, *, deferred: set[str] | None = None) -> None:
+    def _persist_vector_warmup_state(
+        self,
+        *,
+        deferred: set[str] | None = None,
+        summary: Mapping[str, str] | None = None,
+        mode: str | None = None,
+    ) -> None:
         state = dict(self._phase_readiness.get("vector_warmup", {}) or {})
         if deferred:
             state["deferred"] = sorted(set(state.get("deferred", [])) | set(deferred))
             state["ts"] = time.time()
+        if summary:
+            state["summary"] = dict(summary)
+            state["ts"] = time.time()
+        if mode:
+            state["mode"] = mode
         if not state:
             return
         self._phase_readiness["vector_warmup"] = state
@@ -2178,7 +2189,11 @@ class EnvironmentBootstrapper:
             ).strip().lower() in truthy or "vectorise" in tokens or "vectorize" in tokens
             warmup_model = heavy_requested or model_requested
             warmup_handlers = heavy_requested or handlers_requested
-            warmup_probe = True if raw == "" else heavy_requested or light_warmup or probe_requested
+            warmup_probe = (
+                False
+                if raw == ""
+                else heavy_requested or light_warmup or probe_requested
+            )
             warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
             heavy_model_requested = warmup_model
             heavy_handlers_requested = warmup_handlers
@@ -2208,6 +2223,15 @@ class EnvironmentBootstrapper:
                 )
             warmup_budget = fallback_warmup_budget
             stage_timeouts = {"budget": warmup_budget} if warmup_budget is not None else None
+            base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
+            if warmup_budget is not None:
+                stage_timeouts = {
+                    **({"budget": warmup_budget} if warmup_budget is not None else {}),
+                    **{stage: min(warmup_budget, cost) for stage, cost in base_stage_cost.items()},
+                }
+            if raw == "":
+                warmup_probe = warmup_budget is not None and warmup_budget >= 1.0
+                warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
             vector_state = self._phase_readiness.get("vector_warmup")
             persisted_deferred = (
                 set(vector_state.get("deferred", ()))
@@ -2235,6 +2259,16 @@ class EnvironmentBootstrapper:
                 )
                 self._persist_vector_warmup_state(deferred=deferred)
                 check_budget()
+                self._persist_vector_warmup_state(
+                    deferred=deferred,
+                    summary={
+                        "bootstrap": "deferred",
+                        "model": "deferred" if warmup_model else "skipped",
+                        "handlers": "deferred",
+                        "vectorise": "deferred",
+                    },
+                    mode="deferred",
+                )
                 return
 
             if not heavy_requested:
@@ -2254,6 +2288,24 @@ class EnvironmentBootstrapper:
                 or warmup_probe
                 or run_vectorise
             )
+            if not warm_requested and raw == "":
+                mode = "probe-only" if warmup_probe else "deferred"
+                self.logger.info(
+                    "Vector warmup defaulting to %s; set MENACE_BOOTSTRAP_WARM_VECTOR to enable heavy stages",
+                    mode,
+                )
+                self._persist_vector_warmup_state(
+                    summary={
+                        "bootstrap": mode,
+                        "model": "deferred",
+                        "handlers": "deferred",
+                        "vectorise": "deferred",
+                        "scheduler": "skipped",
+                    },
+                    mode=mode,
+                )
+                check_budget()
+                return
             if warm_requested:
                 selected_flags = {
                     "model": warmup_model,
@@ -2261,7 +2313,6 @@ class EnvironmentBootstrapper:
                     "probe": warmup_probe,
                     "vectorise": run_vectorise,
                 }
-                base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
                 heavy_budget_needed = 0.0
                 if warmup_model:
                     heavy_budget_needed += base_stage_cost["model"]
@@ -2284,6 +2335,8 @@ class EnvironmentBootstrapper:
                         stage_budget_cap = float(stage_timeouts)
                     except (TypeError, ValueError):
                         stage_budget_cap = None
+                if remaining_phase_budget is not None and heavy_budget_needed > remaining_phase_budget:
+                    stage_budget_cap = min(stage_budget_cap or heavy_budget_needed, remaining_phase_budget)
                 defer_heavy = bool(
                     heavy_budget_needed
                     and stage_budget_cap is not None
@@ -2310,10 +2363,11 @@ class EnvironmentBootstrapper:
                     warmup_handlers = False
                     run_vectorise = False
                     self._persist_vector_warmup_state(deferred=deferred_stages)
+                summary: Mapping[str, str] | None = None
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
 
-                    warmup_vector_service(
+                    summary = warmup_vector_service(
                         logger=self.logger,
                         check_budget=check_budget,
                         download_model=warmup_model,
@@ -2369,6 +2423,12 @@ class EnvironmentBootstrapper:
                             )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     self.logger.warning("vector warmup failed: %s", exc)
+                finally:
+                    self._persist_vector_warmup_state(
+                        deferred=deferred_stages,
+                        summary=summary,
+                        mode="probe-only" if warmup_probe and not heavy_requested else "heavy" if heavy_requested else "light",
+                    )
             else:
                 self.logger.info(
                     (
@@ -2376,6 +2436,16 @@ class EnvironmentBootstrapper:
                         "MENACE_BOOTSTRAP_WARM_VECTOR=light for a budgeted probe "
                         "(warmup-lite: skips handler hydration) or 1 for full warmup"
                     ),
+                )
+                self._persist_vector_warmup_state(
+                    summary={
+                        "bootstrap": "deferred",
+                        "model": "deferred",
+                        "handlers": "deferred",
+                        "vectorise": "deferred",
+                        "scheduler": "skipped",
+                    },
+                    mode="deferred",
                 )
             check_budget()
 
