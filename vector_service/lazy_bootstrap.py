@@ -638,6 +638,7 @@ def warmup_vector_service(
 
     background_warmup: set[str] = set()
     background_stage_timeouts: dict[str, float | None] | None = None
+    background_budget_ceiling: dict[str, float | None] = {}
     budget_gate_reason: str | None = None
     heavy_admission: str | None = None
 
@@ -700,6 +701,7 @@ def warmup_vector_service(
             )
         background_warmup.add(stage)
         background_candidates.add(stage)
+        _hint_background_budget(stage, _effective_timeout(stage))
         if stage in prior_deferred and stage not in explicit_deferred:
             return
 
@@ -802,17 +804,53 @@ def warmup_vector_service(
 
     def _hint_background_budget(stage: str, stage_timeout: float | None = None) -> None:
         nonlocal background_stage_timeouts
-        remaining = _remaining_budget()
-        if background_stage_timeouts is None and (
-            remaining is not None or stage_timeout is not None
-        ):
+        budget_hint = _available_budget_hint(stage, stage_timeout)
+        budget_window = _stage_budget_window(stage_timeout)
+        shared_remaining = _remaining_shared_budget()
+        timebox_remaining = _timebox_remaining()
+        shared_budget = (
+            shared_remaining
+            if shared_remaining is not None
+            else (
+                max(0.0, stage_budget_cap - cumulative_elapsed)
+                if stage_budget_cap is not None
+                else None
+            )
+        )
+
+        if background_stage_timeouts is None:
             background_stage_timeouts = {}
-        if remaining is not None:
-            background_stage_timeouts.setdefault("budget", max(0.0, remaining))
+
+        if shared_budget is not None:
+            current_budget = background_stage_timeouts.get("budget")
+            shared_budget = max(0.0, shared_budget)
+            if current_budget is None:
+                background_stage_timeouts["budget"] = shared_budget
+            else:
+                background_stage_timeouts["budget"] = min(current_budget, shared_budget)
+
+        if timebox_remaining is not None:
+            current_budget = background_stage_timeouts.get("budget")
+            if current_budget is None:
+                background_stage_timeouts["budget"] = max(0.0, timebox_remaining)
+            else:
+                background_stage_timeouts["budget"] = min(
+                    current_budget, max(0.0, timebox_remaining)
+                )
+
         if stage_timeout is None:
             stage_timeout = resolved_timeouts.get(stage)
-        if stage_timeout is not None:
-            background_stage_timeouts.setdefault(stage, max(0.0, stage_timeout))
+
+        effective_ceiling = budget_hint
+        if effective_ceiling is None:
+            effective_ceiling = budget_window
+        if effective_ceiling is None:
+            effective_ceiling = stage_timeout
+
+        if effective_ceiling is not None:
+            ceiling_value = max(0.0, effective_ceiling)
+            background_stage_timeouts[stage] = ceiling_value
+            background_budget_ceiling[stage] = ceiling_value
 
     def _should_abort(stage: str) -> bool:
         if budget_exhausted:
@@ -970,6 +1008,10 @@ def warmup_vector_service(
             summary["heavy_admission"] = heavy_admission
         for stage, ceiling in stage_budget_ceiling.items():
             summary[f"budget_ceiling_{stage}"] = (
+                f"{ceiling:.3f}" if ceiling is not None else "none"
+            )
+        for stage, ceiling in background_budget_ceiling.items():
+            summary[f"background_budget_ceiling_{stage}"] = (
                 f"{ceiling:.3f}" if ceiling is not None else "none"
             )
         for stage, timeout in effective_timeouts.items():
