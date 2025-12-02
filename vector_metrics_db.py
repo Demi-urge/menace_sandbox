@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 _DB_ROUTER_MODULE: "_db_router_module | None" = None
 _DYNAMIC_PATH_ROUTER: "_dynamic_path_router | None" = None
 
-_VECTOR_DB_INSTANCE: "VectorMetricsDB | None" = None
+_VECTOR_DB_INSTANCE: "VectorMetricsDB | _BootstrapVectorMetricsStub | None" = None
 _VECTOR_DB_LOCK = threading.Lock()
 _PENDING_WEIGHT_NAMES: set[str] = set()
 
@@ -50,6 +50,97 @@ _BOOTSTRAP_TIMER_ENVS = (
     "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS",
     "PREPARE_PIPELINE_CONFIG_BUDGET_SECS",
 )
+
+
+class _BootstrapVectorMetricsStub:
+    """Lightweight placeholder that defers VectorMetricsDB creation."""
+
+    def __init__(
+        self,
+        *,
+        path: str | Path,
+        bootstrap_fast: bool | None,
+        warmup: bool | None,
+        ensure_exists: bool | None,
+        read_only: bool | None,
+    ) -> None:
+        self._activation_kwargs = {
+            "path": path,
+            "bootstrap_fast": False,
+            "warmup": False,
+            "ensure_exists": ensure_exists,
+            "read_only": read_only,
+        }
+        self._delegate: "VectorMetricsDB | None" = None
+        self._activate_on_first_write = False
+
+    @property
+    def _boot_stub_active(self) -> bool:  # pragma: no cover - passthrough flag
+        return self._delegate is None
+
+    def activate_on_first_write(self) -> None:
+        if self._delegate is not None:
+            self._delegate.activate_on_first_write()
+            return
+        self._activate_on_first_write = True
+
+    def configure_activation(
+        self,
+        *,
+        bootstrap_fast: bool | None = None,
+        warmup: bool | None = None,
+        ensure_exists: bool | None = None,
+        read_only: bool | None = None,
+    ) -> None:
+        if self._delegate is not None:
+            return
+        if bootstrap_fast is not None:
+            self._activation_kwargs["bootstrap_fast"] = bool(bootstrap_fast)
+        if warmup is not None:
+            self._activation_kwargs["warmup"] = bool(warmup)
+        if ensure_exists is not None:
+            self._activation_kwargs["ensure_exists"] = ensure_exists
+        if read_only is not None:
+            self._activation_kwargs["read_only"] = read_only
+
+    def _activate(self) -> "VectorMetricsDB":
+        if self._delegate is not None:
+            return self._delegate
+        activation_kwargs = dict(self._activation_kwargs)
+        activation_kwargs.setdefault("bootstrap_fast", False)
+        activation_kwargs.setdefault("warmup", False)
+        vdb = VectorMetricsDB(**activation_kwargs)
+        if self._activate_on_first_write:
+            vdb.activate_on_first_write()
+        _apply_pending_weights(vdb)
+        self._delegate = vdb
+        global _VECTOR_DB_INSTANCE
+        _VECTOR_DB_INSTANCE = vdb
+        return vdb
+
+    def planned_path(self) -> Path:
+        return Path(self._activation_kwargs["path"]).expanduser()
+
+    def persistence_probe(self) -> bool:
+        return False
+
+    def set_db_weights(self, weights: Mapping[str, float]):
+        _record_pending_weights(weights.keys())
+        if self._delegate is None:
+            return None
+        return self._delegate.set_db_weights(weights)
+
+    def get_db_weights(self, default: Mapping[str, float] | None = None):
+        if self._delegate is None:
+            pending = _pending_weight_mapping()
+            if pending:
+                return pending
+            return default or {}
+        return self._delegate.get_db_weights(default=default)
+
+    def __getattr__(self, name: str):
+        delegate = self._activate()
+        return getattr(delegate, name)
 
 
 def _db_router():
@@ -301,15 +392,39 @@ def get_shared_vector_metrics_db(
 ) -> "VectorMetricsDB":
     """Return a lazily initialised shared :class:`VectorMetricsDB` instance."""
 
+    if bootstrap_fast is None or warmup is None:
+        resolved_bootstrap_fast, resolved_warmup, _, _ = resolve_vector_bootstrap_flags(
+            bootstrap_fast=bootstrap_fast, warmup=warmup
+        )
+    else:
+        resolved_bootstrap_fast = bool(bootstrap_fast)
+        resolved_warmup = bool(warmup)
+
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
         if _VECTOR_DB_INSTANCE is None:
-            _VECTOR_DB_INSTANCE = VectorMetricsDB(
-                "vector_metrics.db",
-                bootstrap_fast=bootstrap_fast,
-                warmup=warmup,
+            if resolved_bootstrap_fast or resolved_warmup:
+                _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
+                    path="vector_metrics.db",
+                    bootstrap_fast=resolved_bootstrap_fast,
+                    warmup=resolved_warmup,
+                    ensure_exists=ensure_exists,
+                    read_only=bool(read_only) if read_only is not None else False,
+                )
+            else:
+                _VECTOR_DB_INSTANCE = VectorMetricsDB(
+                    "vector_metrics.db",
+                    bootstrap_fast=resolved_bootstrap_fast,
+                    warmup=resolved_warmup,
+                    ensure_exists=ensure_exists,
+                    read_only=bool(read_only) if read_only is not None else False,
+                )
+        elif isinstance(_VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub):
+            _VECTOR_DB_INSTANCE.configure_activation(
+                bootstrap_fast=resolved_bootstrap_fast,
+                warmup=resolved_warmup,
                 ensure_exists=ensure_exists,
-                read_only=bool(read_only) if read_only is not None else False,
+                read_only=read_only,
             )
 
     _apply_pending_weights(_VECTOR_DB_INSTANCE)
@@ -350,7 +465,6 @@ def ensure_vector_db_weights(
                 "env_bootstrap_requested": env_requested,
             },
         )
-        return
 
     try:
         vdb = get_shared_vector_metrics_db(
@@ -360,6 +474,11 @@ def ensure_vector_db_weights(
             read_only=read_only,
         )
         _apply_pending_weights(vdb)
+        if resolved_warmup and not bootstrap_fast:
+            logger.info(
+                "vector_metrics_db.bootstrap.warmup_weights_cached",
+                extra={"count": len(names)},
+            )
     except Exception as exc:  # pragma: no cover - log only
         logger.warning("vector_metrics_db.bootstrap.weight_seed_failed", exc_info=exc)
 
