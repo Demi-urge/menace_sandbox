@@ -776,6 +776,16 @@ def activate_shared_vector_metrics_db(
     return vm
 
 
+_MENACE_BOOTSTRAP_ENV_ACTIVE: bool | None = None
+
+
+def _menace_bootstrap_active() -> bool:
+    global _MENACE_BOOTSTRAP_ENV_ACTIVE
+    if _MENACE_BOOTSTRAP_ENV_ACTIVE is None:
+        _MENACE_BOOTSTRAP_ENV_ACTIVE = bool(_detect_bootstrap_environment()["bootstrap_env"])
+    return _MENACE_BOOTSTRAP_ENV_ACTIVE
+
+
 def get_bootstrap_vector_metrics_db(
     *,
     bootstrap_fast: bool | None = None,
@@ -783,8 +793,14 @@ def get_bootstrap_vector_metrics_db(
     ensure_exists: bool | None = None,
     read_only: bool | None = None,
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
-    """Return the shared DB with bootstrap-aware warmup defaults."""
+    """Return the shared DB with bootstrap-aware warmup defaults.
 
+    The MENACE bootstrap signal (``MENACE_BOOTSTRAP*``) is latched on first
+    access so callers that import this helper during bootstrap continue to use
+    the warmup stub even if later environment mutations clear the flags.
+    """
+
+    menace_bootstrap = _menace_bootstrap_active()
     (
         resolved_fast,
         warmup_mode,
@@ -795,11 +811,13 @@ def get_bootstrap_vector_metrics_db(
     )
 
     warmup_requested = bool(
-        warmup_mode or env_requested or bootstrap_context or resolved_fast
+        warmup_mode or env_requested or bootstrap_context or resolved_fast or menace_bootstrap
     )
     if warmup_requested:
         warmup_mode = True
         if ensure_exists is None:
+            ensure_exists = False
+        if menace_bootstrap:
             ensure_exists = False
         if read_only is None:
             read_only = True
