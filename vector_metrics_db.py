@@ -338,7 +338,28 @@ class VectorMetricsDB:
 
         self._cached_weights: dict[str, float] = {}
         self._schema_cache: dict[str, list[str]] = {}
-        self._default_columns: dict[str, list[str]] = {
+        self._default_columns: dict[str, list[str]] = {}
+        self._schema_defaults_initialized = False
+        if not self._boot_stub_active:
+            self._initialize_schema_defaults()
+        self._bootstrap_safe = bootstrap_safe
+        self._configured_path = Path(path)
+        self._resolved_path: Path | None = None
+        self._default_path: Path | None = None
+        eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
+        if eager_resolve and not self._boot_stub_active:
+            self._resolved_path, self._default_path = self._resolve_requested_path(
+                self._configured_path, ensure_exists=eager_resolve
+            )
+        self.router = None
+        self._conn = None
+
+    def _initialize_schema_defaults(self) -> None:
+        if self._schema_defaults_initialized:
+            return
+        self._schema_defaults_initialized = True
+        self._schema_cache = {}
+        self._default_columns = {
             "vector_metrics": [
                 "event_type",
                 "db",
@@ -384,17 +405,6 @@ class VectorMetricsDB:
                 "enhancement_score",
             ],
         }
-        self._bootstrap_safe = bootstrap_safe
-        self._configured_path = Path(path)
-        self._resolved_path: Path | None = None
-        self._default_path: Path | None = None
-        eager_resolve = not (self.bootstrap_fast or self._warmup_mode)
-        if eager_resolve and not self._boot_stub_active:
-            self._resolved_path, self._default_path = self._resolve_requested_path(
-                self._configured_path, ensure_exists=eager_resolve
-            )
-        self.router = None
-        self._conn = None
 
     def _register_readiness_hook(self) -> None:
         if self._readiness_hook_registered:
@@ -447,6 +457,7 @@ class VectorMetricsDB:
         self._boot_stub_active = False
         self._lazy_mode = False
         self._lazy_primed = False
+        self._initialize_schema_defaults()
         self._prepare_connection(init_start)
         self._commit_required = False
         self._commit_reason = "first_use"
@@ -905,6 +916,7 @@ class VectorMetricsDB:
         """Return column names for ``table`` using non-blocking pragmas."""
 
         start = time.perf_counter()
+        self._initialize_schema_defaults()
         if self.bootstrap_fast:
             columns = self._schema_cache.get(table) or self._default_columns.get(
                 table, []
