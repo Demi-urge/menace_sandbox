@@ -46,6 +46,7 @@ _CONSERVATIVE_STAGE_TIMEOUTS = {
 }
 
 _BOOTSTRAP_STAGE_TIMEOUT = 3.0
+_HEAVY_STAGE_CEILING = 30.0
 
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
     _metrics,
@@ -1207,6 +1208,14 @@ def warmup_vector_service(
             else:
                 timeouts[stage] = min(timeout, stage_hard_cap)
 
+    def _apply_heavy_stage_cap(timeouts: dict[str, float | None]) -> None:
+        for stage in ("handlers", "vectorise"):
+            timeout = timeouts.get(stage)
+            if timeout is None:
+                timeouts[stage] = _HEAVY_STAGE_CEILING
+            else:
+                timeouts[stage] = min(timeout, _HEAVY_STAGE_CEILING)
+
     if isinstance(stage_timeouts, Mapping):
         for name, timeout in stage_timeouts.items():
             if name == "budget":
@@ -1221,6 +1230,8 @@ def warmup_vector_service(
 
     _apply_stage_cap(base_timeouts)
     _apply_stage_cap(resolved_timeouts)
+    _apply_heavy_stage_cap(base_timeouts)
+    _apply_heavy_stage_cap(resolved_timeouts)
 
     def _distribute_budget(timeouts: dict[str, float | None], budget: float | None) -> dict[str, float | None]:
         if budget is None:
@@ -1268,6 +1279,7 @@ def warmup_vector_service(
 
     resolved_timeouts = _distribute_budget(resolved_timeouts, provided_budget)
     _apply_stage_cap(resolved_timeouts)
+    _apply_heavy_stage_cap(resolved_timeouts)
 
     if bootstrap_hard_timebox is not None:
         for stage in ("handlers", "vectorise"):
@@ -1569,9 +1581,14 @@ def warmup_vector_service(
         for stage in bootstrap_deferred_records:
             if summary.get(stage):
                 continue
-            _record_background(stage, "deferred-bootstrap")
+            base_status = "deferred-bootstrap"
+            if stage in {"handlers", "vectorise"}:
+                requested = requested_handlers if stage == "handlers" else requested_vectorise
+                if not requested:
+                    base_status = "deferred-bootstrap-noop"
+            _record_background(stage, base_status)
             _hint_background_budget(stage, _effective_timeout(stage))
-            memoised_results[stage] = "deferred-bootstrap"
+            memoised_results[stage] = base_status
             if stage == "handlers" and run_vectorise:
                 _record_background("vectorise", "deferred-bootstrap")
                 _hint_background_budget("vectorise", _effective_timeout("vectorise"))
@@ -1584,11 +1601,21 @@ def warmup_vector_service(
         if warmup_lite and not force_heavy:
             if "handlers" in lite_deferrals - bootstrap_deferred_records:
                 if not summary.get("handlers"):
-                    _record_background("handlers", "deferred-lite")
+                    status = (
+                        "deferred-lite"
+                        if requested_handlers
+                        else "deferred-lite-noop"
+                    )
+                    _record_background("handlers", status)
                     _hint_background_budget("handlers", _effective_timeout("handlers"))
             if "vectorise" in lite_deferrals - bootstrap_deferred_records:
                 if not summary.get("vectorise"):
-                    _record_background("vectorise", "deferred-lite")
+                    status = (
+                        "deferred-lite"
+                        if requested_vectorise
+                        else "deferred-lite-noop"
+                    )
+                    _record_background("vectorise", status)
                     _hint_background_budget("vectorise", _effective_timeout("vectorise"))
 
     _apply_bootstrap_deferrals()
