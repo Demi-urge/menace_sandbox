@@ -241,6 +241,15 @@ def warmup_vector_service(
         run_vectorise = False
 
     bootstrap_lite = bootstrap_context and not force_heavy
+    heavy_requested = any(
+        flag
+        for flag in (
+            download_model,
+            hydrate_handlers,
+            start_scheduler,
+            bool(run_vectorise),
+        )
+    )
     deferred_bootstrap: set[str] = set()
 
     if bootstrap_lite:
@@ -314,6 +323,9 @@ def warmup_vector_service(
     summary: dict[str, str] = {"bootstrap": summary_flag, "warmup_lite": str(warmup_lite)}
     deferred = set(deferred_stages or ()) | deferred_bootstrap | lite_deferrals
     memoised_results = dict(_WARMUP_STAGE_MEMO)
+    prior_deferred = set(deferred_stages or ()) | {
+        stage for stage, status in memoised_results.items() if status.startswith("deferred")
+    }
 
     recorded_deferred: set[str] = set()
     background_candidates: set[str] = set()
@@ -332,12 +344,17 @@ def warmup_vector_service(
             log.debug("failed emitting vector warmup metric", exc_info=True)
 
     def _record_deferred(stage: str, status: str) -> None:
-        background_candidates.add(stage)
         _record(stage, status)
+        if stage in prior_deferred:
+            return
+        background_candidates.add(stage)
 
     def _record_background(stage: str, status: str) -> None:
+        _record(stage, status)
+        if stage in prior_deferred:
+            return
         background_warmup.add(stage)
-        _record_deferred(stage, status)
+        background_candidates.add(stage)
 
     def _reuse(stage: str) -> bool:
         status = memoised_results.get(stage)
@@ -637,7 +654,6 @@ def warmup_vector_service(
             }
         )
         warmup_lite = True
-        probe_model = True
         download_model = False
         hydrate_handlers = False
         run_vectorise = False
@@ -645,6 +661,27 @@ def warmup_vector_service(
             "Vector warmup budget capped at %.2fs; deferring heavy stages requiring %.2fs",
             stage_budget_cap,
             heavy_budget_needed,
+        )
+        if heavy_requested:
+            log.info(
+                "Heavy vector warmup requested but skipped due to budget cap",
+                extra={
+                    "event": "vector-warmup-heavy",
+                    "requested": True,
+                    "budget_cap": stage_budget_cap,
+                    "needed": heavy_budget_needed,
+                },
+            )
+        probe_model = False
+    elif heavy_requested:
+        log.info(
+            "Heavy vector warmup explicitly requested",
+            extra={
+                "event": "vector-warmup-heavy",
+                "requested": True,
+                "budget_cap": stage_budget_cap,
+                "needed": heavy_budget_needed,
+            },
         )
 
     def _has_stage_budget(stage: str) -> bool:
