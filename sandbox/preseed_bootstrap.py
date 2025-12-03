@@ -3780,6 +3780,11 @@ def initialize_bootstrap_context(
         and math.isfinite(embedder_stage_deadline_hint)
         else None
     )
+    heavy_stage_ceiling = (
+        BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
+        if BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP > 0
+        else 30.0
+    )
     vector_stage_budget_window = [
         candidate
         for candidate in (
@@ -3790,12 +3795,21 @@ def initialize_bootstrap_context(
         if candidate is not None and candidate >= 0
     ]
     vector_budget_window = min(vector_stage_budget_window) if vector_stage_budget_window else None
-    if vector_budget_window is not None and vector_budget_window < 300.0:
+    vector_inline_cap = (
+        min(vector_budget_window, heavy_stage_ceiling)
+        if vector_budget_window is not None and heavy_stage_ceiling is not None
+        else vector_budget_window
+    )
+    if (
+        vector_budget_window is not None
+        and heavy_stage_ceiling is not None
+        and vector_budget_window <= heavy_stage_ceiling
+    ):
         vector_warmup_requested = False
         vector_bootstrap_hint = False
         vector_budget_guarded = True
         vector_budget_guard_reason = "vector_stage_budget_guard"
-        vector_background_cap = vector_budget_window
+        vector_background_cap = vector_inline_cap
         LOGGER.info(
             "vector warmup guarded by stage budget/deadline; deferring heavy hints",
             extra={
@@ -3804,6 +3818,7 @@ def initialize_bootstrap_context(
                 "stage_deadline": embedder_stage_deadline_hint,
                 "deadline_remaining": deadline_remaining,
                 "budget_window": vector_budget_window,
+                "guard_ceiling": heavy_stage_ceiling,
             },
         )
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
