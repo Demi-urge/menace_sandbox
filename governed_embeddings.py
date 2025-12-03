@@ -230,7 +230,7 @@ _HF_TIMEOUT_CONFIGURED = False
 _FORCED_LOCK_CLEANUP_GUARD = threading.Lock()
 _STACKTRACE_LOCK = threading.Lock()
 _EMBEDDER_STACK_REPORTED: Set[str] = set()
-_BOOTSTRAP_EMBEDDER_WAIT_DEFAULT = 15.0
+_BOOTSTRAP_EMBEDDER_WAIT_DEFAULT = 5.0
 
 
 def _determine_timeout_cap() -> float:
@@ -1363,6 +1363,7 @@ def _initialise_embedder_with_timeout(
     stop_event: threading.Event | None = None,
     fallback_on_timeout: bool = False,
     max_wait_override: float | None = None,
+    allow_background_wait: bool = False,
 ) -> SentenceTransformer | Any | None:
     """Initialise the shared embedder without blocking indefinitely.
 
@@ -1592,13 +1593,21 @@ def _initialise_embedder_with_timeout(
         return _EMBEDDER
 
     _dump_embedder_thread("wait_timeout", waited or wait_time or 0.0)
-    _cancel_embedder_initialisation(stop_event, reason="wait_timeout")
-    cleaned = _force_cleanup_embedder_locks()
-    if cleaned:
+    cleaned = False
+    if not (fallback_on_timeout and allow_background_wait):
+        _cancel_embedder_initialisation(stop_event, reason="wait_timeout")
+        cleaned = _force_cleanup_embedder_locks()
+        if cleaned:
+            _trace(
+                "wait.force_cleanup",
+                requester=requester,
+                removed=cleaned,
+            )
+    else:
         _trace(
-            "wait.force_cleanup",
+            "wait.background_continues",
             requester=requester,
-            removed=cleaned,
+            waited=round(waited or wait_time or 0.0, 3),
         )
 
     placeholder = None
@@ -2086,7 +2095,7 @@ def get_embedder(
     if bootstrap_deadline is not None and stop_event is None:
         stop_event = threading.Event()
 
-    if bootstrap_deadline is not None and bootstrap_deadline > 0:
+    if bootstrap_deadline is not None and bootstrap_deadline > 0 and not bootstrap_mode:
         def _budget_guard(evt: threading.Event, budget: float) -> None:
             deadline = time.perf_counter() + budget
             while not evt.is_set():
@@ -2150,6 +2159,7 @@ def get_embedder(
                 stop_event=stop_event,
                 fallback_on_timeout=bootstrap_mode or wait_override is not None,
                 max_wait_override=max_wait_override,
+                allow_background_wait=bootstrap_mode,
             )
             return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
 
@@ -2164,6 +2174,7 @@ def get_embedder(
                     stop_event=stop_event,
                     fallback_on_timeout=bootstrap_mode or wait_override is not None,
                     max_wait_override=max_wait_override,
+                    allow_background_wait=bootstrap_mode,
                 )
                 break
         except LockTimeout:
