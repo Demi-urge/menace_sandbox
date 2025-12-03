@@ -39,10 +39,10 @@ _WARMUP_CACHE_LOADED = False
 _PROCESS_START = int(time.time())
 
 _CONSERVATIVE_STAGE_TIMEOUTS = {
-    "model": 9.0,
-    "handlers": 9.0,
+    "model": 7.5,
+    "handlers": 7.5,
     "scheduler": 4.5,
-    "vectorise": 4.5,
+    "vectorise": 5.0,
 }
 
 _BOOTSTRAP_STAGE_TIMEOUT = 3.0
