@@ -49,7 +49,7 @@ _CONSERVATIVE_STAGE_TIMEOUTS = {
     "vectorise": 5.0,
 }
 
-_BOOTSTRAP_STAGE_TIMEOUT = 3.0
+_BOOTSTRAP_STAGE_TIMEOUT = 8.0
 _HANDLER_VECTOR_MIN_BUDGET = 1.0
 _HEAVY_STAGE_CEILING = 30.0
 _BACKGROUND_QUEUE_FLAG = "queued"
@@ -358,6 +358,12 @@ def ensure_embedding_model(
     if warmup and not warmup_heavy:
         warmup_lite_enabled = True
 
+    inline_queue_ceiling = _coerce_timeout(
+        os.getenv("MENACE_VECTOR_WARMUP_INLINE_CEILING")
+    )
+    if inline_queue_ceiling is None:
+        inline_queue_ceiling = _BOOTSTRAP_STAGE_TIMEOUT
+
     def _result(path: Path | None, status: str | None = None):
         if warmup_lite_enabled:
             return path, status
@@ -376,6 +382,10 @@ def ensure_embedding_model(
             effective_timeout = max(0.0, min(effective_timeout, stage_budget_remaining))
             pre_ceiling_timeout = effective_timeout
 
+    if effective_timeout is None and warmup:
+        effective_timeout = inline_queue_ceiling
+        pre_ceiling_timeout = inline_queue_ceiling
+
     stage_ceiling: float | None = None
     try:
         from governed_embeddings import apply_bootstrap_timeout_caps
@@ -383,6 +393,14 @@ def ensure_embedding_model(
         stage_ceiling = apply_bootstrap_timeout_caps()
     except Exception:  # pragma: no cover - advisory cap
         log.debug("Embedder timeout cap lookup failed", exc_info=True)
+
+    warmup_no_budget = (
+        warmup
+        and not warmup_heavy
+        and budget_check is None
+        and download_timeout is None
+        and stage_budget_remaining is None
+    )
 
     insufficient_budget = False
     if stage_ceiling is not None:
@@ -394,6 +412,38 @@ def ensure_embedding_model(
             insufficient_budget = True
     if effective_timeout is not None and effective_timeout <= 0:
         insufficient_budget = True
+
+    if warmup_no_budget:
+        if _MODEL_READY:
+            return _result(_model_bundle_path(), "ready")
+        dest = _model_bundle_path()
+        if dest.exists():
+            _MODEL_READY = True
+            _update_warmup_stage_cache(
+                "model", "ready", log, meta={"background_state": "complete"}
+            )
+            return _result(dest, "ready")
+
+        status = "deferred-no-budget"
+        log.info(
+            "embedding model warmup skipped: no budget hooks supplied",
+            extra={
+                "event": "vector-warmup",
+                "stage": "model",
+                "status": status,
+            },
+        )
+        _update_warmup_stage_cache(
+            "model",
+            status,
+            log,
+            meta={
+                "probe_only": True,
+                "background_timeout": inline_queue_ceiling,
+                "background_state": "deferred",
+            },
+        )
+        return _result(None, status)
 
     def _defer_for_ceiling(status: str, timeout_hint: float | None):
         _update_warmup_stage_cache(
@@ -671,6 +721,11 @@ def warmup_vector_service(
     if env_budget is None:
         env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_TIMEOUT"))
     env_budget = env_budget if env_budget is not None and env_budget > 0 else None
+
+    stage_cap_env = _coerce_timeout(
+        os.getenv("MENACE_VECTOR_BOOTSTRAP_STAGE_CEILING")
+        or os.getenv("MENACE_BOOTSTRAP_STAGE_CEILING")
+    )
 
     bootstrap_context = any(
         os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -1672,12 +1727,13 @@ def warmup_vector_service(
         base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     stage_hard_cap: float | None = None
+    bootstrap_stage_cap = stage_cap_env if stage_cap_env is not None else _BOOTSTRAP_STAGE_TIMEOUT
     if bootstrap_hard_timebox is not None:
         stage_hard_cap = bootstrap_hard_timebox
     elif (bootstrap_fast or warmup_lite) and not force_heavy:
-        stage_hard_cap = _BOOTSTRAP_STAGE_TIMEOUT
+        stage_hard_cap = bootstrap_stage_cap
     elif not force_heavy and not (budget_remaining_supplied or check_budget_supplied):
-        stage_hard_cap = _BOOTSTRAP_STAGE_TIMEOUT
+        stage_hard_cap = bootstrap_stage_cap
     if bootstrap_guard_ceiling is not None:
         stage_hard_cap = (
             bootstrap_guard_ceiling
