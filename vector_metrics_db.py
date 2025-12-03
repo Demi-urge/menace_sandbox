@@ -38,6 +38,7 @@ _EMBEDDING_TOKENS_TOTAL = None
 _RETRIEVAL_HIT_RATE = None
 _RETRIEVER_WIN_RATE = None
 _RETRIEVER_REGRET_RATE = None
+_BOOTSTRAP_DEFERRALS = None
 
 
 logger = logging.getLogger(__name__)
@@ -147,28 +148,44 @@ class _BootstrapVectorMetricsStub:
             or self._activation_kwargs.get("warmup")
         )
         updates: dict[str, Any] = {}
+        deferred: dict[str, Any] = {}
         if bootstrap_fast is not None:
             updates["bootstrap_fast"] = bool(bootstrap_fast)
         if warmup is not None:
             if warmup_context and warmup:
                 self._log_deferred_activation(reason="warmup_request")
-            else:
-                updates["warmup"] = bool(warmup)
+            updates["warmup"] = bool(warmup)
         if ensure_exists is not None:
             if warmup_context and ensure_exists:
+                deferred["ensure_exists"] = ensure_exists
                 self._log_deferred_activation(reason="ensure_exists_request")
             else:
                 updates["ensure_exists"] = ensure_exists
         if read_only is not None:
-            updates["read_only"] = read_only
+            if warmup_context and read_only is False:
+                deferred["read_only"] = read_only
+                self._log_deferred_activation(reason="read_only_request")
+            else:
+                updates["read_only"] = read_only
         if path is not None:
             updates["path"] = path
-        if updates:
-            self._activation_kwargs.update(updates)
-        if self._activation_blocked:
-            self._queued_activation_kwargs.update(
-                {k: v for k, v in self._activation_kwargs.items() if k in updates}
+        requested_updates = {**updates, **deferred}
+        if requested_updates:
+            self._activation_kwargs.update(requested_updates)
+        if self._activation_blocked or deferred:
+            self._queued_activation_kwargs.update(requested_updates)
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_activation_deferred",
+                extra={
+                    "queued_keys": sorted(requested_updates),
+                    "bootstrap_fast": bool(
+                        self._activation_kwargs.get("bootstrap_fast")
+                    ),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                    "read_only": bool(self._activation_kwargs.get("read_only")),
+                },
             )
+            _increment_deferral_metric("activation")
         else:
             self._activation_blocked = bool(
                 self._activation_kwargs.get("bootstrap_fast")
@@ -494,6 +511,28 @@ def _record_pending_weights(names: Sequence[str], *, value: float = 1.0) -> None
         _PENDING_WEIGHTS.update(clean_names)
 
 
+def _increment_deferral_metric(reason: str) -> None:
+    global _BOOTSTRAP_DEFERRALS
+    if _BOOTSTRAP_DEFERRALS is False:
+        return
+    if _BOOTSTRAP_DEFERRALS is None:
+        try:
+            _BOOTSTRAP_DEFERRALS = _me.Gauge(
+                "vector_metrics_bootstrap_deferrals",
+                "Warmup deferrals of vector metrics activation",
+                ["reason"],
+            )
+        except Exception:
+            logger.debug("vector metrics deferral metric unavailable", exc_info=True)
+            _BOOTSTRAP_DEFERRALS = False
+            return
+    if _BOOTSTRAP_DEFERRALS:
+        try:
+            _BOOTSTRAP_DEFERRALS.labels(reason).inc()
+        except Exception:
+            logger.debug("vector metrics deferral metric increment failed", exc_info=True)
+
+
 def _record_pending_weight_values(weights: Mapping[str, float]) -> None:
     if not weights:
         return
@@ -810,6 +849,8 @@ def get_shared_vector_metrics_db(
     }
     warmup_context = bool(any(warmup_context_reasons.values()))
     promotion_requested = bool((ensure_exists is True) or (read_only is False))
+    requested_ensure_exists = ensure_exists
+    requested_read_only = read_only
     if warmup_context:
         if promotion_requested:
             logger.info(
@@ -822,6 +863,7 @@ def get_shared_vector_metrics_db(
                     "warmup": resolved_warmup,
                 },
             )
+            _increment_deferral_metric("promotion")
         resolved_warmup = True
         ensure_exists = False
         read_only = True
@@ -839,6 +881,12 @@ def get_shared_vector_metrics_db(
                     read_only=bool(read_only) if read_only is not None else False,
                 )
                 _VECTOR_DB_INSTANCE.activate_on_first_write()
+                _VECTOR_DB_INSTANCE.configure_activation(
+                    bootstrap_fast=resolved_bootstrap_fast,
+                    warmup=resolved_warmup,
+                    ensure_exists=requested_ensure_exists,
+                    read_only=requested_read_only,
+                )
                 _VECTOR_DB_INSTANCE.register_readiness_hook()
                 logger.info(
                     "vector_metrics_db.bootstrap.stub_selected",
@@ -865,8 +913,8 @@ def get_shared_vector_metrics_db(
             _VECTOR_DB_INSTANCE.configure_activation(
                 bootstrap_fast=resolved_bootstrap_fast,
                 warmup=resolved_warmup,
-                ensure_exists=False if warmup_context else ensure_exists,
-                read_only=True if warmup_context else read_only,
+                ensure_exists=requested_ensure_exists,
+                read_only=requested_read_only,
             )
             _VECTOR_DB_INSTANCE.activate_on_first_write()
             _VECTOR_DB_INSTANCE.register_readiness_hook()
@@ -1178,6 +1226,12 @@ def ensure_vector_db_weights(
             read_only=read_only,
         )
         _apply_pending_weights(vdb)
+        if isinstance(vdb, _BootstrapVectorMetricsStub):
+            logger.info(
+                "vector_metrics_db.bootstrap.weight_seed_deferred",
+                extra={"count": len(names), "warmup": resolved_warmup},
+            )
+            _increment_deferral_metric("weights")
         if resolved_warmup and not bootstrap_fast:
             logger.info(
                 "vector_metrics_db.bootstrap.warmup_weights_cached",
