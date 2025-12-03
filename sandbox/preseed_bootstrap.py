@@ -3551,14 +3551,78 @@ def initialize_bootstrap_context(
             )
             placeholder_obj = existing_job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
             return existing_job_snapshot.get("result", placeholder_obj)
-        embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
-            "embedder_preload", vector_heavy=True, heavy=True
-        )
-        embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
         embedder_stage_budget = stage_controller.stage_budget(step_name="embedder_preload")
         embedder_stage_deadline = stage_controller.stage_deadline(
             step_name="embedder_preload"
         )
+        embedder_stage_deadline_remaining = (
+            max(0.0, embedder_stage_deadline - time.monotonic())
+            if embedder_stage_deadline is not None
+            else None
+        )
+        remaining_bootstrap_window = (
+            max(0.0, bootstrap_deadline - time.monotonic())
+            if bootstrap_deadline is not None
+            else None
+        )
+        deferral_threshold = float(
+            os.getenv("BOOTSTRAP_EMBEDDER_DEFERRAL_THRESHOLD", "1.0")
+        )
+        if deferral_threshold > 0:
+            remaining_candidates = [
+                candidate
+                for candidate in (
+                    embedder_stage_budget,
+                    embedder_stage_deadline_remaining,
+                    remaining_bootstrap_window,
+                )
+                if candidate is not None and candidate >= 0
+            ]
+            if remaining_candidates:
+                remaining_window = min(remaining_candidates)
+                if remaining_window < deferral_threshold:
+                    guard_reason = "embedder_deadline_deferral"
+                    LOGGER.info(
+                        "embedder preload deferred due to tight deadline window",
+                        extra={
+                            "event": "embedder-preload-deferred",
+                            "remaining_window": remaining_window,
+                            "deferral_threshold": deferral_threshold,
+                            "stage_budget": embedder_stage_budget,
+                            "stage_deadline": embedder_stage_deadline,
+                            "bootstrap_deadline": bootstrap_deadline,
+                        },
+                    )
+                    stage_controller.defer_step("embedder_preload", reason=guard_reason)
+                    _BOOTSTRAP_SCHEDULER.mark_partial(
+                        "vectorizer_preload", reason=guard_reason
+                    )
+                    _BOOTSTRAP_SCHEDULER.mark_partial(
+                        "background_loops", reason=f"embedder_placeholder:{guard_reason}"
+                    )
+                    job_snapshot = _schedule_background_preload(
+                        guard_reason, strict_timebox=remaining_window
+                    )
+                    warmup_summary = job_snapshot.get("warmup_summary") or {}
+                    warmup_summary.setdefault("deferred", True)
+                    warmup_summary.setdefault("deferred_reason", guard_reason)
+                    warmup_summary.setdefault("deferral_reason", guard_reason)
+                    warmup_summary.setdefault("stage", "deferred-deadline")
+                    warmup_summary.setdefault("stage_budget", embedder_stage_budget)
+                    warmup_summary.setdefault(
+                        "stage_deadline_remaining", embedder_stage_deadline_remaining
+                    )
+                    warmup_summary.setdefault(
+                        "bootstrap_remaining", remaining_bootstrap_window
+                    )
+                    job_snapshot["warmup_summary"] = warmup_summary
+                    _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+                    stage_controller.complete_step("embedder_preload", 0.0)
+                    return job_snapshot.get("result", _BOOTSTRAP_PLACEHOLDER)
+        embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
+            "embedder_preload", vector_heavy=True, heavy=True
+        )
+        embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
         bootstrap_guard_active = False
         guard_budget_scale = 1.0
         guard_delay = 0.0
@@ -3572,11 +3636,6 @@ def initialize_bootstrap_context(
             except Exception:
                 guard_delay = 0.0
             bootstrap_guard_active = bool(guard_delay > 0 or guard_budget_scale > 1.0 or guard_context)
-        embedder_stage_deadline_remaining = (
-            max(0.0, embedder_stage_deadline - time.monotonic())
-            if embedder_stage_deadline is not None
-            else None
-        )
         stage_deadline_hint_remaining = (
             max(0.0, embedder_stage_deadline_hint - time.monotonic())
             if embedder_stage_deadline_hint is not None
@@ -3585,11 +3644,6 @@ def initialize_bootstrap_context(
         )
         embedder_warmup_cap = (
             BOOTSTRAP_EMBEDDER_WARMUP_CAP if BOOTSTRAP_EMBEDDER_WARMUP_CAP > 0 else None
-        )
-        remaining_bootstrap_window = (
-            max(0.0, bootstrap_deadline - time.monotonic())
-            if bootstrap_deadline is not None
-            else None
         )
         coordinator_remaining_budget = getattr(
             shared_timeout_coordinator, "remaining_budget", None
@@ -4583,6 +4637,14 @@ def initialize_bootstrap_context(
                         "warmup_timebox_cap": strict_timebox,
                     },
                 )
+                warmup_summary = job_snapshot.get("warmup_summary") or {}
+                warmup_summary.setdefault("deferred", True)
+                warmup_summary.setdefault("deferred_reason", reason)
+                warmup_summary.setdefault("deferral_reason", reason)
+                warmup_summary.setdefault("stage", "deferred-timebox")
+                warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+                warmup_summary.setdefault("strict_timebox", strict_timebox)
+                job_snapshot["warmup_summary"] = warmup_summary
 
             def _background_preload() -> None:
                 try:
