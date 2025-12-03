@@ -418,6 +418,7 @@ def _get_vector_metrics(
                     warmup=True,
                     ensure_exists=False,
                     read_only=True,
+                    warmup_stub=True,
                 )
                 _VEC_METRICS = vm
                 return vm

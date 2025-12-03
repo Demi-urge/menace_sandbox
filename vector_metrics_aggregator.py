@@ -173,6 +173,7 @@ class VectorMetricsAggregator:
             db = helper(
                 read_only=True,
                 warmup=bool(self._warmup_mode or self._bootstrap_fast),
+                warmup_stub=True,
             )
             if getattr(db, "_boot_stub_active", False):
                 return {}

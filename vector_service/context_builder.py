@@ -1114,9 +1114,10 @@ class ContextBuilder:
             if helper is not None:
                 vm = helper(
                     bootstrap_fast=bootstrap_flag,
-                    warmup=warmup_flag,
+                    warmup=bool(warmup_flag or bootstrap_flag),
                     ensure_exists=False if warmup_flag else None,
                     read_only=True if warmup_flag else None,
+                    warmup_stub=bool(warmup_flag or bootstrap_flag),
                 )
                 vm = _install_global(vm)
                 if not warmup_flag and activator is not None:

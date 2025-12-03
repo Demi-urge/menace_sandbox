@@ -282,6 +282,7 @@ class PatchLogger:
                 self.vector_metrics = get_bootstrap_vector_metrics_db(
                     bootstrap_fast=resolved_fast,
                     warmup=warmup_flag,
+                    warmup_stub=True,
                 )
             except Exception:
                 self.vector_metrics = None
