@@ -3301,8 +3301,33 @@ def initialize_bootstrap_context(
             },
         )
         warmup_lite_context = True
-    vector_bootstrap_hint = force_vector_warmup
-    vector_warmup_requested = bool(force_vector_warmup)
+    vector_force_warmup = force_vector_warmup or force_embedder_preload
+    vector_bootstrap_hint = False
+    vector_warmup_requested = False
+    if heavy_bootstrap or vector_force_warmup:
+        if warmup_lite_context:
+            LOGGER.info(
+                "warmup-lite active; skipping heavy vector bootstrap hints",
+                extra={
+                    "event": "vector-warmup-lite-skip",
+                    "heavy_bootstrap": heavy_bootstrap,
+                    "force_vector_warmup": force_vector_warmup,
+                    "force_embedder_preload": force_embedder_preload,
+                },
+            )
+        elif not full_embedder_preload:
+            LOGGER.info(
+                "full embedder preload not requested; deferring heavy vector bootstrap hints",
+                extra={
+                    "event": "vector-warmup-preload-skip",
+                    "heavy_bootstrap": heavy_bootstrap,
+                    "force_vector_warmup": force_vector_warmup,
+                    "force_embedder_preload": force_embedder_preload,
+                },
+            )
+        else:
+            vector_bootstrap_hint = True
+            vector_warmup_requested = True
     vector_env_snapshot: dict[str, str | float] = {}
     LOGGER.info(
         "initialize_bootstrap_context heavy mode=%s", heavy_bootstrap,

@@ -1,5 +1,6 @@
 import importlib
 import logging
+import os
 import sys
 import time
 import types
@@ -174,3 +175,32 @@ def test_bootstrap_wrappers_export_minimum_floors(monkeypatch):
     assert resolved["MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"] >= 900
     assert preseed_bootstrap._default_step_floor(vector_heavy=False) >= 720
     assert preseed_bootstrap._default_step_floor(vector_heavy=True) >= 900
+
+
+def test_initialize_bootstrap_context_avoids_heavy_vector_env_in_lite_mode(monkeypatch):
+    monkeypatch.delenv("VECTOR_SERVICE_HEAVY", raising=False)
+    monkeypatch.delenv("MENACE_FORCE_HEAVY_VECTOR_WARMUP", raising=False)
+    monkeypatch.delenv("MENACE_FORCE_EMBEDDER_PRELOAD", raising=False)
+
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+    preseed_bootstrap._BOOTSTRAP_CACHE.clear()
+
+    preseed_bootstrap.initialize_bootstrap_context(
+        use_cache=False, full_embedder_preload=False
+    )
+
+    assert "VECTOR_SERVICE_HEAVY" not in os.environ
+
+
+def test_initialize_bootstrap_context_applies_heavy_vector_env_when_forced(monkeypatch):
+    monkeypatch.setenv("MENACE_FORCE_HEAVY_VECTOR_WARMUP", "1")
+    monkeypatch.delenv("VECTOR_SERVICE_HEAVY", raising=False)
+
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+    preseed_bootstrap._BOOTSTRAP_CACHE.clear()
+
+    preseed_bootstrap.initialize_bootstrap_context(
+        use_cache=False, full_embedder_preload=True, heavy_bootstrap=True
+    )
+
+    assert os.environ.get("VECTOR_SERVICE_HEAVY") == "1"
