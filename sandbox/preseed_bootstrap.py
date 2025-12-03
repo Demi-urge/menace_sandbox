@@ -4149,6 +4149,7 @@ def initialize_bootstrap_context(
             ) -> dict[str, Any]:
                 if strict_timebox is None:
                     strict_timebox = warmup_timebox_cap
+                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
                 job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
                 job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
                 job_snapshot.setdefault("placeholder_reason", reason)
@@ -4541,8 +4542,34 @@ def initialize_bootstrap_context(
             warmup_result: dict[str, Any] = {}
             warmup_exc: list[BaseException] = []
 
-            if bootstrap_context_active:
-                warmup_stop_reason_local = "embedder_preload_bootstrap_context"
+            strict_warmup_cap = warmup_timebox_cap
+            if strict_warmup_cap is None:
+                strict_warmup_cap = enforced_timebox
+
+            lite_default = bootstrap_context_active or budget_window_missing
+            tight_cap = strict_warmup_cap is not None and strict_warmup_cap <= minimum_presence_window
+            missing_stage_budget = embedder_stage_budget is None
+            stage_budget_tight = (
+                embedder_stage_budget is not None
+                and strict_warmup_cap is not None
+                and embedder_stage_budget <= strict_warmup_cap
+            )
+            lite_default = lite_default or missing_stage_budget or tight_cap or stage_budget_tight
+            heavy_requested = bool(full_embedder_preload or force_embedder_preload)
+            heavy_budget_available = (
+                (embedder_stage_budget is not None and embedder_stage_budget > (strict_warmup_cap or 0))
+                or (embedder_timeout is not None and embedder_timeout > (strict_warmup_cap or 0))
+            )
+
+            if lite_default and not (heavy_requested and heavy_budget_available):
+                warmup_stop_reason_local = (
+                    warmup_stop_reason
+                    or (
+                        "embedder_preload_bootstrap_context"
+                        if bootstrap_context_active
+                        else "embedder_preload_warmup_lite_default"
+                    )
+                )
                 warmup_stop_reason = warmup_stop_reason or warmup_stop_reason_local
                 return None, warmup_stop_reason
 
@@ -4579,7 +4606,7 @@ def initialize_bootstrap_context(
 
             if warmup_thread.is_alive():
                 combined_stop_event.set()
-                warmup_stop_reason = warmup_stop_reason or "embedder_preload_timebox_expired"
+                warmup_stop_reason = warmup_stop_reason or "embedder_preload_warmup_cap_exceeded"
                 warmup_thread.join(0.05)
                 return None, warmup_stop_reason
 
@@ -4589,12 +4616,20 @@ def initialize_bootstrap_context(
             return warmup_result.get("result"), None
 
         warmup_budget_remaining = None
+        strict_warmup_remaining = None
+        if warmup_timebox_cap is not None:
+            strict_warmup_remaining = max(
+                0.0, warmup_timebox_cap - (time.monotonic() - warmup_started)
+            )
         if enforced_timebox is not None:
             warmup_budget_remaining = max(
                 0.0, enforced_timebox - (time.monotonic() - warmup_started)
             )
+        warmup_join_timeout = strict_warmup_remaining
+        if warmup_join_timeout is None:
+            warmup_join_timeout = warmup_budget_remaining
         warmup_result, warmup_timeout_reason = _guarded_embedder_warmup(
-            join_timeout=warmup_budget_remaining
+            join_timeout=warmup_join_timeout
         )
         if warmup_timeout_reason:
             warmup_summary = warmup_summary or {}
@@ -4609,6 +4644,7 @@ def initialize_bootstrap_context(
             resume_download = warmup_timeout_reason in {
                 "embedder_stage_timebox_guard",
                 "embedder_preload_timebox_expired",
+                "embedder_preload_warmup_cap_exceeded",
             }
             warmup_deferral_reason = (
                 warmup_timeout_reason
