@@ -771,9 +771,11 @@ def get_shared_vector_metrics_db(
         resolved_bootstrap_fast or resolved_warmup or env_requested or menace_bootstrap
     )
     timer_context = _bootstrap_timers_active()
+    readiness_signal_active = bool(_READINESS_HOOK_ARMED)
     warmup_context = bool(
         bootstrap_requested
         or timer_context
+        or readiness_signal_active
         or _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False)
     )
     if warmup_context:
