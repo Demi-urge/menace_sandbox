@@ -1815,6 +1815,7 @@ def _bootstrap_embedder(
         return
 
     caps: dict[str, float | None] = dict(precomputed_caps or {})
+    stage_budget_hint = caps.get("stage_budget_hint")
     result: Dict[str, Any] = {}
     embedder_stop_event = threading.Event()
     now = time.monotonic()
@@ -1832,6 +1833,9 @@ def _bootstrap_embedder(
             cap
             for cap in (
                 stage_budget if stage_budget is not None and stage_budget > 0 else None,
+                stage_budget_hint
+                if stage_budget_hint is not None and stage_budget_hint > 0
+                else None,
                 stage_deadline_remaining
                 if stage_deadline_remaining is not None and stage_deadline_remaining > 0
                 else None,
@@ -1846,6 +1850,7 @@ def _bootstrap_embedder(
     )
     strict_timeout_candidates = [
         stage_budget if stage_budget is not None and stage_budget > 0 else None,
+        stage_budget_hint if stage_budget_hint is not None and stage_budget_hint > 0 else None,
         BOOTSTRAP_EMBEDDER_TIMEOUT if BOOTSTRAP_EMBEDDER_TIMEOUT > 0 else None,
         warmup_cap,
         stage_deadline_remaining if stage_deadline_remaining is not None else None,
@@ -1938,6 +1943,9 @@ def _bootstrap_embedder(
         return placeholder
     _BOOTSTRAP_EMBEDDER_STARTED = True
     start_time = perf_counter()
+    stage_deadline_perf = (
+        start_time + stage_deadline_remaining if stage_deadline_remaining is not None else None
+    )
     presence_cap = caps.get("presence_cap")
     if presence_cap is None:
         presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
@@ -1968,6 +1976,7 @@ def _bootstrap_embedder(
             "bootstrap_deadline": bootstrap_deadline,
             "timeout": timeout,
             "stage_budget": stage_budget,
+            "stage_budget_hint": stage_budget_hint,
             "warmup_cap": warmup_cap,
             "max_duration_cap": max_duration_cap,
             "effective_timeout_cap": effective_timeout_cap,
@@ -2130,10 +2139,14 @@ def _bootstrap_embedder(
                 deadlines: list[tuple[float, str]] = []
                 if budget_deadline is not None:
                     deadlines.append((budget_deadline, "bootstrap_budget_exceeded"))
+                if budget_deadline_hint is not None:
+                    deadlines.append((budget_deadline_hint, "embedder_stage_budget_deadline"))
                 if wall_clock_deadline is not None:
                     deadlines.append((wall_clock_deadline, "bootstrap_wall_clock_exceeded"))
                 if bootstrap_wall_deadline is not None:
                     deadlines.append((bootstrap_wall_deadline, "bootstrap_deadline_exceeded"))
+                if stage_deadline_perf is not None:
+                    deadlines.append((stage_deadline_perf, "embedder_stage_deadline_exhausted"))
                 if max_wait_deadline is not None:
                     deadlines.append((max_wait_deadline, max_wait_reason))
                 if presence_deadline is not None:
@@ -2419,6 +2432,8 @@ def _bootstrap_embedder(
         budget_deadline = (
             start_time + stage_budget if stage_budget is not None and stage_budget > 0 else None
         )
+        if budget_deadline is None and stage_budget_hint is not None and stage_budget_hint > 0:
+            budget_deadline = start_time + stage_budget_hint
         try:
             cache_available = embedder_cache_present()
         except Exception:  # pragma: no cover - diagnostics only
@@ -2574,9 +2589,18 @@ def _bootstrap_embedder(
         return placeholder
 
     budget_window = stage_budget if stage_budget is not None and stage_budget >= 0 else None
+    if stage_budget_hint is not None and stage_budget_hint >= 0:
+        budget_window = (
+            stage_budget_hint if budget_window is None else min(budget_window, stage_budget_hint)
+        )
     if stage_wall_cap is not None and budget_window is not None:
         budget_window = min(stage_wall_cap, budget_window)
     budget_deadline = start_time + budget_window if budget_window is not None else None
+    budget_deadline_hint = (
+        start_time + stage_budget_hint
+        if stage_budget_hint is not None and stage_budget_hint >= 0
+        else None
+    )
     wall_clock_deadline = (
         start_time + stage_wall_cap if stage_wall_cap is not None else None
     )
@@ -2670,9 +2694,23 @@ def _bootstrap_embedder(
                     schedule_background=True,
                 )
                 return
+            if budget_deadline_hint is not None and now >= budget_deadline_hint:
+                _record_abort(
+                    "embedder_stage_budget_deadline",
+                    deferred=True,
+                    schedule_background=True,
+                )
+                return
             if wall_clock_deadline is not None and now >= wall_clock_deadline:
                 _record_abort(
                     "bootstrap_wall_clock_exceeded",
+                    deferred=True,
+                    schedule_background=True,
+                )
+                return
+            if stage_deadline_perf is not None and now >= stage_deadline_perf:
+                _record_abort(
+                    "embedder_stage_deadline_exhausted",
                     deferred=True,
                     schedule_background=True,
                 )
@@ -3483,16 +3521,35 @@ def initialize_bootstrap_context(
         budget_guarded = False
         guard_blocks_preload = False
         non_blocking_presence_probe = False
+        fast_presence_reason = None
+        fast_presence_enforced = False
+        finite_stage_window = bool(
+            (
+                embedder_stage_budget_hint is not None
+                and math.isfinite(embedder_stage_budget_hint)
+            )
+            or (
+                embedder_stage_deadline_hint is not None
+                and math.isfinite(embedder_stage_deadline_hint)
+            )
+        )
         if bootstrap_fast_context:
-            presence_only = True
-            budget_guarded = True
-            guard_blocks_preload = True
-            presence_reason = "embedder_presence_bootstrap_fast_guard"
+            fast_presence_reason = "embedder_presence_bootstrap_fast"
         elif warmup_lite_context:
+            fast_presence_reason = "embedder_presence_warmup_lite"
+        elif finite_stage_window:
+            fast_presence_reason = "embedder_presence_finite_stage_window"
+        if fast_presence_reason:
             presence_only = True
             budget_guarded = True
             guard_blocks_preload = True
-            presence_reason = "embedder_presence_warmup_lite_guard"
+            non_blocking_presence_probe = True
+            presence_reason = fast_presence_reason
+            fast_presence_enforced = True
+        if bootstrap_fast_context:
+            presence_reason = presence_reason or "embedder_presence_bootstrap_fast_guard"
+        elif warmup_lite_context:
+            presence_reason = presence_reason or "embedder_presence_warmup_lite_guard"
         if budget_window_missing:
             presence_only = True
             budget_guarded = True
@@ -4456,6 +4513,20 @@ def initialize_bootstrap_context(
             _set_component_state("vector_seeding", "deferred")
             stage_controller.complete_step("embedder_preload", 0.0)
             return _BOOTSTRAP_PLACEHOLDER
+
+        if fast_presence_enforced:
+            strict_timebox_hint = embedder_stage_budget_hint
+            if strict_timebox_hint is None:
+                strict_timebox_hint = embedder_stage_budget
+            return _defer_to_presence(
+                presence_reason or "embedder_presence_fast_path",
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=True,
+                strict_timebox=strict_timebox_hint,
+                non_blocking_probe=True,
+                resume_download=True,
+            )
 
         budget_shortfall = any(
             candidate is not None
