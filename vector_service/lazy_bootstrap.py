@@ -793,6 +793,7 @@ def warmup_vector_service(
         current_status = summary.get(stage)
         if current_status and current_status.startswith("deferred") and status.startswith("deferred"):
             priority = {
+                "deferred-heavy": 6,
                 "deferred-bootstrap": 5,
                 "deferred-ceiling": 4,
                 "deferred-timebox": 3,
@@ -1200,6 +1201,7 @@ def warmup_vector_service(
             run_vectorise = False
 
     def _finalise() -> Mapping[str, str]:
+        nonlocal background_stage_timeouts
         deferred_record = deferred | recorded_deferred
         if deferred_record:
             summary["deferred"] = ",".join(sorted(deferred_record))
@@ -1255,17 +1257,14 @@ def warmup_vector_service(
             and bootstrap_context
             and background_candidates
         ):
-            nonlocal background_stage_timeouts
+            def _queue_background(
+                stages: set[str], *, budget_hints: Mapping[str, float | None] | None = None
+            ) -> None:
+                if budget_hints and background_stage_timeouts is None:
+                    background_stage_timeouts = dict(budget_hints)
+                _launch_background_warmup(set(stages))
 
-        def _queue_background(
-            stages: set[str], *, budget_hints: Mapping[str, float | None] | None = None
-        ) -> None:
-            nonlocal background_stage_timeouts
-            if budget_hints and background_stage_timeouts is None:
-                background_stage_timeouts = dict(budget_hints)
-            _launch_background_warmup(set(stages))
-
-            effective_background_hook = _queue_background
+                effective_background_hook = _queue_background
 
         if background_candidates and effective_background_hook is not None:
             try:
@@ -1838,6 +1837,43 @@ def warmup_vector_service(
 
     _record_bootstrap_deferrals()
 
+    def _enforce_heavy_inline_flag() -> None:
+        nonlocal download_model, probe_model, model_probe_only
+        nonlocal hydrate_handlers, run_vectorise, heavy_admission
+
+        if force_heavy:
+            return
+
+        heavy_gate_status = "deferred-heavy"
+        heavy_admission = heavy_admission or heavy_gate_status
+
+        def _defer(stage: str, timeout: float | None) -> None:
+            _record_background(stage, heavy_gate_status)
+            _hint_background_budget(stage, timeout)
+
+        model_timeout = _effective_timeout("model")
+        handler_timeout = _effective_timeout("handlers")
+        vectorise_timeout = _effective_timeout("vectorise")
+
+        if download_model:
+            _defer("model", model_timeout)
+            download_model = False
+            probe_model = False
+            model_probe_only = False
+
+        if hydrate_handlers:
+            _defer("handlers", handler_timeout)
+            hydrate_handlers = False
+            if run_vectorise:
+                _defer("vectorise", vectorise_timeout)
+                run_vectorise = False
+
+        if run_vectorise:
+            _defer("vectorise", vectorise_timeout)
+            run_vectorise = False
+
+    _enforce_heavy_inline_flag()
+
     def _admit_stage_budget(
         stage: str, planned_timeout: float | None, *, stage_cap: float | None = None
     ) -> tuple[bool, float | None]:
@@ -2239,6 +2275,9 @@ def warmup_vector_service(
 
     def _shared_budget_preflight() -> None:
         nonlocal hydrate_handlers, start_scheduler, run_vectorise, budget_gate_reason, heavy_admission
+
+        if heavy_admission is not None and heavy_admission != "admitted":
+            return
 
         remaining_shared = _remaining_shared_budget()
         if remaining_shared is None:

@@ -5,6 +5,7 @@ import sys
 import time
 import types
 from pathlib import Path
+from typing import Mapping
 
 vector_service_pkg = types.ModuleType("vector_service")
 vector_service_pkg.__path__ = [str(Path(__file__).resolve().parents[1] / "vector_service")]
@@ -43,7 +44,11 @@ def test_model_download_times_out(caplog, monkeypatch, tmp_path):
             raise TimeoutError("budget expired")
 
     lazy_bootstrap.warmup_vector_service(
-        download_model=True, check_budget=check_budget, logger=logging.getLogger("test"), probe_model=False
+        download_model=True,
+        check_budget=check_budget,
+        logger=logging.getLogger("test"),
+        probe_model=False,
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -78,6 +83,7 @@ def test_deferred_model_download_queues_background(caplog, monkeypatch, tmp_path
         check_budget=check_budget,
         logger=logging.getLogger("test"),
         probe_model=False,
+        force_heavy=True,
     )
 
     background = lazy_bootstrap._MODEL_BACKGROUND_THREAD
@@ -116,6 +122,7 @@ def test_handler_hydration_times_out(caplog, monkeypatch):
         hydrate_handlers=True,
         check_budget=check_budget,
         logger=logging.getLogger("test"),
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -129,10 +136,50 @@ def test_stage_skipped_when_budget_below_estimate(caplog):
         download_model=True,
         budget_remaining=lambda: 5.0,
         logger=logging.getLogger("test"),
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
     assert warmup_summary["model"] == "deferred-estimate"
+
+
+def test_heavy_inline_requires_flag(caplog):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+
+    deferred: set[str] = set()
+    budget_hints_seen: dict[str, float | None] = {}
+
+    def hook(stages: set[str], budget_hints: Mapping[str, float | None] | None = None):
+        deferred.update(stages)
+        for key, value in (budget_hints or {}).items():
+            if key == "budget":
+                continue
+            budget_hints_seen[key] = value
+
+    stage_timeouts = {"model": 3.0, "handlers": 2.0, "vectorise": 1.0, "budget": 12.0}
+
+    warmup_summary = lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        hydrate_handlers=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        logger=logging.getLogger("test"),
+        budget_remaining=lambda: 30.0,
+        stage_timeouts=stage_timeouts,
+        background_hook=hook,
+    )
+
+    assert warmup_summary["model"] == "deferred-heavy"
+    assert warmup_summary["handlers"] == "deferred-heavy"
+    assert warmup_summary["vectorise"] == "deferred-heavy"
+    assert deferred == {"handlers", "model", "vectorise"}
+    assert warmup_summary.get("background") == "handlers,model,vectorise"
+    assert warmup_summary.get("background_budget_ceiling_model") == "3.000"
+    assert warmup_summary.get("background_budget_ceiling_handlers") == "2.000"
+    assert warmup_summary.get("background_budget_ceiling_vectorise") == "1.000"
+    assert warmup_summary.get("heavy_admission") == "deferred-heavy"
+    assert budget_hints_seen == {"handlers": 2.0, "model": 3.0, "vectorise": 1.0}
 
 
 def test_background_hook_invoked_for_estimate_deferral(caplog):
@@ -144,6 +191,7 @@ def test_background_hook_invoked_for_estimate_deferral(caplog):
         budget_remaining=lambda: 5.0,
         logger=logging.getLogger("test"),
         background_hook=deferred.update,
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -162,6 +210,7 @@ def test_handler_vectorise_budget_deferral_uses_background_hook(caplog):
         budget_remaining=lambda: 1.0,
         logger=logging.getLogger("test"),
         background_hook=deferred.update,
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -192,6 +241,7 @@ def test_default_stage_timeouts_enforced_without_budget(caplog, monkeypatch, tmp
         logger=logging.getLogger("test"),
         probe_model=False,
         stage_timeouts=None,
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -229,6 +279,7 @@ def test_timeout_defers_remaining_stages(caplog, monkeypatch, tmp_path):
         probe_model=False,
         stage_timeouts=None,
         background_hook=deferred.update,
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -252,6 +303,7 @@ def test_missing_budget_marks_deferred(caplog):
         warmup_lite=False,
         logger=logging.getLogger("test"),
         background_hook=deferred.update,
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -269,6 +321,7 @@ def test_missing_budget_marks_deferred(caplog):
         run_vectorise=True,
         warmup_lite=False,
         logger=logging.getLogger("test"),
+        force_heavy=True,
     )
 
     retry_summary = _get_warmup_summary(caplog)
@@ -314,6 +367,7 @@ def test_handler_timeout_stops_background(caplog, monkeypatch):
         hydrate_handlers=True,
         stage_timeouts=None,
         logger=logging.getLogger("test"),
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -354,6 +408,7 @@ def test_vectorise_timeout_aborts_work(caplog, monkeypatch):
         run_vectorise=True,
         stage_timeouts=None,
         logger=logging.getLogger("test"),
+        force_heavy=True,
     )
 
     warmup_summary = _get_warmup_summary(caplog)
@@ -387,6 +442,7 @@ def test_upfront_budget_deferral_memoised(caplog, monkeypatch):
         warmup_lite=False,
         stage_timeouts={"handlers": 0.1, "vectorise": 0.1},
         logger=logging.getLogger("test"),
+        force_heavy=True,
     )
 
     lazy_bootstrap.warmup_vector_service(**warmup_kwargs)
