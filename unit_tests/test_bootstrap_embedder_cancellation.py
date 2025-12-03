@@ -437,6 +437,30 @@ def test_start_embedder_warmup_aborts_on_elapsed_deadline(monkeypatch):
     assert summary.get("full_preload_skipped") is True
 
 
+def test_start_embedder_warmup_skips_on_tight_budget_window(monkeypatch):
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    calls: dict[str, object] = {}
+
+    def _bootstrap_embedder(*_args, **_kwargs):
+        calls["bootstrap_invoked"] = True
+        return object()
+
+    monkeypatch.setattr(preseed_bootstrap, "_bootstrap_embedder", _bootstrap_embedder)
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+
+    result = preseed_bootstrap.start_embedder_warmup(
+        stage_budget=0.005, bootstrap_deadline=time.perf_counter() + 0.005
+    )
+
+    job = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+
+    assert result == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert "bootstrap_invoked" not in calls
+    assert job.get("deferral_reason") == "embedder_budget_window_too_short"
+    assert job.get("background_join_timeout") is not None
+
+
 def test_start_embedder_warmup_caps_background_join(monkeypatch):
     preseed_bootstrap = _load_preseed_bootstrap_module()
 
