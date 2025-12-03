@@ -293,9 +293,21 @@ try:  # pragma: no cover - optional dependency
 except Exception:
     VectorMetricsDB = None  # type: ignore
     resolve_vector_bootstrap_flags = None  # type: ignore
+    get_bootstrap_shared_vector_metrics_db = None  # type: ignore
+    get_shared_vector_metrics_db = None  # type: ignore
+    activate_shared_vector_metrics_db = None  # type: ignore
 else:
     VectorMetricsDB = _vector_metrics_module.VectorMetricsDB
     resolve_vector_bootstrap_flags = _vector_metrics_module.resolve_vector_bootstrap_flags
+    get_bootstrap_shared_vector_metrics_db = getattr(
+        _vector_metrics_module, "get_bootstrap_shared_vector_metrics_db", None
+    )
+    get_shared_vector_metrics_db = getattr(
+        _vector_metrics_module, "get_shared_vector_metrics_db", None
+    )
+    activate_shared_vector_metrics_db = getattr(
+        _vector_metrics_module, "activate_shared_vector_metrics_db", None
+    )
 
 
 _VECTOR_SERVICE_WARMUP = _env_flag("VECTOR_SERVICE_WARMUP")
@@ -385,6 +397,8 @@ def _get_vector_metrics(
     warmup_flag = bool(resolved_warmup or bootstrap_context)
     bootstrap_flag = bool(resolved_fast or bootstrap_context or env_requested)
     reason = "data_bot.vector_metrics"
+    helper = get_bootstrap_shared_vector_metrics_db or get_shared_vector_metrics_db
+    activator = activate_shared_vector_metrics_db
     with _VEC_METRICS_LOCK:
         if isinstance(_VEC_METRICS, _VectorMetricsWarmupStub):
             if activate_persistence and not warmup_flag:
@@ -398,6 +412,16 @@ def _get_vector_metrics(
             return _VEC_METRICS
 
         if warmup_flag:
+            if helper is not None:
+                vm = helper(
+                    bootstrap_fast=bootstrap_flag,
+                    warmup=True,
+                    ensure_exists=False,
+                    read_only=True,
+                )
+                _VEC_METRICS = vm
+                return vm
+
             stub = _VectorMetricsWarmupStub(
                 lambda: VectorMetricsDB(
                     bootstrap_fast=False,
@@ -408,18 +432,31 @@ def _get_vector_metrics(
             _VEC_METRICS = stub
             return stub
 
-        vm = VectorMetricsDB(
-            bootstrap_fast=bootstrap_flag,
-            warmup=warmup_flag,
-            read_only=bool(bootstrap_flag or warmup_flag),
-        )
-        if activate_persistence and hasattr(vm, "activate_persistence") and (
-            bootstrap_flag or warmup_flag
-        ):
-            try:
-                vm.activate_persistence(reason=reason)
-            except Exception:  # pragma: no cover - best effort
-                logger.debug("vector metrics activation failed", exc_info=True)
+        if helper is not None:
+            vm = helper(
+                bootstrap_fast=bootstrap_flag,
+                warmup=warmup_flag,
+                ensure_exists=None if warmup_flag else True,
+                read_only=True if (bootstrap_flag or warmup_flag) else False,
+            )
+        else:
+            vm = VectorMetricsDB(
+                bootstrap_fast=bootstrap_flag,
+                warmup=warmup_flag,
+                read_only=bool(bootstrap_flag or warmup_flag),
+            )
+
+        if activate_persistence and not warmup_flag:
+            if activator is not None:
+                try:
+                    activator(reason=reason, post_warmup=True)
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug("vector metrics activation failed", exc_info=True)
+            elif hasattr(vm, "activate_persistence"):
+                try:
+                    vm.activate_persistence(reason=reason)
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug("vector metrics activation failed", exc_info=True)
         _VEC_METRICS = vm
         return vm
 
