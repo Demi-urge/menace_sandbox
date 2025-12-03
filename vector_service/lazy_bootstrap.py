@@ -943,6 +943,7 @@ def warmup_vector_service(
         if warmup_lite_source == "caller":
             warmup_lite_source = "missing-budget-hooks"
         warmup_lite = True
+        missing_budget_deferred.update({"model", "handlers", "vectorise"})
         if heavy_requested or requested_handlers or requested_vectorise:
             log.info(
                 "No budget callbacks supplied; enabling warmup-lite and deferring heavy vector warmup",
