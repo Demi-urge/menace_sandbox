@@ -237,6 +237,9 @@ class _BootstrapVectorMetricsStub:
                 )
                 return
             try:
+                self._release_activation_block(
+                    reason="bootstrap_ready", configure_ready=True
+                )
                 activate_shared_vector_metrics_db(
                     reason="bootstrap_ready", post_warmup=True
                 )
@@ -589,7 +592,9 @@ def _arm_shared_readiness_hook() -> None:
             logger.debug("vector_metrics_db.bootstrap.readiness_gate_failed", exc_info=True)
             return
         try:
-            activate_shared_vector_metrics_db(reason="bootstrap_ready")
+            activate_shared_vector_metrics_db(
+                reason="bootstrap_ready", post_warmup=True
+            )
         except Exception:  # pragma: no cover - best effort
             logger.debug(
                 "vector_metrics_db.bootstrap.readiness_activation_failed", exc_info=True
@@ -938,7 +943,8 @@ def activate_shared_vector_metrics_db(
     if isinstance(vm, _BootstrapVectorMetricsStub):
         vm.register_readiness_hook()
         allow_activation = bool(post_warmup or reason == "bootstrap_ready")
-        if not allow_activation:
+        if not allow_activation and (resolved_fast or resolved_warmup):
+            vm.activate_on_first_write()
             return vm
         vm.configure_activation(warmup=False, ensure_exists=True, read_only=False)
         delegate = vm._promote_from_stub(reason=reason or "warmup_complete")
