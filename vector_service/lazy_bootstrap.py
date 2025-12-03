@@ -507,6 +507,10 @@ def warmup_vector_service(
         for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
     )
 
+    bootstrap_guard_ceiling: float | None = None
+    if bootstrap_context and env_budget is None and not stage_timeouts_supplied:
+        bootstrap_guard_ceiling = _BOOTSTRAP_STAGE_TIMEOUT
+
     bootstrap_fast = bool(bootstrap_fast)
     bootstrap_lite = bool(bootstrap_context if bootstrap_lite is None else bootstrap_lite)
 
@@ -1193,6 +1197,12 @@ def warmup_vector_service(
         stage_hard_cap = bootstrap_hard_timebox
     elif (bootstrap_fast or warmup_lite) and not force_heavy:
         stage_hard_cap = _BOOTSTRAP_STAGE_TIMEOUT
+    if bootstrap_guard_ceiling is not None:
+        stage_hard_cap = (
+            bootstrap_guard_ceiling
+            if stage_hard_cap is None
+            else min(stage_hard_cap, bootstrap_guard_ceiling)
+        )
 
     provided_budget = _coerce_timeout(stage_timeouts) if not isinstance(stage_timeouts, Mapping) else None
     initial_budget_remaining = _remaining_budget()
@@ -1221,6 +1231,14 @@ def warmup_vector_service(
                     heavy_stage_cap_hits.add(stage)
                 timeouts[stage] = capped_timeout
 
+    def _apply_bootstrap_guard(timeouts: dict[str, float | None]) -> None:
+        if bootstrap_guard_ceiling is None:
+            return
+        for stage in base_timeouts:
+            timeout = timeouts.get(stage)
+            if timeout is None or timeout > bootstrap_guard_ceiling:
+                timeouts[stage] = bootstrap_guard_ceiling
+
     if isinstance(stage_timeouts, Mapping):
         for name, timeout in stage_timeouts.items():
             if name == "budget":
@@ -1233,6 +1251,8 @@ def warmup_vector_service(
             resolved_timeouts[target_name] = coerced
             explicit_timeouts.add(target_name)
 
+    _apply_bootstrap_guard(base_timeouts)
+    _apply_bootstrap_guard(resolved_timeouts)
     _apply_stage_cap(base_timeouts)
     _apply_stage_cap(resolved_timeouts)
     _apply_heavy_stage_cap(base_timeouts)
