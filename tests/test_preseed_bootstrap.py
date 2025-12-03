@@ -177,6 +177,7 @@ def reset_bootstrap_timeline():
     bootstrap._BOOTSTRAP_EMBEDDER_ATTEMPTED = False
     bootstrap._BOOTSTRAP_EMBEDDER_STARTED = False
     bootstrap._BOOTSTRAP_EMBEDDER_DISABLED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_READY.clear()
     yield
     bootstrap.BOOTSTRAP_STEP_TIMELINE.clear()
     bootstrap._BOOTSTRAP_TIMELINE_START = None
@@ -190,6 +191,7 @@ def reset_bootstrap_timeline():
     bootstrap._BOOTSTRAP_EMBEDDER_ATTEMPTED = False
     bootstrap._BOOTSTRAP_EMBEDDER_STARTED = False
     bootstrap._BOOTSTRAP_EMBEDDER_DISABLED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_READY.clear()
     sys.modules.pop("menace_sandbox.governed_embeddings", None)
 
 
@@ -203,6 +205,7 @@ def test_embedder_presence_policy_honors_stage_budget():
         embedder_deferred=False,
         bootstrap_fast_context=False,
         warmup_lite_context=False,
+        bootstrap_guard_active=False,
     )
 
     assert presence_only is True
@@ -251,6 +254,7 @@ def test_start_embedder_warmup_deferred(monkeypatch):
     placeholder = object()
     embedder = object()
     download_started = threading.Event()
+    bootstrap_placeholder = bootstrap._BOOTSTRAP_PLACEHOLDER
 
     def fake_activate(reason: str):
         return placeholder
@@ -282,7 +286,7 @@ def test_start_embedder_warmup_deferred(monkeypatch):
     elapsed = time.perf_counter() - start
 
     assert elapsed < 0.08
-    assert result is placeholder
+    assert result is placeholder or result is bootstrap_placeholder
 
     job = bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
     assert job.get("deferred") is True
@@ -297,6 +301,62 @@ def test_start_embedder_warmup_deferred(monkeypatch):
         time.sleep(0.01)
 
     assert final_result is embedder
+
+
+def test_bootstrap_context_short_circuits_embedder(monkeypatch):
+    placeholder = object()
+    download_started = threading.Event()
+
+    def fake_activate(reason: str):  # noqa: ARG001
+        return placeholder
+
+    def fake_cancel(event: threading.Event, reason: str, join_timeout: float) -> None:  # noqa: ARG001
+        event.set()
+
+    def fake_get_embedder(
+        *, timeout: float, stop_event: threading.Event | None, **_kwargs: object
+    ) -> object:
+        download_started.set()
+        start = time.perf_counter()
+        while time.perf_counter() - start < 0.5:
+            if stop_event is not None and stop_event.is_set():
+                raise TimeoutError("cancelled")
+            time.sleep(0.01)
+        return object()
+
+    governed_embeddings = types.SimpleNamespace(
+        _MAX_EMBEDDER_WAIT=1.0,
+        _activate_bundled_fallback=fake_activate,
+        apply_bootstrap_timeout_caps=lambda budget: budget,
+        cancel_embedder_initialisation=fake_cancel,
+        embedder_cache_present=lambda: False,
+        get_embedder=fake_get_embedder,
+    )
+    monkeypatch.setitem(sys.modules, "menace_sandbox.governed_embeddings", governed_embeddings)
+    monkeypatch.setattr(bootstrap, "_current_bootstrap_context", lambda: {"bootstrap": True})
+    bootstrap._BOOTSTRAP_EMBEDDER_READY.clear()
+
+    start = time.perf_counter()
+    result = bootstrap.start_embedder_warmup(timeout=1.0, stage_budget=0.1)
+    elapsed = time.perf_counter() - start
+
+    assert result is placeholder or result is bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert elapsed < 0.2
+
+    job = bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert job.get("deferred") is True
+    assert job.get("bootstrap_context_deferred") is True
+    assert job.get("ready_after_bootstrap") is True
+    assert job.get("placeholder_reason") == "embedder_bootstrap_context_placeholder"
+
+    bootstrap._BOOTSTRAP_EMBEDDER_READY.set()
+    background_future = job.get("background_future")
+    assert background_future is not None
+    background_future.result(timeout=1.5)
+    assert download_started.wait(0.5)
+
+    caps = job.get("computed_caps", {})
+    assert caps.get("stage_budget") == pytest.approx(0.1)
 
 
 def test_start_embedder_warmup_uses_deferred_placeholder(monkeypatch):

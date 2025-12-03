@@ -1951,6 +1951,16 @@ def _bootstrap_embedder(
         placeholder_candidate = None
     placeholder = placeholder_candidate or _BOOTSTRAP_PLACEHOLDER
 
+    bootstrap_context_active = False
+    try:
+        bootstrap_context_active = bool(
+            _current_bootstrap_context()
+            or getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+        )
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("unable to resolve bootstrap context for embedder", exc_info=True)
+    caps.setdefault("bootstrap_context_active", bootstrap_context_active)
+
     if stop_event is not None and stop_event.is_set():
         _BOOTSTRAP_EMBEDDER_JOB = {
             "result": placeholder,
@@ -1973,6 +1983,17 @@ def _bootstrap_embedder(
         presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
     if presence_cap < 0:
         presence_cap = 0.0
+    presence_timebox_candidates = [
+        presence_cap if presence_cap and presence_cap > 0 else None,
+        stage_budget if stage_budget is not None and stage_budget > 0 else None,
+        warmup_cap if warmup_cap is not None and warmup_cap > 0 else None,
+    ]
+    strict_presence_cap = min(
+        (candidate for candidate in presence_timebox_candidates if candidate is not None),
+        default=None,
+    )
+    if strict_presence_cap is not None:
+        presence_cap = strict_presence_cap
     caps["presence_cap"] = presence_cap
     presence_deadline = (
         start_time + presence_cap if presence_cap and presence_cap > 0 else None
@@ -2010,6 +2031,34 @@ def _bootstrap_embedder(
 
     _ensure_not_stopped(stop_event)
     _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
+
+    strict_timebox = caps.get("strict_timebox")
+    if strict_timebox is None:
+        strict_timebox_candidates = [
+            stage_budget if stage_budget is not None and stage_budget > 0 else None,
+            stage_wall_cap if stage_wall_cap is not None and stage_wall_cap > 0 else None,
+            presence_cap if presence_cap > 0 else None,
+        ]
+        strict_timebox = min(
+            (candidate for candidate in strict_timebox_candidates if candidate is not None),
+            default=None,
+        )
+    if strict_timebox is not None and presence_deadline is not None:
+        presence_deadline = min(presence_deadline, start_time + strict_timebox)
+    caps["strict_timebox"] = strict_timebox
+
+    bootstrap_context_guard = (
+        bootstrap_context_active
+        and not presence_probe
+        and not force_placeholder
+        and not schedule_background
+    )
+    if bootstrap_context_guard:
+        presence_probe = True
+        force_placeholder = True
+        schedule_background = True
+        presence_reason = presence_reason or "embedder_bootstrap_context_placeholder"
+        caps["bootstrap_context_deferred"] = True
 
     if _BOOTSTRAP_EMBEDDER_JOB and _BOOTSTRAP_EMBEDDER_JOB.get("thread"):
         existing = _BOOTSTRAP_EMBEDDER_JOB["thread"]
@@ -2140,6 +2189,13 @@ def _bootstrap_embedder(
         if not background_budget_available:
             LOGGER.debug("embedder background download blocked by stage budget")
             return
+
+        if _BOOTSTRAP_EMBEDDER_JOB is not None:
+            _BOOTSTRAP_EMBEDDER_JOB.setdefault("computed_caps", {**caps})
+            _BOOTSTRAP_EMBEDDER_JOB.setdefault(
+                "bootstrap_context_deferred",
+                caps.get("bootstrap_context_deferred", bootstrap_context_active),
+            )
 
         if presence_probe and not background_download_requested:
             LOGGER.debug(
@@ -2477,6 +2533,10 @@ def _bootstrap_embedder(
                 "placeholder_reason": probe_reason,
                 "deferred": True,
                 "presence_available": cache_available,
+                "bootstrap_context_deferred": caps.get(
+                    "bootstrap_context_deferred", bootstrap_context_active
+                ),
+                "ready_after_bootstrap": True,
             }
         )
         if _BOOTSTRAP_EMBEDDER_JOB is not None:
@@ -2486,6 +2546,11 @@ def _bootstrap_embedder(
                     "placeholder_reason": probe_reason,
                     "deferred": True,
                     "presence_available": cache_available,
+                    "bootstrap_context_deferred": caps.get(
+                        "bootstrap_context_deferred", bootstrap_context_active
+                    ),
+                    "ready_after_bootstrap": True,
+                    "computed_caps": {**caps},
                 }
             )
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=probe_reason)
@@ -2842,7 +2907,7 @@ def start_embedder_warmup(
 ) -> Any:
     """Launch embedder warmup quickly and defer heavy downloads when budgets are tight."""
 
-    global _BOOTSTRAP_EMBEDDER_ATTEMPTED
+    global _BOOTSTRAP_EMBEDDER_ATTEMPTED, _BOOTSTRAP_EMBEDDER_JOB
 
     resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT if timeout is None else timeout
     presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
@@ -2963,7 +3028,14 @@ def start_embedder_warmup(
         _BOOTSTRAP_SCHEDULER.mark_partial(
             "background_loops", reason=f"embedder_placeholder:{guard_reason}"
         )
-        guard_timebox = presence_cap if presence_cap > 0 else None
+        guard_timebox_candidates = [
+            presence_cap if presence_cap > 0 else None,
+            stage_budget if stage_budget is not None and stage_budget > 0 else None,
+        ]
+        guard_timebox = min(
+            (candidate for candidate in guard_timebox_candidates if candidate is not None),
+            default=None,
+        )
         telemetry = {
             "stage_budget": stage_budget,
             "presence_cap": presence_cap,
