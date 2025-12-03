@@ -3551,78 +3551,78 @@ def initialize_bootstrap_context(
             non_blocking_presence_probe = True
             presence_reason = presence_reason or "embedder_preload_min_budget"
 
-            def _defer_to_presence(
-                    reason: str,
-                    *,
-                    budget_guarded: bool,
-                    budget_window_missing: bool,
-                    forced_background: bool = False,
-                    strict_timebox: float | None = None,
-                    non_blocking_probe: bool = False,
-                    resume_download: bool | None = None,
-                ) -> Any:
+        def _defer_to_presence(
+            reason: str,
+            *,
+            budget_guarded: bool,
+            budget_window_missing: bool,
+            forced_background: bool = False,
+            strict_timebox: float | None = None,
+            non_blocking_probe: bool = False,
+            resume_download: bool | None = None,
+        ) -> Any:
+            LOGGER.info(
+                "embedder preload guarded; scheduling presence probe",
+                extra={
+                    "gate": embedder_gate,
+                    "budget": embedder_stage_budget,
+                    "force_preload": full_preload_requested,
+                    "full_preload_flag": full_embedder_preload,
+                    "bootstrap_fast": bootstrap_fast_context,
+                    "warmup_lite": warmup_lite_context,
+                    "embedder_deferred": embedder_deferred,
+                    "budget_guarded": budget_guarded,
+                    "presence_default": presence_default_enforced,
+                    "presence_reason": reason,
+                    "budget_window_missing": budget_window_missing,
+                    "forced_background": forced_background,
+                    "background_gate": background_dispatch_gate,
+                    "background_dispatch": True,
+                    "strict_timebox": strict_timebox,
+                    "resume_download": resume_download,
+                    "event": "embedder-preload-deferred",
+                },
+            )
+            stage_controller.defer_step("embedder_preload", reason=reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=reason)
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{reason}"
+            )
+            probe_timeout_candidates = [
+                candidate
+                for candidate in (
+                    embedder_timeout,
+                    embedder_stage_budget,
+                    embedder_stage_budget_hint,
+                    0.75,
+                )
+                if candidate is not None and candidate > 0
+            ]
+            probe_timeout = min(probe_timeout_candidates) if probe_timeout_candidates else 0.75
+            probe_timeout_hard_cap = 1.5
+            probe_timeout = min(probe_timeout, probe_timeout_hard_cap)
+            probe_stop_event = threading.Event()
+            presence_available = False
+            probe_timed_out = False
+            stage_budget_cap = (
+                embedder_stage_budget_hint
+                if embedder_stage_budget_hint is not None
+                else embedder_stage_budget
+            )
+            if stage_budget_cap is not None and stage_budget_cap <= 0:
+                probe_timed_out = True
+            elif stage_budget_cap is not None and probe_timeout > stage_budget_cap:
+                probe_timed_out = True
                 LOGGER.info(
-                    "embedder preload guarded; scheduling presence probe",
+                    "presence probe capped by stage budget; scheduling background",
                     extra={
-                        "gate": embedder_gate,
-                        "budget": embedder_stage_budget,
-                        "force_preload": full_preload_requested,
-                        "full_preload_flag": full_embedder_preload,
-                        "bootstrap_fast": bootstrap_fast_context,
-                        "warmup_lite": warmup_lite_context,
-                        "embedder_deferred": embedder_deferred,
-                        "budget_guarded": budget_guarded,
-                        "presence_default": presence_default_enforced,
-                        "presence_reason": reason,
-                        "budget_window_missing": budget_window_missing,
-                        "forced_background": forced_background,
-                        "background_gate": background_dispatch_gate,
-                        "background_dispatch": True,
-                        "strict_timebox": strict_timebox,
-                        "resume_download": resume_download,
                         "event": "embedder-preload-deferred",
+                        "stage_budget": stage_budget_cap,
+                        "probe_timeout": probe_timeout,
+                        "reason": reason,
                     },
                 )
-                stage_controller.defer_step("embedder_preload", reason=reason)
-                _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=reason)
-                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
-                _BOOTSTRAP_SCHEDULER.mark_partial(
-                    "background_loops", reason=f"embedder_placeholder:{reason}"
-                )
-                probe_timeout_candidates = [
-                    candidate
-                    for candidate in (
-                        embedder_timeout,
-                        embedder_stage_budget,
-                        embedder_stage_budget_hint,
-                        0.75,
-                    )
-                    if candidate is not None and candidate > 0
-                ]
-                probe_timeout = min(probe_timeout_candidates) if probe_timeout_candidates else 0.75
-                probe_timeout_hard_cap = 1.5
-                probe_timeout = min(probe_timeout, probe_timeout_hard_cap)
-                probe_stop_event = threading.Event()
-                presence_available = False
-                probe_timed_out = False
-                stage_budget_cap = (
-                    embedder_stage_budget_hint
-                    if embedder_stage_budget_hint is not None
-                    else embedder_stage_budget
-                )
-                if stage_budget_cap is not None and stage_budget_cap <= 0:
-                    probe_timed_out = True
-                elif stage_budget_cap is not None and probe_timeout > stage_budget_cap:
-                    probe_timed_out = True
-                    LOGGER.info(
-                        "presence probe capped by stage budget; scheduling background",
-                        extra={
-                            "event": "embedder-preload-deferred",
-                            "stage_budget": stage_budget_cap,
-                            "probe_timeout": probe_timeout,
-                            "reason": reason,
-                        },
-                    )
                 background_join_timeout_candidates = [
                     candidate
                     for candidate in (
@@ -3854,6 +3854,37 @@ def initialize_bootstrap_context(
                 stage_controller.complete_step("embedder_preload", 0.0)
                 return _BOOTSTRAP_PLACEHOLDER
     
+        early_background_required = presence_only or guard_blocks_preload or not explicit_budget_available
+        if early_background_required:
+            skip_reason = presence_reason or (
+                "embedder_budget_unavailable" if not explicit_budget_available else "embedder_presence_guarded"
+            )
+            strict_timebox_hint = None
+            if embedder_stage_budget_hint is not None:
+                strict_timebox_hint = embedder_stage_budget_hint
+            elif embedder_stage_budget is not None:
+                strict_timebox_hint = embedder_stage_budget
+            LOGGER.info(
+                "embedder preload skipped; deferring to background",
+                extra={
+                    "event": "embedder-preload-skipped",
+                    "presence_only": presence_only,
+                    "guard_blocks_preload": guard_blocks_preload,
+                    "explicit_budget_available": explicit_budget_available,
+                    "bootstrap_fast": bootstrap_fast_context,
+                    "warmup_lite": warmup_lite_context,
+                    "reason": skip_reason,
+                },
+            )
+            return _defer_to_presence(
+                skip_reason,
+                budget_guarded=budget_guarded,
+                budget_window_missing=budget_window_missing or not explicit_budget_available,
+                forced_background=True,
+                strict_timebox=strict_timebox_hint,
+                non_blocking_probe=True,
+            )
+
         timebox_insufficient = (
             warmup_timebox_cap is None or warmup_timebox_cap < estimated_preload_cost
         )
