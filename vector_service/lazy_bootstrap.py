@@ -689,6 +689,44 @@ def warmup_vector_service(
         )
     )
 
+    budget_hooks_missing = not (budget_remaining_supplied or check_budget_supplied)
+
+    if (
+        not force_heavy
+        and budget_hooks_missing
+        and (bootstrap_context or warmup_requested)
+    ):
+        summary: dict[str, str] = {
+            "bootstrap": "short-circuit",
+            "warmup_lite": "True",
+            "budget_hooks": "missing",
+        }
+
+        memoised_results = dict(_WARMUP_STAGE_MEMO)
+        heavy_stages = ("model", "handlers", "scheduler", "vectorise")
+        model_probe: str | None = None
+
+        if "model" not in memoised_results and (download_model or probe_model or warmup_lite):
+            try:
+                if _model_bundle_path().exists():
+                    model_probe = "ready"
+            except Exception:  # pragma: no cover - best effort presence probe
+                pass
+
+        for stage in heavy_stages:
+            status = memoised_results.get(stage)
+            if not isinstance(status, str) or not status.startswith("deferred"):
+                status = "deferred-budget-hooks"
+            if stage == "model" and model_probe is not None:
+                summary["model_probe"] = model_probe
+            summary[stage] = status
+
+        log.info(
+            "Vector warmup short-circuiting due to missing budget hooks", extra=summary
+        )
+
+        return summary
+
     stage_timeouts = _normalise_stage_timeouts(stage_timeouts)
 
     if stage_timeouts is None:
@@ -843,7 +881,6 @@ def warmup_vector_service(
     warmup_lite = bool(warmup_lite)
     missing_budget_deferred: set[str] = set()
 
-    budget_hooks_missing = not (budget_remaining_supplied or check_budget_supplied)
     if bootstrap_context and not force_heavy and not warmup_lite:
         warmup_lite = True
         warmup_lite_source = "bootstrap-default"
