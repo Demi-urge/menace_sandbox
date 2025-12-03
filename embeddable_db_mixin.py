@@ -370,11 +370,17 @@ def _vector_metrics_db(
         or (warmup_lite is True)
     )
     warmup_mode = bool(warmup)
-    vector_warmup_flag = bool(vector_warmup)
+    vector_warmup_flag = bool(
+        vector_warmup
+        or os.getenv("VECTOR_WARMUP")
+        or os.getenv("VECTOR_SERVICE_WARMUP")
+    )
     warmup_lite_flag = bool(warmup_lite)
     env_requested = False
     bootstrap_env = False
     bootstrap_fast_flag = bool(bootstrap_fast)
+    bootstrap_state_active = False
+    warmup_state_flag = False
     if resolve_vector_bootstrap_flags is not None:
         (
             bootstrap_fast_flag,
@@ -384,13 +390,35 @@ def _vector_metrics_db(
         ) = resolve_vector_bootstrap_flags(
             bootstrap_fast=bootstrap_fast, warmup=warmup
         )
-    warmup_mode = bool(warmup_mode or warmup_lite_flag or vector_warmup_flag)
+    else:  # pragma: no cover - fallback when optional helper unavailable
+        menace_bootstrap = any(
+            os.getenv(flag)
+            for flag in (
+                "MENACE_BOOTSTRAP",
+                "MENACE_BOOTSTRAP_MODE",
+                "MENACE_BOOTSTRAP_FAST",
+            )
+        )
+        bootstrap_env = bool(menace_bootstrap)
+        env_requested = bool(menace_bootstrap or os.getenv("VECTOR_METRICS_WARMUP"))
+        try:
+            cbi = load_internal("coding_bot_interface")
+        except Exception:
+            cbi = None
+        state = getattr(cbi, "_BOOTSTRAP_STATE", None)
+        bootstrap_state_active = bool(getattr(state, "depth", 0) or state)
+        warmup_state_flag = bool(getattr(state, "warmup_lite", False))
+
+    warmup_mode = bool(
+        warmup_mode or warmup_lite_flag or vector_warmup_flag or warmup_state_flag
+    )
     warmup_stub = bool(
         warmup_mode
         or env_requested
         or bootstrap_env
         or bootstrap_fast_flag
         or vector_warmup_flag
+        or bootstrap_state_active
     )
     warmup_kwargs = {
         "bootstrap_fast": bootstrap_fast_flag,
@@ -402,6 +430,7 @@ def _vector_metrics_db(
             for trigger, active in (
                 ("call", callsite_requested),
                 ("env", env_requested or bootstrap_env),
+                ("state", bootstrap_state_active or warmup_state_flag),
                 ("vector_warmup", vector_warmup_flag),
             )
             if active
