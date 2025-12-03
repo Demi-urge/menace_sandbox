@@ -1146,25 +1146,37 @@ def warmup_vector_service(
                     "budget_hints": background_stage_timeouts or {},
                 },
             )
-        if background_candidates and background_hook is not None:
+        effective_background_hook = background_hook
+        if (
+            effective_background_hook is None
+            and bootstrap_context
+            and background_candidates
+        ):
+            nonlocal background_stage_timeouts
+
+            def _queue_background(
+                stages: set[str], *, budget_hints: Mapping[str, float | None] | None = None
+            ) -> None:
+                nonlocal background_stage_timeouts
+                if budget_hints and background_stage_timeouts is None:
+                    background_stage_timeouts = dict(budget_hints)
+                _launch_background_warmup(set(stages))
+
+            effective_background_hook = _queue_background
+
+        if background_candidates and effective_background_hook is not None:
             try:
                 hook_kwargs = {"budget_hints": background_stage_timeouts or {}}
-                hook_code = getattr(background_hook, "__code__", None)
+                hook_code = getattr(effective_background_hook, "__code__", None)
                 if hook_code is not None and "budget_hints" in hook_code.co_varnames:
-                    background_hook(set(background_candidates), **hook_kwargs)
+                    effective_background_hook(set(background_candidates), **hook_kwargs)
                 else:
-                    background_hook(set(background_candidates))
+                    effective_background_hook(set(background_candidates))
                 hook_dispatched = True
             except Exception:  # pragma: no cover - advisory hook
                 log.debug("background hook failed", exc_info=True)
         if background_warmup and not hook_dispatched:
-            if bootstrap_context and bootstrap_deferred_records and background_hook is None:
-                log.info(
-                    "Bootstrap deferrals recorded without background hook; skipping automatic warmup dispatch",
-                    extra={"event": "vector-warmup", "deferred": ",".join(sorted(background_warmup))},
-                )
-            else:
-                _launch_background_warmup(set(background_warmup))
+            _launch_background_warmup(set(background_warmup))
 
         log.info(
             "vector warmup stages recorded", extra={"event": "vector-warmup", "warmup": summary}
@@ -1719,8 +1731,20 @@ def warmup_vector_service(
                 budget_gate_reason = budget_gate_reason or status
                 log.info("Remaining bootstrap budget exhausted before %s stage", stage)
                 return False, None
-            if planned_timeout is None or planned_timeout > remaining:
+            if planned_timeout is None:
                 planned_timeout = remaining
+            elif remaining < planned_timeout:
+                budget_exhausted = True
+                status = "deferred-budget"
+                _record_deferred_background(stage, status)
+                budget_gate_reason = budget_gate_reason or status
+                log.info(
+                    "Vector warmup deferring %s; remaining budget %.2fs below stage ceiling %.2fs",
+                    stage,
+                    remaining,
+                    planned_timeout,
+                )
+                return False, None
         if check_budget is not None:
             try:
                 check_budget()
@@ -1759,7 +1783,14 @@ def warmup_vector_service(
         and not has_budget_signal
     )
 
-    heavy_without_budget = legacy_budget_missing and (
+    runtime_budget_missing = (
+        not force_heavy
+        and budget_callback_missing
+        and check_budget_missing
+        and not has_budget_signal
+    )
+
+    heavy_without_budget = (legacy_budget_missing or runtime_budget_missing) and (
         download_model
         or hydrate_handlers
         or start_scheduler
