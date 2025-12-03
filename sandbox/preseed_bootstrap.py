@@ -3020,6 +3020,22 @@ def start_embedder_warmup(
     if minimum_launch_window < 0:
         minimum_launch_window = 0.0
 
+    input_stage_budget = stage_budget
+    stage_budget_defaulted = False
+    if stage_budget is None:
+        try:
+            default_budget = _BOOTSTRAP_SCHEDULER.default_budget(vector_heavy=True)
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("unable to resolve default embedder budget", exc_info=True)
+            default_budget = None
+
+        if default_budget is None:
+            default_budget = _PREPARE_VECTOR_TIMEOUT_FLOOR
+
+        if default_budget is not None and math.isfinite(default_budget) and default_budget > 0:
+            stage_budget_defaulted = True
+            stage_budget = default_budget
+
     stage_timebox_candidates = [
         candidate
         for candidate in (
@@ -3229,6 +3245,8 @@ def start_embedder_warmup(
             "force_full_preload": force_full_preload,
             "guard_timebox": guard_timebox,
             "full_preload_skipped": not force_full_preload,
+            "stage_budget_defaulted": stage_budget_defaulted,
+            "input_stage_budget": input_stage_budget,
         }
         LOGGER.info(
             "embedder warmup guarded upstream; returning placeholder",  # pragma: no cover - telemetry
@@ -3248,6 +3266,8 @@ def start_embedder_warmup(
                 "presence_only": True,
                 "full_preload_skipped": not force_full_preload,
                 "background_join_timeout": guard_timebox,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             }
         )
         warmup_summary = job_snapshot.get("warmup_summary") or {}
@@ -3258,6 +3278,8 @@ def start_embedder_warmup(
                 "full_preload_skipped": not force_full_preload,
                 "deadline_remaining": deadline_remaining,
                 "stage_budget": stage_budget,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             }
         )
         job_snapshot["warmup_summary"] = warmup_summary
@@ -3303,6 +3325,12 @@ def start_embedder_warmup(
         resolved_timeout = min(resolved_timeout, stage_budget)
 
     stage_budget_cap = stage_timebox_cap
+    if stage_budget_cap is None and stage_budget is not None:
+        stage_budget_cap = stage_budget
+    if stage_budget_cap is None and resolved_timeout is not None:
+        stage_budget_cap = resolved_timeout
+    if stage_budget_cap is None:
+        stage_budget_cap = _PREPARE_VECTOR_TIMEOUT_FLOOR
 
     def _run_bootstrap_embedder(local_stop_event: threading.Event | None) -> Any:
         return _bootstrap_embedder(
@@ -3315,9 +3343,6 @@ def start_embedder_warmup(
             force_placeholder=tight_budget,
             bootstrap_deadline=bootstrap_deadline,
         )
-
-    if stage_budget_cap is None:
-        return _run_bootstrap_embedder(stop_event)
 
     def _remaining_stage_budget() -> float:
         elapsed = time.monotonic() - warmup_started
@@ -3351,6 +3376,8 @@ def start_embedder_warmup(
                 "bootstrap_context": bootstrap_context_active,
                 "warmup_lite": warmup_lite_context,
                 "background_join_timeout": budget_hint,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             }
         )
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
@@ -3358,6 +3385,21 @@ def start_embedder_warmup(
             "background_loops", reason=f"embedder_placeholder:{reason}"
         )
         _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=reason)
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": reason,
+                "stage_budget": stage_budget,
+                "stage_budget_cap": stage_budget_cap,
+                "budget_remaining": budget_remaining,
+                "background_join_timeout": budget_hint,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+                "presence_only": True,
+            }
+        )
+        job_snapshot["warmup_summary"] = warmup_summary
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         LOGGER.info(
             "embedder warmup running as background presence-only preload",
@@ -3387,6 +3429,8 @@ def start_embedder_warmup(
                 "budget_remaining": budget_remaining,
                 "presence_only": presence_only,
                 "budget_guarded": True,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             },
         )
         job_snapshot = _schedule_background_preload_safe(timeout_reason)
@@ -3397,8 +3441,23 @@ def start_embedder_warmup(
                 "stage_budget": stage_budget,
                 "bootstrap_window": deadline_remaining,
                 "budget_remaining": budget_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             }
         )
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": timeout_reason,
+                "stage_budget": stage_budget,
+                "budget_remaining": budget_remaining,
+                "bootstrap_window": deadline_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+            }
+        )
+        job_snapshot["warmup_summary"] = warmup_summary
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         _defer_stage(timeout_reason)
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=timeout_reason)
@@ -3420,6 +3479,8 @@ def start_embedder_warmup(
                 "minimum_launch_window": minimum_launch_window,
                 "stage_budget_cap": stage_budget_cap,
                 "bootstrap_window": deadline_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             },
         )
         job_snapshot = _schedule_background_preload_safe(
@@ -3432,8 +3493,23 @@ def start_embedder_warmup(
                 "bootstrap_window": deadline_remaining,
                 "background_join_timeout": budget_remaining,
                 "deferral_reason": window_reason,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             }
         )
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": window_reason,
+                "stage_budget": stage_budget,
+                "budget_remaining": budget_remaining,
+                "bootstrap_window": deadline_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+            }
+        )
+        job_snapshot["warmup_summary"] = warmup_summary
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         _defer_stage(window_reason)
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=window_reason)
@@ -3487,6 +3563,8 @@ def start_embedder_warmup(
                 "presence_only": presence_only,
                 "budget_guarded": True,
                 "timeout_reason": timeout_reason,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             },
         )
         _defer_stage(timeout_reason)
@@ -3504,8 +3582,24 @@ def start_embedder_warmup(
                 "bootstrap_window": deadline_remaining,
                 "budget_remaining": round(_remaining_stage_budget(), 3),
                 "timeout_reason": timeout_reason,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
             }
         )
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": timeout_reason,
+                "elapsed": round(elapsed, 3),
+                "stage_budget": stage_budget,
+                "budget_remaining": round(_remaining_stage_budget(), 3),
+                "bootstrap_window": deadline_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+            }
+        )
+        job_snapshot["warmup_summary"] = warmup_summary
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
 
