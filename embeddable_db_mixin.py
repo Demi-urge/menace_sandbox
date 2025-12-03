@@ -355,6 +355,7 @@ def _vector_metrics_db(
     bootstrap_fast: bool | None = None,
     warmup: bool | None = None,
     warmup_lite: bool | None = None,
+    vector_warmup: bool | None = None,
 ) -> VectorMetricsDB | None:
     global _VEC_METRICS
     if _VEC_METRICS is not None:
@@ -369,6 +370,7 @@ def _vector_metrics_db(
         or (warmup_lite is True)
     )
     warmup_mode = bool(warmup)
+    vector_warmup_flag = bool(vector_warmup)
     warmup_lite_flag = bool(warmup_lite)
     env_requested = False
     bootstrap_env = False
@@ -382,9 +384,13 @@ def _vector_metrics_db(
         ) = resolve_vector_bootstrap_flags(
             bootstrap_fast=bootstrap_fast, warmup=warmup
         )
-    warmup_mode = bool(warmup_mode or warmup_lite_flag)
+    warmup_mode = bool(warmup_mode or warmup_lite_flag or vector_warmup_flag)
     warmup_stub = bool(
-        warmup_mode or env_requested or bootstrap_env or bootstrap_fast_flag
+        warmup_mode
+        or env_requested
+        or bootstrap_env
+        or bootstrap_fast_flag
+        or vector_warmup_flag
     )
     warmup_kwargs = {
         "bootstrap_fast": bootstrap_fast_flag,
@@ -396,6 +402,7 @@ def _vector_metrics_db(
             for trigger, active in (
                 ("call", callsite_requested),
                 ("env", env_requested or bootstrap_env),
+                ("vector_warmup", vector_warmup_flag),
             )
             if active
         ]
@@ -407,6 +414,9 @@ def _vector_metrics_db(
         _VEC_METRICS = get_bootstrap_vector_metrics_db(**warmup_kwargs)
         try:
             _VEC_METRICS.activate_on_first_write()
+            readiness_hook = getattr(_VEC_METRICS, "register_readiness_hook", None)
+            if callable(readiness_hook):
+                readiness_hook()
         except Exception:
             logger.debug("failed to arm lazy activation for vector metrics", exc_info=True)
         logger.info(
@@ -415,6 +425,7 @@ def _vector_metrics_db(
                 "bootstrap_fast": bootstrap_fast_flag,
                 "warmup_mode": warmup_mode,
                 "warmup_lite": warmup_lite_flag,
+                "vector_warmup": vector_warmup_flag,
                 "env_bootstrap_requested": env_requested,
                 "menace_bootstrap": bootstrap_env,
                 "lazy_activation": True,
@@ -429,6 +440,7 @@ def _vector_metrics_db(
                 "bootstrap_fast": bootstrap_fast_flag,
                 "warmup_mode": warmup_mode,
                 "warmup_lite": warmup_lite_flag,
+                "vector_warmup": vector_warmup_flag,
                 "env_bootstrap_requested": env_requested,
                 "menace_bootstrap": bootstrap_env,
                 "lazy_activation": False,
