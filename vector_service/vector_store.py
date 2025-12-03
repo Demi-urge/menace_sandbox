@@ -113,6 +113,11 @@ class FaissVectorStore:
         self.meta: List[Dict[str, Any]] = []
         if self.lazy:
             self._pending_load = self.path.exists()
+            if self._pending_load:
+                logger.info(
+                    "faiss_vector_store.lazy.pending_load",
+                    extra={"path": str(self.path)},
+                )
         else:
             self._pending_load = False
             if self.path.exists():
@@ -176,6 +181,10 @@ class FaissVectorStore:
             self.meta = []
         self._loaded = True
         self._pending_load = False
+        logger.info(
+            "faiss_vector_store.load.complete",
+            extra={"path": str(self.path), "lazy": self.lazy},
+        )
 
     def _save(self) -> None:
         self._ensure_index()
@@ -201,6 +210,10 @@ class FaissVectorStore:
         if self._loaded:
             return
         if self._pending_load and self.path.exists():
+            logger.info(
+                "faiss_vector_store.lazy.load_triggered",
+                extra={"path": str(self.path)},
+            )
             self.load()
             return
         self._initialise_index()
@@ -496,19 +509,28 @@ class ChromaVectorStore:
 # ---------------------------------------------------------------------------
 
 
+def _env_flag(name: str) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def create_vector_store(
     dim: int,
     path: str | Path,
     *,
     backend: str | None = None,
     metric: str = "angular",
-    lazy: bool = False,
+    lazy: bool | None = None,
 ) -> VectorStore:
     """Create a ``VectorStore`` instance for the given configuration."""
 
+    resolved_lazy = lazy
+    if resolved_lazy is None:
+        resolved_lazy = _env_flag("BOOTSTRAP_FAST") or _env_flag("VECTOR_SERVICE_WARMUP")
+
     backend = (backend or "faiss").lower()
     if backend == "faiss" and faiss is not None and np is not None:
-        return FaissVectorStore(dim=dim, path=Path(path), lazy=lazy)
+        return FaissVectorStore(dim=dim, path=Path(path), lazy=bool(resolved_lazy))
     if backend == "qdrant" and QdrantClient is not None:
         return QdrantVectorStore(dim=dim, path=Path(path))
     if backend == "chroma" and chromadb is not None:
