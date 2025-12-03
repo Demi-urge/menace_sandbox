@@ -885,6 +885,33 @@ def get_shared_vector_metrics_db(
     return _VECTOR_DB_INSTANCE
 
 
+def get_bootstrap_shared_vector_metrics_db(
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    ensure_exists: bool | None = None,
+    read_only: bool | None = None,
+) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+    """Return the shared DB while arming warmup hooks for bootstrap callers."""
+
+    vm = get_shared_vector_metrics_db(
+        bootstrap_fast=bootstrap_fast,
+        warmup=warmup,
+        ensure_exists=ensure_exists,
+        read_only=read_only,
+    )
+
+    if isinstance(vm, _BootstrapVectorMetricsStub):
+        try:
+            vm.activate_on_first_write()
+            vm.register_readiness_hook()
+        except Exception:  # pragma: no cover - best effort during bootstrap
+            logger.debug(
+                "vector_metrics_db.bootstrap.stub_hook_arm_failed", exc_info=True
+            )
+    return vm
+
+
 def activate_shared_vector_metrics_db(
     *, reason: str = "warmup_complete", post_warmup: bool = False
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
@@ -2818,6 +2845,7 @@ __all__ = [
     "VectorMetricsDB",
     "resolve_vector_bootstrap_flags",
     "get_bootstrap_vector_metrics_db",
+    "get_bootstrap_shared_vector_metrics_db",
     "get_shared_vector_metrics_db",
     "activate_shared_vector_metrics_db",
     "ensure_vector_db_weights",

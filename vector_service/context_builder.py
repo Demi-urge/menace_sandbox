@@ -102,9 +102,17 @@ except Exception:  # pragma: no cover - dependency missing or failed
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
 try:  # pragma: no cover - optional dependency
-    from vector_metrics_db import VectorMetricsDB  # type: ignore
+    from vector_metrics_db import (  # type: ignore
+        VectorMetricsDB,
+        get_bootstrap_shared_vector_metrics_db,
+        get_shared_vector_metrics_db,
+        activate_shared_vector_metrics_db,
+    )
 except Exception:  # pragma: no cover
     VectorMetricsDB = None  # type: ignore
+    get_bootstrap_shared_vector_metrics_db = None  # type: ignore
+    get_shared_vector_metrics_db = None  # type: ignore
+    activate_shared_vector_metrics_db = None  # type: ignore
 
 _VECTOR_SERVICE_WARMUP = os.getenv("VECTOR_SERVICE_WARMUP", "").lower() in {
     "1",
@@ -998,6 +1006,11 @@ class ContextBuilder:
 
             existing = ContextBuilder._shared_vector_metrics
 
+            helper = (
+                get_bootstrap_shared_vector_metrics_db or get_shared_vector_metrics_db
+            )
+            activator = activate_shared_vector_metrics_db
+
             def _install_global(vm: "VectorMetricsDB") -> "VectorMetricsDB":
                 ContextBuilder._shared_vector_metrics = vm
                 if not isinstance(globals().get("_VEC_METRICS"), VectorMetricsDB):
@@ -1027,6 +1040,25 @@ class ContextBuilder:
                         "promoted_from_stub": isinstance(prior, _VectorMetricsWarmupStub),
                     },
                 )
+                return vm
+
+            if helper is not None:
+                vm = helper(
+                    bootstrap_fast=bootstrap_flag,
+                    warmup=warmup_flag,
+                    ensure_exists=False if warmup_flag else None,
+                    read_only=True if warmup_flag else None,
+                )
+                vm = _install_global(vm)
+                if not warmup_flag and activator is not None:
+                    try:
+                        activator(
+                            reason="context_builder.vector_metrics", post_warmup=True
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logger.debug(
+                            "vector metrics activation failed", exc_info=True
+                        )
                 return vm
 
             if warmup_flag:
