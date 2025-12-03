@@ -62,6 +62,60 @@ def test_get_shared_stub_when_bootstrap_timer_active(monkeypatch):
     assert calls[0][0] == "init"
 
 
+def test_timer_stub_promotes_after_readiness(monkeypatch):
+    ready = threading.Event()
+    gate = threading.Event()
+
+    class _FakeSignal:
+        def await_ready(self, timeout=None):  # pragma: no cover - simple gate
+            ready.set()
+            gate.wait(timeout)
+
+    calls = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            calls.append("activate_on_first_write")
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("end_warmup")
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("activate_persistence")
+            return self
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bootstrap_readiness",
+        types.SimpleNamespace(readiness_signal=lambda: _FakeSignal()),
+    )
+    monkeypatch.setenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", "15")
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_READINESS_HOOK_ARMED", False)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert not calls
+
+    gate.set()
+
+    for _ in range(20):
+        if isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, DummyVectorDB):
+            break
+        threading.Event().wait(0.05)
+
+    assert ready.is_set()
+    assert isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, DummyVectorDB)
+    assert calls and calls[0][0] == "init"
+
+
 def test_get_shared_stub_when_readiness_hook_active(monkeypatch):
     calls = []
 
