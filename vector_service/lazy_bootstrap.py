@@ -412,6 +412,19 @@ def ensure_embedding_model(
     if effective_timeout is not None and effective_timeout <= 0:
         insufficient_budget = True
 
+    def _mandatory_timeout(current_timeout: float | None) -> float | None:
+        deadline_remaining = _stage_budget_deadline()
+        candidates: list[float] = []
+        if current_timeout is not None:
+            candidates.append(current_timeout)
+        if deadline_remaining is not None:
+            candidates.append(deadline_remaining)
+        if warmup and inline_queue_ceiling is not None:
+            candidates.append(inline_queue_ceiling)
+        if not candidates:
+            return current_timeout
+        return max(0.0, min(candidates))
+
     if warmup_no_budget:
         if _MODEL_READY:
             return _result(_model_bundle_path(), "ready")
@@ -505,6 +518,16 @@ def ensure_embedding_model(
     if insufficient_budget and warmup:
         return _defer_for_ceiling("deferred-ceiling", effective_timeout)
 
+    effective_timeout = _mandatory_timeout(effective_timeout)
+
+    if stop_event is None:
+        stop_event = threading.Event()
+    if effective_timeout is not None and effective_timeout > 0:
+        current_deadline = getattr(stop_event, "_stage_deadline", None)
+        candidate_deadline = time.monotonic() + effective_timeout
+        if current_deadline is None or candidate_deadline < current_deadline:
+            setattr(stop_event, "_stage_deadline", candidate_deadline)
+
     try:
         _check_cancelled("init")
     except TimeoutError as exc:
@@ -554,11 +577,17 @@ def ensure_embedding_model(
             from . import download_model as _dm
 
             _check_cancelled("fetch")
+            mandatory_timeout = _mandatory_timeout(effective_timeout)
+            if mandatory_timeout is not None and mandatory_timeout <= 0:
+                if warmup:
+                    return _defer_for_ceiling("deferred-timebox", mandatory_timeout)
+                raise _timebox_error("embedding model download deadline reached", mandatory_timeout)
+
             _dm.bundle(
                 dest,
                 stop_event=stop_event,
                 budget_check=budget_check,
-                timeout=effective_timeout,
+                timeout=mandatory_timeout,
             )
             _MODEL_READY = True
             _update_warmup_stage_cache(
@@ -1117,8 +1146,11 @@ def warmup_vector_service(
         if stage == "model" and status == "deferred-no-budget":
             summary.setdefault("model_budget_hooks", "missing")
         if stage == "model" and status.startswith("deferred"):
+            background_timeout = stage_timeout
+            if background_timeout is None:
+                background_timeout = _effective_timeout(stage)
             _queue_background_model_download(
-                log, download_timeout=_effective_timeout(stage)
+                log, download_timeout=background_timeout
             )
         background_warmup.add(stage)
         background_candidates.add(stage)
@@ -2886,6 +2918,7 @@ def warmup_vector_service(
                         warmup=True,
                         warmup_lite=True,
                         stop_event=stop_event,
+                        download_timeout=model_timeout,
                     )
                 return _model_bundle_path()
 
@@ -2904,7 +2937,9 @@ def warmup_vector_service(
                     _record("model", "present")
                 else:
                     status = status or (
-                        "deferred-absent-probe" if model_probe_only else "absent-probe"
+                        "deferred-absent-probe"
+                        if model_probe_only or not force_heavy
+                        else "absent-probe"
                     )
                     log.info(
                         "embedding model probe detected absent archive; deferring download",
