@@ -573,6 +573,8 @@ def warmup_vector_service(
 
     model_probe_only = False
     requested_handlers = bool(hydrate_handlers)
+    requested_scheduler = bool(start_scheduler)
+    requested_model = bool(download_model or probe_model)
     requested_vectorise = bool(run_vectorise)
     heavy_requested = any(
         flag
@@ -606,6 +608,7 @@ def warmup_vector_service(
             model_probe_only = True
             download_model = False
             probe_model = True
+            bootstrap_deferred_records.add("model")
             deferred_bootstrap.add("model")
         elif probe_model:
             deferred_bootstrap.add("model")
@@ -1093,6 +1096,15 @@ def warmup_vector_service(
         hook_dispatched = False
         if budget_gate_reason is not None:
             summary["budget_gate"] = budget_gate_reason
+        if background_candidates and (bootstrap_context or bootstrap_fast or warmup_lite):
+            log.info(
+                "Vector warmup deferrals queued for background completion",
+                extra={
+                    "event": "vector-warmup",
+                    "deferred": ",".join(sorted(background_candidates)),
+                    "budget_hints": background_stage_timeouts or {},
+                },
+            )
         if background_candidates and background_hook is not None:
             try:
                 hook_kwargs = {"budget_hints": background_stage_timeouts}
@@ -1775,6 +1787,11 @@ def warmup_vector_service(
                     )
                     _record_background("handlers", status)
                     _hint_background_budget("handlers", _effective_timeout("handlers"))
+            if "model" in lite_deferrals - bootstrap_deferred_records:
+                if not summary.get("model"):
+                    status = "deferred-lite" if requested_model else "deferred-lite-noop"
+                    _record_background("model", status)
+                    _hint_background_budget("model", _effective_timeout("model"))
             if "vectorise" in lite_deferrals - bootstrap_deferred_records:
                 if not summary.get("vectorise"):
                     status = (
@@ -1784,6 +1801,15 @@ def warmup_vector_service(
                     )
                     _record_background("vectorise", status)
                     _hint_background_budget("vectorise", _effective_timeout("vectorise"))
+            if "scheduler" in lite_deferrals - bootstrap_deferred_records:
+                if not summary.get("scheduler"):
+                    status = (
+                        "deferred-lite"
+                        if requested_scheduler
+                        else "deferred-lite-noop"
+                    )
+                    _record_background("scheduler", status)
+                    _hint_background_budget("scheduler", _effective_timeout("scheduler"))
 
     _apply_bootstrap_deferrals()
 
