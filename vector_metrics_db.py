@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-"""Lightweight SQLite store for vector operation metrics."""
+"""Lightweight SQLite store for vector operation metrics.
+
+Warmup and bootstrap flows return an in-memory stub by default so callers do
+not touch SQLite or the dynamic path router until after readiness is signaled
+or the first real metric is written.  A background readiness hook can promote
+the stub once bootstrap completes, while the stub also arms a first-write
+activation path so normal callers eventually create the real database even if
+no readiness signal is emitted.  Pending weight seeds are replayed when the
+stub is promoted so bootstrap-time configuration is preserved.
+"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -290,6 +299,19 @@ class _BootstrapVectorMetricsStub:
             )
         return default
 
+    def _activate_for_write(self, *, method: str):
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        if self._activation_blocked:
+            return None
+        if not self._activate_on_first_write:
+            return None
+        delegate = self._activate(reason=f"write:{method}")
+        if delegate is self:
+            return None
+        return delegate
+
     def planned_path(self) -> Path:
         return Path(self._activation_kwargs["path"]).expanduser()
 
@@ -315,44 +337,52 @@ class _BootstrapVectorMetricsStub:
         return self._delegate.get_db_weights(default=default)
 
     def add(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="add")
+        if delegate is None:
             return self._noop(method="add")
-        return self._delegate.add(*_args, **_kwargs)
+        return delegate.add(*_args, **_kwargs)
 
     def log_embedding(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="log_embedding")
+        if delegate is None:
             return self._noop(method="log_embedding")
-        return self._delegate.log_embedding(*_args, **_kwargs)
+        return delegate.log_embedding(*_args, **_kwargs)
 
     def log_retrieval(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="log_retrieval")
+        if delegate is None:
             return self._noop(method="log_retrieval")
-        return self._delegate.log_retrieval(*_args, **_kwargs)
+        return delegate.log_retrieval(*_args, **_kwargs)
 
     def log_retrieval_feedback(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="log_retrieval_feedback")
+        if delegate is None:
             return self._noop(method="log_retrieval_feedback")
-        return self._delegate.log_retrieval_feedback(*_args, **_kwargs)
+        return delegate.log_retrieval_feedback(*_args, **_kwargs)
 
     def log_ranker_update(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="log_ranker_update")
+        if delegate is None:
             return self._noop(method="log_ranker_update")
-        return self._delegate.log_ranker_update(*_args, **_kwargs)
+        return delegate.log_ranker_update(*_args, **_kwargs)
 
     def save_session(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="save_session")
+        if delegate is None:
             return self._noop(method="save_session")
-        return self._delegate.save_session(*_args, **_kwargs)
+        return delegate.save_session(*_args, **_kwargs)
 
     def load_sessions(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="load_sessions")
+        if delegate is None:
             return self._noop(method="load_sessions", default={})
-        return self._delegate.load_sessions(*_args, **_kwargs)
+        return delegate.load_sessions(*_args, **_kwargs)
 
     def delete_session(self, *_args, **_kwargs):
-        if self._delegate is None:
+        delegate = self._activate_for_write(method="delete_session")
+        if delegate is None:
             return self._noop(method="delete_session")
-        return self._delegate.delete_session(*_args, **_kwargs)
+        return delegate.delete_session(*_args, **_kwargs)
 
     def embedding_tokens_total(self, *_args, **_kwargs):
         if self._delegate is None:
@@ -715,6 +745,7 @@ def get_shared_vector_metrics_db(
                     ensure_exists=ensure_exists,
                     read_only=bool(read_only) if read_only is not None else False,
                 )
+                _VECTOR_DB_INSTANCE.activate_on_first_write()
                 _VECTOR_DB_INSTANCE.register_readiness_hook()
             else:
                 _VECTOR_DB_INSTANCE = VectorMetricsDB(
