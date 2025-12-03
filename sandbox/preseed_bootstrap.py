@@ -2933,6 +2933,57 @@ def start_embedder_warmup(
         return stage_budget_cap - elapsed
 
     budget_remaining = _remaining_stage_budget()
+    presence_fastpath_threshold = 8.0
+    try:
+        presence_fastpath_threshold = float(
+            os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_FASTPATH", presence_fastpath_threshold)
+        )
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("unable to parse presence fastpath threshold", exc_info=True)
+    if presence_fastpath_threshold < 0:
+        presence_fastpath_threshold = 0.0
+
+    def _schedule_presence_fastpath(reason: str) -> Any:
+        budget_hint = budget_remaining if budget_remaining is not None else stage_budget_cap
+        job_snapshot = _schedule_background_preload(
+            reason, strict_timebox=budget_hint
+        )
+        job_snapshot.update(
+            {
+                "presence_only": True,
+                "deferral_reason": reason,
+                "warmup_placeholder_reason": job_snapshot.get(
+                    "warmup_placeholder_reason", reason
+                ),
+                "budget_remaining": budget_remaining,
+                "stage_budget_cap": stage_budget_cap,
+                "bootstrap_context": bootstrap_context_active,
+                "warmup_lite": warmup_lite_context,
+                "background_join_timeout": budget_hint,
+            }
+        )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{reason}"
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=reason)
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        LOGGER.info(
+            "embedder warmup running as background presence-only preload",
+            extra={
+                "reason": reason,
+                "budget_hint": budget_hint,
+                "bootstrap_context": bootstrap_context_active,
+                "warmup_lite": warmup_lite_context,
+                "presence_threshold": presence_fastpath_threshold,
+            },
+        )
+        return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+
+    if (warmup_lite_context or bootstrap_context_active) and not force_full_preload:
+        if budget_remaining is None or budget_remaining <= presence_fastpath_threshold:
+            return _schedule_presence_fastpath("embedder_presence_fastpath")
+
     if budget_remaining <= 0:
         timeout_reason = "embedder_stage_budget_timeout"
         LOGGER.info(
@@ -2986,8 +3037,10 @@ def start_embedder_warmup(
         _run_bootstrap_embedder, embedder_stop_event
     )
 
+    join_timeout = 5.0 if budget_remaining is None else min(budget_remaining, 5.0)
+
     try:
-        return embedder_future.result(timeout=budget_remaining)
+        return embedder_future.result(timeout=join_timeout)
     except FuturesTimeoutError:
         timeout_reason = presence_reason or "embedder_stage_budget_timeout"
         elapsed = time.monotonic() - warmup_started
