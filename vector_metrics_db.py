@@ -728,7 +728,12 @@ def get_shared_vector_metrics_db(
         env_requested = False
 
     bootstrap_requested = bool(resolved_bootstrap_fast or resolved_warmup or env_requested)
-    warmup_context = bool(bootstrap_requested or _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False))
+    timer_context = _bootstrap_timers_active()
+    warmup_context = bool(
+        bootstrap_requested
+        or timer_context
+        or _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False)
+    )
     if warmup_context:
         resolved_warmup = True
         ensure_exists = False
@@ -762,8 +767,14 @@ def get_shared_vector_metrics_db(
                 ensure_exists=False if warmup_context else ensure_exists,
                 read_only=True if warmup_context else read_only,
             )
+            _VECTOR_DB_INSTANCE.activate_on_first_write()
+            _VECTOR_DB_INSTANCE.register_readiness_hook()
 
     if warmup_context:
+        try:
+            _VECTOR_DB_INSTANCE._log_deferred_activation(reason="bootstrap_warmup_summary")
+        except Exception:
+            logger.debug("vector metrics warmup summary logging failed", exc_info=True)
         return _VECTOR_DB_INSTANCE
 
     _apply_pending_weights(_VECTOR_DB_INSTANCE)
@@ -1067,6 +1078,7 @@ class VectorMetricsDB:
         warmup: bool | None = None,
         ensure_exists: bool | None = None,
         read_only: bool = False,
+        allow_bootstrap_path_resolution: bool = False,
     ) -> None:
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
@@ -1088,6 +1100,10 @@ class VectorMetricsDB:
             or env_bootstrap
             or self._bootstrap_timers_active
         )
+        self._router_init_blocked = bool(
+            (self._bootstrap_context or self._bootstrap_timers_active)
+            and not allow_bootstrap_path_resolution
+        )
         if self._bootstrap_context and warmup is None:
             resolved_warmup = True
         if self._bootstrap_timers_active and warmup is None:
@@ -1105,6 +1121,7 @@ class VectorMetricsDB:
             or resolved_warmup
             or resolved_bootstrap_fast
             or self._bootstrap_timers_active
+            or self._router_init_blocked
         )
         self._lazy_mode = True
         self._boot_stub_active = bool(
@@ -1115,6 +1132,7 @@ class VectorMetricsDB:
                 or self._warmup_mode
                 or self._bootstrap_timers_active
                 or self._env_warmup_opt_in
+                or self._router_init_blocked
             )
             and not explicit_bootstrap_stub_opt_out
         )
