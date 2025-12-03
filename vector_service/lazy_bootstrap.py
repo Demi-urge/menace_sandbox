@@ -1067,6 +1067,7 @@ def warmup_vector_service(
                 "deferred-timebox": 3,
                 "deferred-budget": 2,
                 "deferred-embedder": 2,
+                "deferred-estimate": 2,
                 "deferred-lite": 1,
                 "deferred-no-budget": 1,
             }
@@ -1888,15 +1889,53 @@ def warmup_vector_service(
             return False
         return ceiling < estimate
 
+    def _run_stage(
+        stage: str,
+        func: Callable[[threading.Event], Any],
+        *,
+        timeout: float | None = None,
+        estimate: float | None = None,
+    ) -> tuple[bool, Any | None, float, str | None]:
+        nonlocal budget_gate_reason
+        stage_estimate = estimate if estimate is not None else base_stage_cost.get(stage)
+        ceiling_hint = stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+        if ceiling_hint is None:
+            ceiling_hint = timeout
+        if (
+            stage_estimate is not None
+            and ceiling_hint is not None
+            and ceiling_hint >= 0
+            and stage_estimate > ceiling_hint
+        ):
+            status = "deferred-estimate"
+            budget_gate_reason = budget_gate_reason or status
+            _record_deferred_background(stage, status, stage_timeout=ceiling_hint)
+            log.info(
+                "Vector warmup %s estimate %.2fs exceeds ceiling %.2fs; deferring",
+                stage,
+                stage_estimate,
+                ceiling_hint,
+            )
+            return False, None, 0.0, "ceiling"
+        return _run_with_budget(stage, func, timeout=timeout)
+
     if hydrate_handlers and _insufficient_stage_budget("handlers"):
         _defer_handler_chain(
-            "deferred-ceiling",
+            "deferred-estimate",
             stage_timeout=stage_budget_ceiling.get("handlers"),
             vectorise_timeout=stage_budget_ceiling.get("vectorise"),
         )
+    if download_model and _insufficient_stage_budget("model"):
+        status = "deferred-estimate"
+        _record_deferred_background("model", status, stage_timeout=stage_budget_ceiling.get("model"))
+        budget_gate_reason = budget_gate_reason or status
+        download_model = False
+        if not probe_model:
+            model_probe_only = True
+            probe_model = True
     pending_vectorise = bool(run_vectorise)
     if pending_vectorise and not hydrate_handlers and _insufficient_stage_budget("vectorise"):
-        status = "deferred-ceiling"
+        status = "deferred-estimate"
         _record_deferred_background("vectorise", status)
         _hint_background_budget("vectorise", stage_budget_ceiling.get("vectorise"))
         budget_gate_reason = budget_gate_reason or status
@@ -2825,7 +2864,9 @@ def warmup_vector_service(
                     )
                 return _model_bundle_path()
 
-            completed, dest, elapsed, cancelled = _run_with_budget("model", _probe)
+            completed, dest, elapsed, cancelled = _run_stage(
+                "model", _probe, timeout=model_timeout, estimate=0.1
+            )
             _record_elapsed("model", elapsed)
             if cancelled:
                 _record_cancelled("model", cancelled)
@@ -3015,7 +3056,7 @@ def warmup_vector_service(
                     try:
                         from .vectorizer import SharedVectorService
 
-                        completed, svc, elapsed, cancelled = _run_with_budget(
+                        completed, svc, elapsed, cancelled = _run_stage(
                             "handlers",
                             lambda stop_event: SharedVectorService(
                                 bootstrap_fast=bootstrap_fast,
@@ -3324,7 +3365,7 @@ def warmup_vector_service(
                             vectorise_gate_budget, vectorise_gate_start = _start_stage_gate(
                                 "vectorise", vectorise_timeout
                             )
-                            completed, _, elapsed, cancelled = _run_with_budget(
+                            completed, _, elapsed, cancelled = _run_stage(
                                 "vectorise",
                                 _vectorise,
                                 timeout=vectorise_timeout,
