@@ -1183,7 +1183,7 @@ class ContextBuilder:
     def vector_metrics(self) -> "VectorMetricsDB | None":
         """Property wrapper around :meth:`_get_vector_metrics`."""
 
-        return self._get_vector_metrics()
+        return self._get_vector_metrics(warmup=_VECTOR_SERVICE_WARMUP)
 
     # ------------------------------------------------------------------
     def refresh_db_weights(
