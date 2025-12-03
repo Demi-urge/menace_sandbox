@@ -3206,17 +3206,24 @@ def initialize_bootstrap_context(
     embedder_stage_budget_hint = stage_controller.stage_budget(
         step_name="embedder_preload"
     )
+    embedder_stage_deadline_hint = stage_controller.stage_deadline(
+        step_name="embedder_preload"
+    )
     embedder_warmup_lite_budget_guard = bool(
         embedder_stage_budget_hint is not None
         and math.isfinite(embedder_stage_budget_hint)
         and embedder_stage_budget_hint > 0
     )
-    if embedder_warmup_lite_budget_guard and not warmup_lite_context:
+    embedder_warmup_lite_deadline_guard = bool(
+        embedder_stage_deadline_hint is not None and math.isfinite(embedder_stage_deadline_hint)
+    )
+    if (embedder_warmup_lite_budget_guard or embedder_warmup_lite_deadline_guard) and not warmup_lite_context:
         LOGGER.info(
-            "forcing embedder warmup-lite path due to finite stage budget",
+            "forcing embedder warmup-lite path due to finite stage window",
             extra={
                 "event": "embedder-preload-budget-lite",
                 "stage_budget": embedder_stage_budget_hint,
+                "stage_deadline": embedder_stage_deadline_hint,
             },
         )
         warmup_lite_context = True
@@ -3232,6 +3239,30 @@ def initialize_bootstrap_context(
     def _task_embedder(_: dict[str, Any]) -> None:
         global _BOOTSTRAP_EMBEDDER_JOB
         _mark_bootstrap_step("embedder_preload")
+        existing_job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+        existing_background = existing_job_snapshot.get("background_future") or getattr(
+            _BOOTSTRAP_SCHEDULER, "_embedder_background_future", None
+        )
+        if existing_background is not None:
+            resume_reason = existing_job_snapshot.get("deferral_reason") or existing_job_snapshot.get(
+                "background_enqueue_reason", "embedder_background_resume"
+            )
+            LOGGER.info(
+                "embedder preload resuming from background state",
+                extra={
+                    "event": "embedder-preload-background",
+                    "reason": resume_reason,
+                    "bootstrap_fast": bootstrap_fast_context,
+                    "warmup_lite": warmup_lite_context,
+                },
+            )
+            stage_controller.defer_step("embedder_preload", reason=resume_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=resume_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{resume_reason}"
+            )
+            placeholder_obj = existing_job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+            return existing_job_snapshot.get("result", placeholder_obj)
         embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
             "embedder_preload", vector_heavy=True, heavy=True
         )
@@ -3297,9 +3328,12 @@ def initialize_bootstrap_context(
         guard_presence_reason = presence_reason
         guard_budget_guarded = budget_guarded
         presence_default_enforced = False
-        full_preload_requested = False
-        if not guard_blocks_preload:
-            full_preload_requested = bool(full_embedder_preload or force_embedder_preload)
+        full_preload_requested = bool(full_embedder_preload or force_embedder_preload)
+        if guard_blocks_preload:
+            guard_presence_only = True
+            guard_budget_guarded = True
+            guard_presence_reason = presence_reason
+        else:
             presence_default_enforced = not full_preload_requested
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
         fast_or_lite = bootstrap_fast_context or warmup_lite_context
@@ -3490,7 +3524,7 @@ def initialize_bootstrap_context(
                     "background_dispatch": True,
                     "strict_timebox": strict_timebox,
                     "resume_download": resume_download,
-                    "event": "embedder-preload-presence-only",
+                    "event": "embedder-preload-deferred",
                 },
             )
             stage_controller.defer_step("embedder_preload", reason=reason)
@@ -3515,6 +3549,24 @@ def initialize_bootstrap_context(
             probe_stop_event = threading.Event()
             presence_available = False
             probe_timed_out = False
+            stage_budget_cap = (
+                embedder_stage_budget_hint
+                if embedder_stage_budget_hint is not None
+                else embedder_stage_budget
+            )
+            if stage_budget_cap is not None and stage_budget_cap <= 0:
+                probe_timed_out = True
+            elif stage_budget_cap is not None and probe_timeout > stage_budget_cap:
+                probe_timed_out = True
+                LOGGER.info(
+                    "presence probe capped by stage budget; scheduling background",
+                    extra={
+                        "event": "embedder-preload-deferred",
+                        "stage_budget": stage_budget_cap,
+                        "probe_timeout": probe_timeout,
+                        "reason": reason,
+                    },
+                )
             background_join_timeout_candidates = [
                 candidate
                 for candidate in (
@@ -3548,31 +3600,32 @@ def initialize_bootstrap_context(
                     except Exception:  # pragma: no cover - diagnostics only
                         LOGGER.debug("embedder presence probe failed", exc_info=True)
 
-                probe_thread = threading.Thread(
-                    target=_probe_worker,
-                    name="embedder-presence-probe",
-                    daemon=True,
-                )
-                probe_thread.start()
+                if not probe_timed_out:
+                    probe_thread = threading.Thread(
+                        target=_probe_worker,
+                        name="embedder-presence-probe",
+                        daemon=True,
+                    )
+                    probe_thread.start()
 
-                if not non_blocking_probe:
-                    if stop_event is not None:
+                    if not non_blocking_probe:
+                        if stop_event is not None:
 
-                        def _propagate_stop() -> None:
-                            stop_event.wait(probe_timeout)
-                            if stop_event.is_set():
-                                probe_stop_event.set()
+                            def _propagate_stop() -> None:
+                                stop_event.wait(probe_timeout)
+                                if stop_event.is_set():
+                                    probe_stop_event.set()
 
-                        threading.Thread(
-                            target=_propagate_stop,
-                            name="embedder-presence-probe-stop",
-                            daemon=True,
-                        ).start()
+                            threading.Thread(
+                                target=_propagate_stop,
+                                name="embedder-presence-probe-stop",
+                                daemon=True,
+                            ).start()
 
-                    probe_thread.join(probe_timeout)
-                    if probe_thread.is_alive() or probe_stop_event.is_set():
-                        probe_timed_out = True
-                        probe_stop_event.set()
+                        probe_thread.join(probe_timeout)
+                        if probe_thread.is_alive() or probe_stop_event.is_set():
+                            probe_timed_out = True
+                            probe_stop_event.set()
 
             if warmup_summary is not None:
                 warmup_summary.setdefault("deferred", True)
@@ -3730,6 +3783,15 @@ def initialize_bootstrap_context(
             if background_future is not None:
                 job_snapshot["background_future"] = background_future
                 job_snapshot["background_enqueued"] = True
+                LOGGER.info(
+                    "embedder preload deferred to background",  # pragma: no cover - telemetry
+                    extra={
+                        "event": "embedder-preload-background",
+                        "reason": reason,
+                        "bootstrap_fast": bootstrap_fast_context,
+                        "warmup_lite": warmup_lite_context,
+                    },
+                )
 
             _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
             _set_component_state("vector_seeding", "deferred")
@@ -4065,6 +4127,15 @@ def initialize_bootstrap_context(
             if background_future is not None:
                 job_snapshot["background_future"] = background_future
                 job_snapshot["background_enqueued"] = True
+                LOGGER.info(
+                    "embedder preload deferred to background",  # pragma: no cover - telemetry
+                    extra={
+                        "event": "embedder-preload-background",
+                        "reason": reason,
+                        "bootstrap_fast": bootstrap_fast_context,
+                        "warmup_lite": warmup_lite_context,
+                    },
+                )
             return job_snapshot
 
         if budget_window_missing and embedder_stage_budget is None and embedder_timeout is None:
