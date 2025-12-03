@@ -46,6 +46,7 @@ _CONSERVATIVE_STAGE_TIMEOUTS = {
 }
 
 _BOOTSTRAP_STAGE_TIMEOUT = 3.0
+_HANDLER_VECTOR_MIN_BUDGET = 1.0
 _HEAVY_STAGE_CEILING = 30.0
 _BACKGROUND_QUEUE_FLAG = "queued"
 
@@ -707,6 +708,9 @@ def warmup_vector_service(
 
     warmup_lite = bool(warmup_lite)
     budget_hooks_missing = not (budget_remaining_supplied or check_budget_supplied)
+    if bootstrap_context and not force_heavy and not warmup_lite:
+        warmup_lite = True
+        warmup_lite_source = "bootstrap-default"
     if budget_hooks_missing and not force_heavy:
         if warmup_lite_source == "caller":
             warmup_lite_source = "missing-budget-hooks"
@@ -789,7 +793,22 @@ def warmup_vector_service(
         probe_model = True
         download_model = False
 
-    def _record(stage: str, status: str) -> None:
+    def _deferral_meta(stage_timeout: float | None = None) -> dict[str, object]:
+        meta: dict[str, object] = {"recorded_at": time.time()}
+        budget_hint = _remaining_budget()
+        shared_remaining = _remaining_shared_budget()
+        timebox_remaining = _timebox_remaining()
+        if budget_hint is not None:
+            meta["budget_remaining"] = budget_hint
+        if shared_remaining is not None:
+            meta["shared_budget_remaining"] = shared_remaining
+        if timebox_remaining is not None:
+            meta["timebox_remaining"] = timebox_remaining
+        if stage_timeout is not None:
+            meta["stage_timeout"] = stage_timeout
+        return meta
+
+    def _record(stage: str, status: str, *, meta: Mapping[str, object] | None = None) -> None:
         current_status = summary.get(stage)
         if current_status and current_status.startswith("deferred") and status.startswith("deferred"):
             priority = {
@@ -813,7 +832,7 @@ def warmup_vector_service(
         if status.startswith("deferred"):
             recorded_deferred.add(stage)
         memoised_results[stage] = status
-        _update_warmup_stage_cache(stage, status, log)
+        _update_warmup_stage_cache(stage, status, log, meta=meta)
 
     def _record_deferred(stage: str, status: str) -> None:
         _record_background(stage, status)
@@ -833,9 +852,16 @@ def warmup_vector_service(
                 continue
             _record_background(stage, "deferred-lite")
 
-    def _record_background(stage: str, status: str) -> None:
-        _record(stage, status)
+    def _record_background(stage: str, status: str, *, stage_timeout: float | None = None) -> None:
+        meta = _deferral_meta(stage_timeout)
+        _record(stage, status, meta=meta)
         summary[f"{stage}_background"] = status
+        budget_hint = meta.get("budget_remaining")
+        if isinstance(budget_hint, (int, float)):
+            summary[f"{stage}_budget_remaining"] = f"{budget_hint:.3f}"
+        timebox_hint = meta.get("timebox_remaining")
+        if isinstance(timebox_hint, (int, float)):
+            summary[f"{stage}_timebox_remaining"] = f"{timebox_hint:.3f}"
         if stage == "model" and status.startswith("deferred"):
             _queue_background_model_download(
                 log, download_timeout=_effective_timeout(stage)
@@ -854,7 +880,7 @@ def warmup_vector_service(
             return
         if summary.get(stage):
             return
-        _record_background(stage, status)
+        _record_background(stage, status, stage_timeout=stage_timeout)
         _hint_background_budget(stage, stage_timeout)
         memoised_results[stage] = status
         proactive_deferred.add(stage)
@@ -869,7 +895,7 @@ def warmup_vector_service(
     ) -> None:
         nonlocal hydrate_handlers, run_vectorise, download_model, probe_model, model_probe_only
 
-        _record_background(stage, reason)
+        _record_background(stage, reason, stage_timeout=stage_timeout)
         _update_warmup_stage_cache(
             stage,
             reason,
@@ -882,7 +908,7 @@ def warmup_vector_service(
             emit_metric=False,
         )
         if chain_vectorise and run_vectorise and stage != "vectorise":
-            _record_background("vectorise", reason)
+            _record_background("vectorise", reason, stage_timeout=vectorise_timeout)
             _hint_background_budget("vectorise", vectorise_timeout)
             run_vectorise = False
             _update_warmup_stage_cache(
@@ -2606,6 +2632,15 @@ def warmup_vector_service(
             vectorise_timeout=vectorise_timeout,
         ):
             return _finalise()
+        remaining_hint = _remaining_budget()
+        if hydrate_handlers and remaining_hint is not None and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET:
+            _defer_handler_chain(
+                "deferred-budget",
+                stage_timeout=handler_timeout,
+                vectorise_timeout=vectorise_timeout,
+            )
+            _record_cancelled("handlers", "budget")
+            return _finalise()
         if _shared_budget_probe(
             "handlers",
             stage_timeout=handler_timeout,
@@ -2856,6 +2891,11 @@ def warmup_vector_service(
         if _background_first_gate(
             "vectorise", vectorise_timeout, stage_enabled=should_vectorise
         ):
+            return _finalise()
+        remaining_hint = _remaining_budget()
+        if should_vectorise and remaining_hint is not None and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET:
+            _record_deferred_background("vectorise", "deferred-budget")
+            _record_cancelled("vectorise", "budget")
             return _finalise()
         if _shared_budget_probe(
             "vectorise",

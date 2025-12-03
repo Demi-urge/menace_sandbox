@@ -153,6 +153,41 @@ def test_bootstrap_deferral_memoised(monkeypatch, caplog):
     assert not scheduler_calls
 
 
+def test_bootstrap_fast_defers_handlers_and_reports_background(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    _reset_state()
+    monkeypatch.setenv("MENACE_BOOTSTRAP_FAST", "1")
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class NoOpSharedVectorService:
+        def __init__(self, *args, **kwargs):  # noqa: ARG002
+            raise AssertionError("SharedVectorService should be deferred during bootstrap-fast")
+
+    vectorizer_stub.SharedVectorService = NoOpSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    deferred_calls: list[set[str]] = []
+
+    def _background_hook(stages, _budget=None):
+        deferred_calls.append(set(stages))
+
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        warmup_lite=False,
+        hydrate_handlers=True,
+        start_scheduler=False,
+        run_vectorise=True,
+        background_hook=_background_hook,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["handlers"].startswith("deferred")
+    assert "handlers" in warmup_summary["deferred_stages"].split(",")
+    assert "vectorise" in warmup_summary["deferred_stages"].split(",")
+    assert deferred_calls and {"handlers", "vectorise"}.issubset(deferred_calls[-1])
+
+
 def test_warmup_cache_reused(monkeypatch, caplog, tmp_path):
     caplog.set_level(logging.INFO)
     cache_dir = tmp_path / "cache"
