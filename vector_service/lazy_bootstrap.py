@@ -2020,6 +2020,20 @@ def warmup_vector_service(
                             _record_cancelled("handlers", cancelled)
                         if completed:
                             _record("handlers", "hydrated")
+                            handler_deferrals = getattr(
+                                svc, "handler_deferrals", None
+                            ) or {}
+                            if handler_deferrals:
+                                summary["handler_deferrals"] = json.dumps(
+                                    handler_deferrals, sort_keys=True
+                                )
+                                _update_warmup_stage_cache(
+                                    "handlers",
+                                    summary.get("handlers", "hydrated"),
+                                    log,
+                                    meta={"handler_deferrals": handler_deferrals},
+                                    emit_metric=False,
+                                )
                         elif budget_exhausted:
                             if "handlers" not in summary:
                                 _record_deferred("handlers", "deferred-budget")

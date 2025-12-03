@@ -69,6 +69,7 @@ def test_budget_cap_defers_without_import(monkeypatch, caplog):
     assert "budgeted" in handlers
     assert getattr(handlers["budgeted"], "is_patch_stub", False)
     assert handlers.deferral_statuses.get("budgeted") == "budget"
+    assert handlers.deferral_budgets.get("budgeted") is not None
     assert not called
     assert any(getattr(record, "reason", None) == "budget" for record in caplog.records)
 
@@ -109,4 +110,5 @@ def test_global_budget_short_circuits(monkeypatch, caplog):
     assert set(handlers.keys()) == {"first", "second"}
     assert handlers.deferral_statuses.get("first") in {"timeout", "budget"}
     assert handlers.deferral_statuses.get("second") == "budget"
+    assert handlers.deferral_budgets.get("second") is not None
     assert any(getattr(record, "reason", None) == "budget" for record in caplog.records)

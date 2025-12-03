@@ -65,9 +65,14 @@ class HandlerLoadResult(dict[str, Callable[[Dict[str, any]], list[float]]]):
     def __init__(self) -> None:
         super().__init__()
         self.deferral_statuses: dict[str, str] = {}
+        self.deferral_budgets: dict[str, float | None] = {}
 
-    def record_status(self, kind: str, status: str) -> None:
+    def record_status(
+        self, kind: str, status: str, *, remaining_budget: float | None = None
+    ) -> None:
         self.deferral_statuses[kind] = status
+        if remaining_budget is not None:
+            self.deferral_budgets[kind] = remaining_budget
 
 
 def _env_flag(name: str) -> bool:
@@ -222,7 +227,9 @@ def load_handlers(
         return deadline - time.perf_counter()
 
     def _record_deferred(kind: str, reason: str, *, as_stub: bool = True) -> None:
-        handlers.record_status(kind, reason)
+        handlers.record_status(
+            kind, reason, remaining_budget=_remaining_budget()
+        )
         if as_stub:
             handlers[kind] = _patch_stub_handler
 
