@@ -1293,6 +1293,7 @@ def warmup_vector_service(
         return True, result[0] if result else None, time.monotonic() - start, None
 
     base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+    min_vectorise_budget = 0.5
     base_stage_cost = {
         "model": 20.0,
         "handlers": 25.0,
@@ -2457,6 +2458,36 @@ def warmup_vector_service(
                 return _finalise()
             elif _guard("vectorise"):
                 if should_vectorise and svc is not None:
+                    budget_hint = _available_budget_hint("vectorise", vectorise_timeout)
+                    if budget_hint is not None and budget_hint < min_vectorise_budget:
+                        status = "deferred-ceiling" if budget_hint <= 0 else "deferred-budget"
+                        _record_deferred_background("vectorise", status)
+                        _hint_background_budget("vectorise", vectorise_timeout)
+                        _record_cancelled("vectorise", "budget")
+                        log.info(
+                            "Vectorise warmup deferred before embedder check; budget %.2fs below minimum %.2fs",
+                            budget_hint,
+                            min_vectorise_budget,
+                        )
+                        return _finalise()
+                    embedder_available = getattr(svc, "text_embedder", None) is not None
+                    placeholder_present = False
+                    if not embedder_available:
+                        try:
+                            from governed_embeddings import _EMBEDDER, _EMBEDDER_BOOTSTRAP_PLACEHOLDER
+
+                            embedder_available = _EMBEDDER is not None
+                            placeholder_present = _EMBEDDER_BOOTSTRAP_PLACEHOLDER is not None
+                        except Exception:  # pragma: no cover - defensive logging
+                            log.debug("Embedder preflight probe failed", exc_info=True)
+                    if not embedder_available:
+                        status = "deferred-embedder"
+                        if warmup_lite and not placeholder_present:
+                            status = "deferred-lite"
+                        _record_deferred_background("vectorise", status)
+                        _hint_background_budget("vectorise", vectorise_timeout)
+                        log.info("Vectorise warmup deferred: embedder unavailable")
+                        return _finalise()
                     if vectorise_timeout is not None and vectorise_timeout <= 0:
                         budget_exhausted = True
                         _record_deferred_background("vectorise", "deferred-budget")
@@ -2494,6 +2525,8 @@ def warmup_vector_service(
                                     if stop_event is not None:
                                         stop_event.set()
                                     raise TimeoutError("embedder warmup deferred")
+                                if warmup_lite:
+                                    return {"vectorise": "probe"}
                                 return svc.vectorise(
                                     "text", {"text": "warmup"}, stop_event=stop_event
                                 )
