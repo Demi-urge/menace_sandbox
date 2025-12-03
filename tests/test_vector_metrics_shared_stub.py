@@ -50,3 +50,47 @@ def test_shared_db_stub_defers_activation(monkeypatch):
     activated.log_embedding("default", tokens=1, wall_time_ms=1.0)
     assert calls[1][0] == "log_embedding"
     assert getattr(activated, "weights", {}) == {"alpha": 1.0, "beta": 1.0}
+
+
+def test_shared_stub_promotes_on_first_write(monkeypatch):
+    calls = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+            self.weights = {}
+            self.logged = []
+
+        def activate_on_first_write(self):
+            calls.append("activate_on_first_write")
+
+        def set_db_weights(self, weights):  # pragma: no cover - simple passthrough
+            self.weights.update(weights)
+
+        def get_db_weights(self, default=None):
+            if self.weights:
+                return dict(self.weights)
+            return default or {}
+
+        def log_embedding(self, *args, **kwargs):
+            self.logged.append((args, kwargs))
+            calls.append(("log_embedding", args, kwargs))
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db(warmup=True)
+    vector_metrics_db.ensure_vector_db_weights(["alpha"], warmup=True)
+
+    vm.configure_activation(warmup=False, ensure_exists=True, read_only=False)
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+
+    activated = vector_metrics_db._VECTOR_DB_INSTANCE
+
+    assert isinstance(activated, DummyVectorDB)
+    assert calls[0][0] == "init"
+    assert calls[1] == "activate_on_first_write"
+    assert calls[-1][0] == "log_embedding"
+    assert getattr(activated, "weights", {}) == {"alpha": 1.0}
+    assert getattr(activated, "logged", None)
