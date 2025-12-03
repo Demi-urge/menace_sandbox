@@ -1855,6 +1855,14 @@ def warmup_vector_service(
         stage for stage, timeout in stage_budget_ceiling.items() if timeout is not None
     }
 
+    if run_vectorise and not force_heavy:
+        _record_deferred_background(
+            "vectorise",
+            "deferred-heavy-optin",
+        )
+        _hint_background_budget("vectorise", stage_budget_ceiling.get("vectorise"))
+        run_vectorise = False
+
     if background_stage_timeouts is None:
         background_stage_timeouts = {
             stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
@@ -3218,13 +3226,36 @@ def warmup_vector_service(
                             min_vectorise_budget,
                         )
                         return _finalise()
-                    embedder_available = getattr(svc, "text_embedder", None) is not None
+                    vectorise_cap = stage_budget_ceiling.get("vectorise")
+                    vectorise_estimate = base_stage_cost.get("vectorise")
+                    if (
+                        should_vectorise
+                        and vectorise_cap is not None
+                        and vectorise_estimate is not None
+                        and vectorise_estimate > vectorise_cap
+                    ):
+                        _record_deferred_background("vectorise", "deferred-ceiling")
+                        _hint_background_budget("vectorise", vectorise_timeout)
+                        _record_cancelled("vectorise", "ceiling")
+                        log.info(
+                            "Vectorise warmup deferred: stage estimate %.2fs exceeds cap %.2fs",
+                            vectorise_estimate,
+                            vectorise_cap,
+                        )
+                        return _finalise()
+
                     placeholder_present = False
+                    embedder = getattr(svc, "text_embedder", None)
+                    placeholder_reason = getattr(embedder, "_placeholder_reason", None)
+                    embedder_available = embedder is not None and placeholder_reason is None
                     if not embedder_available:
                         try:
                             probe = getattr(svc, "probe_text_embedder", None)
                             if callable(probe):
                                 embedder_available, placeholder_present = probe()
+                                placeholder_present = placeholder_present or (
+                                    placeholder_reason is not None
+                                )
                         except Exception:  # pragma: no cover - defensive logging
                             log.debug("Embedder preflight probe failed", exc_info=True)
                     if not embedder_available:
