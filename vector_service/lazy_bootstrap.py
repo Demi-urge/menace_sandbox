@@ -1075,6 +1075,43 @@ def warmup_vector_service(
         except Exception:  # pragma: no cover - metrics best effort
             log.debug("failed emitting vector warmup timeout metric", exc_info=True)
 
+    def _stage_gate_timeout(stage: str, timeout_hint: float | None) -> TimeoutError:
+        err = TimeoutError(f"{stage} warmup exceeded stage budget")
+        setattr(err, "_warmup_timebox", True)
+        if timeout_hint is not None:
+            setattr(err, "_timebox_timeout", timeout_hint)
+        return err
+
+    def _start_stage_gate(stage: str, stage_timeout: float | None) -> tuple[float | None, float | None]:
+        gate_budget = _available_budget_hint(stage, stage_timeout)
+        if gate_budget is None:
+            return None, None
+        return gate_budget, time.monotonic()
+
+    def _apply_stage_gate(
+        stage: str,
+        gate_budget: float | None,
+        gate_start: float | None,
+        stage_timeout: float | None,
+        *,
+        elapsed_hint: float | None = None,
+    ) -> None:
+        nonlocal budget_exhausted
+
+        if gate_budget is None or gate_start is None:
+            return
+
+        elapsed = elapsed_hint if elapsed_hint is not None else time.monotonic() - gate_start
+        if elapsed <= gate_budget:
+            return
+
+        budget_exhausted = True
+        status = "deferred-timebox" if stage_timeout is not None else "deferred-budget"
+        _record_deferred_background(stage, status)
+        _hint_background_budget(stage, gate_budget)
+        _record_timeout(stage)
+        raise _stage_gate_timeout(stage, stage_timeout if stage_timeout is not None else gate_budget)
+
     def _record_cancelled(stage: str, reason: str) -> None:
         summary[f"{stage}_cancelled"] = reason
 
@@ -2407,6 +2444,7 @@ def warmup_vector_service(
             if not _has_estimated_budget("model", budget_cap=model_timeout):
                 _record_cancelled("model", "budget")
                 return _finalise()
+            model_gate_budget, model_gate_start = _start_stage_gate("model", model_timeout)
             completed, path, elapsed, cancelled = _run_with_budget(
                 "model",
                 lambda stop_event: ensure_embedding_model(
@@ -2442,6 +2480,22 @@ def warmup_vector_service(
                     )
                 else:
                     _record("model", "missing")
+                try:
+                    _apply_stage_gate(
+                        "model",
+                        model_gate_budget,
+                        model_gate_start,
+                        model_timeout,
+                        elapsed_hint=elapsed,
+                    )
+                except TimeoutError as exc:
+                    _record_cancelled(
+                        "model", "ceiling" if model_timeout is not None else "budget"
+                    )
+                    log.info(
+                        "Vector warmup model gate exceeded; deferring", extra={"error": str(exc)}
+                    )
+                    return _finalise()
             elif budget_exhausted:
                 if "model" not in summary:
                     _record_deferred("model", "deferred-budget")
@@ -2483,6 +2537,21 @@ def warmup_vector_service(
                         _record_background("model", status)
                     else:
                         _record("model", status)
+                try:
+                    _apply_stage_gate(
+                        "model",
+                        *_start_stage_gate("model", model_timeout),
+                        model_timeout,
+                        elapsed_hint=elapsed,
+                    )
+                except TimeoutError as exc:
+                    _record_cancelled(
+                        "model", "ceiling" if model_timeout is not None else "budget"
+                    )
+                    log.info(
+                        "Vector warmup model probe gate exceeded; deferring", extra={"error": str(exc)}
+                    )
+                    return _finalise()
         else:
             if "model" in deferred_bootstrap:
                 status = "deferred-bootstrap"
@@ -2618,6 +2687,9 @@ def warmup_vector_service(
                         )
                         _record_cancelled("handlers", "budget")
                         return _finalise()
+                    handler_gate_budget, handler_gate_start = _start_stage_gate(
+                        "handlers", handler_timeout
+                    )
                     try:
                         from .vectorizer import SharedVectorService
 
@@ -2652,6 +2724,31 @@ def warmup_vector_service(
                                     meta={"handler_deferrals": handler_deferrals},
                                     emit_metric=False,
                                 )
+                        try:
+                            _apply_stage_gate(
+                                "handlers",
+                                handler_gate_budget,
+                                handler_gate_start,
+                                handler_timeout,
+                                elapsed_hint=elapsed,
+                            )
+                        except TimeoutError:
+                            status = (
+                                "deferred-timebox"
+                                if handler_timeout is not None
+                                else "deferred-budget"
+                            )
+                            _record_cancelled(
+                                "handlers",
+                                "ceiling" if handler_timeout is not None else "budget",
+                            )
+                            _defer_handler_chain(
+                                status,
+                                stage_timeout=handler_timeout,
+                                vectorise_timeout=vectorise_timeout,
+                            )
+                            log.info("Handler warmup gate exceeded; deferring stage")
+                            return _finalise()
                         elif budget_exhausted:
                             if "handlers" not in summary:
                                 _record_deferred("handlers", "deferred-budget")
@@ -2875,6 +2972,9 @@ def warmup_vector_service(
                                     "text", {"text": "warmup"}, stop_event=stop_event
                                 )
 
+                            vectorise_gate_budget, vectorise_gate_start = _start_stage_gate(
+                                "vectorise", vectorise_timeout
+                            )
                             completed, _, elapsed, cancelled = _run_with_budget(
                                 "vectorise",
                                 _vectorise,
@@ -2885,6 +2985,31 @@ def warmup_vector_service(
                                 _record_cancelled("vectorise", cancelled)
                             if completed:
                                 _record("vectorise", "ok")
+                                try:
+                                    _apply_stage_gate(
+                                        "vectorise",
+                                        vectorise_gate_budget,
+                                        vectorise_gate_start,
+                                        vectorise_timeout,
+                                        elapsed_hint=elapsed,
+                                    )
+                                except TimeoutError:
+                                    status = (
+                                        "deferred-timebox"
+                                        if vectorise_timeout is not None
+                                        else "deferred-budget"
+                                    )
+                                    _record_cancelled(
+                                        "vectorise",
+                                        "ceiling"
+                                        if vectorise_timeout is not None
+                                        else "budget",
+                                    )
+                                    _record_deferred_background("vectorise", status)
+                                    log.info(
+                                        "Vectorise warmup gate exceeded; deferring stage"
+                                    )
+                                    return _finalise()
                             else:
                                 return _finalise()
                         except TimeoutError:
