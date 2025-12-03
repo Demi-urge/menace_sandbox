@@ -287,7 +287,9 @@ class _BootstrapVectorMetricsStub:
             daemon=True,
         ).start()
 
-    def _promote_from_stub(self, *, reason: str) -> "VectorMetricsDB | None":
+    def _promote_from_stub(
+        self, *, reason: str, allow_override: bool = False
+    ) -> "VectorMetricsDB | None":
         delegate = self._delegate
         if delegate is not None:
             return delegate
@@ -295,10 +297,13 @@ class _BootstrapVectorMetricsStub:
             allow_unblock = reason in {"bootstrap_ready", "post_warmup", "warmup_complete"}
             if allow_unblock:
                 self._release_activation_block(reason=reason, configure_ready=True)
-            else:
+            elif not _warmup_activation_allowed(allow_override=allow_override):
                 self._log_deferred_activation(reason=reason)
+                _increment_deferral_metric("blocked_activation")
                 return None
-        delegate = self._activate(reason=reason)
+            else:
+                self._release_activation_block(reason=reason, configure_ready=True)
+        delegate = self._activate(reason=reason, allow_override=allow_override)
         if isinstance(delegate, VectorMetricsDB):
             try:  # pragma: no cover - best effort promotion
                 if reason == "bootstrap_ready":
@@ -325,12 +330,17 @@ class _BootstrapVectorMetricsStub:
                 )
         return delegate
 
-    def _activate(self, *, reason: str = "attribute_access") -> "VectorMetricsDB":
+    def _activate(
+        self, *, reason: str = "attribute_access", allow_override: bool = False
+    ) -> "VectorMetricsDB":
         if self._delegate is not None:
             return self._delegate
         if self._activation_blocked:
-            self._log_deferred_activation(reason=reason)
-            return self
+            if not _warmup_activation_allowed(allow_override=allow_override):
+                self._log_deferred_activation(reason=reason)
+                _increment_deferral_metric("blocked_activation")
+                return self
+            self._release_activation_block(reason=reason, configure_ready=True)
         if self._pending_weights:
             _record_pending_weight_values(self._pending_weights)
         activation_kwargs = dict(self._activation_kwargs)
@@ -373,14 +383,19 @@ class _BootstrapVectorMetricsStub:
         if delegate is not None:
             return delegate
         if self._activation_blocked:
-            self._log_deferred_activation(reason=f"blocked:{method}")
-            _increment_deferral_metric("blocked_first_write")
-            return None
+            if self._activate_on_first_write and not self._first_write_deferred():
+                self._release_activation_block(
+                    reason=f"first_write_ready:{method}", configure_ready=True
+                )
+            else:
+                self._log_deferred_activation(reason=f"blocked:{method}")
+                _increment_deferral_metric("blocked_first_write")
+                return None
         if self._first_write_deferred():
             return None
         if not self._activate_on_first_write:
             return None
-        delegate = self._activate(reason=f"write:{method}")
+        delegate = self._activate(reason=f"write:{method}", allow_override=True)
         if delegate is self:
             return None
         return delegate
@@ -797,6 +812,20 @@ def _first_write_activation_budget_seconds() -> float | None:
     return None
 
 
+def _warmup_activation_allowed(*, allow_override: bool) -> bool:
+    if allow_override:
+        return True
+    bootstrap_env = _detect_bootstrap_environment()
+    warmup_requested = bool(
+        bootstrap_env["vector_bootstrap_env"]
+        or bootstrap_env["patch_bootstrap_env"]
+        or bootstrap_env["vector_warmup_env"]
+        or bootstrap_env["bootstrap_env"]
+        or bootstrap_env["bootstrap_timers"]
+    )
+    return not warmup_requested
+
+
 def _detect_bootstrap_environment() -> dict[str, bool]:
     vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
     patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
@@ -1028,6 +1057,42 @@ def get_shared_vector_metrics_db(
     return _VECTOR_DB_INSTANCE
 
 
+def get_vector_metrics_db(
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    ensure_exists: bool | None = None,
+    read_only: bool | None = None,
+    allow_bootstrap_activation: bool = False,
+) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+    """Return the shared DB while preserving warmup/bootstrap stubs."""
+
+    vm = get_shared_vector_metrics_db(
+        bootstrap_fast=bootstrap_fast,
+        warmup=warmup,
+        ensure_exists=ensure_exists,
+        read_only=read_only,
+    )
+
+    if isinstance(vm, _BootstrapVectorMetricsStub):
+        vm.activate_on_first_write()
+        vm.register_readiness_hook()
+        if allow_bootstrap_activation:
+            vm.configure_activation(
+                warmup=False,
+                ensure_exists=True if ensure_exists is None else ensure_exists,
+                read_only=False if read_only is None else read_only,
+            )
+            promoted = vm._promote_from_stub(
+                reason="bootstrap_override", allow_override=True
+            )
+            if promoted is not None:
+                return promoted
+        return vm
+
+    return vm
+
+
 def get_bootstrap_shared_vector_metrics_db(
     *,
     bootstrap_fast: bool | None = None,
@@ -1106,7 +1171,9 @@ def activate_shared_vector_metrics_db(
             read_only=False,
             path=activation_path,
         )
-        delegate = vm._promote_from_stub(reason=reason or "warmup_complete")
+        delegate = vm._promote_from_stub(
+            reason=reason or "warmup_complete", allow_override=allow_activation
+        )
         if delegate is not None:
             vm = delegate
             logger.info(
@@ -3135,6 +3202,7 @@ __all__ = [
     "bootstrap_vector_metrics_stub",
     "get_bootstrap_vector_metrics_db",
     "get_bootstrap_shared_vector_metrics_db",
+    "get_vector_metrics_db",
     "get_shared_vector_metrics_db",
     "activate_shared_vector_metrics_db",
     "ensure_vector_db_weights",
