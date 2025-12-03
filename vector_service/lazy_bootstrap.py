@@ -59,7 +59,7 @@ def _model_executor() -> ThreadPoolExecutor:
     global _MODEL_EXECUTOR
     if _MODEL_EXECUTOR is None:
         _MODEL_EXECUTOR = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="vector-model"
+            max_workers=2, thread_name_prefix="vector-model"
         )
     return _MODEL_EXECUTOR
 
@@ -1089,8 +1089,10 @@ def warmup_vector_service(
         if stage in prior_deferred:
             return
 
-    def _record_deferred_background(stage: str, status: str) -> None:
-        _record_background(stage, status)
+    def _record_deferred_background(
+        stage: str, status: str, *, stage_timeout: float | None = None
+    ) -> None:
+        _record_background(stage, status, stage_timeout=stage_timeout)
         if stage in prior_deferred:
             return
 
@@ -1676,7 +1678,9 @@ def warmup_vector_service(
                 _stop_thread("timeout")
                 _record_timeout(stage)
                 budget_exhausted = True
-                _record_deferred_background(stage, "deferred-timebox")
+                _record_deferred_background(
+                    stage, "deferred-timebox", stage_timeout=timeout
+                )
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
                 )
@@ -1689,7 +1693,9 @@ def warmup_vector_service(
                     _stop_thread("budget deadline")
                     budget_exhausted = True
                     _record_timeout(stage)
-                    _record_deferred_background(stage, "deferred-budget")
+                    _record_deferred_background(
+                        stage, "deferred-budget", stage_timeout=timeout
+                    )
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
                     return False, None, time.monotonic() - start, "budget"
 
@@ -1715,7 +1721,9 @@ def warmup_vector_service(
                         "timeout": timeout_hint,
                     },
                 )
-                _record_deferred_background(stage, status)
+                _record_deferred_background(
+                    stage, status, stage_timeout=timeout if timeboxed else None
+                )
                 return False, None, time.monotonic() - start, "timebox" if timeboxed else "budget"
             raise err
 
@@ -2795,7 +2803,16 @@ def warmup_vector_service(
                 download_timeout=model_timeout,
             )
             try:
-                path = model_future.result(timeout=model_timeout)
+                wait_timeout = _effective_timeout("model")
+                if wait_timeout is None:
+                    wait_timeout = model_timeout
+                elif model_timeout is not None:
+                    wait_timeout = min(wait_timeout, model_timeout)
+                else:
+                    wait_timeout = max(0.0, wait_timeout)
+                if wait_timeout is None:
+                    wait_timeout = _BOOTSTRAP_STAGE_TIMEOUT
+                path = model_future.result(timeout=wait_timeout)
                 elapsed = time.monotonic() - start
                 _record_elapsed("model", elapsed)
                 resolved_path: Path | None
@@ -2841,9 +2858,12 @@ def warmup_vector_service(
                 elapsed = time.monotonic() - start
                 _record_elapsed("model", elapsed)
                 _record_cancelled("model", "ceiling")
-                _record_background("model", "deferred-timebox", stage_timeout=model_timeout)
+                _record_background(
+                    "model", "deferred-timebox", stage_timeout=wait_timeout
+                )
                 log.info(
-                    "Vector warmup model download deferred after stage ceiling", extra={"timeout": model_timeout}
+                    "Vector warmup model download deferred after stage ceiling",
+                    extra={"timeout": wait_timeout},
                 )
                 return _finalise()
             except TimeoutError as exc:

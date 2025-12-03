@@ -96,6 +96,44 @@ def test_deferred_model_download_queues_background(caplog, monkeypatch, tmp_path
     assert lazy_bootstrap._WARMUP_STAGE_META.get("model", {}).get("background_state")
 
 
+def test_short_timebox_defers_inline_download(caplog, monkeypatch, tmp_path):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._MODEL_READY = False
+    lazy_bootstrap._MODEL_BACKGROUND_THREAD = None
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._WARMUP_STAGE_META.clear()
+
+    def slow_download(*, logger=None, warmup=False, **_kwargs):  # noqa: ARG001
+        time.sleep(0.3)
+        return tmp_path / "model.tar"
+
+    monkeypatch.setattr(lazy_bootstrap, "ensure_embedding_model", slow_download)
+
+    start = time.monotonic()
+    warmup_summary = lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        probe_model=False,
+        warmup_lite=False,
+        force_heavy=True,
+        stage_timeouts={"model": 0.1, "budget": 0.1},
+        logger=logging.getLogger("test"),
+    )
+    elapsed = time.monotonic() - start
+
+    background = lazy_bootstrap._MODEL_BACKGROUND_THREAD
+
+    assert elapsed < 0.25
+    assert warmup_summary["model"] == "deferred-timebox"
+    assert background is not None and background.is_alive()
+    assert (
+        lazy_bootstrap._WARMUP_STAGE_META.get("model", {}).get("stage_timeout")
+        is not None
+    )
+
+    background.join(timeout=1)
+    assert not background.is_alive()
+
+
 def test_handler_hydration_times_out(caplog, monkeypatch):
     caplog.set_level(logging.INFO)
 
