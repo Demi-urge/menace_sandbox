@@ -1157,6 +1157,22 @@ def get_shared_vector_metrics_db(
                     },
                 )
 
+    if warmup_context and isinstance(
+        _VECTOR_DB_INSTANCE, (VectorMetricsDB, _BootstrapVectorMetricsStub)
+    ):
+        if getattr(_VECTOR_DB_INSTANCE, "_boot_stub_active", False):
+            _VECTOR_DB_INSTANCE.activate_on_first_write()
+            logger.info(
+                "vector_metrics_db.bootstrap.persistence_deferred",
+                extra={
+                    "warmup_reasons": [
+                        reason for reason, active in warmup_context_reasons.items() if active
+                    ],
+                    "bootstrap_fast": resolved_bootstrap_fast,
+                    "warmup": resolved_warmup,
+                },
+            )
+
     if warmup_context:
         try:
             _VECTOR_DB_INSTANCE._log_deferred_activation(reason="bootstrap_warmup_summary")

@@ -1030,6 +1030,15 @@ class ContextBuilder:
 
             def _activate_real_db(reason: str = "vector_metrics.activate") -> "VectorMetricsDB | None":
                 prior = ContextBuilder._shared_vector_metrics
+                if warmup_flag and isinstance(prior, (_VectorMetricsWarmupStub, VectorMetricsDB)):
+                    if getattr(prior, "_boot_stub_active", False):
+                        logger.info(
+                            "vector_metrics.warmup.promotion_deferred",
+                            extra={"reason": reason, "stub_type": prior.__class__.__name__},
+                        )
+                        self._vector_metrics = prior
+                        return prior
+
                 vm = ContextBuilder._shared_vector_metrics
                 if isinstance(vm, VectorMetricsDB) and getattr(
                     vm, "_boot_stub_active", False
