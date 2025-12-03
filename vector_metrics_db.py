@@ -1044,6 +1044,9 @@ def get_shared_vector_metrics_db(
         or state_flags["warmup_lite"]
     )
     timer_context = _bootstrap_timers_active()
+    stub_short_circuit = bool(
+        resolved_warmup or resolved_bootstrap_fast or timer_context
+    )
     readiness_signal_active = bool(_READINESS_HOOK_ARMED)
     warmup_context_reasons = {
         "bootstrap_requested": bootstrap_requested,
@@ -1084,6 +1087,49 @@ def get_shared_vector_metrics_db(
 
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
+        if (
+            warmup_context
+            and isinstance(_VECTOR_DB_INSTANCE, VectorMetricsDB)
+            and stub_short_circuit
+        ):
+            stub = _BootstrapVectorMetricsStub(
+                path="vector_metrics.db",
+                bootstrap_fast=resolved_bootstrap_fast,
+                warmup=resolved_warmup,
+                ensure_exists=ensure_exists,
+                read_only=bool(read_only) if read_only is not None else False,
+                warmup_stub_requested=warmup_stub_requested,
+            )
+            stub.configure_activation(
+                bootstrap_fast=resolved_bootstrap_fast,
+                warmup=resolved_warmup,
+                ensure_exists=requested_ensure_exists,
+                read_only=requested_read_only,
+            )
+            _queue_promotion_for_stub(
+                stub,
+                ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
+                read_only=queued_promotion_kwargs.get("read_only"),
+            )
+            stub.activate_on_first_write()
+            stub.register_readiness_hook()
+            stub._delegate = _VECTOR_DB_INSTANCE
+            _VECTOR_DB_INSTANCE = stub
+            _increment_deferral_metric("stub_short_circuit")
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_short_circuit",
+                extra={
+                    "warmup_reasons": [
+                        reason
+                        for reason, active in warmup_context_reasons.items()
+                        if active
+                    ],
+                    "bootstrap_fast": resolved_bootstrap_fast,
+                    "warmup": resolved_warmup,
+                    "reuse_delegate": True,
+                },
+            )
+
         if _VECTOR_DB_INSTANCE is None:
             if warmup_context:
                 _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
@@ -1099,6 +1145,7 @@ def get_shared_vector_metrics_db(
                     ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
                     read_only=queued_promotion_kwargs.get("read_only"),
                 )
+                _increment_deferral_metric("stub_short_circuit")
                 _VECTOR_DB_INSTANCE.activate_on_first_write()
                 _VECTOR_DB_INSTANCE.configure_activation(
                     bootstrap_fast=resolved_bootstrap_fast,
