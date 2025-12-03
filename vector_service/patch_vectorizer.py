@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Embeds patch history records using textual fields."""
 
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterator, Tuple, List
 from types import SimpleNamespace
@@ -34,9 +35,21 @@ class PatchVectorizer(EmbeddableDBMixin):
         index_path: str | Path | None = None,
         backend: str = "annoy",
         embedding_version: int = 1,
-        bootstrap_fast: bool = False,
+        bootstrap_fast: bool | None = None,
     ) -> None:
         init_start = time.perf_counter()
+        warmup_context = any(
+            os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
+            for flag in (
+                "MENACE_BOOTSTRAP",
+                "MENACE_BOOTSTRAP_FAST",
+                "MENACE_BOOTSTRAP_MODE",
+                "VECTOR_SERVICE_WARMUP",
+                "VECTOR_SERVICE_LAZY_BOOTSTRAP",
+            )
+        )
+        if bootstrap_fast is None:
+            bootstrap_fast = warmup_context
         logger.debug(
             "patch_vectorizer.init.start",
             extra={
@@ -48,6 +61,7 @@ class PatchVectorizer(EmbeddableDBMixin):
             },
         )
         self.bootstrap_fast = bool(bootstrap_fast)
+        self._index_load_deferred = bool(self.bootstrap_fast or warmup_context)
         if self.bootstrap_fast:
             fast_db_path = Path(path) if path is not None else Path(self.DB_FILE)
             index_fallback = Path(index_path) if index_path is not None else fast_db_path.with_suffix(
@@ -168,7 +182,7 @@ class PatchVectorizer(EmbeddableDBMixin):
             metadata_path=metadata_path,
             backend=backend,
             embedding_version=embedding_version,
-            defer_index_load=self.bootstrap_fast,
+            defer_index_load=self._index_load_deferred,
         )
         logger.info(
             "patch_vectorizer.init.complete duration=%.6fs index=%s",
@@ -177,6 +191,7 @@ class PatchVectorizer(EmbeddableDBMixin):
             extra={
                 "duration_s": round(time.perf_counter() - init_start, 6),
                 "index_path": str(index_path),
+                "index_load_deferred": self._index_load_deferred,
             },
         )
 
@@ -217,6 +232,29 @@ class PatchVectorizer(EmbeddableDBMixin):
                 "diff": getattr(rec, "diff", None),
                 "summary": getattr(rec, "summary", None),
             }, "patch"
+
+    def _ensure_index_loaded(self) -> None:
+        if self._index_loaded:
+            return
+        start = time.perf_counter()
+        logger.info(
+            "patch_vectorizer.index.load.start",
+            extra={
+                "deferred": self._index_load_deferred,
+                "index_path": str(self.index_path),
+                "metadata_path": str(self.metadata_path),
+            },
+        )
+        super()._ensure_index_loaded()
+        logger.info(
+            "patch_vectorizer.index.load.complete",
+            extra={
+                "deferred": self._index_load_deferred,
+                "duration_s": round(time.perf_counter() - start, 6),
+                "index_path": str(self.index_path),
+                "metadata_path": str(self.metadata_path),
+            },
+        )
 
 
 def backfill_patch_embeddings(

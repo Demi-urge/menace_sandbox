@@ -555,6 +555,8 @@ def warmup_vector_service(
     if bootstrap_context and env_budget is None and not stage_timeouts_supplied:
         bootstrap_guard_ceiling = _BOOTSTRAP_STAGE_TIMEOUT
 
+    if bootstrap_fast is None:
+        bootstrap_fast = bootstrap_context
     bootstrap_fast = bool(bootstrap_fast)
     bootstrap_lite = bool(bootstrap_context if bootstrap_lite is None else bootstrap_lite)
 
