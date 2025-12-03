@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from enhancement_score import EnhancementMetrics
 from vector_service.patch_logger import PatchLogger
-from vector_metrics_db import VectorMetricsDB
+from vector_metrics_db import VectorMetricsDB, bootstrap_vector_metrics_stub
 from code_database import PatchHistoryDB
 
 
 def backfill() -> None:
     pdb = PatchHistoryDB()
-    vm = VectorMetricsDB()
+    vm = bootstrap_vector_metrics_stub() or VectorMetricsDB()
     logger = PatchLogger(patch_db=pdb, vector_metrics=vm)
     conn = pdb.router.get_connection("patch_history")
     cur = conn.execute(
