@@ -3526,6 +3526,7 @@ def initialize_bootstrap_context(
 
     def _task_embedder(_: dict[str, Any]) -> None:
         global _BOOTSTRAP_EMBEDDER_JOB
+        nonlocal warmup_lite_context
         _mark_bootstrap_step("embedder_preload")
         existing_job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
         existing_background = existing_job_snapshot.get("background_future") or getattr(
@@ -3565,6 +3566,37 @@ def initialize_bootstrap_context(
             if bootstrap_deadline is not None
             else None
         )
+        finite_timebox_candidates = [
+            candidate
+            for candidate in (
+                embedder_stage_budget
+                if embedder_stage_budget is not None
+                and math.isfinite(embedder_stage_budget)
+                else None,
+                embedder_stage_deadline_remaining
+                if embedder_stage_deadline_remaining is not None
+                and math.isfinite(embedder_stage_deadline_remaining)
+                else None,
+                remaining_bootstrap_window
+                if remaining_bootstrap_window is not None
+                and math.isfinite(remaining_bootstrap_window)
+                else None,
+            )
+            if candidate is not None
+        ]
+        no_finite_timebox_available = not finite_timebox_candidates
+        no_budget_deferral_reason = "embedder_preload_no_budget_window"
+        if no_finite_timebox_available:
+            warmup_lite_context = True
+            LOGGER.info(
+                "embedder preload missing finite budget/deadline; deferring heavy warmup",
+                extra={
+                    "event": "embedder-preload-no-budget-window",
+                    "stage_budget": embedder_stage_budget,
+                    "stage_deadline_remaining": embedder_stage_deadline_remaining,
+                    "bootstrap_remaining": remaining_bootstrap_window,
+                },
+            )
         deferral_threshold = float(
             os.getenv("BOOTSTRAP_EMBEDDER_DEFERRAL_THRESHOLD", "1.0")
         )
@@ -3689,6 +3721,8 @@ def initialize_bootstrap_context(
             fast_presence_reason = "embedder_presence_warmup_lite"
         elif finite_stage_window:
             fast_presence_reason = "embedder_presence_finite_stage_window"
+        elif no_finite_timebox_available:
+            fast_presence_reason = "embedder_presence_no_budget_window"
         if fast_presence_reason:
             presence_only = True
             budget_guarded = True
@@ -3700,6 +3734,8 @@ def initialize_bootstrap_context(
             presence_reason = presence_reason or "embedder_presence_bootstrap_fast_guard"
         elif warmup_lite_context:
             presence_reason = presence_reason or "embedder_presence_warmup_lite_guard"
+        elif no_finite_timebox_available:
+            presence_reason = presence_reason or "embedder_preload_no_budget_window"
         if budget_window_missing:
             presence_only = True
             budget_guarded = True
@@ -3807,6 +3843,12 @@ def initialize_bootstrap_context(
             budget_guarded = True
             non_blocking_presence_probe = True
             presence_reason = presence_reason or "embedder_budget_unavailable"
+        if no_finite_timebox_available:
+            presence_only = True
+            budget_guarded = True
+            guard_blocks_preload = True
+            non_blocking_presence_probe = True
+            presence_reason = presence_reason or no_budget_deferral_reason
         explicit_budget_available = any(
             candidate is not None and candidate > 0
             for candidate in (
@@ -4790,6 +4832,34 @@ def initialize_bootstrap_context(
                     },
                 )
             return job_snapshot
+
+        if no_finite_timebox_available:
+            stage_controller.defer_step("embedder_preload", reason=no_budget_deferral_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vectorizer_preload", reason=no_budget_deferral_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops",
+                reason=f"embedder_placeholder:{no_budget_deferral_reason}",
+            )
+            job_snapshot = _schedule_background_preload(no_budget_deferral_reason)
+            warmup_summary = job_snapshot.get("warmup_summary") or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault("deferred_reason", no_budget_deferral_reason)
+            warmup_summary.setdefault("deferral_reason", no_budget_deferral_reason)
+            warmup_summary.setdefault("stage", "deferred-no-budget")
+            warmup_summary.setdefault("stage_budget", embedder_stage_budget)
+            warmup_summary.setdefault(
+                "stage_deadline_remaining", embedder_stage_deadline_remaining
+            )
+            warmup_summary.setdefault("bootstrap_remaining", remaining_bootstrap_window)
+            job_snapshot["warmup_summary"] = warmup_summary
+            job_snapshot.setdefault("presence_only", True)
+            job_snapshot.setdefault("budget_guarded", True)
+            job_snapshot.setdefault("budget_window_missing", True)
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            stage_controller.complete_step("embedder_preload", 0.0)
+            return job_snapshot.get("result", _BOOTSTRAP_PLACEHOLDER)
 
         if budget_window_missing and embedder_stage_budget is None and embedder_timeout is None:
             missing_budget_reason = presence_reason or "embedder_budget_unavailable"
