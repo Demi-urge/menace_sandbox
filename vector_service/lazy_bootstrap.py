@@ -463,6 +463,8 @@ def warmup_vector_service(
 
     log = logger or logging.getLogger(__name__)
     _load_warmup_cache(log)
+    budget_remaining_supplied = budget_remaining is not None
+    check_budget_supplied = check_budget is not None
     stage_timeouts_supplied = stage_timeouts is not None
     env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"))
     if env_budget is None:
@@ -530,11 +532,13 @@ def warmup_vector_service(
 
     bootstrap_hard_timebox: float | None = None
     bootstrap_deferred_records: set[str] = set()
+    warmup_lite_source = "caller"
 
     bootstrap_force_lite = bootstrap_context and not force_heavy and bootstrap_lite
     if bootstrap_force_lite and not warmup_lite:
         log.info("Bootstrap context detected; forcing warmup_lite")
         warmup_lite = True
+        warmup_lite_source = "bootstrap"
 
     if fast_vector_env and not force_heavy:
         if download_model:
@@ -607,6 +611,20 @@ def warmup_vector_service(
         bootstrap_hard_timebox = _BOOTSTRAP_STAGE_TIMEOUT
 
     warmup_lite = bool(warmup_lite)
+    budget_hooks_missing = not (budget_remaining_supplied or check_budget_supplied)
+    if budget_hooks_missing and not force_heavy:
+        if warmup_lite_source == "caller":
+            warmup_lite_source = "missing-budget-hooks"
+        warmup_lite = True
+        if heavy_requested or requested_handlers or requested_vectorise:
+            log.info(
+                "No budget callbacks supplied; enabling warmup-lite and deferring heavy vector warmup",
+                extra={
+                    "event": "vector-warmup",
+                    "warmup_lite": True,
+                    "budget_callbacks": "missing",
+                },
+            )
     lite_deferrals: set[str] = set()
     if warmup_lite and not force_heavy:
         lite_deferrals.update({"handlers", "scheduler", "vectorise"})
@@ -634,6 +652,8 @@ def warmup_vector_service(
         run_vectorise = False
 
     summary: dict[str, str] = {"bootstrap": summary_flag, "warmup_lite": str(warmup_lite)}
+    if warmup_lite_source != "caller":
+        summary["warmup_lite_source"] = warmup_lite_source
     explicit_deferred: set[str] = set(deferred_stages or ())
     deferred = explicit_deferred | deferred_bootstrap | lite_deferrals
     memoised_results = dict(_WARMUP_STAGE_MEMO)
@@ -693,10 +713,9 @@ def warmup_vector_service(
         _update_warmup_stage_cache(stage, status, log)
 
     def _record_deferred(stage: str, status: str) -> None:
-        _record(stage, status)
+        _record_background(stage, status)
         if stage in prior_deferred:
             return
-        background_candidates.add(stage)
 
     def _record_deferred_background(stage: str, status: str) -> None:
         _record_background(stage, status)
