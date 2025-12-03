@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import logging
 import sys
 import types
@@ -36,6 +37,36 @@ def _clear_cache_only():
     lazy_bootstrap._WARMUP_CACHE_LOADED = False
     lazy_bootstrap._SCHEDULER = None
     lazy_bootstrap._MODEL_READY = False
+
+
+def test_handler_deferrals_exposed_in_summary(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    _reset_state()
+
+    deferral_payload = {"foo": {"reason": "budget", "remaining_budget": 0.5}}
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class StubSharedVectorService:
+        handler_deferrals = deferral_payload
+        handler_hydration_deferred = True
+
+        def __init__(self, *args, **kwargs):  # noqa: ARG002
+            pass
+
+    vectorizer_stub.SharedVectorService = StubSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        warmup_lite=False,
+        hydrate_handlers=True,
+        start_scheduler=False,
+        run_vectorise=False,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert json.loads(warmup_summary["handler_deferrals"]) == deferral_payload
 
 
 def test_warmup_lite_defers_heavy_stages(monkeypatch, caplog):
