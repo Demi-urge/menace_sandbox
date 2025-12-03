@@ -178,6 +178,49 @@ def test_get_shared_stub_in_bootstrap_even_with_explicit_flags(monkeypatch):
     assert vm._activation_kwargs["read_only"] is True
 
 
+def test_activation_short_circuits_until_post_warmup(monkeypatch):
+    calls = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            calls.append("activate_on_first_write")
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("end_warmup")
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("activate_persistence")
+            return self
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db(warmup=True)
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+
+    skipped = vector_metrics_db.activate_shared_vector_metrics_db(
+        reason="bootstrap_in_progress"
+    )
+
+    assert skipped is vm
+    assert calls == []
+
+    vm.configure_activation(warmup=False, ensure_exists=True, read_only=False)
+    promoted = vector_metrics_db.activate_shared_vector_metrics_db(
+        reason="post_warmup", post_warmup=True
+    )
+
+    assert isinstance(promoted, DummyVectorDB)
+    assert calls and calls[0][0] == "init"
+
+
 def test_bootstrap_stub_defers_creation_until_activated(monkeypatch, tmp_path):
     class _FakeSignal:
         def await_ready(self, timeout=None):  # pragma: no cover - gate only
