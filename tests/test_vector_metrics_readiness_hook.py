@@ -1,6 +1,8 @@
 import sys
 import threading
 import types
+from pathlib import Path
+import sys
 
 import vector_metrics_db
 
@@ -174,6 +176,56 @@ def test_get_shared_stub_in_bootstrap_even_with_explicit_flags(monkeypatch):
     assert vm._activation_kwargs["warmup"] is True
     assert vm._activation_kwargs["ensure_exists"] is False
     assert vm._activation_kwargs["read_only"] is True
+
+
+def test_bootstrap_stub_defers_creation_until_activated(monkeypatch, tmp_path):
+    class _FakeSignal:
+        def await_ready(self, timeout=None):  # pragma: no cover - gate only
+            threading.Event().wait(timeout)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bootstrap_readiness",
+        types.SimpleNamespace(readiness_signal=lambda: _FakeSignal()),
+    )
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_READINESS_HOOK_ARMED", False)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+    monkeypatch.chdir(tmp_path)
+
+    created_paths: list[Path] = []
+
+    class DummyVectorDB:
+        def __init__(self, path, *args, **kwargs):
+            self._boot_stub_active = False
+            created_paths.append(Path(path))
+            Path(path).touch()
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            pass
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            pass
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover
+            return self
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert not created_paths
+    assert not (tmp_path / "vector_metrics.db").exists()
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(
+        reason="bootstrap_ready", post_warmup=True
+    )
+
+    assert isinstance(activated, DummyVectorDB)
+    assert [p.resolve() for p in created_paths] == [tmp_path / "vector_metrics.db"]
+    assert (tmp_path / "vector_metrics.db").exists()
 
 
 def test_readiness_hook_replays_buffer_after_bootstrap(monkeypatch, tmp_path):
