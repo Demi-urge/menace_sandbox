@@ -175,18 +175,31 @@ def _model_bundle_path() -> Path:
     return resolve_path("vector_service/minilm/tiny-distilroberta-base.tar.xz")
 
 
-def _note_model_background(state: str, logger: logging.Logger, *, emit_metric: bool = False) -> None:
+def _note_model_background(
+    state: str,
+    logger: logging.Logger,
+    *,
+    emit_metric: bool = False,
+    timeout: float | None = None,
+) -> None:
     _update_warmup_stage_cache(
         "model",
         _WARMUP_STAGE_MEMO.get("model", "deferred"),
         logger,
-        meta={"background_state": state, "background_updated_at": time.time()},
+        meta={
+            "background_state": state,
+            "background_updated_at": time.time(),
+            "background_timeout": timeout,
+        },
         emit_metric=emit_metric,
     )
 
 
 def _queue_background_model_download(
-    logger: logging.Logger, *, download_timeout: float | None = None
+    logger: logging.Logger,
+    *,
+    download_timeout: float | None = None,
+    force_heavy: bool = False,
 ) -> None:
     global _MODEL_BACKGROUND_THREAD, _MODEL_READY
 
@@ -204,20 +217,37 @@ def _queue_background_model_download(
             return
 
         if _MODEL_BACKGROUND_THREAD is not None and _MODEL_BACKGROUND_THREAD.is_alive():
+            _note_model_background("running", logger, timeout=_coerce_timeout(download_timeout))
             return
 
-        _note_model_background("queued", logger)
+        effective_timeout = _coerce_timeout(download_timeout)
+        if effective_timeout is not None and effective_timeout <= 0:
+            _update_warmup_stage_cache(
+                "model",
+                "deferred-timebox",
+                logger,
+                meta={
+                    "background_state": "skipped",
+                    "background_timeout": effective_timeout,
+                },
+            )
+            return
+
+        _note_model_background("queued", logger, timeout=effective_timeout)
 
         def _background_download() -> None:
             global _MODEL_BACKGROUND_THREAD
-            _note_model_background("running", logger)
+            _note_model_background("running", logger, timeout=effective_timeout)
             try:
+                stop_event = threading.Event()
+                if effective_timeout is not None:
+                    setattr(stop_event, "_stage_deadline", time.monotonic() + effective_timeout)
                 path = ensure_embedding_model(
                     logger=logger,
                     warmup=True,
-                    warmup_lite=False,
-                    warmup_heavy=True,
-                    stop_event=None,
+                    warmup_lite=not force_heavy,
+                    warmup_heavy=force_heavy,
+                    stop_event=stop_event,
                     budget_check=None,
                     download_timeout=download_timeout,
                 )
@@ -227,12 +257,21 @@ def _queue_background_model_download(
                         "model",
                         "ready",
                         logger,
-                        meta={"background_state": "complete"},
+                        meta={"background_state": "complete", "background_timeout": effective_timeout},
                     )
                     return
+                _update_warmup_stage_cache(
+                    "model",
+                    _WARMUP_STAGE_MEMO.get("model", "deferred"),
+                    logger,
+                    meta={
+                        "background_state": "deferred",
+                        "background_timeout": effective_timeout,
+                    },
+                )
             except Exception:  # pragma: no cover - background best effort
                 logger.debug("background embedding model download failed", exc_info=True)
-                _note_model_background("failed", logger)
+                _note_model_background("failed", logger, timeout=effective_timeout)
             finally:
                 with _MODEL_BACKGROUND_LOCK:
                     _MODEL_BACKGROUND_THREAD = None
@@ -320,7 +359,9 @@ def ensure_embedding_model(
             raise error
         status = "deferred-timebox" if getattr(error, "_warmup_timebox", False) else "deferred-budget"
         timeout_hint = getattr(error, "_timebox_timeout", None)
-        _queue_background_model_download(log, download_timeout=effective_timeout)
+        _queue_background_model_download(
+            log, download_timeout=effective_timeout, force_heavy=False
+        )
         log.info(
             "embedding model warmup deferred after cancellation",
             extra={
@@ -354,6 +395,7 @@ def ensure_embedding_model(
                 "embedding model warmup-lite probe: archive missing; deferring download",
                 extra={"event": "vector-warmup", "model_status": status},
             )
+            _update_warmup_stage_cache("model", status, log, meta={"probe_only": True})
             return _result(None, status)
 
         try:
@@ -1199,13 +1241,13 @@ def warmup_vector_service(
         ):
             nonlocal background_stage_timeouts
 
-            def _queue_background(
-                stages: set[str], *, budget_hints: Mapping[str, float | None] | None = None
-            ) -> None:
-                nonlocal background_stage_timeouts
-                if budget_hints and background_stage_timeouts is None:
-                    background_stage_timeouts = dict(budget_hints)
-                _launch_background_warmup(set(stages))
+        def _queue_background(
+            stages: set[str], *, budget_hints: Mapping[str, float | None] | None = None
+        ) -> None:
+            nonlocal background_stage_timeouts
+            if budget_hints and background_stage_timeouts is None:
+                background_stage_timeouts = dict(budget_hints)
+            _launch_background_warmup(set(stages))
 
             effective_background_hook = _queue_background
 
@@ -1544,7 +1586,24 @@ def warmup_vector_service(
                     "Skipping background warmup launch; shared budget cap exhausted",
                     extra={"event": "vector-warmup", "stage": ",".join(sorted(stages))},
                 )
+                for stage in stages:
+                    _update_warmup_stage_cache(
+                        stage,
+                        _WARMUP_STAGE_MEMO.get(stage, "deferred-budget"),
+                        log,
+                        meta={"background_state": "skipped", "background_timeout": stage_budget_cap},
+                        emit_metric=False,
+                    )
                 return
+
+        for stage in stages:
+            _update_warmup_stage_cache(
+                stage,
+                _WARMUP_STAGE_MEMO.get(stage, "deferred"),
+                log,
+                meta={"background_state": "queued", "background_timeout": background_timeouts.get(stage)},
+                emit_metric=False,
+            )
 
         def _run_background() -> None:
             try:
@@ -1554,17 +1613,17 @@ def warmup_vector_service(
                     hydrate_handlers="handlers" in stages,
                     start_scheduler="scheduler" in stages,
                     run_vectorise="vectorise" in stages,
-                    check_budget=None,
-                    budget_remaining=None,
+                    check_budget=check_budget,
+                    budget_remaining=_remaining_budget,
                     logger=log,
-                    force_heavy=True,
+                    force_heavy=False,
                     bootstrap_fast=bootstrap_fast,
-                    warmup_lite=False,
+                    warmup_lite=warmup_lite,
                     warmup_model=warmup_model,
                     warmup_handlers=True,
                     warmup_probe=warmup_probe,
                     stage_timeouts=background_timeouts,
-                    deferred_stages=set(),
+                    deferred_stages=recorded_deferred or set(),
                     background_hook=None,
                 )
             except Exception:  # pragma: no cover - background best effort

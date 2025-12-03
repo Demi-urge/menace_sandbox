@@ -1428,6 +1428,10 @@ def default_vector_metrics_path(
             resolved_bootstrap_fast or resolved_warmup or env_requested or bootstrap_context
         )
 
+    if bootstrap_read_only:
+        ensure_exists = False
+        read_only = True
+
     if ensure_exists is None:
         ensure_exists = not (bootstrap_read_only or read_only)
 
@@ -1436,8 +1440,14 @@ def default_vector_metrics_path(
 
     if bootstrap_read_only:
         path = Path("vector_metrics.db").expanduser()
-        if not path.is_absolute():
-            path = path.resolve()
+        logger.info(
+            "vector_metrics_db.bootstrap.default_path_stub",
+            extra={
+                "bootstrap_read_only": True,
+                "ensure_exists": ensure_exists,
+                "read_only": read_only,
+            },
+        )
         return path
 
     if not bootstrap_read_only:
