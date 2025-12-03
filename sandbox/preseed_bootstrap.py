@@ -3664,9 +3664,22 @@ def initialize_bootstrap_context(
                     _BOOTSTRAP_SCHEDULER.mark_partial(
                         "background_loops", reason=f"embedder_placeholder:{guard_reason}"
                     )
-                    job_snapshot = _schedule_background_preload(
-                        guard_reason, strict_timebox=remaining_window
+                    _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+                        reason=guard_reason
                     )
+                    placeholder_obj = existing_job_snapshot.get(
+                        "placeholder", _BOOTSTRAP_PLACEHOLDER
+                    )
+                    job_snapshot = existing_job_snapshot | {
+                        "placeholder": placeholder_obj,
+                        "placeholder_reason": guard_reason,
+                        "warmup_placeholder_reason": guard_reason,
+                        "presence_only": True,
+                        "budget_guarded": True,
+                        "budget_window_missing": budget_window_missing,
+                        "deferral_reason": guard_reason,
+                        "result": existing_job_snapshot.get("result", placeholder_obj),
+                    }
                     warmup_summary = job_snapshot.get("warmup_summary") or {}
                     warmup_summary.setdefault("deferred", True)
                     warmup_summary.setdefault("deferred_reason", guard_reason)
@@ -3682,7 +3695,51 @@ def initialize_bootstrap_context(
                     job_snapshot["warmup_summary"] = warmup_summary
                     _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
                     stage_controller.complete_step("embedder_preload", 0.0)
-                    return job_snapshot.get("result", _BOOTSTRAP_PLACEHOLDER)
+                    return job_snapshot.get("result", placeholder_obj)
+        if warmup_lite_context and not full_embedder_preload:
+            guard_reason = "embedder_warmup_lite_probe_only"
+            LOGGER.info(
+                "embedder preload entering warmup-lite probe-only path",
+                extra={
+                    "event": "embedder-preload-warmup-lite",
+                    "stage_budget": embedder_stage_budget,
+                    "stage_deadline_remaining": embedder_stage_deadline_remaining,
+                    "bootstrap_remaining": remaining_bootstrap_window,
+                },
+            )
+            stage_controller.defer_step("embedder_preload", reason=guard_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=guard_reason)
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=guard_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{guard_reason}"
+            )
+            placeholder_obj = existing_job_snapshot.get(
+                "placeholder", _BOOTSTRAP_PLACEHOLDER
+            )
+            job_snapshot = existing_job_snapshot | {
+                "placeholder": placeholder_obj,
+                "placeholder_reason": guard_reason,
+                "warmup_placeholder_reason": guard_reason,
+                "presence_only": True,
+                "budget_guarded": True,
+                "budget_window_missing": budget_window_missing,
+                "deferral_reason": guard_reason,
+                "result": existing_job_snapshot.get("result", placeholder_obj),
+            }
+            warmup_summary = job_snapshot.get("warmup_summary") or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault("deferred_reason", guard_reason)
+            warmup_summary.setdefault("deferral_reason", guard_reason)
+            warmup_summary.setdefault("stage", "warmup-lite-deferred")
+            warmup_summary.setdefault("stage_budget", embedder_stage_budget)
+            warmup_summary.setdefault(
+                "stage_deadline_remaining", embedder_stage_deadline_remaining
+            )
+            warmup_summary.setdefault("bootstrap_remaining", remaining_bootstrap_window)
+            job_snapshot["warmup_summary"] = warmup_summary
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            stage_controller.complete_step("embedder_preload", 0.0)
+            return job_snapshot.get("result", placeholder_obj)
         embedder_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
             "embedder_preload", vector_heavy=True, heavy=True
         )
@@ -4589,6 +4646,8 @@ def initialize_bootstrap_context(
                 remaining_candidates.append(embedder_stage_deadline - time.monotonic())
             if bootstrap_deadline is not None:
                 remaining_candidates.append(bootstrap_deadline - time.monotonic())
+            if remaining_bootstrap_window is not None:
+                remaining_candidates.append(remaining_bootstrap_window)
             if warmup_timebox_cap is not None:
                 remaining_candidates.append(
                     warmup_timebox_cap - (time.monotonic() - warmup_started)
