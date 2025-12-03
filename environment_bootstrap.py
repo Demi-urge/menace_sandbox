@@ -2827,11 +2827,17 @@ class EnvironmentBootstrapper:
                                 "vectorise": 4.5,
                             }
 
-                        effective_stage_timeouts = (
-                            background_stage_timeouts
-                            or stage_timeouts
-                            or dict(_CONSERVATIVE_STAGE_TIMEOUTS)
-                        )
+                        timeout_hints: Mapping[str, float | None] | None = None
+                        if isinstance(background_stage_timeouts, Mapping):
+                            timeout_hints = dict(background_stage_timeouts)
+                        elif isinstance(stage_timeouts, Mapping):
+                            timeout_hints = dict(stage_timeouts)
+
+                        if timeout_hints is None:
+                            timeout_hints = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+                        background_stage_timeouts = timeout_hints
+
+                        effective_stage_timeouts = timeout_hints
                         bg_summary = warmup_vector_service(
                             logger=self.logger,
                             download_model=heavy_model_requested,
