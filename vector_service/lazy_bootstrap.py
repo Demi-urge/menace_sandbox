@@ -216,6 +216,7 @@ def _queue_background_model_download(
                     logger=logger,
                     warmup=True,
                     warmup_lite=False,
+                    warmup_heavy=True,
                     stop_event=None,
                     budget_check=None,
                     download_timeout=download_timeout,
@@ -246,7 +247,8 @@ def ensure_embedding_model(
     *,
     logger: logging.Logger | None = None,
     warmup: bool = False,
-    warmup_lite: bool = False,
+    warmup_lite: bool | None = None,
+    warmup_heavy: bool = False,
     stop_event: threading.Event | None = None,
     budget_check: Callable[[threading.Event | None], None] | None = None,
     download_timeout: float | None = None,
@@ -256,9 +258,10 @@ def ensure_embedding_model(
     The download is performed at most once per process and only when the model
     is missing.  When ``warmup`` is False the function favours fast failure so
     first-use callers can fall back gracefully; during warmup we log and swallow
-    errors to avoid breaking bootstrap flows.  When ``warmup_lite`` is True the
-    function performs a presence probe only and defers the download if the
-    bundle is absent, returning a ``(path, status)`` tuple so callers can
+    errors to avoid breaking bootstrap flows.  Warmup callers default to the
+    "lite" behaviour unless ``warmup_heavy`` is True.  When ``warmup_lite`` is
+    True the function performs a presence probe only and defers the download if
+    the bundle is absent, returning a ``(path, status)`` tuple so callers can
     propagate the deferral state.
     """
 
@@ -281,8 +284,12 @@ def ensure_embedding_model(
             setattr(err, "_timebox_timeout", timeout_hint)
         return err
 
+    warmup_lite_enabled = warmup_lite
+    if warmup and not warmup_heavy:
+        warmup_lite_enabled = True
+
     def _result(path: Path | None, status: str | None = None):
-        if warmup_lite:
+        if warmup_lite_enabled:
             return path, status
         return path
 
@@ -341,7 +348,7 @@ def ensure_embedding_model(
             )
             return _result(dest, "ready")
 
-        if warmup_lite:
+        if warmup_lite_enabled:
             status = "deferred-absent-probe"
             log.info(
                 "embedding model warmup-lite probe: archive missing; deferring download",
@@ -2116,6 +2123,7 @@ def warmup_vector_service(
                     logger=log,
                     warmup=True,
                     warmup_lite=False,
+                    warmup_heavy=not warmup_lite or force_heavy,
                     stop_event=stop_event,
                     budget_check=lambda evt: _cooperative_budget_check(
                         "model", evt
