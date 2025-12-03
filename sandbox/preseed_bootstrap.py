@@ -2342,6 +2342,10 @@ def _bootstrap_embedder(
                     ready_timeout = warmup_remaining if ready_timeout is None else min(
                         ready_timeout, warmup_remaining
                     )
+                embedder_deferred, _ = _BOOTSTRAP_SCHEDULER.embedder_deferral()
+                if embedder_deferred and not _BOOTSTRAP_EMBEDDER_READY.is_set():
+                    _abort_background("embedder_background_deferred")
+                    return
                 if ready_timeout is None:
                     _BOOTSTRAP_EMBEDDER_READY.wait()
                 else:
@@ -4034,6 +4038,7 @@ def initialize_bootstrap_context(
         )
         warmup_lite_context = True
     embedder_preload_enabled = True
+    embedder_stage_timebox_hint: float | None = None
     embedder_preload_stage_blocked = bool(
         embedder_stage_budget_hint is not None and embedder_stage_budget_hint <= 0.0
     )
@@ -4073,6 +4078,37 @@ def initialize_bootstrap_context(
         candidate is not None and candidate > 0
         for candidate in (embedder_stage_budget_hint, embedder_stage_deadline_hint_remaining)
     )
+    embedder_stage_timebox_ceiling = 30.0
+    try:
+        stage_budget_remaining = stage_controller.stage_budget(step_name="embedder_preload")
+        if stage_budget_remaining is not None:
+            embedder_stage_timebox_hint = min(
+                embedder_stage_timebox_ceiling, max(float(stage_budget_remaining), 0.0)
+            )
+            if stage_budget_remaining < embedder_stage_timebox_ceiling:
+                embedder_preload_enabled = False
+                embedder_preload_skip_reason = "embedder_preload_stage_timebox_shortfall"
+                embedder_preload_deferred = True
+                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+                    reason=embedder_preload_skip_reason
+                )
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "vectorizer_preload", reason=embedder_preload_skip_reason
+                )
+                LOGGER.info(
+                    "embedder preload deferred due to limited stage budget",  # pragma: no cover - telemetry
+                    extra={
+                        "event": "embedder-preload-stage-budget-shortfall",
+                        "stage_budget_remaining": stage_budget_remaining,
+                        "stage_timebox": embedder_stage_timebox_hint,
+                        "timebox_ceiling": embedder_stage_timebox_ceiling,
+                    },
+                )
+                stage_controller.defer_step(
+                    "embedder_preload", reason=embedder_preload_skip_reason
+                )
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("failed to compute embedder stage timebox hint", exc_info=True)
     full_preload_requested = full_embedder_preload or force_embedder_preload
     if full_preload_requested and not positive_stage_timebox:
         _record_embedder_skip("embedder_full_preload_budget_required")
@@ -4586,6 +4622,7 @@ def initialize_bootstrap_context(
                 embedder_stage_deadline_remaining,
                 remaining_bootstrap_window,
                 coordinator_remaining_budget,
+                embedder_stage_timebox_hint,
             )
             if candidate is not None and candidate > 0
         ]
@@ -4887,8 +4924,12 @@ def initialize_bootstrap_context(
                                 "embedder_background_shared_budget_exhausted"
                             )
                             return
-    
+
                         ready_timeout = background_cap if background_cap is not None else None
+                        embedder_deferred, _ = _BOOTSTRAP_SCHEDULER.embedder_deferral()
+                        if embedder_deferred and not _BOOTSTRAP_EMBEDDER_READY.is_set():
+                            _record_background_placeholder("embedder_background_deferred")
+                            return
                         ready = _BOOTSTRAP_EMBEDDER_READY.wait(ready_timeout)
                         if not ready:
                             _record_background_placeholder(
@@ -5547,6 +5588,10 @@ def initialize_bootstrap_context(
                         return
 
                     ready_timeout = background_cap if background_cap is not None else None
+                    embedder_deferred, _ = _BOOTSTRAP_SCHEDULER.embedder_deferral()
+                    if embedder_deferred and not _BOOTSTRAP_EMBEDDER_READY.is_set():
+                        _record_background_placeholder("embedder_background_deferred")
+                        return
                     ready = _BOOTSTRAP_EMBEDDER_READY.wait(ready_timeout)
                     if not ready:
                         _record_background_placeholder(
