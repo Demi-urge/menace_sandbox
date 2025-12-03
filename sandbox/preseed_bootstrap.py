@@ -4039,6 +4039,7 @@ def initialize_bootstrap_context(
     )
     embedder_preload_skip_reason = None
     embedder_preload_deferred = False
+    warmup_summary: dict[str, Any] | None = None
 
     def _record_embedder_skip(reason: str) -> None:
         nonlocal embedder_preload_enabled, embedder_preload_skip_reason, embedder_preload_deferred
@@ -4376,9 +4377,9 @@ def initialize_bootstrap_context(
         )
         if bootstrap_fast_context:
             fast_presence_reason = "embedder_presence_bootstrap_fast"
-        elif warmup_lite_context:
+        elif warmup_lite_context and not full_embedder_preload:
             fast_presence_reason = "embedder_presence_warmup_lite"
-        elif finite_stage_window:
+        elif finite_stage_window and not full_embedder_preload:
             fast_presence_reason = "embedder_presence_finite_stage_window"
         elif no_finite_timebox_available:
             fast_presence_reason = "embedder_presence_no_budget_window"
@@ -4389,6 +4390,17 @@ def initialize_bootstrap_context(
             non_blocking_presence_probe = True
             presence_reason = fast_presence_reason
             fast_presence_enforced = True
+            if not full_embedder_preload:
+                warmup_summary = warmup_summary or {}
+                warmup_summary.setdefault("deferred", True)
+                warmup_summary.setdefault("deferred_reason", fast_presence_reason)
+                warmup_summary.setdefault("deferral_reason", fast_presence_reason)
+                stage_hint = "bootstrap-fast-presence"
+                if warmup_lite_context:
+                    stage_hint = "warmup-lite-presence"
+                elif finite_stage_window:
+                    stage_hint = "finite-window-presence"
+                warmup_summary.setdefault("stage", stage_hint)
         if bootstrap_fast_context:
             presence_reason = presence_reason or "embedder_presence_bootstrap_fast_guard"
         elif warmup_lite_context:
@@ -4479,6 +4491,15 @@ def initialize_bootstrap_context(
             non_blocking_presence_probe = True
             presence_default_enforced = True
             presence_reason = presence_reason or "embedder_presence_bootstrap_default"
+            warmup_summary = warmup_summary or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault(
+                "deferred_reason", presence_reason or "embedder_presence_bootstrap_default"
+            )
+            warmup_summary.setdefault(
+                "deferral_reason", presence_reason or "embedder_presence_bootstrap_default"
+            )
+            warmup_summary.setdefault("stage", "presence-default")
         fast_presence_reason = None
         if bootstrap_fast_context:
             fast_presence_reason = "embedder_presence_bootstrap_fast"
@@ -4621,7 +4642,6 @@ def initialize_bootstrap_context(
                 non_blocking_probe=True,
                 resume_download=True,
             )
-        warmup_summary: dict[str, Any] | None = None
         if (
             (embedder_stage_budget is not None and embedder_stage_budget < minimum_presence_window)
             or (strict_timebox is not None and strict_timebox < minimum_presence_window)
@@ -4791,6 +4811,7 @@ def initialize_bootstrap_context(
                         "stage_budget_hint": embedder_stage_budget_hint,
                         "stage_deadline": embedder_stage_deadline,
                         "bootstrap_deadline": bootstrap_deadline,
+                        "inline_timebox_cap": inline_join_cap,
                     },
                 )
                 job_snapshot.update(
@@ -4810,6 +4831,7 @@ def initialize_bootstrap_context(
                         "budget_window_missing": budget_window_missing,
                         "deferral_reason": reason,
                         "strict_timebox": strict_timebox,
+                        "inline_timebox_cap": inline_join_cap,
                         "background_full_warmup": True,
                         "resume_embedder_download": bool(resolved_resume_download),
                     }
@@ -5041,6 +5063,20 @@ def initialize_bootstrap_context(
         if warmup_presence_cap is not None and warmup_presence_cap < 0:
             warmup_presence_cap = 0.0
 
+        inline_join_cap: float | None = None
+        inline_cap_applied = False
+        try:
+            inline_join_cap = float(
+                os.getenv("BOOTSTRAP_EMBEDDER_INLINE_CAP", "20.0") or 0.0
+            )
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("unable to parse embedder inline cap", exc_info=True)
+        else:
+            if inline_join_cap <= 0:
+                inline_join_cap = None
+            else:
+                inline_join_cap = max(15.0, min(30.0, inline_join_cap))
+
         warmup_timebox_cap = strict_timebox
         if warmup_presence_cap is not None and warmup_presence_cap > 0:
             warmup_timebox_cap = (
@@ -5049,9 +5085,17 @@ def initialize_bootstrap_context(
                 else min(warmup_timebox_cap, warmup_presence_cap)
             )
 
+        if inline_join_cap is not None:
+            if warmup_timebox_cap is None or warmup_timebox_cap > inline_join_cap:
+                warmup_timebox_cap = inline_join_cap
+                inline_cap_applied = True
+
         enforced_timebox = (
             warmup_timebox_cap if warmup_timebox_cap is not None else strict_timebox
         )
+
+        if inline_cap_applied and enforced_timebox is not None:
+            enforced_timebox = min(enforced_timebox, inline_join_cap)
 
         warmup_join_ceiling = (
             BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
@@ -5288,6 +5332,7 @@ def initialize_bootstrap_context(
                     "deferred_reason": presence_reason,
                     "strict_timebox": warmup_timebox_cap,
                     "stage_budget": embedder_stage_budget_hint,
+                    "inline_timebox_cap": inline_join_cap,
                 }
             )
             return _defer_to_presence(
@@ -5423,6 +5468,7 @@ def initialize_bootstrap_context(
                         "stage_budget_hint": embedder_stage_budget_hint,
                         "stage_deadline": embedder_stage_deadline,
                         "bootstrap_deadline": bootstrap_deadline,
+                        "inline_timebox_cap": inline_join_cap,
                     },
                 )
                 job_snapshot.update(
@@ -5437,6 +5483,7 @@ def initialize_bootstrap_context(
                         "background_gate": background_dispatch_gate,
                         "background_dispatch": True,
                         "warmup_timebox_cap": strict_timebox,
+                        "inline_timebox_cap": inline_join_cap,
                     },
                 )
                 warmup_summary = job_snapshot.get("warmup_summary") or {}
@@ -5989,6 +6036,18 @@ def initialize_bootstrap_context(
             warmup_hard_cap=warmup_hard_cap,
             warmup_join_ceiling=warmup_join_ceiling,
         )
+
+        if inline_cap_applied:
+            warmup_join_cap = (
+                inline_join_cap
+                if warmup_join_cap is None
+                else min(warmup_join_cap, inline_join_cap or warmup_join_cap)
+            )
+            warmup_join_timeout = (
+                inline_join_cap
+                if warmup_join_timeout is None
+                else min(warmup_join_timeout, inline_join_cap or warmup_join_timeout)
+            )
         strict_join_cap_candidates = [
             candidate
             for candidate in (
@@ -6017,6 +6076,7 @@ def initialize_bootstrap_context(
                 warmup_summary.setdefault("stage", "deferred-timebox")
                 warmup_summary.setdefault("strict_timebox", strict_join_cap)
                 warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+                warmup_summary.setdefault("inline_timebox_cap", inline_join_cap)
                 return _defer_to_presence(
                     "embedder_preload_join_timebox_exceeded",
                     budget_guarded=True,
