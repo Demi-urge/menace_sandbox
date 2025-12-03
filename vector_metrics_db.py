@@ -103,6 +103,7 @@ class _BootstrapVectorMetricsStub:
         )
         self._created_at = time.perf_counter()
         self._first_write_budget = _first_write_activation_budget_seconds()
+        self._first_write_attempted = False
         logger.info(
             "vector_metrics_db.bootstrap.stub_created",
             extra={
@@ -390,10 +391,79 @@ class _BootstrapVectorMetricsStub:
             return None
         if not self._activate_on_first_write:
             return None
-        delegate = self._activate(reason=f"write:{method}", allow_override=True)
+        delegate = self._activate_with_timeout(reason=f"write:{method}")
         if delegate is self:
             return None
         return delegate
+
+    def _activate_with_timeout(self, *, reason: str) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+        budget = self._first_write_budget
+        if budget is None:
+            return self._activate(reason=reason, allow_override=True)
+
+        result: list[Any] = []
+        finished = threading.Event()
+
+        def _do_activate() -> None:
+            try:
+                result.append(self._activate(reason=reason, allow_override=True))
+            except Exception as exc:  # pragma: no cover - best effort guard
+                result.append(exc)
+            finally:
+                finished.set()
+
+        threading.Thread(
+            target=_do_activate,
+            name="vector-metrics-first-write",
+            daemon=True,
+        ).start()
+
+        if finished.wait(timeout=budget):
+            outcome = result[0] if result else None
+            if isinstance(outcome, Exception):
+                logger.debug(
+                    "vector_metrics_db.bootstrap.first_write_activation_failed",
+                    exc_info=True,
+                )
+                return self
+            return outcome or self
+
+        self._first_write_attempted = True
+        self._log_deferred_activation(reason="first_write_activation_timeout")
+        _increment_deferral_metric("first_write_timeout")
+        logger.info(
+            "vector_metrics_db.bootstrap.first_write_timeout_fallback",
+            extra={
+                "budget_secs": budget,
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+            },
+        )
+        return self._activate_in_memory(reason=reason)
+
+    def _activate_in_memory(self, *, reason: str) -> "VectorMetricsDB":
+        if self._delegate is not None and self._delegate is not self:
+            return self._delegate
+        activation_kwargs = dict(self._activation_kwargs)
+        activation_kwargs.update(
+            {
+                "path": ":memory:",
+                "bootstrap_fast": False,
+                "warmup": False,
+                "ensure_exists": False,
+                "read_only": False,
+            }
+        )
+        vdb = VectorMetricsDB(**activation_kwargs)
+        _apply_pending_weights(vdb)
+        self._delegate = vdb
+        global _VECTOR_DB_INSTANCE
+        _VECTOR_DB_INSTANCE = vdb
+        logger.info(
+            "vector_metrics_db.bootstrap.in_memory_fallback",
+            extra={"reason": reason, "budget_secs": self._first_write_budget},
+        )
+        return vdb
 
     def _first_write_deferred(self) -> bool:
         if self._first_write_budget is None:
