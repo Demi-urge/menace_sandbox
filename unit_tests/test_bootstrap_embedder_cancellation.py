@@ -390,3 +390,22 @@ def test_warmup_uses_derived_join_cap(monkeypatch):
     assert job.get("deferral_reason") == "embedder_preload_warmup_cap_exceeded"
     assert job.get("strict_timebox") == 0.1
 
+
+def test_warmup_join_timeout_capped(monkeypatch):
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    monkeypatch.setattr(preseed_bootstrap, "BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP", 0.5)
+
+    start = time.monotonic()
+    join_timeout, join_cap = preseed_bootstrap._derive_warmup_join_timeout(
+        warmup_timebox_cap=5.0,
+        enforced_timebox=10.0,
+        warmup_started=start,
+        stage_guard_timebox=None,
+        embedder_stage_budget_hint=None,
+        warmup_hard_cap=None,
+    )
+
+    assert join_timeout == 0.5
+    assert join_cap == 0.5
+

@@ -627,8 +627,17 @@ def _derive_warmup_join_timeout(
     stage_guard_timebox: float | None,
     embedder_stage_budget_hint: float | None,
     warmup_hard_cap: float | None,
+    warmup_join_ceiling: float | None = None,
 ) -> tuple[float, float | None]:
     """Determine a finite join timeout for embedder warmup threads."""
+
+    warmup_join_cap = (
+        warmup_join_ceiling
+        if warmup_join_ceiling is not None
+        else BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
+    )
+    if warmup_join_cap is not None and warmup_join_cap <= 0:
+        warmup_join_cap = None
 
     strict_warmup_remaining = None
     if warmup_timebox_cap is not None:
@@ -661,6 +670,16 @@ def _derive_warmup_join_timeout(
         join_timeout = max(0.0, join_cap)
     else:
         join_cap = join_cap if join_cap is not None else join_timeout
+
+    if warmup_join_cap is not None:
+        join_cap = min(join_cap, warmup_join_cap) if join_cap is not None else warmup_join_cap
+        join_timeout = (
+            min(join_timeout, warmup_join_cap)
+            if join_timeout is not None
+            else warmup_join_cap
+        )
+    elif join_timeout is None and join_cap is not None:
+        join_timeout = join_cap
 
     return join_timeout, join_cap
 
@@ -1029,6 +1048,9 @@ BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0
 BOOTSTRAP_EMBEDDER_WARMUP_CAP = float(os.getenv("BOOTSTRAP_EMBEDDER_WARMUP_CAP", "90.0"))
 BOOTSTRAP_EMBEDDER_FALLBACK_WARMUP_CAP = float(
     os.getenv("BOOTSTRAP_EMBEDDER_FALLBACK_WARMUP_CAP", "12.0")
+)
+BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP = float(
+    os.getenv("BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP", "30.0")
 )
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
@@ -4133,6 +4155,12 @@ def initialize_bootstrap_context(
             warmup_timebox_cap if warmup_timebox_cap is not None else strict_timebox
         )
 
+        warmup_join_ceiling = (
+            BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
+            if BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP > 0
+            else None
+        )
+
         fallback_timebox_reason = None
         fallback_timebox_applied = False
         fallback_warmup_cap = (
@@ -4276,6 +4304,7 @@ def initialize_bootstrap_context(
 
         warmup_started = time.monotonic()
         warmup_stop_reason: str | None = None
+        warmup_join_cap_reason = "embedder_preload_warmup_ceiling"
 
         def _warmup_budget_remaining() -> float | None:
             remaining_candidates = []
@@ -4319,6 +4348,41 @@ def initialize_bootstrap_context(
                     warmup_stage_timeouts[key] = min(existing, warmup_timebox_cap)
         elif warmup_timebox_cap is not None:
             warmup_stage_timeouts = {"budget": warmup_timebox_cap, "model": warmup_timebox_cap}
+
+        warmup_cap_exceeded = False
+        if warmup_join_ceiling is not None:
+            warmup_cap_exceeded = any(
+                candidate is not None and candidate > warmup_join_ceiling
+                for candidate in (estimated_preload_cost, warmup_budget)
+            )
+        if warmup_cap_exceeded:
+            warmup_summary = warmup_summary or {}
+            warmup_summary.update(
+                {
+                    "deferred": True,
+                    "deferral_reason": warmup_join_cap_reason,
+                    "deferred_reason": warmup_join_cap_reason,
+                    "strict_timebox": (
+                        min(warmup_timebox_cap, warmup_join_ceiling)
+                        if warmup_timebox_cap is not None
+                        else warmup_join_ceiling
+                    ),
+                    "stage_budget": embedder_stage_budget_hint,
+                }
+            )
+            return _defer_to_presence(
+                warmup_join_cap_reason,
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=full_preload_requested,
+                strict_timebox=(
+                    min(warmup_timebox_cap, warmup_join_ceiling)
+                    if warmup_timebox_cap is not None
+                    else warmup_join_ceiling
+                ),
+                non_blocking_probe=non_blocking_presence_probe,
+                resume_download=True,
+            )
 
         try:
             from menace_sandbox.vector_service.lazy_bootstrap import warmup_vector_service
@@ -4765,7 +4829,7 @@ def initialize_bootstrap_context(
             return combined_stop_event
 
     def _guarded_embedder_warmup(
-        *, join_timeout: float | None
+        *, join_timeout: float | None, join_cap: float | None
     ) -> tuple[Any, str | None]:
             combined_stop_event = _build_guarded_stop_event()
             warmup_result: dict[str, Any] = {}
@@ -4774,6 +4838,12 @@ def initialize_bootstrap_context(
             strict_warmup_cap = warmup_timebox_cap
             if strict_warmup_cap is None:
                 strict_warmup_cap = enforced_timebox
+            if join_cap is not None:
+                strict_warmup_cap = (
+                    join_cap
+                    if strict_warmup_cap is None
+                    else min(strict_warmup_cap, join_cap)
+                )
 
             lite_default = bootstrap_context_active or budget_window_missing
             tight_cap = strict_warmup_cap is not None and strict_warmup_cap <= minimum_presence_window
@@ -4842,7 +4912,15 @@ def initialize_bootstrap_context(
             warmup_thread.start()
 
             if join_timeout is not None and join_timeout <= 0:
-                warmup_stop_reason = warmup_stop_reason or "embedder_preload_warmup_cap_exceeded"
+                warmup_stop_reason = warmup_stop_reason or (
+                    warmup_join_cap_reason
+                    if (
+                        warmup_join_ceiling is not None
+                        and join_cap is not None
+                        and join_cap <= warmup_join_ceiling
+                    )
+                    else "embedder_preload_warmup_cap_exceeded"
+                )
                 combined_stop_event.set()
                 warmup_thread.join(0.05)
                 return None, warmup_stop_reason
@@ -4850,7 +4928,15 @@ def initialize_bootstrap_context(
 
             if warmup_thread.is_alive():
                 combined_stop_event.set()
-                warmup_stop_reason = warmup_stop_reason or "embedder_preload_warmup_cap_exceeded"
+                warmup_stop_reason = warmup_stop_reason or (
+                    warmup_join_cap_reason
+                    if (
+                        warmup_join_ceiling is not None
+                        and join_cap is not None
+                        and join_cap <= warmup_join_ceiling
+                    )
+                    else "embedder_preload_warmup_cap_exceeded"
+                )
                 warmup_thread.join(0.05)
                 return None, warmup_stop_reason
 
@@ -4866,9 +4952,10 @@ def initialize_bootstrap_context(
             stage_guard_timebox=stage_guard_timebox,
             embedder_stage_budget_hint=embedder_stage_budget_hint,
             warmup_hard_cap=warmup_hard_cap,
+            warmup_join_ceiling=warmup_join_ceiling,
         )
         warmup_result, warmup_timeout_reason = _guarded_embedder_warmup(
-            join_timeout=warmup_join_timeout
+            join_timeout=warmup_join_timeout, join_cap=warmup_join_cap
         )
         if warmup_timeout_reason:
             warmup_summary = warmup_summary or {}
