@@ -365,6 +365,18 @@ class _BootstrapStepScheduler:
         )
 
     def snapshot(self) -> dict[str, Any]:
+        bootstrap_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+        persisted_deferral = bool(
+            getattr(bootstrap_state, "embedder_warmup_deferred", False)
+            if bootstrap_state is not None
+            else False
+        )
+        persisted_reason = None
+        if bootstrap_state is not None:
+            persisted_reason = getattr(
+                bootstrap_state, "embedder_warmup_deferral_reason", None
+            )
+
         return {
             "components": dict(self._component_state),
             "quorum": self.quorum_met(),
@@ -372,8 +384,9 @@ class _BootstrapStepScheduler:
             "component_budgets": dict(self._component_budgets),
             "component_ready_at": dict(self._component_ready_at),
             "online": self.quorum_met(),
-            "embedder_deferred": self._embedder_deferred,
-            "embedder_deferral_reason": self._embedder_deferral_reason,
+            "embedder_deferred": self._embedder_deferred or persisted_deferral,
+            "embedder_deferral_reason": self._embedder_deferral_reason
+            or persisted_reason,
             "embedder_background_enqueued": self._embedder_background_future is not None,
             "embedder_background_reason": self._embedder_background_reason,
         }
@@ -381,10 +394,29 @@ class _BootstrapStepScheduler:
     def mark_embedder_deferred(self, *, reason: str | None = None) -> None:
         self._embedder_deferred = True
         self._embedder_deferral_reason = reason or self._embedder_deferral_reason
+        try:
+            bootstrap_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+            if bootstrap_state is not None:
+                bootstrap_state.embedder_warmup_deferred = True
+                if self._embedder_deferral_reason:
+                    bootstrap_state.embedder_warmup_deferral_reason = (
+                        self._embedder_deferral_reason
+                    )
+        except Exception:  # pragma: no cover - advisory persistence only
+            LOGGER.debug("failed to persist embedder deferral", exc_info=True)
 
     def clear_embedder_deferral(self) -> None:
         self._embedder_deferred = False
         self._embedder_deferral_reason = None
+        try:
+            bootstrap_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+            if bootstrap_state is not None:
+                if hasattr(bootstrap_state, "embedder_warmup_deferred"):
+                    delattr(bootstrap_state, "embedder_warmup_deferred")
+                if hasattr(bootstrap_state, "embedder_warmup_deferral_reason"):
+                    delattr(bootstrap_state, "embedder_warmup_deferral_reason")
+        except Exception:  # pragma: no cover - advisory persistence only
+            LOGGER.debug("failed to clear embedder deferral", exc_info=True)
 
     def embedder_deferral(self) -> tuple[bool, str | None]:
         return self._embedder_deferred, self._embedder_deferral_reason
@@ -2991,6 +3023,42 @@ def start_embedder_warmup(
             },
         )
         return placeholder
+    persistent_deferral = False
+    persistent_deferral_reason = None
+    try:
+        bootstrap_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+        if bootstrap_state is not None:
+            persistent_deferral = bool(
+                getattr(bootstrap_state, "embedder_warmup_deferred", False)
+            )
+            persistent_deferral_reason = getattr(
+                bootstrap_state, "embedder_warmup_deferral_reason", None
+            )
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("unable to inspect embedder deferral state", exc_info=True)
+    if persistent_deferral and not _BOOTSTRAP_EMBEDDER_READY.is_set():
+        placeholder_reason = (
+            placeholder_reason or persistent_deferral_reason or "embedder_warmup_deferred"
+        )
+        job_snapshot = existing_job or {}
+        placeholder_obj = job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+        job_snapshot.setdefault("placeholder", placeholder_obj)
+        job_snapshot.setdefault("placeholder_reason", placeholder_reason)
+        job_snapshot.setdefault("warmup_placeholder_reason", placeholder_reason)
+        job_snapshot.setdefault("background_enqueue_reason", placeholder_reason)
+        job_snapshot.setdefault("deferred", True)
+        job_snapshot.setdefault("ready_after_bootstrap", True)
+        job_snapshot.setdefault("deferral_reason", placeholder_reason)
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.setdefault("deferred", True)
+        warmup_summary.setdefault("deferred_reason", placeholder_reason)
+        warmup_summary.setdefault("deferral_reason", placeholder_reason)
+        warmup_summary.setdefault("stage", "deferred-persisted")
+        job_snapshot["warmup_summary"] = warmup_summary
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=placeholder_reason)
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
+        return placeholder_obj
     guard_reason = None
     if deadline_remaining is not None and deadline_remaining <= 0:
         guard_reason = "embedder_bootstrap_deadline_elapsed"
