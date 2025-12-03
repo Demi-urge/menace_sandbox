@@ -256,7 +256,7 @@ def _queue_background_model_download(
                 stop_event = threading.Event()
                 if effective_timeout is not None:
                     setattr(stop_event, "_stage_deadline", time.monotonic() + effective_timeout)
-                path = ensure_embedding_model(
+                result = ensure_embedding_model(
                     logger=logger,
                     warmup=True,
                     warmup_lite=not force_heavy,
@@ -265,13 +265,30 @@ def _queue_background_model_download(
                     budget_check=None,
                     download_timeout=download_timeout,
                 )
-                if path:
+                result_path: Path | None
+                result_status: str | None
+                if isinstance(result, tuple):
+                    result_path, result_status = result
+                else:
+                    result_path, result_status = result, None
+                if result_path:
                     _MODEL_READY = True
                     _update_warmup_stage_cache(
                         "model",
                         "ready",
                         logger,
                         meta={"background_state": "complete", "background_timeout": effective_timeout},
+                    )
+                    return
+                if result_status is not None:
+                    _update_warmup_stage_cache(
+                        "model",
+                        result_status,
+                        logger,
+                        meta={
+                            "background_state": "deferred",
+                            "background_timeout": effective_timeout,
+                        },
                     )
                     return
                 _update_warmup_stage_cache(
@@ -348,13 +365,57 @@ def ensure_embedding_model(
 
     stage_budget_remaining = _stage_budget_deadline()
     effective_timeout = _coerce_timeout(download_timeout)
+    pre_ceiling_timeout = effective_timeout
     if stage_budget_remaining is not None:
         if stage_budget_remaining <= 0:
-            raise _timebox_error("embedding model stage budget exhausted", 0.0)
-        if effective_timeout is None:
+            pre_ceiling_timeout = 0.0
+        elif effective_timeout is None:
             effective_timeout = stage_budget_remaining
+            pre_ceiling_timeout = stage_budget_remaining
         else:
             effective_timeout = max(0.0, min(effective_timeout, stage_budget_remaining))
+            pre_ceiling_timeout = effective_timeout
+
+    stage_ceiling: float | None = None
+    try:
+        from governed_embeddings import apply_bootstrap_timeout_caps
+
+        stage_ceiling = apply_bootstrap_timeout_caps()
+    except Exception:  # pragma: no cover - advisory cap
+        log.debug("Embedder timeout cap lookup failed", exc_info=True)
+
+    insufficient_budget = False
+    if stage_ceiling is not None:
+        if effective_timeout is None:
+            effective_timeout = stage_ceiling
+        else:
+            effective_timeout = min(effective_timeout, stage_ceiling)
+        if pre_ceiling_timeout is not None and pre_ceiling_timeout < stage_ceiling:
+            insufficient_budget = True
+    if effective_timeout is not None and effective_timeout <= 0:
+        insufficient_budget = True
+
+    def _defer_for_ceiling(status: str, timeout_hint: float | None):
+        _update_warmup_stage_cache(
+            "model",
+            status,
+            log,
+            meta={"background_state": "queued", "background_timeout": timeout_hint},
+        )
+        _queue_background_model_download(
+            log, download_timeout=timeout_hint, force_heavy=warmup_heavy
+        )
+        log.info(
+            "embedding model warmup deferred: insufficient stage ceiling",
+            extra={
+                "event": "vector-warmup",
+                "stage": "model",
+                "status": status,
+                "timeout": timeout_hint,
+                "cap": stage_ceiling,
+            },
+        )
+        return _result(None, status)
 
     def _check_cancelled(context: str) -> None:
         if stop_event is not None and stop_event.is_set():
@@ -369,6 +430,8 @@ def ensure_embedding_model(
             budget_check(stop_event)
 
     def _handle_timeout(error: TimeoutError) -> tuple[Path | None, str | None] | None:
+        if insufficient_budget and warmup:
+            return _defer_for_ceiling("deferred-ceiling", effective_timeout)
         if not warmup:
             raise error
         status = "deferred-timebox" if getattr(error, "_warmup_timebox", False) else "deferred-budget"
@@ -387,7 +450,16 @@ def ensure_embedding_model(
         )
         return _result(None, status)
 
-    _check_cancelled("init")
+    if insufficient_budget and warmup:
+        return _defer_for_ceiling("deferred-ceiling", effective_timeout)
+
+    try:
+        _check_cancelled("init")
+    except TimeoutError as exc:
+        handled = _handle_timeout(exc)
+        if handled is not None:
+            return handled
+        raise
 
     if _MODEL_READY:
         return _result(_model_bundle_path(), "ready")
