@@ -78,7 +78,12 @@ try:  # pragma: no cover - optional dependency used for text embeddings
 except Exception:  # pragma: no cover - avoid hard dependency
     SentenceTransformer = None  # type: ignore
 
-from .lazy_bootstrap import ensure_embedding_model, ensure_embedding_model_future
+from .lazy_bootstrap import (
+    _BACKGROUND_QUEUE_FLAG,
+    _HEAVY_STAGE_CEILING,
+    ensure_embedding_model,
+    ensure_embedding_model_future,
+)
 
 
 _BUNDLED_MODEL = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
@@ -138,6 +143,10 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     global _LOCAL_TOKENIZER, _LOCAL_MODEL, _LOCAL_BUNDLE_CHECKSUM
     if AutoTokenizer is None or AutoModel is None or torch is None:
         raise RuntimeError("local embedding model dependencies unavailable")
+    stage_ceiling = _HEAVY_STAGE_CEILING
+    wait_timeout = _REMOTE_TIMEOUT
+    if stage_ceiling is not None:
+        wait_timeout = min(stage_ceiling, wait_timeout) if wait_timeout else stage_ceiling
     model_future = ensure_embedding_model_future(
         logger=logger,
         warmup=True,
@@ -146,10 +155,17 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
         download_timeout=_REMOTE_TIMEOUT,
     )
     try:
-        model_future.result(timeout=_REMOTE_TIMEOUT)
+        model_future.result(timeout=wait_timeout)
     except FutureTimeout as exc:
-        _trace("local-model.deferred", timeout=_REMOTE_TIMEOUT)
-        raise TimeoutError("local embedding model download deferred") from exc
+        _trace(
+            "local-model.deferred",
+            timeout=wait_timeout,
+            stage_ceiling=stage_ceiling,
+        )
+        deferred = TimeoutError("local embedding model download deferred")
+        setattr(deferred, "_deferred_status", _BACKGROUND_QUEUE_FLAG)
+        setattr(deferred, "_deferred_timeout", wait_timeout)
+        raise deferred from exc
     bundle_checksum = _compute_bundle_checksum()
     if bundle_checksum != _LOCAL_BUNDLE_CHECKSUM:
         _trace("local-model.bundle-changed")

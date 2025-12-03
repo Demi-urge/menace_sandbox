@@ -3350,10 +3350,14 @@ def warmup_vector_service(
                                     return _finalise()
                             else:
                                 return _finalise()
-                        except TimeoutError:
-                            _record_deferred_background("vectorise", "deferred-embedder")
+                        except TimeoutError as exc:
+                            deferred_status = getattr(
+                                exc, "_deferred_status", "deferred-embedder"
+                            )
+                            _record_deferred_background("vectorise", deferred_status)
                             log.info(
                                 "Vector warmup vectorise stage deferred after embedder budget exhaustion",
+                                extra={"status": deferred_status},
                             )
                         except Exception:  # pragma: no cover - allow partial warmup
                             log.debug("vector warmup transform failed; continuing", exc_info=True)
