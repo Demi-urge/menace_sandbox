@@ -14,6 +14,7 @@ stub is promoted so bootstrap-time configuration is preserved.
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import sys
 from typing import Any, Dict, List, Tuple, Mapping, Sequence, TYPE_CHECKING
 import threading
 import contextlib
@@ -698,6 +699,17 @@ def _detect_bootstrap_environment() -> dict[str, bool]:
     }
 
 
+def _bootstrap_state_flags() -> dict[str, bool]:
+    """Return bootstrap hints exposed by the coding bot bootstrap state."""
+
+    state = getattr(sys.modules.get("coding_bot_interface"), "_BOOTSTRAP_STATE", None)
+    try:
+        warmup_lite = bool(getattr(state, "warmup_lite", False))
+    except Exception:  # pragma: no cover - defensive
+        warmup_lite = False
+    return {"bootstrap_state": bool(state), "warmup_lite": warmup_lite}
+
+
 def resolve_vector_bootstrap_flags(
     *, bootstrap_fast: bool | None = None, warmup: bool | None = None
 ) -> tuple[bool, bool, bool, bool]:
@@ -766,6 +778,7 @@ def get_shared_vector_metrics_db(
         bootstrap_env,
     ) = resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast, warmup=warmup)
 
+    state_flags = _bootstrap_state_flags()
     menace_bootstrap = bool(_menace_bootstrap_active() or bootstrap_env)
     bootstrap_requested = bool(
         resolved_bootstrap_fast
@@ -773,6 +786,8 @@ def get_shared_vector_metrics_db(
         or env_requested
         or menace_bootstrap
         or _bootstrap_timers_active()
+        or state_flags["bootstrap_state"]
+        or state_flags["warmup_lite"]
     )
     timer_context = _bootstrap_timers_active()
     readiness_signal_active = bool(_READINESS_HOOK_ARMED)
@@ -782,6 +797,8 @@ def get_shared_vector_metrics_db(
         "readiness_signal": readiness_signal_active,
         "warmup_env": _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False),
         "menace_bootstrap": menace_bootstrap,
+        "warmup_lite": state_flags["warmup_lite"],
+        "bootstrap_state": state_flags["bootstrap_state"],
     }
     warmup_context = bool(any(warmup_context_reasons.values()))
     if warmup_context:
@@ -932,6 +949,7 @@ def get_bootstrap_vector_metrics_db(
     """
 
     menace_bootstrap = _menace_bootstrap_active()
+    state_flags = _bootstrap_state_flags()
     (
         resolved_fast,
         warmup_mode,
@@ -942,16 +960,18 @@ def get_bootstrap_vector_metrics_db(
     )
 
     warmup_requested = bool(
-        warmup_mode or env_requested or bootstrap_context or resolved_fast or menace_bootstrap
+        warmup_mode
+        or env_requested
+        or bootstrap_context
+        or resolved_fast
+        or menace_bootstrap
+        or state_flags["bootstrap_state"]
+        or state_flags["warmup_lite"]
     )
     if warmup_requested:
         warmup_mode = True
-        if ensure_exists is None:
-            ensure_exists = False
-        if menace_bootstrap:
-            ensure_exists = False
-        if read_only is None:
-            read_only = True
+        ensure_exists = False
+        read_only = True
         _arm_shared_readiness_hook()
 
     return get_shared_vector_metrics_db(
