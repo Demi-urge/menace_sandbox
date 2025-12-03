@@ -1322,6 +1322,8 @@ def warmup_vector_service(
 
     heavy_stage_cap_hits: set[str] = set()
 
+    background_first = warmup_lite or stage_hard_cap is not None
+
     def _apply_stage_cap(timeouts: dict[str, float | None]) -> None:
         if stage_hard_cap is None:
             return
@@ -1933,6 +1935,54 @@ def warmup_vector_service(
             return True
         return False
 
+    def _background_first_gate(
+        stage: str,
+        stage_timeout: float | None,
+        *,
+        stage_enabled: bool,
+        chain_vectorise: bool = False,
+        vectorise_timeout: float | None = None,
+    ) -> bool:
+        nonlocal download_model, probe_model, model_probe_only
+        nonlocal hydrate_handlers, run_vectorise, budget_gate_reason
+
+        if not background_first or not stage_enabled:
+            return False
+
+        budget_window = _stage_budget_window(stage_timeout)
+
+        if stage_timeout is None:
+            status = "deferred-no-budget"
+        elif budget_window is not None and budget_window <= 0:
+            status = "deferred-timebox" if stage_hard_cap is not None else "deferred-ceiling"
+        elif stage_timeout >= _HEAVY_STAGE_CEILING:
+            status = "deferred-ceiling"
+        else:
+            return False
+
+        budget_gate_reason = budget_gate_reason or status
+        _record_deferred_background(stage, status)
+        _hint_background_budget(stage, stage_timeout)
+
+        if chain_vectorise and run_vectorise and stage != "vectorise":
+            _record_deferred_background("vectorise", status)
+            _hint_background_budget("vectorise", vectorise_timeout)
+            run_vectorise = False
+
+        if stage == "model":
+            download_model = False
+            probe_model = False
+            model_probe_only = False
+        elif stage == "handlers":
+            hydrate_handlers = False
+        elif stage == "vectorise":
+            run_vectorise = False
+
+        log.info(
+            "Background-first deferral triggered for %s with timeout %s", stage, stage_timeout
+        )
+        return True
+
     def _abort_missing_timeout(
         stage: str,
         stage_timeout: float | None,
@@ -2083,6 +2133,9 @@ def warmup_vector_service(
             model_probe_only = False
             model_enabled = False
 
+        if _background_first_gate("model", model_timeout, stage_enabled=model_enabled):
+            return _finalise()
+
         admitted, model_timeout = _admit_stage_budget(
             "model", model_timeout, stage_cap=stage_budget_ceiling.get("model")
         )
@@ -2215,6 +2268,14 @@ def warmup_vector_service(
         handler_timeout = _effective_timeout("handlers")
         vectorise_timeout = _effective_timeout("vectorise")
         handler_budget_window = _stage_budget_window(handler_timeout)
+        if _background_first_gate(
+            "handlers",
+            handler_timeout,
+            stage_enabled=hydrate_handlers,
+            chain_vectorise=bool(run_vectorise),
+            vectorise_timeout=vectorise_timeout,
+        ):
+            return _finalise()
         if _shared_budget_probe(
             "handlers",
             stage_timeout=handler_timeout,
@@ -2416,6 +2477,10 @@ def warmup_vector_service(
     else:
         vectorise_timeout = _effective_timeout("vectorise")
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
+        if _background_first_gate(
+            "vectorise", vectorise_timeout, stage_enabled=should_vectorise
+        ):
+            return _finalise()
         if _shared_budget_probe(
             "vectorise",
             stage_timeout=vectorise_timeout,
