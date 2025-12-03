@@ -147,41 +147,28 @@ class _BootstrapVectorMetricsStub:
     ) -> None:
         if self._delegate is not None:
             return
-        warmup_context = bool(
+        if bootstrap_fast is not None:
+            self._activation_kwargs["bootstrap_fast"] = bool(bootstrap_fast)
+        if warmup is not None:
+            self._activation_kwargs["warmup"] = bool(warmup)
+        self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
         )
         updates: dict[str, Any] = {}
-        deferred: dict[str, Any] = {}
-        if bootstrap_fast is not None:
-            updates["bootstrap_fast"] = bool(bootstrap_fast)
-        if warmup is not None:
-            if warmup_context and warmup:
-                self._log_deferred_activation(reason="warmup_request")
-            updates["warmup"] = bool(warmup)
         if ensure_exists is not None:
-            if warmup_context and ensure_exists:
-                deferred["ensure_exists"] = ensure_exists
-                self._log_deferred_activation(reason="ensure_exists_request")
-            else:
-                updates["ensure_exists"] = ensure_exists
+            updates["ensure_exists"] = ensure_exists
         if read_only is not None:
-            if warmup_context and read_only is False:
-                deferred["read_only"] = read_only
-                self._log_deferred_activation(reason="read_only_request")
-            else:
-                updates["read_only"] = read_only
+            updates["read_only"] = read_only
         if path is not None:
             updates["path"] = path
-        requested_updates = {**updates, **deferred}
-        if requested_updates:
-            self._activation_kwargs.update(requested_updates)
-        if self._activation_blocked or deferred:
-            self._queued_activation_kwargs.update(requested_updates)
+        if self._activation_blocked and updates:
+            self._log_deferred_activation(reason="activation_blocked")
+            self._queued_activation_kwargs.update(updates)
             logger.info(
                 "vector_metrics_db.bootstrap.stub_activation_deferred",
                 extra={
-                    "queued_keys": sorted(requested_updates),
+                    "queued_keys": sorted(self._queued_activation_kwargs),
                     "bootstrap_fast": bool(
                         self._activation_kwargs.get("bootstrap_fast")
                     ),
@@ -190,11 +177,17 @@ class _BootstrapVectorMetricsStub:
                 },
             )
             _increment_deferral_metric("activation")
-        else:
-            self._activation_blocked = bool(
-                self._activation_kwargs.get("bootstrap_fast")
-                or self._activation_kwargs.get("warmup")
-            )
+            return
+        if updates:
+            self._activation_kwargs.update(updates)
+        if not self._activation_blocked:
+            self._apply_queued_activation_kwargs()
+
+    def _apply_queued_activation_kwargs(self) -> None:
+        if not self._queued_activation_kwargs:
+            return
+        self._activation_kwargs.update(self._queued_activation_kwargs)
+        self._queued_activation_kwargs.clear()
 
     def _log_deferred_activation(self, *, reason: str) -> None:
         if self._delegate is not None:
@@ -220,9 +213,7 @@ class _BootstrapVectorMetricsStub:
             self._activation_kwargs["warmup"] = False
             self._activation_kwargs.setdefault("ensure_exists", True)
             self._activation_kwargs.setdefault("read_only", False)
-        if self._queued_activation_kwargs:
-            self._activation_kwargs.update(self._queued_activation_kwargs)
-            self._queued_activation_kwargs.clear()
+        self._apply_queued_activation_kwargs()
         if self._queued_first_write:
             self._activate_on_first_write = True
         self._activation_blocked = False
@@ -295,6 +286,8 @@ class _BootstrapVectorMetricsStub:
         delegate = self._delegate
         if delegate is not None:
             return delegate
+        if not self._activation_blocked:
+            self._apply_queued_activation_kwargs()
         if self._activation_blocked:
             allow_unblock = reason in {"bootstrap_ready", "post_warmup", "warmup_complete"}
             if allow_unblock:
