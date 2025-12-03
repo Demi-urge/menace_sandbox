@@ -267,6 +267,8 @@ class _BootstrapVectorMetricsStub:
                 delegate = self._promote_from_stub(reason="bootstrap_ready")
                 if delegate is None:
                     self.activate_on_first_write()
+                elif isinstance(delegate, VectorMetricsDB):
+                    _apply_pending_weights(delegate)
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True
@@ -680,6 +682,9 @@ def _arm_shared_readiness_hook() -> None:
             activate_shared_vector_metrics_db(
                 reason="bootstrap_ready", post_warmup=True
             )
+            instance = _VECTOR_DB_INSTANCE
+            if isinstance(instance, VectorMetricsDB):
+                _apply_pending_weights(instance)
         except Exception:  # pragma: no cover - best effort
             logger.debug(
                 "vector_metrics_db.bootstrap.readiness_activation_failed", exc_info=True
@@ -1077,6 +1082,16 @@ def get_vector_metrics_db(
     if isinstance(vm, _BootstrapVectorMetricsStub):
         vm.activate_on_first_write()
         vm.register_readiness_hook()
+        if getattr(vm, "_boot_stub_active", False):
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_enforced",
+                extra={
+                    "warmup": warmup,
+                    "bootstrap_fast": bootstrap_fast,
+                    "allow_bootstrap_activation": allow_bootstrap_activation,
+                },
+            )
+            return vm
         if allow_bootstrap_activation:
             vm.configure_activation(
                 warmup=False,
@@ -1145,10 +1160,23 @@ def activate_shared_vector_metrics_db(
 
     if isinstance(vm, _BootstrapVectorMetricsStub):
         vm.register_readiness_hook()
+        vm.activate_on_first_write()
         allow_activation = bool(post_warmup or reason == "bootstrap_ready")
         bootstrap_blocked = bool(
             resolved_fast or resolved_warmup or env_requested or bootstrap_env
         )
+        if getattr(vm, "_boot_stub_active", False) and bootstrap_blocked and not post_warmup:
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_activation_guarded",
+                extra={
+                    "reason": reason,
+                    "bootstrap_fast": resolved_fast,
+                    "warmup": resolved_warmup,
+                    "env_requested": env_requested,
+                    "bootstrap_env": bootstrap_env,
+                },
+            )
+            return vm
         if not allow_activation and bootstrap_blocked:
             logger.info(
                 "vector_metrics_db.bootstrap.activation_deferred",
@@ -1160,7 +1188,6 @@ def activate_shared_vector_metrics_db(
                     "bootstrap_env": bootstrap_env,
                 },
             )
-            vm.activate_on_first_write()
             return vm
         activation_path = default_vector_metrics_path(
             ensure_exists=True, bootstrap_read_only=False, read_only=False
