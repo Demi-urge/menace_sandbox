@@ -768,20 +768,27 @@ def get_shared_vector_metrics_db(
 
     menace_bootstrap = bool(_menace_bootstrap_active() or bootstrap_env)
     bootstrap_requested = bool(
-        resolved_bootstrap_fast or resolved_warmup or env_requested or menace_bootstrap
+        resolved_bootstrap_fast
+        or resolved_warmup
+        or env_requested
+        or menace_bootstrap
+        or _bootstrap_timers_active()
     )
     timer_context = _bootstrap_timers_active()
     readiness_signal_active = bool(_READINESS_HOOK_ARMED)
-    warmup_context = bool(
-        bootstrap_requested
-        or timer_context
-        or readiness_signal_active
-        or _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False)
-    )
+    warmup_context_reasons = {
+        "bootstrap_requested": bootstrap_requested,
+        "bootstrap_timer": timer_context,
+        "readiness_signal": readiness_signal_active,
+        "warmup_env": _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False),
+        "menace_bootstrap": menace_bootstrap,
+    }
+    warmup_context = bool(any(warmup_context_reasons.values()))
     if warmup_context:
         resolved_warmup = True
         ensure_exists = False
         read_only = True
+        _arm_shared_readiness_hook()
 
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
@@ -796,6 +803,19 @@ def get_shared_vector_metrics_db(
                 )
                 _VECTOR_DB_INSTANCE.activate_on_first_write()
                 _VECTOR_DB_INSTANCE.register_readiness_hook()
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_selected",
+                    extra={
+                        "warmup_reasons": [
+                            reason
+                            for reason, active in warmup_context_reasons.items()
+                            if active
+                        ],
+                        "bootstrap_fast": resolved_bootstrap_fast,
+                        "warmup": resolved_warmup,
+                        "read_only": bool(read_only) if read_only is not None else True,
+                    },
+                )
             else:
                 _VECTOR_DB_INSTANCE = VectorMetricsDB(
                     "vector_metrics.db",
@@ -813,6 +833,20 @@ def get_shared_vector_metrics_db(
             )
             _VECTOR_DB_INSTANCE.activate_on_first_write()
             _VECTOR_DB_INSTANCE.register_readiness_hook()
+            if warmup_context:
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_reused",
+                    extra={
+                        "warmup_reasons": [
+                            reason
+                            for reason, active in warmup_context_reasons.items()
+                            if active
+                        ],
+                        "bootstrap_fast": resolved_bootstrap_fast,
+                        "warmup": resolved_warmup,
+                        "read_only": bool(read_only) if read_only is not None else True,
+                    },
+                )
 
     if warmup_context:
         try:
