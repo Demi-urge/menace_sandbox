@@ -2848,6 +2848,7 @@ def start_embedder_warmup(
     presence_cap = float(os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75"))
     if presence_cap < 0:
         presence_cap = 0.0
+    warmup_started = time.monotonic()
     bootstrap_context_active = False
     warmup_lite_context = False
     resume_embedder_download_default = False
@@ -2893,9 +2894,22 @@ def start_embedder_warmup(
         capped_join: float | None = None
         try:
             if join_timeout is not None:
-                capped_join = max(0.0, min(float(join_timeout), 5.0))
+                capped_join = float(join_timeout)
         except (TypeError, ValueError):
             capped_join = None
+        join_caps = [
+            cap
+            for cap in (
+                capped_join,
+                stage_budget if stage_budget is not None and stage_budget > 0 else None,
+                deadline_remaining
+                if deadline_remaining is not None and deadline_remaining > 0
+                else None,
+            )
+            if cap is not None
+        ]
+        if join_caps:
+            capped_join = max(0.0, min(min(join_caps), 5.0))
         if background_future is not None and capped_join is not None:
             with contextlib.suppress(Exception):
                 background_future.result(timeout=capped_join)
@@ -2913,7 +2927,11 @@ def start_embedder_warmup(
         )
         return placeholder
     guard_reason = None
-    if stage_budget is None:
+    if deadline_remaining is not None and deadline_remaining <= 0:
+        guard_reason = "embedder_bootstrap_deadline_elapsed"
+    elif stage_budget is not None and stage_budget <= 0:
+        guard_reason = "embedder_stage_budget_exhausted"
+    elif stage_budget is None:
         guard_reason = "embedder_stage_budget_missing"
     elif stage_budget >= _BOOTSTRAP_TIMEOUT_FLOOR:
         guard_reason = "embedder_stage_budget_large"
@@ -2957,6 +2975,7 @@ def start_embedder_warmup(
             "warmup_lite_context": warmup_lite_context,
             "force_full_preload": force_full_preload,
             "guard_timebox": guard_timebox,
+            "full_preload_skipped": not force_full_preload,
         }
         LOGGER.info(
             "embedder warmup guarded upstream; returning placeholder",  # pragma: no cover - telemetry
@@ -2974,8 +2993,21 @@ def start_embedder_warmup(
                 "deferral_reason": guard_reason,
                 "strict_timebox": guard_timebox,
                 "presence_only": True,
+                "full_preload_skipped": not force_full_preload,
+                "background_join_timeout": guard_timebox,
             }
         )
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": guard_reason,
+                "full_preload_skipped": not force_full_preload,
+                "deadline_remaining": deadline_remaining,
+                "stage_budget": stage_budget,
+            }
+        )
+        job_snapshot["warmup_summary"] = warmup_summary
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
 
         def _background_presence() -> None:
