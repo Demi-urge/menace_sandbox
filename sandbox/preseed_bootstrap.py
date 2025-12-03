@@ -1027,6 +1027,9 @@ _DEFAULT_VECTOR_BOOTSTRAP_STEP_TIMEOUT = max(
 BOOTSTRAP_STEP_TIMEOUT = _DEFAULT_BOOTSTRAP_STEP_TIMEOUT
 BOOTSTRAP_EMBEDDER_TIMEOUT = float(os.getenv("BOOTSTRAP_EMBEDDER_TIMEOUT", "20.0"))
 BOOTSTRAP_EMBEDDER_WARMUP_CAP = float(os.getenv("BOOTSTRAP_EMBEDDER_WARMUP_CAP", "90.0"))
+BOOTSTRAP_EMBEDDER_FALLBACK_WARMUP_CAP = float(
+    os.getenv("BOOTSTRAP_EMBEDDER_FALLBACK_WARMUP_CAP", "12.0")
+)
 SELF_CODING_MIN_REMAINING_BUDGET = float(
     os.getenv("SELF_CODING_MIN_REMAINING_BUDGET", "35.0")
 )
@@ -4011,6 +4014,51 @@ def initialize_bootstrap_context(
                 non_blocking_probe=True,
             )
 
+        warmup_presence_cap: float | None = None
+        try:
+            warmup_presence_cap = float(
+                os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75")
+            )
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("unable to parse warmup presence cap", exc_info=True)
+        if warmup_presence_cap is not None and warmup_presence_cap < 0:
+            warmup_presence_cap = 0.0
+
+        warmup_timebox_cap = strict_timebox
+        if warmup_presence_cap is not None and warmup_presence_cap > 0:
+            warmup_timebox_cap = (
+                warmup_presence_cap
+                if warmup_timebox_cap is None
+                else min(warmup_timebox_cap, warmup_presence_cap)
+            )
+
+        enforced_timebox = (
+            warmup_timebox_cap if warmup_timebox_cap is not None else strict_timebox
+        )
+
+        fallback_timebox_reason = None
+        fallback_timebox_applied = False
+        fallback_warmup_cap = (
+            BOOTSTRAP_EMBEDDER_FALLBACK_WARMUP_CAP
+            if BOOTSTRAP_EMBEDDER_FALLBACK_WARMUP_CAP > 0
+            else None
+        )
+        if warmup_timebox_cap is None and fallback_warmup_cap is not None:
+            missing_budget_hints = all(
+                candidate is None
+                for candidate in (
+                    embedder_stage_budget_hint,
+                    embedder_timeout,
+                    embedder_stage_deadline,
+                    bootstrap_deadline,
+                )
+            )
+            if missing_budget_hints:
+                warmup_timebox_cap = fallback_warmup_cap
+                enforced_timebox = warmup_timebox_cap
+                fallback_timebox_reason = "embedder_preload_fallback_timebox"
+                fallback_timebox_applied = True
+
         timebox_insufficient = (
             warmup_timebox_cap is None or warmup_timebox_cap < estimated_preload_cost
         )
@@ -4131,25 +4179,6 @@ def initialize_bootstrap_context(
 
         warmup_started = time.monotonic()
         warmup_stop_reason: str | None = None
-        warmup_presence_cap: float | None = None
-        try:
-            warmup_presence_cap = float(
-                os.getenv("BOOTSTRAP_EMBEDDER_PRESENCE_CAP", "0.75")
-            )
-        except Exception:  # pragma: no cover - advisory only
-            LOGGER.debug("unable to parse warmup presence cap", exc_info=True)
-        if warmup_presence_cap is not None and warmup_presence_cap < 0:
-            warmup_presence_cap = 0.0
-        warmup_timebox_cap = strict_timebox
-        if warmup_presence_cap is not None and warmup_presence_cap > 0:
-            warmup_timebox_cap = (
-                warmup_presence_cap
-                if warmup_timebox_cap is None
-                else min(warmup_timebox_cap, warmup_presence_cap)
-            )
-        enforced_timebox = (
-            warmup_timebox_cap if warmup_timebox_cap is not None else strict_timebox
-        )
 
         def _warmup_budget_remaining() -> float | None:
             remaining_candidates = []
@@ -4717,31 +4746,40 @@ def initialize_bootstrap_context(
         if warmup_timeout_reason:
             warmup_summary = warmup_summary or {}
             warmup_summary.setdefault("deferred", True)
-            warmup_summary["deferral_reason"] = warmup_timeout_reason
-            warmup_summary.setdefault("deferred_reason", warmup_timeout_reason)
-            warmup_summary.setdefault(
-                "strict_timebox", warmup_hard_cap or enforced_timebox or warmup_join_cap
-            )
-            warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
-            warmup_summary.setdefault("stage", "deferred-timebox")
-            warmup_summary.setdefault("presence_available", False)
-            warmup_summary.setdefault("presence_probe_timeout", False)
-            resume_download = warmup_timeout_reason in {
-                "embedder_stage_timebox_guard",
-                "embedder_preload_timebox_expired",
-                "embedder_preload_warmup_cap_exceeded",
-            }
+            strict_timebox_value = warmup_hard_cap or enforced_timebox or warmup_join_cap
+            warmup_summary.setdefault("strict_timebox", strict_timebox_value)
             warmup_deferral_reason = (
                 warmup_timeout_reason
                 if warmup_timeout_reason != "embedder_preload_timebox_expired"
                 else "embedder_preload_warmup_cap_exceeded"
             )
+            if fallback_timebox_applied and warmup_deferral_reason in {
+                "embedder_preload_warmup_cap_exceeded",
+                "embedder_preload_timebox_expired",
+            }:
+                warmup_deferral_reason = (
+                    fallback_timebox_reason or "embedder_preload_fallback_warmup_cap_exceeded"
+                )
+
+            warmup_summary["deferral_reason"] = warmup_deferral_reason
+            warmup_summary.setdefault("deferred_reason", warmup_deferral_reason)
+            warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+            warmup_summary.setdefault("stage", "deferred-timebox")
+            warmup_summary.setdefault("presence_available", False)
+            warmup_summary.setdefault("presence_probe_timeout", False)
+            resume_download = warmup_deferral_reason in {
+                "embedder_stage_timebox_guard",
+                "embedder_preload_timebox_expired",
+                "embedder_preload_warmup_cap_exceeded",
+                "embedder_preload_fallback_timebox",
+                "embedder_preload_fallback_warmup_cap_exceeded",
+            }
             return _defer_to_presence(
                 warmup_deferral_reason,
                 budget_guarded=True,
                 budget_window_missing=budget_window_missing,
                 forced_background=full_preload_requested,
-                strict_timebox=warmup_hard_cap or enforced_timebox or warmup_join_cap,
+                strict_timebox=strict_timebox_value,
                 non_blocking_probe=non_blocking_presence_probe,
                 resume_download=resume_download,
             )
