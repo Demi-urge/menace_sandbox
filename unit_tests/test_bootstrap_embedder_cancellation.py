@@ -1,5 +1,7 @@
-import time
 import threading
+import time
+
+import pytest
 
 from unit_tests.test_preseed_bootstrap_timeout_safety import (
     _install_stub_module,
@@ -408,4 +410,80 @@ def test_warmup_join_timeout_capped(monkeypatch):
 
     assert join_timeout == 0.5
     assert join_cap == 0.5
+
+
+def test_start_embedder_warmup_aborts_on_elapsed_deadline(monkeypatch):
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    calls: dict[str, object] = {}
+
+    def _bootstrap_embedder(*_args, **_kwargs):
+        calls["bootstrap_invoked"] = True
+        return object()
+
+    monkeypatch.setattr(preseed_bootstrap, "_bootstrap_embedder", _bootstrap_embedder)
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+
+    result = preseed_bootstrap.start_embedder_warmup(
+        stage_budget=0.1, bootstrap_deadline=time.perf_counter() - 0.01
+    )
+
+    job = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert result == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert "bootstrap_invoked" not in calls
+    assert job.get("deferral_reason") == "embedder_bootstrap_deadline_elapsed"
+    assert job.get("full_preload_skipped") is True
+    summary = job.get("warmup_summary") or {}
+    assert summary.get("full_preload_skipped") is True
+
+
+def test_start_embedder_warmup_caps_background_join(monkeypatch):
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    join_seen = threading.Event()
+
+    def background_task():
+        join_seen.set()
+        time.sleep(0.2)
+
+    future = preseed_bootstrap._BOOTSTRAP_BACKGROUND_EXECUTOR.submit(background_task)
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = {
+        "placeholder": preseed_bootstrap._BOOTSTRAP_PLACEHOLDER,
+        "deferred": True,
+        "ready_after_bootstrap": True,
+        "placeholder_reason": "embedder_budget_guarded",
+        "background_join_timeout": 10.0,
+        "background_future": future,
+    }
+
+    start = time.perf_counter()
+    result = preseed_bootstrap.start_embedder_warmup(
+        timeout=1.0,
+        stage_budget=0.05,
+        bootstrap_deadline=time.perf_counter() + 0.05,
+    )
+    elapsed = time.perf_counter() - start
+
+    assert result is preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert elapsed < 0.2
+    assert join_seen.wait(1.0)
+
+
+def test_start_embedder_warmup_records_full_preload_deferral(monkeypatch):
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    monkeypatch.setattr(preseed_bootstrap, "_bootstrap_embedder", pytest.fail)
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+
+    result = preseed_bootstrap.start_embedder_warmup(
+        stage_budget=None, bootstrap_deadline=time.perf_counter() + 5.0
+    )
+
+    job = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert result == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert job.get("deferral_reason") == "embedder_stage_budget_missing"
+    assert job.get("full_preload_skipped") is True
+    summary = job.get("warmup_summary") or {}
+    assert summary.get("deferred") is True
+    assert summary.get("full_preload_skipped") is True
 
