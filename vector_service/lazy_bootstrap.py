@@ -1199,6 +1199,8 @@ def warmup_vector_service(
     resolved_timeouts: dict[str, float | None] = dict(base_timeouts)
     explicit_timeouts: set[str] = set()
 
+    heavy_stage_cap_hits: set[str] = set()
+
     def _apply_stage_cap(timeouts: dict[str, float | None]) -> None:
         if stage_hard_cap is None:
             return
@@ -1209,12 +1211,15 @@ def warmup_vector_service(
                 timeouts[stage] = min(timeout, stage_hard_cap)
 
     def _apply_heavy_stage_cap(timeouts: dict[str, float | None]) -> None:
-        for stage in ("handlers", "vectorise"):
+        for stage in ("handlers", "model", "vectorise"):
             timeout = timeouts.get(stage)
             if timeout is None:
                 timeouts[stage] = _HEAVY_STAGE_CEILING
             else:
-                timeouts[stage] = min(timeout, _HEAVY_STAGE_CEILING)
+                capped_timeout = min(timeout, _HEAVY_STAGE_CEILING)
+                if capped_timeout != timeout:
+                    heavy_stage_cap_hits.add(stage)
+                timeouts[stage] = capped_timeout
 
     if isinstance(stage_timeouts, Mapping):
         for name, timeout in stage_timeouts.items():
@@ -1791,6 +1796,22 @@ def warmup_vector_service(
     else:
         model_timeout = _effective_timeout("model")
         model_enabled = download_model or probe_model or model_probe_only
+        model_cap_deferral = (
+            download_model
+            and "model" in heavy_stage_cap_hits
+            and not _MODEL_READY
+            and model_timeout is not None
+            and model_timeout >= _HEAVY_STAGE_CEILING
+        )
+
+        if model_cap_deferral:
+            _record_background("model", "deferred-ceiling")
+            _record_cancelled("model", "ceiling")
+            download_model = False
+            probe_model = False
+            model_probe_only = False
+            model_enabled = False
+
         if _abort_missing_timeout("model", model_timeout, stage_enabled=model_enabled):
             _record_cancelled("model", "budget")
             return _finalise()
