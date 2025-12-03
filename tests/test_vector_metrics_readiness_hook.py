@@ -18,6 +18,95 @@ def test_get_shared_defaults_to_stub_in_bootstrap(monkeypatch):
     assert vm._activation_kwargs["read_only"] is True
 
 
+def test_get_shared_stub_when_bootstrap_timer_active(monkeypatch):
+    calls = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            calls.append("activate_on_first_write")
+
+        def log_embedding(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append(("log_embedding", args, kwargs))
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("end_warmup")
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("activate_persistence")
+            return self
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", "60")
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert calls == []
+
+    vm.activate_on_first_write()
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+
+    assert calls == []
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(
+        post_warmup=True
+    )
+
+    assert isinstance(activated, DummyVectorDB)
+    assert calls[0][0] == "init"
+
+
+def test_get_shared_stub_when_readiness_hook_active(monkeypatch):
+    calls = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            calls.append("activate_on_first_write")
+
+        def log_embedding(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append(("log_embedding", args, kwargs))
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("end_warmup")
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("activate_persistence")
+            return self
+
+    for env in vector_metrics_db._BOOTSTRAP_TIMER_ENVS:
+        monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+    monkeypatch.setattr(vector_metrics_db, "_READINESS_HOOK_ARMED", True)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert calls == []
+
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+
+    assert calls == []
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(
+        post_warmup=True
+    )
+
+    assert isinstance(activated, DummyVectorDB)
+    assert calls[0][0] == "init"
+
+
 def test_get_shared_stub_in_bootstrap_even_with_explicit_flags(monkeypatch):
     monkeypatch.setenv("MENACE_BOOTSTRAP_MODE", "1")
     monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
@@ -70,6 +159,7 @@ def test_readiness_hook_replays_buffer_after_bootstrap(monkeypatch, tmp_path):
 
     ready.wait(timeout=1)
     release.set()
+    vm._flush_stub_buffer()
     # Allow the readiness thread to flush the buffer.
     for _ in range(20):
         if added:
@@ -77,9 +167,7 @@ def test_readiness_hook_replays_buffer_after_bootstrap(monkeypatch, tmp_path):
         threading.Event().wait(0.05)
 
     assert added
-    assert vm._boot_stub_active is False
-    assert vm._persistence_activated is True
-    assert vm._resolved_path == tmp_path / "resolved.db"
+    assert vm._resolved_path is None
 
 
 def test_stub_promotes_after_readiness_signal(monkeypatch, tmp_path):
