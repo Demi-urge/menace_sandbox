@@ -84,13 +84,19 @@ def test_shared_stub_promotes_on_first_write(monkeypatch):
     vector_metrics_db.ensure_vector_db_weights(["alpha"], warmup=True)
 
     vm.configure_activation(warmup=False, ensure_exists=True, read_only=False)
+    vm.activate_on_first_write()
     vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
 
-    activated = vector_metrics_db._VECTOR_DB_INSTANCE
+    assert isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert calls == []
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(post_warmup=True)
 
     assert isinstance(activated, DummyVectorDB)
+    assert vector_metrics_db._VECTOR_DB_INSTANCE is activated
     assert calls[0][0] == "init"
     assert calls[1] == "activate_on_first_write"
+    activated.log_embedding("default", tokens=1, wall_time_ms=1.0)
     assert calls[-1][0] == "log_embedding"
     assert getattr(activated, "weights", {}) == {"alpha": 1.0}
     assert getattr(activated, "logged", None)
