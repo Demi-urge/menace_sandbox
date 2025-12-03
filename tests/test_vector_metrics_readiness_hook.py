@@ -65,3 +65,65 @@ def test_readiness_hook_replays_buffer_after_bootstrap(monkeypatch, tmp_path):
     assert vm._persistence_activated is True
     assert vm._resolved_path == tmp_path / "resolved.db"
 
+
+def test_stub_promotes_after_readiness_signal(monkeypatch, tmp_path):
+    gate = threading.Event()
+
+    class _FakeSignal:
+        def await_ready(self, timeout=None):  # pragma: no cover - trivial gate
+            gate.wait(timeout)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bootstrap_readiness",
+        types.SimpleNamespace(readiness_signal=lambda: _FakeSignal()),
+    )
+
+    calls = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+            self.weights = {}
+            self.logged = []
+
+        def activate_on_first_write(self):
+            calls.append("activate_on_first_write")
+
+        def set_db_weights(self, weights):  # pragma: no cover - passthrough
+            self.weights.update(weights)
+
+        def get_db_weights(self, default=None):
+            if self.weights:
+                return dict(self.weights)
+            return default or {}
+
+        def log_embedding(self, *args, **kwargs):
+            self.logged.append((args, kwargs))
+            calls.append(("log_embedding", args, kwargs))
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db(warmup=True)
+    vm.activate_on_first_write()
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert calls == []
+
+    gate.set()
+    for _ in range(20):
+        if isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, DummyVectorDB):
+            break
+        threading.Event().wait(0.05)
+
+    activated = vector_metrics_db._VECTOR_DB_INSTANCE
+    assert isinstance(activated, DummyVectorDB)
+    assert calls[0][0] == "init"
+    assert calls[1] == "activate_on_first_write"
+    activated.log_embedding("default", tokens=2, wall_time_ms=2.0)
+    assert calls[-1][0] == "log_embedding"
+    assert getattr(activated, "logged", None)
+

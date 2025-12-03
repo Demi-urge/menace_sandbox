@@ -91,6 +91,8 @@ class _BootstrapVectorMetricsStub:
         self._activate_on_first_write = False
         self._deferred_summary_emitted = False
         self._pending_weights: dict[str, float] = {}
+        self._queued_first_write = False
+        self._queued_activation_kwargs: dict[str, Any] = {}
         self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
@@ -112,6 +114,10 @@ class _BootstrapVectorMetricsStub:
     def activate_on_first_write(self) -> None:
         if self._delegate is not None:
             self._delegate.activate_on_first_write()
+            return
+        if self._activation_blocked:
+            self._queued_first_write = True
+            self._log_deferred_activation(reason="activate_on_first_write_blocked")
             return
         self._activate_on_first_write = True
         logger.info(
@@ -138,24 +144,32 @@ class _BootstrapVectorMetricsStub:
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
         )
+        updates: dict[str, Any] = {}
         if bootstrap_fast is not None:
-            self._activation_kwargs["bootstrap_fast"] = bool(bootstrap_fast)
+            updates["bootstrap_fast"] = bool(bootstrap_fast)
         if warmup is not None:
             if warmup_context and warmup:
                 self._log_deferred_activation(reason="warmup_request")
             else:
-                self._activation_kwargs["warmup"] = bool(warmup)
+                updates["warmup"] = bool(warmup)
         if ensure_exists is not None:
             if warmup_context and ensure_exists:
                 self._log_deferred_activation(reason="ensure_exists_request")
             else:
-                self._activation_kwargs["ensure_exists"] = ensure_exists
+                updates["ensure_exists"] = ensure_exists
         if read_only is not None:
-            self._activation_kwargs["read_only"] = read_only
-        self._activation_blocked = bool(
-            self._activation_kwargs.get("bootstrap_fast")
-            or self._activation_kwargs.get("warmup")
-        )
+            updates["read_only"] = read_only
+        if updates:
+            self._activation_kwargs.update(updates)
+        if self._activation_blocked:
+            self._queued_activation_kwargs.update(
+                {k: v for k, v in self._activation_kwargs.items() if k in updates}
+            )
+        else:
+            self._activation_blocked = bool(
+                self._activation_kwargs.get("bootstrap_fast")
+                or self._activation_kwargs.get("warmup")
+            )
 
     def _log_deferred_activation(self, *, reason: str) -> None:
         if self._delegate is not None:
@@ -171,6 +185,29 @@ class _BootstrapVectorMetricsStub:
                 "warmup": bool(self._activation_kwargs.get("warmup")),
                 "read_only": bool(self._activation_kwargs.get("read_only")),
                 "ensure_exists": self._activation_kwargs.get("ensure_exists"),
+            },
+        )
+
+    def _release_activation_block(self, *, reason: str, configure_ready: bool) -> None:
+        if not self._activation_blocked:
+            return
+        if configure_ready:
+            self._activation_kwargs["warmup"] = False
+            self._activation_kwargs.setdefault("ensure_exists", True)
+            self._activation_kwargs.setdefault("read_only", False)
+        if self._queued_activation_kwargs:
+            self._activation_kwargs.update(self._queued_activation_kwargs)
+            self._queued_activation_kwargs.clear()
+        if self._queued_first_write:
+            self._activate_on_first_write = True
+        self._activation_blocked = False
+        logger.info(
+            "vector_metrics_db.bootstrap.activation_unblocked",
+            extra={
+                "reason": reason,
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+                "read_only": bool(self._activation_kwargs.get("read_only")),
             },
         )
 
@@ -227,8 +264,12 @@ class _BootstrapVectorMetricsStub:
         if delegate is not None:
             return delegate
         if self._activation_blocked:
-            self._log_deferred_activation(reason=reason)
-            return None
+            allow_unblock = reason in {"bootstrap_ready", "post_warmup", "warmup_complete"}
+            if allow_unblock:
+                self._release_activation_block(reason=reason, configure_ready=True)
+            else:
+                self._log_deferred_activation(reason=reason)
+                return None
         delegate = self._activate(reason=reason)
         if isinstance(delegate, VectorMetricsDB):
             try:  # pragma: no cover - best effort promotion
@@ -810,7 +851,9 @@ def activate_shared_vector_metrics_db(
         if not allow_activation:
             return vm
         vm.configure_activation(warmup=False, ensure_exists=True, read_only=False)
-        vm = vm._activate()
+        delegate = vm._promote_from_stub(reason=reason or "warmup_complete")
+        if delegate is not None:
+            vm = delegate
 
     if isinstance(vm, VectorMetricsDB):
         vm.end_warmup(reason=reason)
