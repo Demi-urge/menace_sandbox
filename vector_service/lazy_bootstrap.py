@@ -758,6 +758,7 @@ def warmup_vector_service(
     }
 
     recorded_deferred: set[str] = set()
+    proactive_deferred: set[str] = set()
     background_candidates: set[str] = set()
     effective_timeouts: dict[str, float | None] = {}
 
@@ -843,6 +844,19 @@ def warmup_vector_service(
         _hint_background_budget(stage, _effective_timeout(stage))
         if stage in prior_deferred and stage not in explicit_deferred:
             return
+
+    def _record_proactive_deferral(
+        stage: str, status: str, *, stage_timeout: float | None
+    ) -> None:
+        existing_status = memoised_results.get(stage)
+        if existing_status and not str(existing_status).startswith("deferred"):
+            return
+        if summary.get(stage):
+            return
+        _record_background(stage, status)
+        _hint_background_budget(stage, stage_timeout)
+        memoised_results[stage] = status
+        proactive_deferred.add(stage)
 
     def _record_lazy_sentinel(
         stage: str,
@@ -1196,6 +1210,8 @@ def warmup_vector_service(
             if (background_candidates or deferred_record)
             else ""
         )
+        if proactive_deferred:
+            summary["proactive_deferred"] = ",".join(sorted(proactive_deferred))
         summary["capped_stages"] = ",".join(sorted(capped_stages)) if capped_stages else ""
         if heavy_admission is not None:
             summary["heavy_admission"] = heavy_admission
@@ -1934,6 +1950,35 @@ def warmup_vector_service(
             probe_model = False
             warmup_lite = True
             model_probe_only = False
+
+    proactive_background_block = (
+        not force_heavy
+        and not stage_timeouts_supplied
+        and (warmup_lite or bootstrap_fast)
+    )
+
+    if proactive_background_block:
+        conservative_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+
+        def _planned_timeout(stage: str) -> float | None:
+            timeout = stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+            if timeout is not None:
+                return timeout
+            return conservative_timeouts.get(stage)
+
+        for stage, enabled in (
+            (
+                "model",
+                requested_model or download_model or probe_model or model_probe_only,
+            ),
+            ("handlers", requested_handlers or hydrate_handlers),
+            ("vectorise", requested_vectorise or bool(run_vectorise)),
+        ):
+            if not enabled:
+                continue
+            _record_proactive_deferral(
+                stage, "deferred-ceiling", stage_timeout=_planned_timeout(stage)
+            )
 
     def _apply_bootstrap_deferrals() -> None:
         for stage in bootstrap_deferred_records:
