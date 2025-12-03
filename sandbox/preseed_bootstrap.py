@@ -4608,9 +4608,9 @@ def initialize_bootstrap_context(
 
             return combined_stop_event
 
-        def _guarded_embedder_warmup(
-            *, join_timeout: float | None
-        ) -> tuple[Any, str | None]:
+    def _guarded_embedder_warmup(
+        *, join_timeout: float | None
+    ) -> tuple[Any, str | None]:
             combined_stop_event = _build_guarded_stop_event()
             warmup_result: dict[str, Any] = {}
             warmup_exc: list[BaseException] = []
@@ -4657,10 +4657,19 @@ def initialize_bootstrap_context(
 
             def _run_warmup() -> None:
                 try:
+                    effective_stage_budget = embedder_stage_budget
+                    if (
+                        warmup_timebox_cap is not None
+                        and (
+                            effective_stage_budget is None
+                            or effective_stage_budget > warmup_timebox_cap
+                        )
+                    ):
+                        effective_stage_budget = warmup_timebox_cap
                     warmup_result["result"] = _bootstrap_embedder(
                         embedder_timeout,
                         stop_event=combined_stop_event,
-                        stage_budget=embedder_stage_budget,
+                        stage_budget=effective_stage_budget,
                         budget=shared_timeout_coordinator,
                         budget_label="vector_seeding",
                         bootstrap_fast=bootstrap_fast_context,
@@ -4675,6 +4684,12 @@ def initialize_bootstrap_context(
                 daemon=True,
             )
             warmup_thread.start()
+
+            if join_timeout is not None and join_timeout <= 0:
+                warmup_stop_reason = warmup_stop_reason or "embedder_preload_warmup_cap_exceeded"
+                combined_stop_event.set()
+                warmup_thread.join(0.05)
+                return None, warmup_stop_reason
             warmup_thread.join(join_timeout)
 
             if warmup_thread.is_alive():
@@ -4702,7 +4717,7 @@ def initialize_bootstrap_context(
         if warmup_timeout_reason:
             warmup_summary = warmup_summary or {}
             warmup_summary.setdefault("deferred", True)
-            warmup_summary.setdefault("deferral_reason", warmup_timeout_reason)
+            warmup_summary["deferral_reason"] = warmup_timeout_reason
             warmup_summary.setdefault("deferred_reason", warmup_timeout_reason)
             warmup_summary.setdefault(
                 "strict_timebox", warmup_hard_cap or enforced_timebox or warmup_join_cap

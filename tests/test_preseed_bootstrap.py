@@ -378,6 +378,48 @@ def test_start_embedder_warmup_aborts_background_download(monkeypatch):
     assert (bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}).get("result") is placeholder
 
 
+def test_start_embedder_warmup_honors_stage_cap(monkeypatch):
+    placeholder = object()
+    download_started = threading.Event()
+
+    def fake_activate(reason: str):  # noqa: ARG001
+        return placeholder
+
+    def fake_cancel(event: threading.Event, reason: str, join_timeout: float) -> None:  # noqa: ARG001
+        event.set()
+
+    def fake_get_embedder(
+        *, timeout: float, stop_event: threading.Event | None, **_kwargs: object
+    ) -> object:
+        download_started.set()
+        time.sleep(0.2)
+        if stop_event is not None and stop_event.is_set():
+            raise TimeoutError("cancelled")
+        return object()
+
+    governed_embeddings = types.SimpleNamespace(
+        _MAX_EMBEDDER_WAIT=5.0,
+        _activate_bundled_fallback=fake_activate,
+        apply_bootstrap_timeout_caps=lambda budget: budget,
+        cancel_embedder_initialisation=fake_cancel,
+        embedder_cache_present=lambda: False,
+        get_embedder=fake_get_embedder,
+    )
+    monkeypatch.setitem(sys.modules, "menace_sandbox.governed_embeddings", governed_embeddings)
+
+    start = time.perf_counter()
+    result = bootstrap.start_embedder_warmup(timeout=1.0, stage_budget=0.02)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 0.1
+    assert result is placeholder
+
+    job = bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    assert job.get("deferred") is True
+    assert job.get("placeholder_reason")
+    assert download_started.wait(1.0)
+
+
 def test_run_with_timeout_reports_timeline(capsys):
     bootstrap._mark_bootstrap_step("phase-one")
     time.sleep(0.01)
