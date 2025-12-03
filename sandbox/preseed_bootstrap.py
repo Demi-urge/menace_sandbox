@@ -3482,6 +3482,7 @@ def initialize_bootstrap_context(
         presence_reason = None
         budget_guarded = False
         guard_blocks_preload = False
+        non_blocking_presence_probe = False
         if bootstrap_fast_context:
             presence_only = True
             budget_guarded = True
@@ -3530,7 +3531,12 @@ def initialize_bootstrap_context(
         presence_only = presence_only or guard_presence_only
         budget_guarded = budget_guarded or guard_budget_guarded
         presence_reason = presence_reason or guard_presence_reason
-        non_blocking_presence_probe = False
+        if not full_preload_requested and not embedder_deferred:
+            presence_only = True
+            budget_guarded = True
+            non_blocking_presence_probe = True
+            presence_default_enforced = True
+            presence_reason = presence_reason or "embedder_presence_bootstrap_default"
         fast_presence_reason = None
         if bootstrap_fast_context:
             fast_presence_reason = "embedder_presence_bootstrap_fast"
@@ -3665,6 +3671,7 @@ def initialize_bootstrap_context(
                 forced_background=True,
                 strict_timebox=guard_timebox,
                 non_blocking_probe=True,
+                resume_download=True,
             )
         warmup_summary: dict[str, Any] | None = None
         if (
@@ -4012,6 +4019,7 @@ def initialize_bootstrap_context(
                 forced_background=True,
                 strict_timebox=strict_timebox_hint,
                 non_blocking_probe=True,
+                resume_download=True,
             )
 
         warmup_presence_cap: float | None = None
