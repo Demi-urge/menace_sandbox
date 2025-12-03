@@ -365,7 +365,7 @@ def ensure_embedding_model(
         inline_queue_ceiling = _BOOTSTRAP_STAGE_TIMEOUT
 
     def _result(path: Path | None, status: str | None = None):
-        if warmup_lite_enabled:
+        if warmup_lite_enabled or status is not None:
             return path, status
         return path
 
@@ -396,7 +396,6 @@ def ensure_embedding_model(
 
     warmup_no_budget = (
         warmup
-        and not warmup_heavy
         and budget_check is None
         and download_timeout is None
         and stage_budget_remaining is None
@@ -431,6 +430,8 @@ def ensure_embedding_model(
                 "event": "vector-warmup",
                 "stage": "model",
                 "status": status,
+                "budget_hooks": "missing",
+                "download_timeout": download_timeout,
             },
         )
         _update_warmup_stage_cache(
@@ -438,12 +439,13 @@ def ensure_embedding_model(
             status,
             log,
             meta={
+                "budget_hooks": "missing",
                 "probe_only": True,
                 "background_timeout": inline_queue_ceiling,
                 "background_state": "deferred",
             },
         )
-        return _result(None, status)
+        return (None, status)
 
     def _defer_for_ceiling(status: str, timeout_hint: float | None):
         _update_warmup_stage_cache(
@@ -1109,6 +1111,8 @@ def warmup_vector_service(
         timebox_hint = meta.get("timebox_remaining")
         if isinstance(timebox_hint, (int, float)):
             summary[f"{stage}_timebox_remaining"] = f"{timebox_hint:.3f}"
+        if stage == "model" and status == "deferred-no-budget":
+            summary.setdefault("model_budget_hooks", "missing")
         if stage == "model" and status.startswith("deferred"):
             _queue_background_model_download(
                 log, download_timeout=_effective_timeout(stage)
@@ -2763,7 +2767,12 @@ def warmup_vector_service(
                     resolved_path, status = path, None
 
                 if status:
-                    _record("model", status)
+                    if status.startswith("deferred"):
+                        _record_background(
+                            "model", status, stage_timeout=model_timeout
+                        )
+                    else:
+                        _record("model", status)
                 elif resolved_path:
                     _record(
                         "model",
@@ -2836,7 +2845,9 @@ def warmup_vector_service(
                         extra={"event": "vector-warmup", "model_status": status},
                     )
                     if status.startswith("deferred"):
-                        _record_background("model", status)
+                        _record_background(
+                            "model", status, stage_timeout=model_timeout
+                        )
                     else:
                         _record("model", status)
                 try:
