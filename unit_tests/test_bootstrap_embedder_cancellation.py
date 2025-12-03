@@ -328,3 +328,65 @@ def test_existing_download_cancelled_with_stage_caps():
     assert placeholder == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
     assert preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB is None
 
+
+def test_warmup_uses_derived_join_cap(monkeypatch):
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    calls: dict[str, object] = {}
+
+    def slow_bootstrap_embedder(*_, stop_event: threading.Event, **__):
+        calls["start"] = time.perf_counter()
+        stop_event.wait(5)
+        calls["end"] = time.perf_counter()
+        calls["stop_state"] = stop_event.is_set()
+        return object()
+
+    monkeypatch.setattr(
+        preseed_bootstrap, "_bootstrap_embedder", slow_bootstrap_embedder
+    )
+    monkeypatch.setattr(
+        preseed_bootstrap._StagedBootstrapController, "stage_budget", lambda *_, **__: 5.0
+    )
+    monkeypatch.setattr(
+        preseed_bootstrap._StagedBootstrapController, "stage_deadline", lambda *_, **__: None
+    )
+    monkeypatch.setattr(
+        preseed_bootstrap,
+        "_derive_warmup_join_timeout",
+        lambda **__: (0.1, 0.1),
+    )
+
+    class DummyCoordinator:
+        def negotiate_step(self, *_args, **_kwargs):
+            return {"timeout_scale": 1.0, "contention": False}
+
+    monkeypatch.setattr(
+        preseed_bootstrap, "_BOOTSTRAP_CONTENTION_COORDINATOR", DummyCoordinator()
+    )
+
+    preseed_bootstrap._BOOTSTRAP_CACHE.clear()
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+
+    start = time.perf_counter()
+    preseed_bootstrap.initialize_bootstrap_context(
+        use_cache=False, full_embedder_preload=True
+    )
+    elapsed = time.perf_counter() - start
+
+    for _ in range(40):
+        if calls.get("end"):
+            break
+        time.sleep(0.05)
+
+    job = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+
+    assert elapsed < 2.0
+    assert calls.get("start") is not None
+    assert calls.get("end") is not None
+    assert calls.get("stop_state") is True
+    assert calls["end"] - calls["start"] < 0.5
+    assert job.get("deferred") is True
+    assert job.get("result") == preseed_bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert job.get("deferral_reason") == "embedder_preload_warmup_cap_exceeded"
+    assert job.get("strict_timebox") == 0.1
+

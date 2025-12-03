@@ -619,6 +619,52 @@ def _set_component_state(component: str, state: str) -> None:
     _publish_online_state()
 
 
+def _derive_warmup_join_timeout(
+    *,
+    warmup_timebox_cap: float | None,
+    enforced_timebox: float | None,
+    warmup_started: float,
+    stage_guard_timebox: float | None,
+    embedder_stage_budget_hint: float | None,
+    warmup_hard_cap: float | None,
+) -> tuple[float, float | None]:
+    """Determine a finite join timeout for embedder warmup threads."""
+
+    strict_warmup_remaining = None
+    if warmup_timebox_cap is not None:
+        strict_warmup_remaining = max(
+            0.0, warmup_timebox_cap - (time.monotonic() - warmup_started)
+        )
+
+    warmup_budget_remaining = None
+    if enforced_timebox is not None:
+        warmup_budget_remaining = max(
+            0.0, enforced_timebox - (time.monotonic() - warmup_started)
+        )
+
+    join_timeout = strict_warmup_remaining
+    join_cap = warmup_timebox_cap if warmup_timebox_cap is not None else enforced_timebox
+    if join_timeout is None:
+        join_timeout = warmup_budget_remaining
+
+    if join_timeout is None:
+        fallback_candidates = [
+            candidate
+            for candidate in (
+                stage_guard_timebox,
+                embedder_stage_budget_hint,
+                warmup_hard_cap,
+            )
+            if candidate is not None and candidate > 0
+        ]
+        join_cap = min(fallback_candidates) if fallback_candidates else 1.0
+        join_timeout = max(0.0, join_cap)
+    else:
+        join_cap = join_cap if join_cap is not None else join_timeout
+
+    return join_timeout, join_cap
+
+
 def _embedder_presence_policy(
     *,
     gate_constrained: bool,
@@ -4615,19 +4661,14 @@ def initialize_bootstrap_context(
 
             return warmup_result.get("result"), None
 
-        warmup_budget_remaining = None
-        strict_warmup_remaining = None
-        if warmup_timebox_cap is not None:
-            strict_warmup_remaining = max(
-                0.0, warmup_timebox_cap - (time.monotonic() - warmup_started)
-            )
-        if enforced_timebox is not None:
-            warmup_budget_remaining = max(
-                0.0, enforced_timebox - (time.monotonic() - warmup_started)
-            )
-        warmup_join_timeout = strict_warmup_remaining
-        if warmup_join_timeout is None:
-            warmup_join_timeout = warmup_budget_remaining
+        warmup_join_timeout, warmup_join_cap = _derive_warmup_join_timeout(
+            warmup_timebox_cap=warmup_timebox_cap,
+            enforced_timebox=enforced_timebox,
+            warmup_started=warmup_started,
+            stage_guard_timebox=stage_guard_timebox,
+            embedder_stage_budget_hint=embedder_stage_budget_hint,
+            warmup_hard_cap=warmup_hard_cap,
+        )
         warmup_result, warmup_timeout_reason = _guarded_embedder_warmup(
             join_timeout=warmup_join_timeout
         )
@@ -4636,7 +4677,9 @@ def initialize_bootstrap_context(
             warmup_summary.setdefault("deferred", True)
             warmup_summary.setdefault("deferral_reason", warmup_timeout_reason)
             warmup_summary.setdefault("deferred_reason", warmup_timeout_reason)
-            warmup_summary.setdefault("strict_timebox", enforced_timebox)
+            warmup_summary.setdefault(
+                "strict_timebox", warmup_hard_cap or enforced_timebox or warmup_join_cap
+            )
             warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
             warmup_summary.setdefault("stage", "deferred-timebox")
             warmup_summary.setdefault("presence_available", False)
@@ -4656,7 +4699,7 @@ def initialize_bootstrap_context(
                 budget_guarded=True,
                 budget_window_missing=budget_window_missing,
                 forced_background=full_preload_requested,
-                strict_timebox=warmup_hard_cap or enforced_timebox,
+                strict_timebox=warmup_hard_cap or enforced_timebox or warmup_join_cap,
                 non_blocking_probe=non_blocking_presence_probe,
                 resume_download=resume_download,
             )
