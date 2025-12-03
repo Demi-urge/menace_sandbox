@@ -724,6 +724,7 @@ def warmup_vector_service(
     background_budget_ceiling: dict[str, float | None] = {}
     budget_gate_reason: str | None = None
     heavy_admission: str | None = None
+    lazy_sentinel_active = bootstrap_context and not force_heavy
 
     if deferred:
         background_warmup.update(deferred)
@@ -800,6 +801,48 @@ def warmup_vector_service(
         _hint_background_budget(stage, _effective_timeout(stage))
         if stage in prior_deferred and stage not in explicit_deferred:
             return
+
+    def _record_lazy_sentinel(
+        stage: str,
+        *,
+        reason: str = "deferred-lazy",
+        stage_timeout: float | None = None,
+        chain_vectorise: bool = False,
+        vectorise_timeout: float | None = None,
+    ) -> None:
+        nonlocal hydrate_handlers, run_vectorise, download_model, probe_model, model_probe_only
+
+        _record_background(stage, reason)
+        _update_warmup_stage_cache(
+            stage,
+            reason,
+            log,
+            meta={
+                "lazy_sentinel": True,
+                "stage_timeout": stage_timeout,
+                "recorded_at": time.time(),
+            },
+            emit_metric=False,
+        )
+        if chain_vectorise and run_vectorise and stage != "vectorise":
+            _record_background("vectorise", reason)
+            _hint_background_budget("vectorise", vectorise_timeout)
+            run_vectorise = False
+            _update_warmup_stage_cache(
+                "vectorise",
+                reason,
+                log,
+                meta={"lazy_sentinel": True, "stage_timeout": vectorise_timeout},
+                emit_metric=False,
+            )
+        if stage == "handlers":
+            hydrate_handlers = False
+        elif stage == "model":
+            download_model = False
+            probe_model = False
+            model_probe_only = False
+        elif stage == "vectorise":
+            run_vectorise = False
 
     def _reuse(stage: str) -> bool:
         if stage in explicit_deferred and not force_heavy:
@@ -2172,6 +2215,20 @@ def warmup_vector_service(
         if _background_first_gate("model", model_timeout, stage_enabled=model_enabled):
             return _finalise()
 
+        model_budget_window = _stage_budget_window(model_timeout)
+        if model_enabled:
+            if model_budget_window is not None and model_budget_window <= 0:
+                status = "deferred-timebox" if model_timeout is not None else "deferred-budget"
+                _record_lazy_sentinel("model", reason=status, stage_timeout=model_timeout)
+                _record_cancelled(
+                    "model", "ceiling" if status == "deferred-timebox" else "budget"
+                )
+                return _finalise()
+            if lazy_sentinel_active and model_budget_window is None:
+                _record_lazy_sentinel("model", stage_timeout=model_timeout)
+                _record_cancelled("model", "budget")
+                return _finalise()
+
         admitted, model_timeout = _admit_stage_budget(
             "model", model_timeout, stage_cap=stage_budget_ceiling.get("model")
         )
@@ -2304,6 +2361,31 @@ def warmup_vector_service(
         handler_timeout = _effective_timeout("handlers")
         vectorise_timeout = _effective_timeout("vectorise")
         handler_budget_window = _stage_budget_window(handler_timeout)
+        if hydrate_handlers:
+            if handler_budget_window is not None and handler_budget_window <= 0:
+                status = (
+                    "deferred-timebox" if handler_timeout is not None else "deferred-budget"
+                )
+                _record_lazy_sentinel(
+                    "handlers",
+                    reason=status,
+                    stage_timeout=handler_timeout,
+                    chain_vectorise=bool(run_vectorise),
+                    vectorise_timeout=vectorise_timeout,
+                )
+                _record_cancelled(
+                    "handlers", "ceiling" if status == "deferred-timebox" else "budget"
+                )
+                return _finalise()
+            if lazy_sentinel_active and handler_budget_window is None:
+                _record_lazy_sentinel(
+                    "handlers",
+                    stage_timeout=handler_timeout,
+                    chain_vectorise=bool(run_vectorise),
+                    vectorise_timeout=vectorise_timeout,
+                )
+                _record_cancelled("handlers", "budget")
+                return _finalise()
         if _background_first_gate(
             "handlers",
             handler_timeout,
@@ -2513,6 +2595,24 @@ def warmup_vector_service(
     else:
         vectorise_timeout = _effective_timeout("vectorise")
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
+        if should_vectorise:
+            if vectorise_budget_window is not None and vectorise_budget_window <= 0:
+                status = (
+                    "deferred-timebox" if vectorise_timeout is not None else "deferred-budget"
+                )
+                _record_lazy_sentinel(
+                    "vectorise", reason=status, stage_timeout=vectorise_timeout
+                )
+                _record_cancelled(
+                    "vectorise", "ceiling" if status == "deferred-timebox" else "budget"
+                )
+                return _finalise()
+            if lazy_sentinel_active and vectorise_budget_window is None:
+                _record_lazy_sentinel(
+                    "vectorise", stage_timeout=vectorise_timeout
+                )
+                _record_cancelled("vectorise", "budget")
+                return _finalise()
         if _background_first_gate(
             "vectorise", vectorise_timeout, stage_enabled=should_vectorise
         ):
