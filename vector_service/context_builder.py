@@ -991,18 +991,28 @@ class ContextBuilder:
             if self._vector_metrics is not None:
                 return self._vector_metrics
 
-            bootstrap_env = any(
-                os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
-                for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_MODE", "MENACE_BOOTSTRAP_FAST")
+            bootstrap_resolved = bootstrap_fast
+            if bootstrap_resolved is None:
+                bootstrap_resolved = self._bootstrap_fast
+
+            (
+                resolved_fast,
+                resolved_warmup,
+                env_requested,
+                bootstrap_env,
+            ) = resolve_vector_bootstrap_flags(
+                bootstrap_fast=bootstrap_resolved, warmup=warmup
             )
-            bootstrap_resolved = (
-                bootstrap_fast
-                if bootstrap_fast is not None
-                else self._bootstrap_fast
+
+            bootstrap_flag = bool(
+                resolved_fast or env_requested or bootstrap_env or _VECTOR_SERVICE_WARMUP
             )
-            bootstrap_flag = bool(bootstrap_resolved or _VECTOR_SERVICE_WARMUP or bootstrap_env)
-            warmup_resolved = warmup if warmup is not None else bootstrap_flag
-            warmup_flag = bool(warmup_resolved)
+            warmup_flag = bool(
+                resolved_warmup
+                or env_requested
+                or bootstrap_env
+                or _VECTOR_SERVICE_WARMUP
+            )
 
             existing = ContextBuilder._shared_vector_metrics
 

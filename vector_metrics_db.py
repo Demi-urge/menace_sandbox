@@ -51,6 +51,7 @@ _VECTOR_DB_LOCK = threading.Lock()
 _PENDING_WEIGHTS: dict[str, float] = {}
 _READINESS_HOOK_ARMED = False
 _FIRST_WRITE_BUDGET_ENV = "VECTOR_METRICS_FIRST_WRITE_BUDGET_SECS"
+_BOOTSTRAP_PERSISTENCE_OVERRIDE_ENV = "VECTOR_METRICS_ALLOW_BOOTSTRAP_PERSISTENCE"
 
 _BOOTSTRAP_TIMER_ENVS = (
     "MENACE_BOOTSTRAP_WAIT_SECS",
@@ -747,6 +748,28 @@ def _bootstrap_timers_active() -> bool:
     if _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False):
         return True
     return any(os.getenv(name) for name in _BOOTSTRAP_TIMER_ENVS)
+
+
+def _enforce_bootstrap_timer_stub(
+    *, bootstrap_fast: bool | None, warmup: bool | None, read_only: bool
+) -> bool:
+    """Force stub mode when bootstrap timers are armed unless explicitly overridden."""
+
+    if not _bootstrap_timers_active():
+        return False
+    if _env_flag(_BOOTSTRAP_PERSISTENCE_OVERRIDE_ENV, False):
+        return False
+    if bootstrap_fast or warmup or read_only:
+        return False
+    logger.info(
+        "vector_metrics_db.bootstrap.timer_stub_enforced",
+        extra={
+            "bootstrap_fast": bootstrap_fast,
+            "warmup": warmup,
+            "read_only": read_only,
+        },
+    )
+    return True
 
 
 def _first_write_activation_budget_seconds() -> float | None:
@@ -1474,6 +1497,11 @@ class VectorMetricsDB:
         ) = resolve_vector_bootstrap_flags(
             bootstrap_fast=bootstrap_fast, warmup=warmup
         )
+        timer_stub_enforced = _enforce_bootstrap_timer_stub(
+            bootstrap_fast=bootstrap_fast,
+            warmup=warmup,
+            read_only=read_only,
+        )
         self._bootstrap_timers_active = _bootstrap_timers_active()
         self._menace_bootstrap_env = bootstrap_context
         self._bootstrap_env_requested = env_bootstrap
@@ -1487,6 +1515,8 @@ class VectorMetricsDB:
             (self._bootstrap_context or self._bootstrap_timers_active)
             and not allow_bootstrap_path_resolution
         )
+        if timer_stub_enforced and not resolved_warmup:
+            resolved_warmup = True
         if self._bootstrap_context and warmup is None:
             resolved_warmup = True
         if self._bootstrap_timers_active and warmup is None:
@@ -1554,7 +1584,8 @@ class VectorMetricsDB:
         self._stub_usage_logged = False
         self._persistence_activated = not self._boot_stub_active
         self._persistence_activation_pending = bool(self._boot_stub_active)
-        self._activate_on_first_write = False
+        self._bootstrap_timer_stub_enforced = bool(timer_stub_enforced)
+        self._activate_on_first_write = bool(timer_stub_enforced)
         self._prometheus_ready = False
         self._warmup_complete = threading.Event()
         if not self._warmup_mode:
