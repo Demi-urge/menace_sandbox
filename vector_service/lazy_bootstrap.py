@@ -531,6 +531,11 @@ def warmup_vector_service(
     bootstrap_hard_timebox: float | None = None
     bootstrap_deferred_records: set[str] = set()
 
+    bootstrap_force_lite = bootstrap_context and not force_heavy and bootstrap_lite
+    if bootstrap_force_lite and not warmup_lite:
+        log.info("Bootstrap context detected; forcing warmup_lite")
+        warmup_lite = True
+
     if fast_vector_env and not force_heavy:
         if download_model:
             log.info("Fast vector warmup requested; skipping embedding model download")
@@ -557,7 +562,7 @@ def warmup_vector_service(
     )
     deferred_bootstrap: set[str] = set()
 
-    if bootstrap_lite and not force_heavy:
+    if bootstrap_force_lite:
         heavy_requested = download_model or hydrate_handlers or start_scheduler or run_vectorise
         if heavy_requested:
             log.info(
@@ -697,6 +702,14 @@ def warmup_vector_service(
         _record_background(stage, status)
         if stage in prior_deferred:
             return
+
+    def _record_bootstrap_deferrals() -> None:
+        for stage in bootstrap_deferred_records:
+            _record_background(stage, "deferred-bootstrap")
+        for stage in lite_deferrals:
+            if stage in bootstrap_deferred_records:
+                continue
+            _record_background(stage, "deferred-lite")
 
     def _record_background(stage: str, status: str) -> None:
         _record(stage, status)
@@ -1550,6 +1563,51 @@ def warmup_vector_service(
             return shared_remaining
         return min(shared_remaining, stage_timeout)
 
+    _record_bootstrap_deferrals()
+
+    def _admit_stage_budget(
+        stage: str, planned_timeout: float | None
+    ) -> tuple[bool, float | None]:
+        nonlocal budget_exhausted, budget_gate_reason
+        remaining = _remaining_budget()
+        if remaining is not None:
+            if remaining <= 0:
+                budget_exhausted = True
+                status = "deferred-budget"
+                _record_deferred_background(stage, status)
+                budget_gate_reason = budget_gate_reason or status
+                log.info("Remaining bootstrap budget exhausted before %s stage", stage)
+                return False, None
+            if planned_timeout is None or planned_timeout > remaining:
+                planned_timeout = remaining
+        if check_budget is not None:
+            try:
+                check_budget()
+            except TimeoutError:
+                budget_exhausted = True
+                status = "deferred-budget"
+                _record_deferred_background(stage, status)
+                budget_gate_reason = budget_gate_reason or status
+                log.info("Vector warmup budget check failed before %s stage; deferring", stage)
+                return False, None
+        estimate = base_stage_cost.get(stage)
+        if (
+            estimate is not None
+            and planned_timeout is not None
+            and planned_timeout < min(estimate, base_stage_cost.get(stage, estimate))
+        ):
+            status = "deferred-budget"
+            _record_deferred_background(stage, status)
+            budget_gate_reason = budget_gate_reason or status
+            log.info(
+                "Deferring %s warmup; %.2fs remaining below estimated cost %.2fs",
+                stage,
+                planned_timeout,
+                estimate,
+            )
+            return False, None
+        return True, planned_timeout
+
     budget_callback_missing = budget_remaining is None or budget_remaining is _default_budget_remaining
     check_budget_missing = check_budget is None or check_budget is _default_check_budget
     has_budget_signal = any(
@@ -1832,6 +1890,11 @@ def warmup_vector_service(
             model_probe_only = False
             model_enabled = False
 
+        admitted, model_timeout = _admit_stage_budget("model", model_timeout)
+        if not admitted:
+            _record_cancelled("model", "budget")
+            return _finalise()
+
         if _abort_missing_timeout("model", model_timeout, stage_enabled=model_enabled):
             _record_cancelled("model", "budget")
             return _finalise()
@@ -1956,6 +2019,12 @@ def warmup_vector_service(
         handler_timeout = _effective_timeout("handlers")
         vectorise_timeout = _effective_timeout("vectorise")
         handler_budget_window = _stage_budget_window(handler_timeout)
+        admitted, handler_timeout = _admit_stage_budget("handlers", handler_timeout)
+        if not admitted:
+            _record_cancelled("handlers", "budget")
+            if run_vectorise:
+                _record_deferred_background("vectorise", "deferred-budget")
+            return _finalise()
         if _abort_missing_timeout(
             "handlers",
             handler_timeout,
@@ -2134,6 +2203,10 @@ def warmup_vector_service(
     else:
         vectorise_timeout = _effective_timeout("vectorise")
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
+        admitted, vectorise_timeout = _admit_stage_budget("vectorise", vectorise_timeout)
+        if not admitted:
+            _record_cancelled("vectorise", "budget")
+            return _finalise()
         if _abort_missing_timeout(
             "vectorise", vectorise_timeout, stage_enabled=should_vectorise
         ):
