@@ -380,3 +380,130 @@ def test_stub_promotes_after_readiness_signal(monkeypatch, tmp_path):
     assert calls[-1][0] == "log_embedding"
     assert getattr(activated, "logged", None)
 
+
+def test_warmup_stub_defers_filesystem_until_ready(monkeypatch, tmp_path):
+    gate = threading.Event()
+
+    class _FakeSignal:
+        def await_ready(self, timeout=None):  # pragma: no cover - gate only
+            gate.wait(timeout)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bootstrap_readiness",
+        types.SimpleNamespace(readiness_signal=lambda: _FakeSignal()),
+    )
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_READINESS_HOOK_ARMED", False)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+    monkeypatch.chdir(tmp_path)
+
+    created_paths: list[Path] = []
+    seen_kwargs: list[dict[str, object]] = []
+
+    class DummyVectorDB:
+        def __init__(self, path, *args, **kwargs):
+            self._boot_stub_active = False
+            seen_kwargs.append(dict(kwargs))
+            created_paths.append(Path(path))
+            if kwargs.get("ensure_exists"):
+                Path(path).touch()
+
+        def activate_on_first_write(self):
+            pass  # pragma: no cover - passthrough
+
+        def end_warmup(self, *args, **kwargs):
+            pass  # pragma: no cover - passthrough
+
+        def activate_persistence(self, *args, **kwargs):
+            return self  # pragma: no cover - passthrough
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db(
+        warmup=True, ensure_exists=True, read_only=False
+    )
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert not created_paths
+    assert not (tmp_path / "vector_metrics.db").exists()
+
+    gate.set()
+    for _ in range(40):
+        if isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, DummyVectorDB):
+            break
+        threading.Event().wait(0.05)
+
+    assert isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, DummyVectorDB)
+    assert created_paths == [tmp_path / "vector_metrics.db"]
+    assert seen_kwargs and seen_kwargs[0]["ensure_exists"] is True
+    assert seen_kwargs[0]["read_only"] is False
+    assert (tmp_path / "vector_metrics.db").exists()
+
+
+def test_readiness_hook_replays_deferred_weights(monkeypatch, tmp_path):
+    gate = threading.Event()
+
+    class _FakeSignal:
+        def await_ready(self, timeout=None):  # pragma: no cover - gate only
+            gate.wait(timeout)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bootstrap_readiness",
+        types.SimpleNamespace(readiness_signal=lambda: _FakeSignal()),
+    )
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_READINESS_HOOK_ARMED", False)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+    monkeypatch.chdir(tmp_path)
+
+    weight_sets: list[dict[str, float]] = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            self._boot_stub_active = False
+            self.weights: dict[str, float] = {}
+
+        def activate_on_first_write(self):
+            pass  # pragma: no cover - passthrough
+
+        def end_warmup(self, *args, **kwargs):
+            pass  # pragma: no cover - passthrough
+
+        def activate_persistence(self, *args, **kwargs):
+            return self  # pragma: no cover - passthrough
+
+        def set_db_weights(self, weights):
+            self.weights.update(weights)
+            weight_sets.append(dict(weights))
+
+        def get_db_weights(self, default=None):
+            if self.weights:
+                return dict(self.weights)
+            return default or {}
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+
+    vector_metrics_db.ensure_vector_db_weights(
+        ["alpha", "beta"], warmup=True, ensure_exists=True, read_only=False
+    )
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db(
+        warmup=True, ensure_exists=True, read_only=False
+    )
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert not weight_sets
+
+    gate.set()
+    for _ in range(40):
+        if isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, DummyVectorDB):
+            break
+        threading.Event().wait(0.05)
+
+    activated = vector_metrics_db._VECTOR_DB_INSTANCE
+    assert isinstance(activated, DummyVectorDB)
+    assert weight_sets and weight_sets[-1].get("alpha") == 1.0
+    assert weight_sets[-1].get("beta") == 1.0
+
