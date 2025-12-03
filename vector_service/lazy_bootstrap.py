@@ -1777,12 +1777,11 @@ def warmup_vector_service(
         for stage in ("handlers", "model", "vectorise"):
             timeout = timeouts.get(stage)
             if timeout is None:
-                timeouts[stage] = _HEAVY_STAGE_CEILING
-            else:
-                capped_timeout = min(timeout, _HEAVY_STAGE_CEILING)
-                if capped_timeout != timeout:
-                    heavy_stage_cap_hits.add(stage)
-                timeouts[stage] = capped_timeout
+                continue
+            capped_timeout = min(timeout, _HEAVY_STAGE_CEILING)
+            if capped_timeout != timeout:
+                heavy_stage_cap_hits.add(stage)
+            timeouts[stage] = capped_timeout
 
     def _apply_bootstrap_guard(timeouts: dict[str, float | None]) -> None:
         if bootstrap_guard_ceiling is None:
@@ -2185,16 +2184,18 @@ def warmup_vector_service(
         stage_timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
         fallback_budget = provided_budget if provided_budget is not None else None
         timebox_remaining = _timebox_remaining()
+        fallback_cap = stage_budget_cap if stage_budget_cap is not None else None
         if remaining is None:
             timeout_candidates = [timebox_remaining]
             if stage_timeout is not None:
                 timeout_candidates.append(stage_timeout)
-            elif fallback_budget is not None:
-                timeout_candidates.append(fallback_budget)
-            elif stage_hard_cap is not None:
-                timeout_candidates.append(stage_hard_cap)
             else:
-                timeout_candidates.append(_HEAVY_STAGE_CEILING)
+                if fallback_budget is not None:
+                    timeout_candidates.append(fallback_budget)
+                if fallback_cap is not None:
+                    timeout_candidates.append(fallback_cap)
+                if stage_hard_cap is not None:
+                    timeout_candidates.append(stage_hard_cap)
             timeout_candidates = [t for t in timeout_candidates if t is not None]
             timeout = min(timeout_candidates) if timeout_candidates else None
             effective_timeouts[stage] = timeout
@@ -2204,11 +2205,15 @@ def warmup_vector_service(
                 timeout = remaining
             else:
                 timeout = max(0.0, min(remaining, fallback_budget))
+            if fallback_cap is not None:
+                timeout = min(timeout, fallback_cap)
             if timebox_remaining is not None:
                 timeout = min(timeout, timebox_remaining)
             effective_timeouts[stage] = timeout
             return timeout
         timeout = max(0.0, min(stage_timeout, remaining))
+        if fallback_cap is not None:
+            timeout = min(timeout, fallback_cap)
         if timebox_remaining is not None:
             timeout = min(timeout, timebox_remaining)
         effective_timeouts[stage] = timeout
