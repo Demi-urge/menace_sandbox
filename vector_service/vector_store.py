@@ -46,6 +46,16 @@ except Exception:  # pragma: no cover - fallback when module missing
 logger = logging.getLogger(__name__)
 
 
+_BOOTSTRAP_ENV_FLAGS = (
+    "MENACE_BOOTSTRAP",
+    "MENACE_BOOTSTRAP_FAST",
+    "MENACE_BOOTSTRAP_MODE",
+    "BOOTSTRAP_FAST",
+    "VECTOR_SERVICE_WARMUP",
+    "VECTOR_SERVICE_LAZY_BOOTSTRAP",
+)
+
+
 def _trace(event: str, **extra: Any) -> None:
     flag = os.getenv("VECTOR_SERVICE_TRACE", "")
     if flag and flag.lower() not in {"0", "false", "no", "off"}:
@@ -514,6 +524,10 @@ def _env_flag(name: str) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _in_bootstrap_or_warmup() -> bool:
+    return any(_env_flag(flag) for flag in _BOOTSTRAP_ENV_FLAGS)
+
+
 def create_vector_store(
     dim: int,
     path: str | Path,
@@ -525,10 +539,26 @@ def create_vector_store(
     """Create a ``VectorStore`` instance for the given configuration."""
 
     resolved_lazy = lazy
+    defaulted_lazy = False
+    bootstrap_context = _in_bootstrap_or_warmup()
+    env_lazy = _env_flag("BOOTSTRAP_FAST") or _env_flag("VECTOR_SERVICE_WARMUP")
     if resolved_lazy is None:
-        resolved_lazy = _env_flag("BOOTSTRAP_FAST") or _env_flag("VECTOR_SERVICE_WARMUP")
+        resolved_lazy = bool(env_lazy or bootstrap_context)
+        defaulted_lazy = resolved_lazy
 
-    backend = (backend or "faiss").lower()
+    backend_name = (backend or "faiss").lower()
+    if defaulted_lazy and resolved_lazy:
+        logger.info(
+            "vector_store.lazy.defaulted",
+            extra={
+                "backend": backend_name,
+                "path": str(path),
+                "bootstrap_context": bootstrap_context,
+                "env_lazy": bool(env_lazy),
+            },
+        )
+
+    backend = backend_name
     if backend == "faiss" and faiss is not None and np is not None:
         return FaissVectorStore(dim=dim, path=Path(path), lazy=bool(resolved_lazy))
     if backend == "qdrant" and QdrantClient is not None:
