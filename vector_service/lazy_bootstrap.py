@@ -474,8 +474,31 @@ def warmup_vector_service(
         env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_TIMEOUT"))
     env_budget = env_budget if env_budget is not None and env_budget > 0 else None
 
-    if stage_timeouts is None and env_budget is None:
-        stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+    bootstrap_context = any(
+        os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
+        for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
+    )
+
+    warmup_requested = any(
+        flag
+        for flag in (
+            download_model,
+            probe_model,
+            hydrate_handlers,
+            start_scheduler,
+            bool(run_vectorise),
+            warmup_lite,
+        )
+    )
+
+    if stage_timeouts is None:
+        if bootstrap_context or warmup_requested:
+            stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+            if env_budget is not None:
+                stage_timeouts = dict(stage_timeouts)
+                stage_timeouts["budget"] = env_budget
+        elif env_budget is None:
+            stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
 
     budget_start = time.monotonic()
     timebox_deadline: float | None = None
@@ -504,11 +527,6 @@ def warmup_vector_service(
         stage_timeouts = env_budget
     if stage_timeouts is None:
         stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
-
-    bootstrap_context = any(
-        os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
-        for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
-    )
 
     bootstrap_guard_ceiling: float | None = None
     if bootstrap_context and env_budget is None and not stage_timeouts_supplied:
@@ -589,8 +607,8 @@ def warmup_vector_service(
             download_model = False
             probe_model = True
             deferred_bootstrap.add("model")
-        if not probe_model:
-            probe_model = True
+        elif probe_model:
+            deferred_bootstrap.add("model")
         if requested_handlers:
             log.info("Bootstrap context detected; deferring handler hydration")
             hydrate_handlers = False
@@ -1457,6 +1475,44 @@ def warmup_vector_service(
         if initial_remaining is not None:
             stage_budget_cap = min(stage_budget_cap, initial_remaining)
         timebox_deadline = budget_start + stage_budget_cap
+
+    if stage_budget_cap is not None and stage_budget_cap <= 0:
+        status = "deferred-budget"
+        background_stage_timeouts = background_stage_timeouts or {
+            stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+            for stage in base_timeouts
+        }
+        for stage, enabled in (
+            (
+                "model",
+                download_model or probe_model or model_probe_only,
+            ),
+            ("handlers", hydrate_handlers),
+            ("scheduler", start_scheduler),
+            (
+                "vectorise",
+                run_vectorise if run_vectorise is not None else hydrate_handlers,
+            ),
+        ):
+            if not enabled:
+                continue
+            _record_background(stage, status)
+            memoised_results[stage] = status
+            if stage == "model":
+                download_model = False
+                model_probe_only = False
+                probe_model = False
+            elif stage == "handlers":
+                hydrate_handlers = False
+                if run_vectorise:
+                    _record_background("vectorise", status)
+                    memoised_results["vectorise"] = status
+                    run_vectorise = False
+            elif stage == "scheduler":
+                start_scheduler = False
+            elif stage == "vectorise":
+                run_vectorise = False
+        warmup_lite = True
     heavy_budget_needed = 0.0
     if download_model:
         heavy_budget_needed += base_stage_cost["model"]
