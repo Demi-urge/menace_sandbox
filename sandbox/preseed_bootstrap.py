@@ -4069,6 +4069,47 @@ def initialize_bootstrap_context(
                     "bootstrap_remaining": remaining_bootstrap_window,
                 },
             )
+            stage_controller.defer_step(
+                "embedder_preload", reason=no_budget_deferral_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vectorizer_preload", reason=no_budget_deferral_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops",
+                reason=f"embedder_placeholder:{no_budget_deferral_reason}",
+            )
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+                reason=no_budget_deferral_reason
+            )
+            placeholder_obj = existing_job_snapshot.get(
+                "placeholder", _BOOTSTRAP_PLACEHOLDER
+            )
+            job_snapshot = existing_job_snapshot | {
+                "placeholder": placeholder_obj,
+                "placeholder_reason": no_budget_deferral_reason,
+                "warmup_placeholder_reason": no_budget_deferral_reason,
+                "presence_only": True,
+                "budget_guarded": True,
+                "budget_window_missing": True,
+                "deferral_reason": no_budget_deferral_reason,
+                "background_enqueue_reason": no_budget_deferral_reason,
+                "result": existing_job_snapshot.get("result", placeholder_obj),
+            }
+            warmup_summary = job_snapshot.get("warmup_summary") or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault("deferred_reason", no_budget_deferral_reason)
+            warmup_summary.setdefault("deferral_reason", no_budget_deferral_reason)
+            warmup_summary.setdefault("stage", "deferred-no-budget")
+            warmup_summary.setdefault("stage_budget", embedder_stage_budget)
+            warmup_summary.setdefault(
+                "stage_deadline_remaining", embedder_stage_deadline_remaining
+            )
+            warmup_summary.setdefault("bootstrap_remaining", remaining_bootstrap_window)
+            job_snapshot["warmup_summary"] = warmup_summary
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            stage_controller.complete_step("embedder_preload", 0.0)
+            return job_snapshot.get("result", placeholder_obj)
         deferral_threshold = float(
             os.getenv("BOOTSTRAP_EMBEDDER_DEFERRAL_THRESHOLD", "1.0")
         )
