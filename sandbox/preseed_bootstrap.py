@@ -2217,7 +2217,7 @@ def _bootstrap_embedder(
     background_download_requested = schedule_background or force_placeholder
     background_budget_available = stage_budget is None or stage_budget > 0
 
-    def _enqueue_background_download() -> None:
+        def _enqueue_background_download() -> None:
         if not background_budget_available:
             LOGGER.debug("embedder background download blocked by stage budget")
             return
@@ -2245,6 +2245,23 @@ def _bootstrap_embedder(
             _BOOTSTRAP_EMBEDDER_JOB["awaiting_full_preload"] = True
 
         def _background_worker() -> None:
+
+            def _warmup_budget_remaining() -> float | None:
+                remaining_candidates = []
+                now_perf = perf_counter()
+                if stage_wall_cap is not None and stage_wall_cap >= 0:
+                    remaining_candidates.append((start_time + stage_wall_cap) - now_perf)
+                if stage_deadline_hint is not None:
+                    remaining_candidates.append(stage_deadline_hint - now_perf)
+                if remaining_bootstrap_window is not None:
+                    remaining_candidates.append((start_time + remaining_bootstrap_window) - now_perf)
+                if bootstrap_deadline is not None:
+                    remaining_candidates.append(bootstrap_deadline - time.monotonic())
+
+                filtered = [candidate for candidate in remaining_candidates if candidate is not None]
+                if not filtered:
+                    return None
+                return max(0.0, min(filtered))
             def _remaining_budget() -> tuple[float | None, str | None]:
                 deadlines: list[tuple[float, str]] = []
                 if budget_deadline is not None:
@@ -2320,14 +2337,23 @@ def _bootstrap_embedder(
                 if remaining_budget is not None and remaining_budget < 0:
                     _abort_background(remaining_reason or "embedder_background_timeout")
                     return
+                warmup_remaining = _warmup_budget_remaining()
+                if warmup_remaining is not None:
+                    ready_timeout = warmup_remaining if ready_timeout is None else min(
+                        ready_timeout, warmup_remaining
+                    )
                 if ready_timeout is None:
                     _BOOTSTRAP_EMBEDDER_READY.wait()
                 else:
+                    if ready_timeout <= 0:
+                        _abort_background("embedder_background_budget_exhausted")
+                        return
                     ready = _BOOTSTRAP_EMBEDDER_READY.wait(ready_timeout)
                     if not ready:
                         LOGGER.debug(
                             "embedder background preload skipped after readiness wait timeout"
                         )
+                        _abort_background("embedder_background_budget_exhausted")
                         return
                 with contextlib.suppress(Exception):
                     os.nice(5)
@@ -2340,6 +2366,12 @@ def _bootstrap_embedder(
                         )
                         return
                     embedder_timeout = min(embedder_timeout, max(remaining_budget, 0.0))
+                warmup_remaining = _warmup_budget_remaining()
+                if warmup_remaining is not None:
+                    if warmup_remaining <= 0:
+                        _abort_background("embedder_background_budget_exhausted")
+                        return
+                    embedder_timeout = min(embedder_timeout, max(warmup_remaining, 0.0))
 
                 embedder_obj = get_embedder(
                     timeout=embedder_timeout,
