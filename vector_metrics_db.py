@@ -1178,15 +1178,25 @@ def get_shared_vector_metrics_db(
             _VECTOR_DB_INSTANCE._log_deferred_activation(reason="bootstrap_warmup_summary")
         except Exception:
             logger.debug("vector metrics warmup summary logging failed", exc_info=True)
+        context_extra = {
+            "menace_bootstrap": menace_bootstrap,
+            "bootstrap_requested": bootstrap_requested,
+            "timer_context": timer_context,
+            "warmup_env": _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False),
+            "stub_selected": isinstance(
+                _VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub
+            ),
+            "stub_requested": warmup_stub_requested,
+        }
         logger.info(
             "vector_metrics_db.bootstrap.stub_returned",
-            extra={
-                "menace_bootstrap": menace_bootstrap,
-                "bootstrap_requested": bootstrap_requested,
-                "timer_context": timer_context,
-                "warmup_env": _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False),
-            },
+            extra=context_extra,
         )
+        if not context_extra["stub_selected"]:
+            logger.warning(
+                "vector_metrics_db.bootstrap.real_db_during_warmup",
+                extra=context_extra,
+            )
         return _VECTOR_DB_INSTANCE
 
     _apply_pending_weights(_VECTOR_DB_INSTANCE)
@@ -1445,6 +1455,7 @@ def get_bootstrap_vector_metrics_db(
     warmup: bool | None = None,
     ensure_exists: bool | None = None,
     read_only: bool | None = None,
+    warmup_stub: bool | None = None,
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Return the shared DB with bootstrap-aware warmup defaults.
 
@@ -1472,6 +1483,7 @@ def get_bootstrap_vector_metrics_db(
         or menace_bootstrap
         or state_flags["bootstrap_state"]
         or state_flags["warmup_lite"]
+        or warmup_stub
     )
     if warmup_requested:
         warmup_mode = True
@@ -1484,6 +1496,7 @@ def get_bootstrap_vector_metrics_db(
         warmup=warmup_mode,
         ensure_exists=ensure_exists,
         read_only=read_only,
+        warmup_stub=warmup_stub,
     )
 
 

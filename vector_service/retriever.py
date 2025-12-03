@@ -639,7 +639,8 @@ class PatchRetriever:
             try:
                 self.vector_metrics = get_bootstrap_vector_metrics_db(
                     bootstrap_fast=resolved_fast,
-                    warmup=warmup_flag,
+                    warmup=bool(warmup_flag or resolved_fast),
+                    warmup_stub=True,
                 )
             except Exception:
                 self.vector_metrics = None

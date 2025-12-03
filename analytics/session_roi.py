@@ -40,7 +40,11 @@ def _resolve_metrics_db(db: Union[VectorMetricsDB, str, Path]) -> VectorMetricsD
     )
 
     if helper and target_path.resolve() == default_path.resolve():
-        vmdb = helper(read_only=True, warmup=bool(warmup_mode or bootstrap_fast))
+        vmdb = helper(
+            read_only=True,
+            warmup=bool(warmup_mode or bootstrap_fast),
+            warmup_stub=True,
+        )
         if getattr(vmdb, "_boot_stub_active", False):
             return None
         return vmdb
