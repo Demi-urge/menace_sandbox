@@ -77,6 +77,7 @@ class _BootstrapVectorMetricsStub:
         warmup: bool | None,
         ensure_exists: bool | None,
         read_only: bool | None,
+        warmup_stub_requested: bool = False,
     ) -> None:
         self._activation_kwargs = {
             "path": path,
@@ -90,6 +91,7 @@ class _BootstrapVectorMetricsStub:
         if warmup is not None:
             self._activation_kwargs["warmup"] = bool(warmup)
         self._delegate: "VectorMetricsDB | None" = None
+        self._warmup_stub_requested = warmup_stub_requested
         self._noop_calls: set[str] = set()
         self._readiness_hook_registered = False
         self._activate_on_first_write = False
@@ -293,7 +295,10 @@ class _BootstrapVectorMetricsStub:
             allow_unblock = reason in {"bootstrap_ready", "post_warmup", "warmup_complete"}
             if allow_unblock:
                 self._release_activation_block(reason=reason, configure_ready=True)
-            elif not _warmup_activation_allowed(allow_override=allow_override):
+            elif not _warmup_activation_allowed(
+                allow_override=allow_override,
+                warmup_stub_requested=self._warmup_stub_requested,
+            ):
                 self._log_deferred_activation(reason=reason)
                 _increment_deferral_metric("blocked_activation")
                 return None
@@ -332,7 +337,10 @@ class _BootstrapVectorMetricsStub:
         if self._delegate is not None:
             return self._delegate
         if self._activation_blocked:
-            if not _warmup_activation_allowed(allow_override=allow_override):
+            if not _warmup_activation_allowed(
+                allow_override=allow_override,
+                warmup_stub_requested=self._warmup_stub_requested,
+            ):
                 self._log_deferred_activation(reason=reason)
                 _increment_deferral_metric("blocked_activation")
                 return self
@@ -880,12 +888,15 @@ def _first_write_activation_budget_seconds() -> float | None:
     return None
 
 
-def _warmup_activation_allowed(*, allow_override: bool) -> bool:
+def _warmup_activation_allowed(
+    *, allow_override: bool, warmup_stub_requested: bool = False
+) -> bool:
     if allow_override:
         return True
     bootstrap_env = _detect_bootstrap_environment()
     warmup_requested = bool(
-        bootstrap_env["vector_bootstrap_env"]
+        warmup_stub_requested
+        or bootstrap_env["vector_bootstrap_env"]
         or bootstrap_env["patch_bootstrap_env"]
         or bootstrap_env["vector_warmup_env"]
         or bootstrap_env["bootstrap_env"]
@@ -1006,6 +1017,7 @@ def get_shared_vector_metrics_db(
     warmup: bool | None = None,
     ensure_exists: bool | None = None,
     read_only: bool | None = None,
+    warmup_stub: bool | None = None,
 ) -> "VectorMetricsDB":
     """Return a lazily initialised shared :class:`VectorMetricsDB` instance."""
 
@@ -1016,10 +1028,14 @@ def get_shared_vector_metrics_db(
         bootstrap_env,
     ) = resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast, warmup=warmup)
 
+    warmup_stub_requested = bool(warmup_stub)
+    if warmup_stub_requested:
+        resolved_warmup = True
     state_flags = _bootstrap_state_flags()
     menace_bootstrap = bool(_menace_bootstrap_active() or bootstrap_env)
     bootstrap_requested = bool(
-        resolved_bootstrap_fast
+        warmup_stub_requested
+        or resolved_bootstrap_fast
         or resolved_warmup
         or env_requested
         or menace_bootstrap
@@ -1037,8 +1053,9 @@ def get_shared_vector_metrics_db(
         "menace_bootstrap": menace_bootstrap,
         "warmup_lite": state_flags["warmup_lite"],
         "bootstrap_state": state_flags["bootstrap_state"],
+        "warmup_stub_requested": warmup_stub_requested,
     }
-    warmup_context = bool(any(warmup_context_reasons.values()))
+    warmup_context = bool(warmup_stub_requested or any(warmup_context_reasons.values()))
     promotion_requested = bool((ensure_exists is True) or (read_only is False))
     requested_ensure_exists = ensure_exists
     requested_read_only = read_only
@@ -1075,6 +1092,7 @@ def get_shared_vector_metrics_db(
                     warmup=resolved_warmup,
                     ensure_exists=ensure_exists,
                     read_only=bool(read_only) if read_only is not None else False,
+                    warmup_stub_requested=warmup_stub_requested,
                 )
                 _queue_promotion_for_stub(
                     _VECTOR_DB_INSTANCE,
@@ -1165,6 +1183,7 @@ def get_vector_metrics_db(
     warmup: bool | None = None,
     ensure_exists: bool | None = None,
     read_only: bool | None = None,
+    warmup_stub: bool | None = None,
     allow_bootstrap_activation: bool = False,
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Return the shared DB while preserving warmup/bootstrap stubs."""
@@ -1174,6 +1193,7 @@ def get_vector_metrics_db(
         warmup=warmup,
         ensure_exists=ensure_exists,
         read_only=read_only,
+        warmup_stub=warmup_stub,
     )
 
     if isinstance(vm, _BootstrapVectorMetricsStub):
@@ -1211,6 +1231,7 @@ def get_bootstrap_shared_vector_metrics_db(
     warmup: bool | None = None,
     ensure_exists: bool | None = None,
     read_only: bool | None = None,
+    warmup_stub: bool | None = None,
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Return the shared DB while arming warmup hooks for bootstrap callers."""
 
@@ -1219,6 +1240,7 @@ def get_bootstrap_shared_vector_metrics_db(
         warmup=warmup,
         ensure_exists=ensure_exists,
         read_only=read_only,
+        warmup_stub=warmup_stub,
     )
 
     if isinstance(vm, _BootstrapVectorMetricsStub):

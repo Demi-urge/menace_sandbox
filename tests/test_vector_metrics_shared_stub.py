@@ -1,4 +1,6 @@
+import sys
 import time
+import types
 
 import vector_metrics_db
 
@@ -163,6 +165,37 @@ def test_stub_remains_active_during_warmup_first_write(monkeypatch):
 
     assert elapsed < 0.1
     assert vector_metrics_db._VECTOR_DB_INSTANCE is vm
+    assert calls == []
+
+
+def test_warmup_stub_flag_blocks_activation_without_env(monkeypatch):
+    calls: list[str] = []
+
+    class GuardVectorDB:
+        def __init__(self, *args, **kwargs):  # pragma: no cover - guard
+            calls.append("init")
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", GuardVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    class DummyReadiness:
+        def await_ready(self, timeout=None):  # pragma: no cover - background thread
+            raise RuntimeError("skip readiness")
+
+    dummy_module = types.SimpleNamespace(readiness_signal=lambda: DummyReadiness())
+    monkeypatch.setitem(sys.modules, "bootstrap_readiness", dummy_module)
+
+    vm = vector_metrics_db.get_vector_metrics_db(warmup_stub=True)
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert vm._boot_stub_active
+    assert vm._readiness_hook_registered
+    assert calls == []
+
+    activated = vm._activate(reason="attribute_access")
+
+    assert isinstance(activated, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert vm._boot_stub_active
     assert calls == []
 
 
