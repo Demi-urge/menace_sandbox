@@ -1596,7 +1596,7 @@ def warmup_vector_service(
     _record_bootstrap_deferrals()
 
     def _admit_stage_budget(
-        stage: str, planned_timeout: float | None
+        stage: str, planned_timeout: float | None, *, stage_cap: float | None = None
     ) -> tuple[bool, float | None]:
         nonlocal budget_exhausted, budget_gate_reason
         remaining = _remaining_budget()
@@ -1621,21 +1621,19 @@ def warmup_vector_service(
                 log.info("Vector warmup budget check failed before %s stage; deferring", stage)
                 return False, None
         estimate = base_stage_cost.get(stage)
-        if (
-            estimate is not None
-            and planned_timeout is not None
-            and planned_timeout < min(estimate, base_stage_cost.get(stage, estimate))
-        ):
-            status = "deferred-budget"
-            _record_deferred_background(stage, status)
-            budget_gate_reason = budget_gate_reason or status
-            log.info(
-                "Deferring %s warmup; %.2fs remaining below estimated cost %.2fs",
-                stage,
-                planned_timeout,
-                estimate,
-            )
-            return False, None
+        if estimate is not None and planned_timeout is not None:
+            cap_limited = stage_cap is not None and stage_cap < estimate
+            if planned_timeout < min(estimate, base_stage_cost.get(stage, estimate)):
+                status = "deferred-ceiling" if cap_limited else "deferred-budget"
+                _record_deferred_background(stage, status)
+                budget_gate_reason = budget_gate_reason or status
+                log.info(
+                    "Deferring %s warmup; %.2fs remaining below estimated cost %.2fs",
+                    stage,
+                    planned_timeout,
+                    estimate,
+                )
+                return False, None
         return True, planned_timeout
 
     budget_callback_missing = budget_remaining is None or budget_remaining is _default_budget_remaining
@@ -1920,7 +1918,9 @@ def warmup_vector_service(
             model_probe_only = False
             model_enabled = False
 
-        admitted, model_timeout = _admit_stage_budget("model", model_timeout)
+        admitted, model_timeout = _admit_stage_budget(
+            "model", model_timeout, stage_cap=stage_budget_ceiling.get("model")
+        )
         if not admitted:
             _record_cancelled("model", "budget")
             return _finalise()
@@ -2049,7 +2049,9 @@ def warmup_vector_service(
         handler_timeout = _effective_timeout("handlers")
         vectorise_timeout = _effective_timeout("vectorise")
         handler_budget_window = _stage_budget_window(handler_timeout)
-        admitted, handler_timeout = _admit_stage_budget("handlers", handler_timeout)
+        admitted, handler_timeout = _admit_stage_budget(
+            "handlers", handler_timeout, stage_cap=stage_budget_ceiling.get("handlers")
+        )
         if not admitted:
             _record_cancelled("handlers", "budget")
             if run_vectorise:
@@ -2191,6 +2193,12 @@ def warmup_vector_service(
         pass
     else:
         scheduler_timeout = _effective_timeout("scheduler")
+        admitted, scheduler_timeout = _admit_stage_budget(
+            "scheduler", scheduler_timeout, stage_cap=stage_budget_ceiling.get("scheduler")
+        )
+        if not admitted:
+            _record_cancelled("scheduler", "budget")
+            return _finalise()
         if _abort_missing_timeout(
             "scheduler", scheduler_timeout, stage_enabled=start_scheduler
         ):
@@ -2233,7 +2241,9 @@ def warmup_vector_service(
     else:
         vectorise_timeout = _effective_timeout("vectorise")
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
-        admitted, vectorise_timeout = _admit_stage_budget("vectorise", vectorise_timeout)
+        admitted, vectorise_timeout = _admit_stage_budget(
+            "vectorise", vectorise_timeout, stage_cap=stage_budget_ceiling.get("vectorise")
+        )
         if not admitted:
             _record_cancelled("vectorise", "budget")
             return _finalise()
