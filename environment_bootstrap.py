@@ -1225,6 +1225,7 @@ class EnvironmentBootstrapper:
         deferred: set[str] | None = None,
         summary: Mapping[str, str] | None = None,
         mode: str | None = None,
+        budget_hints: Mapping[str, float | None] | None = None,
     ) -> None:
         state = dict(self._phase_readiness.get("vector_warmup", {}) or {})
         if deferred is not None:
@@ -1232,6 +1233,13 @@ class EnvironmentBootstrapper:
                 state["deferred"] = sorted(set(state.get("deferred", [])) | set(deferred))
             elif "deferred" in state:
                 state.pop("deferred", None)
+            state["ts"] = time.time()
+        if budget_hints:
+            state["budget_hints"] = {
+                key: float(value) if value is not None else None
+                for key, value in budget_hints.items()
+                if value is None or isinstance(value, (int, float))
+            }
             state["ts"] = time.time()
         if summary:
             state["summary"] = dict(summary)
@@ -2292,6 +2300,104 @@ class EnvironmentBootstrapper:
                     stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
                 except Exception:
                     stage_timeouts = {"model": 9.0, "handlers": 9.0, "vectorise": 4.5}
+            shared_vector_budget = None
+            shared_vector_remaining = None
+            shared_snapshot = None
+            shared_caps: dict[str, float | None] = {}
+            coordinator = self.shared_timeout_coordinator
+            if coordinator is not None:
+                try:
+                    shared_snapshot = coordinator.snapshot()
+                except Exception:
+                    shared_snapshot = None
+            if isinstance(shared_snapshot, Mapping):
+                component_windows = shared_snapshot.get("component_windows")
+                component_remaining = shared_snapshot.get("component_remaining")
+                global_remaining = shared_snapshot.get("remaining_budget")
+
+                def _shared_remaining(source: Mapping[str, object] | None) -> float | None:
+                    if not isinstance(source, Mapping):
+                        return None
+                    for label in (
+                        "vector_warmup",
+                        "vector_seeding",
+                        "vectorizers",
+                        "vector",
+                    ):
+                        window = source.get(label)
+                        if isinstance(window, Mapping):
+                            return _coerce_timeout(
+                                window.get("remaining") or window.get("budget")
+                            )
+                        try:
+                            return _coerce_timeout(window)
+                        except Exception:
+                            continue
+                    return None
+
+                shared_vector_remaining = _shared_remaining(component_windows)
+                shared_vector_budget = _shared_remaining(component_remaining)
+                shared_global_budget = _coerce_timeout(global_remaining)
+                shared_budget = min(
+                    hint
+                    for hint in (
+                        shared_vector_budget,
+                        shared_vector_remaining,
+                        shared_global_budget,
+                    )
+                    if hint is not None
+                ) if any(
+                    hint is not None
+                    for hint in (
+                        shared_vector_budget,
+                        shared_vector_remaining,
+                        shared_global_budget,
+                    )
+                ) else None
+                if isinstance(stage_timeouts, Mapping):
+                    shared_caps = dict(stage_timeouts)
+                budget_ceiling = _coerce_timeout(shared_caps.get("budget")) if isinstance(shared_caps, Mapping) else None
+                if budget_ceiling is None:
+                    budget_ceiling = warmup_budget if warmup_budget is not None else phase_remaining
+                merged_budget = min(
+                    hint
+                    for hint in (budget_ceiling, shared_budget)
+                    if hint is not None
+                ) if any(hint is not None for hint in (budget_ceiling, shared_budget)) else budget_ceiling
+                if merged_budget is not None:
+                    shared_caps["budget"] = merged_budget
+                for name, stage_cap in (shared_caps or {}).items():
+                    if name == "budget":
+                        continue
+                    adjusted = min(
+                        hint
+                        for hint in (
+                            _coerce_timeout(stage_cap),
+                            shared_budget,
+                            shared_vector_remaining,
+                        )
+                        if hint is not None
+                    ) if any(
+                        hint is not None
+                        for hint in (
+                            stage_cap,
+                            shared_budget,
+                            shared_vector_remaining,
+                        )
+                    ) else _coerce_timeout(stage_cap)
+                    if adjusted is not None:
+                        shared_caps[name] = adjusted
+                if shared_caps:
+                    stage_timeouts = shared_caps
+                    self.logger.info(
+                        "Applying shared timeout ceilings to vector warmup",
+                        extra=log_record(
+                            event="vector-warmup-timeboxed",
+                            shared_budget=shared_budget,
+                            stage_caps={k: v for k, v in shared_caps.items() if k != "budget"},
+                            budget=shared_caps.get("budget"),
+                        ),
+                    )
             vector_state = self._phase_readiness.get("vector_warmup")
             budget_ceiling = None
             if isinstance(stage_timeouts, Mapping):
@@ -2354,7 +2460,12 @@ class EnvironmentBootstrapper:
             )
             background_status: str | None = "pending" if background_pending else None
             pending_background_stages: set[str] = set()
-            background_stage_timeouts: dict[str, float | None] | None = None
+            stored_budget_hints = (
+                vector_state.get("budget_hints") if isinstance(vector_state, Mapping) else None
+            )
+            background_stage_timeouts: dict[str, float | None] | None = (
+                dict(stored_budget_hints) if isinstance(stored_budget_hints, Mapping) else None
+            )
             warmup_background: set[str] = set()
             background_ticket_only = False
             if budget_guard_deferred:
@@ -2424,7 +2535,9 @@ class EnvironmentBootstrapper:
                     "Vector warmup deferred due to insufficient remaining budget (%.2fs)",
                     min_remaining_budget,
                 )
-                self._persist_vector_warmup_state(deferred=deferred)
+                self._persist_vector_warmup_state(
+                    deferred=deferred, budget_hints=stage_timeouts if isinstance(stage_timeouts, Mapping) else None
+                )
                 check_budget()
                 self._persist_vector_warmup_state(
                     deferred=deferred,
@@ -2435,6 +2548,7 @@ class EnvironmentBootstrapper:
                         "vectorise": "deferred",
                     },
                     mode="deferred",
+                    budget_hints=stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                 )
                 return
 
@@ -2492,14 +2606,58 @@ class EnvironmentBootstrapper:
                     heavy_budget_needed += base_stage_cost["vectorise"]
                 if remaining_phase_budget is not None and heavy_budget_needed > remaining_phase_budget:
                     stage_budget_cap = min(stage_budget_cap or heavy_budget_needed, remaining_phase_budget)
+                heavy_threshold = _coerce_timeout(
+                    os.getenv("MENACE_VECTOR_HEAVY_THRESHOLD")
+                )
+                guard_budget = min(
+                    hint
+                    for hint in (
+                        stage_budget_cap,
+                        warmup_budget,
+                        phase_remaining,
+                        shared_vector_budget,
+                        shared_vector_remaining,
+                    )
+                    if hint is not None
+                ) if any(
+                    hint is not None
+                    for hint in (
+                        stage_budget_cap,
+                        warmup_budget,
+                        phase_remaining,
+                        shared_vector_budget,
+                        shared_vector_remaining,
+                    )
+                ) else stage_budget_cap
+                if heavy_threshold is not None and guard_budget is not None:
+                    guard_budget = min(guard_budget, heavy_threshold)
                 defer_heavy = bool(
                     heavy_budget_needed
-                    and stage_budget_cap is not None
-                    and heavy_budget_needed > stage_budget_cap
+                    and guard_budget is not None
+                    and heavy_budget_needed > guard_budget
                 )
                 deferred_stages: set[str] = set(persisted_deferred) | set(budget_guard_deferred)
                 if deferred_stages:
                     defer_heavy = True
+                if defer_heavy and heavy_budget_needed:
+                    pending_background_stages |= {
+                        stage
+                        for stage, enabled in (
+                            ("model", warmup_model),
+                            ("handlers", warmup_handlers),
+                            ("vectorise", run_vectorise),
+                        )
+                        if enabled
+                    }
+                    self.logger.info(
+                        "Vector warmup heavy stages pre-deferred to background", 
+                        extra=log_record(
+                            event="vector-warmup-predeferred",
+                            expected_cost=heavy_budget_needed,
+                            budget=guard_budget,
+                            deferred=sorted(pending_background_stages),
+                        ),
+                    )
 
             def _schedule_heavy_background(
                 additional: Iterable[str] = (),
@@ -2584,7 +2742,12 @@ class EnvironmentBootstrapper:
                     background_status = background_status or "pending"
                     pending_background_stages |= deferred_stages
                     budget_deferred = True
-                    self._persist_vector_warmup_state(deferred=deferred_stages)
+                    self._persist_vector_warmup_state(
+                        deferred=deferred_stages,
+                        budget_hints=background_stage_timeouts
+                        if isinstance(background_stage_timeouts, Mapping)
+                        else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
+                    )
 
                 def _run_heavy_background() -> None:
                     bg_summary: Mapping[str, str] | None = None
@@ -2603,6 +2766,9 @@ class EnvironmentBootstrapper:
                                 **{stage: "pending" for stage in pending_background_stages or []},
                             },
                             mode="deferred",
+                            budget_hints=background_stage_timeouts
+                            if isinstance(background_stage_timeouts, Mapping)
+                            else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                         )
                         return None
                     if not self._phase_readiness.get("online"):
@@ -2614,6 +2780,9 @@ class EnvironmentBootstrapper:
                                 **{stage: "pending" for stage in pending_background_stages or []},
                             },
                             mode="deferred",
+                            budget_hints=background_stage_timeouts
+                            if isinstance(background_stage_timeouts, Mapping)
+                            else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                         )
                         return None
                     try:
@@ -2660,6 +2829,9 @@ class EnvironmentBootstrapper:
                                 **{stage: "failed" for stage in pending_background_stages or []},
                             },
                             mode="error",
+                            budget_hints=background_stage_timeouts
+                            if isinstance(background_stage_timeouts, Mapping)
+                            else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                         )
                     else:
                         merged_summary = {**(bg_summary or {})}
@@ -2668,6 +2840,9 @@ class EnvironmentBootstrapper:
                             deferred=set(),
                             summary=merged_summary,
                             mode="heavy",
+                            budget_hints=background_stage_timeouts
+                            if isinstance(background_stage_timeouts, Mapping)
+                            else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                         )
                     return None
 
@@ -2721,6 +2896,9 @@ class EnvironmentBootstrapper:
                     deferred=deferred_stages,
                     summary=summary,
                     mode="deferred",
+                    budget_hints=background_stage_timeouts
+                    if isinstance(background_stage_timeouts, Mapping)
+                    else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                 )
                 check_budget()
                 return
@@ -2795,8 +2973,11 @@ class EnvironmentBootstrapper:
                         deferred=deferred_stages,
                         summary=final_summary,
                         mode="probe-only" if warmup_probe and not heavy_requested else "heavy" if heavy_requested else "light",
+                        budget_hints=background_stage_timeouts
+                        if isinstance(background_stage_timeouts, Mapping)
+                        else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                     )
-            else:
+            if not warm_requested:
                 self.logger.info(
                     (
                         "Vector assets deferred to lazy initialisation; set "
@@ -2813,6 +2994,9 @@ class EnvironmentBootstrapper:
                         "scheduler": "skipped",
                     },
                     mode="deferred",
+                    budget_hints=background_stage_timeouts
+                    if isinstance(background_stage_timeouts, Mapping)
+                    else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                 )
             check_budget()
 
