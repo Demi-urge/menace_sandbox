@@ -3301,7 +3301,8 @@ def initialize_bootstrap_context(
             },
         )
         warmup_lite_context = True
-    vector_bootstrap_hint = False
+    vector_bootstrap_hint = force_vector_warmup
+    vector_warmup_requested = bool(force_vector_warmup)
     vector_env_snapshot: dict[str, str | float] = {}
     LOGGER.info(
         "initialize_bootstrap_context heavy mode=%s", heavy_bootstrap,
@@ -5025,10 +5026,12 @@ def initialize_bootstrap_context(
             "db_index_load", reason="context_builder_ready"
         )
         try:
-            vector_bootstrap_hint_holder["vector"] = _is_vector_bootstrap_heavy(builder)
+            vector_bootstrap_hint_holder["vector"] = bool(
+                vector_warmup_requested and _is_vector_bootstrap_heavy(builder)
+            )
         except Exception:  # pragma: no cover - advisory only
             LOGGER.debug("failed to inspect context builder for vector-heavy hint", exc_info=True)
-        if vector_bootstrap_hint_holder["vector"]:
+        if vector_bootstrap_hint_holder["vector"] and vector_warmup_requested:
             vector_env_snapshot.update(_apply_vector_env("context_builder_hint"))
             try:
                 _coding_bot_interface._BOOTSTRAP_STATE.vector_heavy = True
@@ -5038,6 +5041,15 @@ def initialize_bootstrap_context(
             _apply_timeout_policy_snapshot(timeout_policy)
             timeout_policy_summary = _render_timeout_policy(timeout_policy)
             print(f"bootstrap timeout policy: {timeout_policy_summary}", flush=True)
+        elif vector_bootstrap_hint_holder["vector"] and not vector_warmup_requested:
+            LOGGER.info(
+                "vector-heavy hint detected but heavy warmup not requested; remaining in warmup-lite mode",
+                extra={
+                    "event": "vector-warmup-lite-default",
+                    "force_vector_warmup": force_vector_warmup,
+                    "bootstrap_fast": bootstrap_fast_context,
+                },
+            )
         return builder
 
     def _task_registry(_: dict[str, Any]) -> BotRegistry:
@@ -5394,18 +5406,20 @@ def initialize_bootstrap_context(
                 vector_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
                 if vector_state is not None:
                     vector_heavy = bool(getattr(vector_state, "vector_heavy", False))
-                if not vector_heavy and _is_vector_bootstrap_heavy(context_builder):
-                    vector_heavy = True
-                if not vector_heavy and _is_vector_bootstrap_heavy(ModelAutomationPipeline):
-                    vector_heavy = True
+                if not vector_heavy and vector_warmup_requested:
+                    vector_heavy = _is_vector_bootstrap_heavy(context_builder)
+                if not vector_heavy and vector_warmup_requested:
+                    vector_heavy = _is_vector_bootstrap_heavy(ModelAutomationPipeline)
             except Exception:  # pragma: no cover - diagnostics only
                 LOGGER.debug("unable to inspect vector_heavy flag", exc_info=True)
 
-            if vector_heavy:
+            vector_heavy = bool(vector_heavy and vector_warmup_requested)
+
+            if vector_heavy and vector_warmup_requested:
                 vector_env_snapshot = vector_env_snapshot or _apply_vector_env(
                     "prepare_pipeline_vector_heavy"
                 )
-
+            
             prepare_timeout = vector_timeout if vector_heavy else standard_timeout
             prepare_timeout_floor = (
                 _PREPARE_VECTOR_TIMEOUT_FLOOR
