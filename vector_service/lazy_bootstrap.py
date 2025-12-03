@@ -2749,7 +2749,7 @@ def warmup_vector_service(
                             )
                             log.info("Handler warmup gate exceeded; deferring stage")
                             return _finalise()
-                        elif budget_exhausted:
+                        if budget_exhausted:
                             if "handlers" not in summary:
                                 _record_deferred("handlers", "deferred-budget")
                             log.info(
@@ -2915,10 +2915,9 @@ def warmup_vector_service(
                     placeholder_present = False
                     if not embedder_available:
                         try:
-                            from governed_embeddings import _EMBEDDER, _EMBEDDER_BOOTSTRAP_PLACEHOLDER
-
-                            embedder_available = _EMBEDDER is not None
-                            placeholder_present = _EMBEDDER_BOOTSTRAP_PLACEHOLDER is not None
+                            probe = getattr(svc, "probe_text_embedder", None)
+                            if callable(probe):
+                                embedder_available, placeholder_present = probe()
                         except Exception:  # pragma: no cover - defensive logging
                             log.debug("Embedder preflight probe failed", exc_info=True)
                     if not embedder_available:

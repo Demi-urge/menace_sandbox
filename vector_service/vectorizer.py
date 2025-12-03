@@ -11,6 +11,7 @@ using a configurable :class:`~vector_service.vector_store.VectorStore`.
 
 # ruff: noqa: T201 - module level debug prints are routed via logging
 
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 import hashlib
 import shutil
@@ -47,6 +48,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run as ``python 
         sys.path.insert(0, str(_PACKAGE_ROOT))
     from dynamic_path_router import resolve_path  # type: ignore
 
+import governed_embeddings
 from governed_embeddings import governed_embed, get_embedder
 
 try:  # pragma: no cover - prefer package-relative imports
@@ -237,6 +239,9 @@ class SharedVectorService:
     _background_handler_timeouts: Mapping[str, float] | float | None = field(
         init=False, default=None
     )
+    _embedder_future: Future | None = field(init=False, default=None)
+    _embedder_future_lock: threading.RLock | None = field(init=False, default=None)
+
 
     def __post_init__(self) -> None:
         self._check_cancelled("init")
@@ -271,6 +276,7 @@ class SharedVectorService:
         self._handler_requires_store = {}
         self._handler_lock = threading.RLock()
         self._vector_store_lock = threading.RLock()
+        self._embedder_future_lock = threading.RLock()
         self._known_kinds = set()
         eager_hydration = bool(self.hydrate_handlers) and not (
             (warmup_lite or resolved_fast) and not explicit_hydration
@@ -709,15 +715,137 @@ class SharedVectorService:
                 )
         return handler
 
-    def _ensure_text_embedder(self) -> SentenceTransformer | None:
-        """Initialise ``self.text_embedder`` if possible."""
+    def _probe_embedder_state(self) -> tuple[bool, bool]:
+        """Return embedder availability and placeholder state without loading it."""
+
+        embedder_available = self.text_embedder is not None
+        placeholder_present = False
+        future = self._embedder_future
+        if future is not None and not future.cancelled() and future.done():
+            try:
+                embedder_available = embedder_available or future.result() is not None
+            except Exception:
+                pass
+        try:
+            embedder_available = embedder_available or bool(
+                getattr(governed_embeddings, "_EMBEDDER", None)
+            )
+            placeholder_present = bool(
+                getattr(governed_embeddings, "_EMBEDDER_BOOTSTRAP_PLACEHOLDER", None)
+            )
+        except Exception:
+            pass
+        if not embedder_available and SentenceTransformer is not None:
+            embedder_available = True
+        return embedder_available, placeholder_present
+
+    def probe_text_embedder(self) -> tuple[bool, bool]:
+        """Expose embedder readiness without triggering model downloads."""
+
+        return self._probe_embedder_state()
+
+    def _get_embedder_future(self, *, force: bool, bootstrap_mode: bool) -> Future:
+        lock = self._embedder_future_lock
+        if lock is None:
+            lock = threading.RLock()
+            self._embedder_future_lock = lock
+        with lock:
+            future = self._embedder_future
+            if future is not None and not future.cancelled():
+                if future.done():
+                    try:
+                        result = future.result()
+                    except Exception:
+                        if not force:
+                            return future
+                        future = None
+                    else:
+                        if result is not None:
+                            if self.text_embedder is None:
+                                self.text_embedder = result
+                            return future
+                        if not force:
+                            return future
+                        future = None
+                else:
+                    return future
+
+            future = Future()
+
+            def _resolve() -> None:
+                if not future.set_running_or_notify_cancel():
+                    return
+                try:
+                    embedder = get_embedder(
+                        timeout=0.0 if (bootstrap_mode and not force) else None,
+                        bootstrap_timeout=0.0 if (bootstrap_mode and not force) else None,
+                        bootstrap_mode=bootstrap_mode,
+                        stop_event=self.stop_event,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    future.set_exception(exc)
+                else:
+                    future.set_result(embedder)
+
+            thread = threading.Thread(
+                target=_resolve,
+                name="shared-vector-service-embedder",
+                daemon=True,
+            )
+            thread.start()
+            self._embedder_future = future
+            return future
+
+    def _wait_for_embedder_future(
+        self,
+        future: Future,
+        *,
+        timeout: float | None,
+        stop_event: threading.Event | None,
+    ) -> SentenceTransformer | None:
+        deadline = None if timeout is None else time.perf_counter() + timeout
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                if not future.done():
+                    future.cancel()
+                raise TimeoutError("shared vector service embedder cancelled")
+            try:
+                wait_timeout = None
+                if deadline is not None:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        raise TimeoutError("shared vector service embedder timed out")
+                    wait_timeout = max(min(remaining, 0.1), 0.0)
+                return future.result(timeout=wait_timeout)
+            except FutureTimeout:
+                continue
+
+    def _ensure_text_embedder(self, *, force: bool = False) -> SentenceTransformer | None:
+        """Initialise ``self.text_embedder`` if possible, respecting warmup guards."""
 
         if self.text_embedder is not None:
             return self.text_embedder
         if SentenceTransformer is None:
             return None
-        _trace("shared_vector_service.embedder.resolve.start")
-        embedder = get_embedder()
+
+        bootstrap_mode = bool(self.bootstrap_fast or self.warmup_lite)
+        future = self._get_embedder_future(force=force, bootstrap_mode=bootstrap_mode)
+        wait_timeout = 0.0 if (bootstrap_mode and not force) else None
+        stop_event = self.stop_event
+        _trace("shared_vector_service.embedder.resolve.start", bootstrap_mode=bootstrap_mode)
+        try:
+            embedder = self._wait_for_embedder_future(
+                future, timeout=wait_timeout, stop_event=stop_event
+            )
+        except TimeoutError:
+            _trace("shared_vector_service.embedder.resolve.deferred")
+            return None
+        except Exception as exc:  # pragma: no cover - defensive logging
+            _trace(
+                "shared_vector_service.embedder.resolve.failed",
+                error=str(exc),
+            )
+            return None
         if embedder is None:
             _trace("shared_vector_service.embedder.resolve.failed")
             return None
@@ -726,7 +854,7 @@ class SharedVectorService:
         return embedder
 
     def _encode_text(self, text: str) -> List[float]:
-        embedder = self._ensure_text_embedder()
+        embedder = self._ensure_text_embedder(force=True)
         embedder_available = embedder is not None
         if embedder_available or SentenceTransformer is not None:
             _trace(
