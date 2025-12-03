@@ -78,7 +78,7 @@ try:  # pragma: no cover - optional dependency used for text embeddings
 except Exception:  # pragma: no cover - avoid hard dependency
     SentenceTransformer = None  # type: ignore
 
-from .lazy_bootstrap import ensure_embedding_model
+from .lazy_bootstrap import ensure_embedding_model, ensure_embedding_model_future
 
 
 _BUNDLED_MODEL = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
@@ -138,7 +138,18 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     global _LOCAL_TOKENIZER, _LOCAL_MODEL, _LOCAL_BUNDLE_CHECKSUM
     if AutoTokenizer is None or AutoModel is None or torch is None:
         raise RuntimeError("local embedding model dependencies unavailable")
-    ensure_embedding_model(logger=logger)
+    model_future = ensure_embedding_model_future(
+        logger=logger,
+        warmup=True,
+        warmup_lite=False,
+        warmup_heavy=True,
+        download_timeout=_REMOTE_TIMEOUT,
+    )
+    try:
+        model_future.result(timeout=_REMOTE_TIMEOUT)
+    except FutureTimeout as exc:
+        _trace("local-model.deferred", timeout=_REMOTE_TIMEOUT)
+        raise TimeoutError("local embedding model download deferred") from exc
     bundle_checksum = _compute_bundle_checksum()
     if bundle_checksum != _LOCAL_BUNDLE_CHECKSUM:
         _trace("local-model.bundle-changed")
