@@ -769,6 +769,8 @@ def warmup_vector_service(
         deferred_bootstrap.add("vectorise")
 
     warmup_lite = bool(warmup_lite)
+    missing_budget_deferred: set[str] = set()
+
     budget_hooks_missing = not (budget_remaining_supplied or check_budget_supplied)
     if bootstrap_context and not force_heavy and not warmup_lite:
         warmup_lite = True
@@ -786,6 +788,24 @@ def warmup_vector_service(
                     "budget_callbacks": "missing",
                 },
             )
+        for stage, enabled in (
+            ("model", download_model),
+            ("handlers", hydrate_handlers),
+            ("scheduler", start_scheduler),
+            ("vectorise", bool(run_vectorise)),
+        ):
+            if enabled:
+                missing_budget_deferred.add(stage)
+        if missing_budget_deferred:
+            budget_gate_reason = budget_gate_reason or "deferred-budget-hooks"
+            deferred.update(missing_budget_deferred)
+            background_candidates.update(missing_budget_deferred)
+            download_model = False
+            probe_model = False
+            model_probe_only = False
+            hydrate_handlers = False
+            start_scheduler = False
+            run_vectorise = False
     lite_deferrals: set[str] = set()
     if warmup_lite and not force_heavy:
         lite_deferrals.update({"handlers", "scheduler", "vectorise"})
@@ -1670,6 +1690,14 @@ def warmup_vector_service(
         stage for stage, timeout in stage_budget_ceiling.items() if timeout is not None
     }
 
+    if background_stage_timeouts is None:
+        background_stage_timeouts = {
+            stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+            for stage in base_timeouts
+        }
+        if stage_budget_cap is not None:
+            background_stage_timeouts["budget"] = stage_budget_cap
+
     def _below_conservative_budget(stage: str) -> bool:
         threshold = _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
         ceiling = stage_budget_ceiling.get(stage)
@@ -1705,6 +1733,15 @@ def warmup_vector_service(
     elif run_vectorise and _below_conservative_budget("vectorise"):
         _record_deferred_background("vectorise", "deferred-ceiling")
         run_vectorise = False
+
+    if missing_budget_deferred:
+        summary["budget_hooks"] = "missing"
+        for stage in missing_budget_deferred:
+            _record_proactive_deferral(
+                stage,
+                "deferred-budget-hooks",
+                stage_timeout=stage_budget_ceiling.get(stage),
+            )
 
     def _launch_background_warmup(stages: set[str]) -> None:
         if not stages:
