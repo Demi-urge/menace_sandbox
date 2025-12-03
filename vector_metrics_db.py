@@ -1208,6 +1208,10 @@ def ensure_vector_db_weights(
         env_requested = False
         bootstrap_env = False
 
+    bootstrap_context = bool(
+        bootstrap_fast or resolved_warmup or env_requested or bootstrap_env
+    )
+
     if bootstrap_fast:
         logger.info(
             "vector_metrics_db.bootstrap.fast_weights_skipped",
@@ -1219,19 +1223,30 @@ def ensure_vector_db_weights(
         )
 
     try:
-        vdb = get_shared_vector_metrics_db(
-            bootstrap_fast=bootstrap_fast,
-            warmup=resolved_warmup,
-            ensure_exists=ensure_exists,
-            read_only=read_only,
-        )
-        _apply_pending_weights(vdb)
+        if bootstrap_context:
+            vdb = get_bootstrap_vector_metrics_db(
+                bootstrap_fast=bootstrap_fast,
+                warmup=resolved_warmup,
+                ensure_exists=ensure_exists,
+                read_only=read_only,
+            )
+        else:
+            vdb = get_shared_vector_metrics_db(
+                bootstrap_fast=bootstrap_fast,
+                warmup=resolved_warmup,
+                ensure_exists=ensure_exists,
+                read_only=read_only,
+            )
+
         if isinstance(vdb, _BootstrapVectorMetricsStub):
             logger.info(
                 "vector_metrics_db.bootstrap.weight_seed_deferred",
                 extra={"count": len(names), "warmup": resolved_warmup},
             )
             _increment_deferral_metric("weights")
+            return
+
+        _apply_pending_weights(vdb)
         if resolved_warmup and not bootstrap_fast:
             logger.info(
                 "vector_metrics_db.bootstrap.warmup_weights_cached",
