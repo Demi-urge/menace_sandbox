@@ -112,3 +112,31 @@ def test_shared_stub_promotes_on_first_write(monkeypatch):
     assert calls[1] == "activate_on_first_write"
     activated.log_embedding("default", tokens=1, wall_time_ms=1.0)
     assert any(entry[0] == "log_embedding" for entry in calls if isinstance(entry, tuple))
+
+
+def test_bootstrap_helper_returns_stub_without_sql(monkeypatch):
+    class BoomVectorDB:
+        def __init__(self, *args, **kwargs):  # pragma: no cover - guard
+            raise AssertionError("should not initialise sqlite during bootstrap")
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", BoomVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vector_metrics_db.get_bootstrap_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert vector_metrics_db._VECTOR_DB_INSTANCE is vm
+
+
+def test_ensure_weights_skips_sqlite_when_warmup(monkeypatch):
+    class BoomVectorDB:
+        def __init__(self, *args, **kwargs):  # pragma: no cover - guard
+            raise AssertionError("should not touch sqlite during warmup")
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", BoomVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    vector_metrics_db.ensure_vector_db_weights(["alpha"], warmup=True)
+
+    assert isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, vector_metrics_db._BootstrapVectorMetricsStub)
