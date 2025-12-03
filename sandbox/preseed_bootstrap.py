@@ -2828,6 +2828,7 @@ def start_embedder_warmup(
         presence_cap = 0.0
     bootstrap_context_active = False
     warmup_lite_context = False
+    resume_embedder_download_default = False
     try:
         bootstrap_context_active = bool(
             _current_bootstrap_context()
@@ -3266,6 +3267,9 @@ def initialize_bootstrap_context(
         if full_embedder_preload is not None
         else _env_flag("MENACE_EMBEDDER_FULL_PRELOAD")
     )
+    if bootstrap_lite_mode:
+        resume_embedder_download_default = True
+
     if not full_embedder_preload and not warmup_lite_context:
         LOGGER.info(
             "embedder full preload not requested; enforcing warmup-lite presence path",
@@ -3560,6 +3564,12 @@ def initialize_bootstrap_context(
         guard_budget_guarded = budget_guarded
         presence_default_enforced = False
         full_preload_requested = bool(full_embedder_preload or force_embedder_preload)
+        if bootstrap_lite_mode:
+            presence_only = True
+            budget_guarded = True
+            guard_blocks_preload = True
+            non_blocking_presence_probe = True
+            presence_reason = presence_reason or "embedder_presence_bootstrap_lite"
         if guard_blocks_preload:
             guard_presence_only = True
             guard_budget_guarded = True
@@ -3750,6 +3760,11 @@ def initialize_bootstrap_context(
             non_blocking_probe: bool = False,
             resume_download: bool | None = None,
         ) -> Any:
+            resolved_resume_download = (
+                resume_download
+                if resume_download is not None
+                else resume_embedder_download_default
+            )
             LOGGER.info(
                 "embedder preload guarded; scheduling presence probe",
                 extra={
@@ -3771,7 +3786,7 @@ def initialize_bootstrap_context(
                     "background_gate": background_dispatch_gate,
                     "background_dispatch": True,
                     "strict_timebox": strict_timebox,
-                    "resume_download": resume_download,
+                    "resume_download": resolved_resume_download,
                     "event": "embedder-preload-deferred",
                 },
             )
@@ -3915,7 +3930,7 @@ def initialize_bootstrap_context(
                         "deferral_reason": reason,
                         "strict_timebox": strict_timebox,
                         "background_full_warmup": True,
-                        "resume_embedder_download": bool(resume_download),
+                        "resume_embedder_download": bool(resolved_resume_download),
                     }
                 )
     
@@ -3982,6 +3997,23 @@ def initialize_bootstrap_context(
                         resolved_timeout = embedder_timeout
                         if resolved_timeout is None or resolved_timeout <= 0:
                             resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT
+                        if job_snapshot.get("resume_embedder_download"):
+                            try:
+                                from menace_sandbox.vector_service.lazy_bootstrap import (
+                                    _queue_background_model_download,
+                                )
+
+                                _queue_background_model_download(
+                                    LOGGER,
+                                    download_timeout=background_cap
+                                    if background_cap is not None
+                                    else strict_timebox,
+                                )
+                            except Exception:
+                                LOGGER.debug(
+                                    "failed to enqueue background embedding model download",
+                                    exc_info=True,
+                                )
                         LOGGER.info(
                             "starting deferred embedder preload after readiness",
                             extra={
@@ -4408,6 +4440,22 @@ def initialize_bootstrap_context(
                     resolved_timeout = embedder_timeout
                     if resolved_timeout is None or resolved_timeout <= 0:
                         resolved_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT
+                    if job_snapshot.get("resume_embedder_download"):
+                        try:
+                            from menace_sandbox.vector_service.lazy_bootstrap import (
+                                _queue_background_model_download,
+                            )
+
+                            _queue_background_model_download(
+                                LOGGER,
+                                download_timeout=
+                                    background_cap if background_cap is not None else strict_timebox,
+                            )
+                        except Exception:
+                            LOGGER.debug(
+                                "failed to enqueue background embedding model download",
+                                exc_info=True,
+                            )
                     cap_hints = {
                         "stage_budget": embedder_stage_budget,
                         "stage_budget_hint": embedder_stage_budget_hint,
