@@ -759,16 +759,17 @@ def get_shared_vector_metrics_db(
 ) -> "VectorMetricsDB":
     """Return a lazily initialised shared :class:`VectorMetricsDB` instance."""
 
-    if bootstrap_fast is None or warmup is None:
-        resolved_bootstrap_fast, resolved_warmup, env_requested, _ = (
-            resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast, warmup=warmup)
-        )
-    else:
-        resolved_bootstrap_fast = bool(bootstrap_fast)
-        resolved_warmup = bool(warmup)
-        env_requested = False
+    (
+        resolved_bootstrap_fast,
+        resolved_warmup,
+        env_requested,
+        bootstrap_env,
+    ) = resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast, warmup=warmup)
 
-    bootstrap_requested = bool(resolved_bootstrap_fast or resolved_warmup or env_requested)
+    menace_bootstrap = bool(_menace_bootstrap_active() or bootstrap_env)
+    bootstrap_requested = bool(
+        resolved_bootstrap_fast or resolved_warmup or env_requested or menace_bootstrap
+    )
     timer_context = _bootstrap_timers_active()
     warmup_context = bool(
         bootstrap_requested
@@ -816,6 +817,15 @@ def get_shared_vector_metrics_db(
             _VECTOR_DB_INSTANCE._log_deferred_activation(reason="bootstrap_warmup_summary")
         except Exception:
             logger.debug("vector metrics warmup summary logging failed", exc_info=True)
+        logger.info(
+            "vector_metrics_db.bootstrap.stub_returned",
+            extra={
+                "menace_bootstrap": menace_bootstrap,
+                "bootstrap_requested": bootstrap_requested,
+                "timer_context": timer_context,
+                "warmup_env": _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False),
+            },
+        )
         return _VECTOR_DB_INSTANCE
 
     _apply_pending_weights(_VECTOR_DB_INSTANCE)

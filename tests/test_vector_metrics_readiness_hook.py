@@ -8,8 +8,24 @@ import vector_metrics_db
 def test_get_shared_defaults_to_stub_in_bootstrap(monkeypatch):
     monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
     monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
 
     vm = vector_metrics_db.get_shared_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert vm._activation_kwargs["warmup"] is True
+    assert vm._activation_kwargs["ensure_exists"] is False
+    assert vm._activation_kwargs["read_only"] is True
+
+
+def test_get_shared_stub_in_bootstrap_even_with_explicit_flags(monkeypatch):
+    monkeypatch.setenv("MENACE_BOOTSTRAP_MODE", "1")
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db(
+        bootstrap_fast=False, warmup=False, ensure_exists=True, read_only=False
+    )
 
     assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
     assert vm._activation_kwargs["warmup"] is True
