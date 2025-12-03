@@ -981,6 +981,25 @@ def resolve_vector_bootstrap_flags(
     return resolved_bootstrap_fast, resolved_warmup, env_requested, env["bootstrap_env"]
 
 
+def _queue_promotion_for_stub(
+    instance: "_BootstrapVectorMetricsStub | None",
+    *,
+    ensure_exists: bool | None,
+    read_only: bool | None,
+) -> None:
+    """Record promotion flags on the stub so they are applied post-warmup."""
+
+    if instance is None:
+        return
+    queued_updates: dict[str, Any] = {}
+    if ensure_exists is not None:
+        queued_updates["ensure_exists"] = ensure_exists
+    if read_only is not None:
+        queued_updates["read_only"] = read_only
+    if queued_updates:
+        instance.configure_activation(**queued_updates)
+
+
 def get_shared_vector_metrics_db(
     *,
     bootstrap_fast: bool | None = None,
@@ -1023,6 +1042,7 @@ def get_shared_vector_metrics_db(
     promotion_requested = bool((ensure_exists is True) or (read_only is False))
     requested_ensure_exists = ensure_exists
     requested_read_only = read_only
+    queued_promotion_kwargs: dict[str, Any] = {}
     if warmup_context:
         if promotion_requested:
             logger.info(
@@ -1036,6 +1056,10 @@ def get_shared_vector_metrics_db(
                 },
             )
             _increment_deferral_metric("promotion")
+            if requested_ensure_exists is not None:
+                queued_promotion_kwargs["ensure_exists"] = requested_ensure_exists
+            if requested_read_only is not None:
+                queued_promotion_kwargs["read_only"] = requested_read_only
         resolved_warmup = True
         ensure_exists = False
         read_only = True
@@ -1051,6 +1075,11 @@ def get_shared_vector_metrics_db(
                     warmup=resolved_warmup,
                     ensure_exists=ensure_exists,
                     read_only=bool(read_only) if read_only is not None else False,
+                )
+                _queue_promotion_for_stub(
+                    _VECTOR_DB_INSTANCE,
+                    ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
+                    read_only=queued_promotion_kwargs.get("read_only"),
                 )
                 _VECTOR_DB_INSTANCE.activate_on_first_write()
                 _VECTOR_DB_INSTANCE.configure_activation(
@@ -1082,6 +1111,11 @@ def get_shared_vector_metrics_db(
                     read_only=bool(read_only) if read_only is not None else False,
                 )
         elif isinstance(_VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub):
+            _queue_promotion_for_stub(
+                _VECTOR_DB_INSTANCE,
+                ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
+                read_only=queued_promotion_kwargs.get("read_only"),
+            )
             _VECTOR_DB_INSTANCE.configure_activation(
                 bootstrap_fast=resolved_bootstrap_fast,
                 warmup=resolved_warmup,
