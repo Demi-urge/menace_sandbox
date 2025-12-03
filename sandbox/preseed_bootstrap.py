@@ -3304,6 +3304,9 @@ def initialize_bootstrap_context(
     vector_force_warmup = force_vector_warmup or force_embedder_preload
     vector_bootstrap_hint = False
     vector_warmup_requested = False
+    vector_budget_guarded = False
+    vector_budget_guard_reason: str | None = None
+    vector_background_cap: float | None = None
     if heavy_bootstrap or vector_force_warmup:
         if warmup_lite_context:
             LOGGER.info(
@@ -3461,6 +3464,41 @@ def initialize_bootstrap_context(
     embedder_stage_deadline_hint = stage_controller.stage_deadline(
         step_name="embedder_preload"
     )
+    vector_stage_deadline_remaining = (
+        max(0.0, embedder_stage_deadline_hint - time.monotonic())
+        if embedder_stage_deadline_hint is not None
+        and math.isfinite(embedder_stage_deadline_hint)
+        else None
+    )
+    vector_stage_budget_window = [
+        candidate
+        for candidate in (
+            embedder_stage_budget_hint,
+            vector_stage_deadline_remaining,
+            deadline_remaining,
+        )
+        if candidate is not None and candidate >= 0
+    ]
+    vector_budget_window = min(vector_stage_budget_window) if vector_stage_budget_window else None
+    if vector_budget_window is not None and vector_budget_window < 300.0:
+        vector_warmup_requested = False
+        vector_bootstrap_hint = False
+        vector_budget_guarded = True
+        vector_budget_guard_reason = "vector_stage_budget_guard"
+        vector_background_cap = vector_budget_window
+        LOGGER.info(
+            "vector warmup guarded by stage budget/deadline; deferring heavy hints",
+            extra={
+                "event": "vector-stage-budget-guard",
+                "stage_budget": embedder_stage_budget_hint,
+                "stage_deadline": embedder_stage_deadline_hint,
+                "deadline_remaining": deadline_remaining,
+                "budget_window": vector_budget_window,
+            },
+        )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+            reason=vector_budget_guard_reason
+        )
     embedder_warmup_lite_budget_guard = bool(
         embedder_stage_budget_hint is not None
         and math.isfinite(embedder_stage_budget_hint)
@@ -3613,6 +3651,40 @@ def initialize_bootstrap_context(
             budget_guarded = True
             guard_blocks_preload = True
             presence_reason = presence_reason or "embedder_budget_unavailable"
+
+        if vector_budget_guarded:
+            presence_only = True
+            budget_guarded = True
+            guard_blocks_preload = True
+            presence_reason = presence_reason or vector_budget_guard_reason
+
+            guard_reason = vector_budget_guard_reason or "vector_stage_budget_guard"
+            stage_controller.defer_step("embedder_preload", reason=guard_reason)
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vectorizer_preload", reason=guard_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops", reason=f"embedder_placeholder:{guard_reason}"
+            )
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=guard_reason)
+            _set_component_state("vector_seeding", "deferred")
+            job_snapshot = _schedule_background_preload(
+                guard_reason, strict_timebox=vector_background_cap
+            )
+            job_snapshot.update(
+                {
+                    "presence_available": False,
+                    "presence_probe_timeout": False,
+                    "budget_guarded": True,
+                    "presence_only": True,
+                    "budget_window_missing": budget_window_missing,
+                    "forced_background": True,
+                    "deferral_reason": guard_reason,
+                }
+            )
+            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+            stage_controller.complete_step("embedder_preload", 0.0)
+            return job_snapshot.get("result", _BOOTSTRAP_PLACEHOLDER)
         guard_presence_only = presence_only
         guard_presence_reason = presence_reason
         guard_budget_guarded = budget_guarded
@@ -4899,9 +4971,9 @@ def initialize_bootstrap_context(
 
             return combined_stop_event
 
-    def _guarded_embedder_warmup(
-        *, join_timeout: float | None, join_cap: float | None
-    ) -> tuple[Any, str | None]:
+        def _guarded_embedder_warmup(
+            *, join_timeout: float | None, join_cap: float | None
+        ) -> tuple[Any, str | None]:
             combined_stop_event = _build_guarded_stop_event()
             warmup_result: dict[str, Any] = {}
             warmup_exc: list[BaseException] = []
