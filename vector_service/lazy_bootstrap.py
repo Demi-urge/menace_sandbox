@@ -3021,6 +3021,30 @@ def warmup_vector_service(
         ):
             return _finalise()
         remaining_hint = _remaining_budget()
+        if (
+            hydrate_handlers
+            and handler_timeout is not None
+            and remaining_hint is not None
+            and remaining_hint < handler_timeout
+        ):
+            _defer_handler_chain(
+                "deferred-budget",
+                stage_timeout=handler_timeout,
+                vectorise_timeout=vectorise_timeout,
+            )
+            _record_cancelled("handlers", "budget")
+            log.info(
+                "Vector warmup handler hydration deferred; remaining budget %.2fs below cap %.2fs",
+                remaining_hint,
+                handler_timeout,
+                extra={
+                    "event": "vector-warmup-budget-remaining",
+                    "stage": "handlers",
+                    "remaining": remaining_hint,
+                    "cap": handler_timeout,
+                },
+            )
+            return _finalise()
         if hydrate_handlers and remaining_hint is not None and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET:
             _defer_handler_chain(
                 "deferred-budget",
@@ -3281,6 +3305,26 @@ def warmup_vector_service(
         ):
             return _finalise()
         remaining_hint = _remaining_budget()
+        if (
+            should_vectorise
+            and vectorise_timeout is not None
+            and remaining_hint is not None
+            and remaining_hint < vectorise_timeout
+        ):
+            _record_deferred_background("vectorise", "deferred-budget", stage_timeout=vectorise_timeout)
+            _record_cancelled("vectorise", "budget")
+            log.info(
+                "Vectorise warmup deferred; remaining budget %.2fs below cap %.2fs",
+                remaining_hint,
+                vectorise_timeout,
+                extra={
+                    "event": "vector-warmup-budget-remaining",
+                    "stage": "vectorise",
+                    "remaining": remaining_hint,
+                    "cap": vectorise_timeout,
+                },
+            )
+            return _finalise()
         if should_vectorise and remaining_hint is not None and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET:
             _record_deferred_background("vectorise", "deferred-budget")
             _record_cancelled("vectorise", "budget")

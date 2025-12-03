@@ -2288,7 +2288,13 @@ class EnvironmentBootstrapper:
                     "Applying fallback vector warmup budget: %.1fs", fallback_warmup_budget
                 )
             warmup_budget = fallback_warmup_budget
-            phase_remaining = phase_budget.remaining if phase_budget is not None else None
+            def _phase_remaining_budget() -> float | None:
+                try:
+                    return phase_budget.remaining if phase_budget is not None else None
+                except Exception:
+                    return None
+
+            phase_remaining = _phase_remaining_budget()
             if warmup_budget is not None and phase_remaining is not None:
                 warmup_budget = min(warmup_budget, phase_remaining)
             base_stage_cost = {"model": 20.0, "handlers": 25.0, "vectorise": 8.0}
@@ -2308,6 +2314,29 @@ class EnvironmentBootstrapper:
                     return float(value) if value is not None else None
                 except (TypeError, ValueError):
                     return None
+
+            def _cap_timeouts(
+                hints: Mapping[str, float | None] | None,
+            ) -> dict[str, float | None] | None:
+                if hints is None:
+                    return None
+                capped = dict(hints)
+                phase_remaining_hint = _phase_remaining_budget()
+                if phase_remaining_hint is not None:
+                    budget_cap = capped.get("budget")
+                    if budget_cap is None or phase_remaining_hint < budget_cap:
+                        capped["budget"] = phase_remaining_hint
+                    for name, value in list(capped.items()):
+                        if name == "budget":
+                            continue
+                        try:
+                            numeric = float(value) if value is not None else None
+                        except (TypeError, ValueError):
+                            continue
+                        if numeric is None:
+                            continue
+                        capped[name] = min(numeric, phase_remaining_hint)
+                return capped
 
             def _build_stage_timeouts() -> dict[str, float]:
                 timeouts: dict[str, float] = {}
@@ -2336,6 +2365,7 @@ class EnvironmentBootstrapper:
                     stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
                 except Exception:
                     stage_timeouts = {"model": 9.0, "handlers": 9.0, "vectorise": 4.5}
+            stage_timeouts = _cap_timeouts(stage_timeouts)
             shared_vector_budget = None
             shared_vector_remaining = None
             shared_snapshot = None
@@ -2438,9 +2468,9 @@ class EnvironmentBootstrapper:
             budget_ceiling = None
             if isinstance(stage_timeouts, Mapping):
                 budget_ceiling = _coerce_timeout(stage_timeouts.get("budget"))
-            if budget_ceiling is None:
-                budget_ceiling = warmup_budget if warmup_budget is not None else phase_remaining
-            preflight_skipped: set[str] = set()
+                if budget_ceiling is None:
+                    budget_ceiling = warmup_budget if warmup_budget is not None else phase_remaining
+                preflight_skipped: set[str] = set()
             for _stage, enabled in (
                 ("handlers", warmup_handlers),
                 ("vectorise", run_vectorise),
@@ -2723,8 +2753,9 @@ class EnvironmentBootstrapper:
             ) -> set[str]:
                 nonlocal background_status, pending_background_stages, background_stage_timeouts
                 if budget_hints:
+                    capped_hints = _cap_timeouts(budget_hints) or {}
                     merged = dict(background_stage_timeouts or {})
-                    merged.update({k: v for k, v in budget_hints.items()})
+                    merged.update({k: v for k, v in capped_hints.items()})
                     background_stage_timeouts = merged
 
                 heavy_opt_in = bool(
@@ -2768,12 +2799,12 @@ class EnvironmentBootstrapper:
                     background_status = background_status or "pending"
                 return set(heavy_to_schedule)
 
-                def _background_resume_hook(
-                    stages: set[str], budget_hints: Mapping[str, float | None] | None = None
-                ) -> set[str]:
-                    deferred_stages.update(stages)
-                    warmup_background.update(stages)
-                    return _schedule_heavy_background(stages, budget_hints)
+            def _background_resume_hook(
+                stages: set[str], budget_hints: Mapping[str, float | None] | None = None
+            ) -> set[str]:
+                deferred_stages.update(stages)
+                warmup_background.update(stages)
+                return _schedule_heavy_background(stages, _cap_timeouts(budget_hints))
                 if preflight_skipped:
                     _background_resume_hook(
                         preflight_skipped,
@@ -2863,11 +2894,13 @@ class EnvironmentBootstrapper:
 
                         if timeout_hints is None:
                             timeout_hints = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+                        timeout_hints = _cap_timeouts(timeout_hints) or timeout_hints
                         background_stage_timeouts = timeout_hints
 
                         effective_stage_timeouts = timeout_hints
                         bg_summary = warmup_vector_service(
                             logger=self.logger,
+                            budget_remaining=_phase_remaining_budget,
                             download_model=heavy_model_requested,
                             probe_model=warmup_probe,
                             hydrate_handlers=heavy_handlers_requested,
@@ -2972,10 +3005,7 @@ class EnvironmentBootstrapper:
                 summary: Mapping[str, str] | None = None
 
                 def _vector_budget_remaining() -> float | None:
-                    try:
-                        return phase_budget.remaining if phase_budget is not None else None
-                    except Exception:
-                        return None
+                    return _phase_remaining_budget()
 
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
