@@ -48,6 +48,7 @@ class PatchVectorizer(EmbeddableDBMixin):
                 "VECTOR_SERVICE_LAZY_BOOTSTRAP",
             )
         )
+        self._warmup_context = warmup_context
         if bootstrap_fast is None:
             bootstrap_fast = warmup_context
         logger.debug(
@@ -62,44 +63,114 @@ class PatchVectorizer(EmbeddableDBMixin):
         )
         self.bootstrap_fast = bool(bootstrap_fast)
         self._index_load_deferred = bool(self.bootstrap_fast or warmup_context)
-        if self.bootstrap_fast:
-            fast_db_path = Path(path) if path is not None else Path(self.DB_FILE)
-            index_fallback = Path(index_path) if index_path is not None else fast_db_path.with_suffix(
-                ".patch.index"
-            )
-            metadata_fallback = index_fallback.with_suffix(".json")
-            stub_conn = SimpleNamespace(execute=lambda *_a, **_k: SimpleNamespace(fetchall=lambda: []))
-            stub_router = SimpleNamespace(get_connection=lambda *_a, **_k: stub_conn)
-            self.db = SimpleNamespace(
-                path=fast_db_path,
-                router=stub_router,
-                get=lambda *_a, **_k: None,
-                _vec_db_enabled=False,
-            )
-            self.conn = stub_router.get_connection("patch_history")
-            self.index_path = index_fallback
-            self.metadata_path = metadata_fallback
-            self.model_name = "sentence-transformers/all-MiniLM-L6-v2"
-            self.embedding_version = embedding_version
-            self.backend = backend
-            self._model = None
-            self._index = None
-            self._vector_dim = 0
-            self._id_map = []
-            self._metadata = {}
-            self._last_embedding_tokens = 0
-            self._last_embedding_time = 0.0
-            self._last_chunk_meta: Dict[str, Any] = {}
-            self.encode_text = lambda _text: []  # type: ignore[assignment]
-            logger.info(
-                "patch_vectorizer.bootstrap_fast.stubbed",
-                extra={
-                    "db_path": str(fast_db_path),
-                    "index_path": str(index_fallback),
-                    "metadata_path": str(metadata_fallback),
-                },
-            )
+        self._bootstrap_warmup = bool(self.bootstrap_fast or warmup_context)
+        self._init_start = init_start
+        self._deferred_init: Dict[str, Any] = {
+            "path": path,
+            "index_path": index_path,
+            "backend": backend,
+            "embedding_version": embedding_version,
+        }
+        if self._bootstrap_warmup:
+            self._prepare_warmup_stub(path, index_path, backend, embedding_version)
             return
+        self._initialise_full(
+            path=path,
+            index_path=index_path,
+            backend=backend,
+            embedding_version=embedding_version,
+            bootstrap_fast=self.bootstrap_fast,
+            init_start=init_start,
+        )
+
+    # ------------------------------------------------------------------
+    def _prepare_warmup_stub(
+        self,
+        path: str | Path | None,
+        index_path: str | Path | None,
+        backend: str,
+        embedding_version: int,
+    ) -> None:
+        """Initialise a lightweight placeholder during bootstrap warmup."""
+
+        fast_db_path = Path(path) if path is not None else Path(self.DB_FILE)
+        index_fallback = Path(index_path) if index_path is not None else fast_db_path.with_suffix(
+            ".patch.index"
+        )
+        metadata_fallback = index_fallback.with_suffix(".json")
+        stub_conn = SimpleNamespace(execute=lambda *_a, **_k: SimpleNamespace(fetchall=lambda: []))
+        stub_router = SimpleNamespace(get_connection=lambda *_a, **_k: stub_conn)
+        self.db = SimpleNamespace(
+            path=fast_db_path,
+            router=stub_router,
+            get=lambda *_a, **_k: None,
+            _vec_db_enabled=False,
+        )
+        self.conn = stub_router.get_connection("patch_history")
+        self.index_path = index_fallback
+        self.metadata_path = metadata_fallback
+        self.model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        self.embedding_version = embedding_version
+        self.backend = backend
+        self._model = None
+        self._index = None
+        self._vector_dim = 0
+        self._id_map = []
+        self._metadata = {}
+        self._last_embedding_tokens = 0
+        self._last_embedding_time = 0.0
+        self._last_chunk_meta: Dict[str, Any] = {}
+        logger.info(
+            "patch_vectorizer.bootstrap_fast.stubbed",
+            extra={
+                "db_path": str(fast_db_path),
+                "index_path": str(index_fallback),
+                "metadata_path": str(metadata_fallback),
+                "warmup_context": self._warmup_context,
+            },
+        )
+
+    def _activate_full_initialisation(self) -> None:
+        """Transition from warmup placeholders to the real backing stores."""
+
+        if not self._bootstrap_warmup:
+            return
+
+        activation_start = time.perf_counter()
+        deferred = dict(self._deferred_init)
+        logger.info(
+            "patch_vectorizer.bootstrap_fast.activate",
+            extra={
+                "db_path": str(deferred.get("path") or self.DB_FILE),
+                "index_path": str(deferred.get("index_path") or ""),
+                "warmup_context": self._warmup_context,
+            },
+        )
+        self._bootstrap_warmup = False
+        self.bootstrap_fast = False
+        self._initialise_full(
+            path=deferred.get("path"),
+            index_path=deferred.get("index_path"),
+            backend=deferred.get("backend", "annoy"),
+            embedding_version=int(deferred.get("embedding_version", 1)),
+            bootstrap_fast=False,
+            init_start=activation_start,
+        )
+
+    def _ensure_bootstrap_ready(self) -> None:
+        if self._bootstrap_warmup:
+            self._activate_full_initialisation()
+
+    def _initialise_full(
+        self,
+        *,
+        path: str | Path | None,
+        index_path: str | Path | None,
+        backend: str,
+        embedding_version: int,
+        bootstrap_fast: bool,
+        init_start: float,
+    ) -> None:
         db_path: Path | str | None
         if path is not None:
             path_resolve_start = time.perf_counter()
@@ -222,6 +293,7 @@ class PatchVectorizer(EmbeddableDBMixin):
     vector = transform
 
     def iter_records(self) -> Iterator[Tuple[int, Dict[str, Any], str]]:
+        self._ensure_bootstrap_ready()
         cur = self.conn.execute("SELECT id FROM patch_history")
         for (pid,) in cur.fetchall():
             rec = self.db.get(pid)
@@ -234,6 +306,8 @@ class PatchVectorizer(EmbeddableDBMixin):
             }, "patch"
 
     def _ensure_index_loaded(self) -> None:
+        if self._bootstrap_warmup:
+            self._activate_full_initialisation()
         if self._index_loaded:
             return
         start = time.perf_counter()
