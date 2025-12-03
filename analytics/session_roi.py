@@ -13,10 +13,40 @@ import argparse
 import json
 from typing import Dict, Iterable, Union
 
-from vector_metrics_db import VectorMetricsDB
+from vector_metrics_db import (
+    VectorMetricsDB,
+    default_vector_metrics_path,
+    get_bootstrap_shared_vector_metrics_db,
+    get_shared_vector_metrics_db,
+    resolve_vector_bootstrap_flags,
+)
 
 
 # ---------------------------------------------------------------------------
+
+def _resolve_metrics_db(db: Union[VectorMetricsDB, str, Path]) -> VectorMetricsDB | None:
+    """Return a shared metrics DB suitable for read-only bootstrap flows."""
+
+    if isinstance(db, VectorMetricsDB):
+        return db
+
+    helper = get_bootstrap_shared_vector_metrics_db or get_shared_vector_metrics_db
+    (bootstrap_fast, warmup_mode, *_env_flags) = resolve_vector_bootstrap_flags()
+    target_path = Path(db)
+    default_path = default_vector_metrics_path(
+        ensure_exists=False,
+        bootstrap_read_only=True,
+        read_only=True,
+    )
+
+    if helper and target_path.resolve() == default_path.resolve():
+        vmdb = helper(read_only=True, warmup=bool(warmup_mode or bootstrap_fast))
+        if getattr(vmdb, "_boot_stub_active", False):
+            return None
+        return vmdb
+
+    return VectorMetricsDB(target_path, read_only=True)
+
 
 def per_origin_stats(db: Union[VectorMetricsDB, str, Path]) -> Dict[str, Dict[str, float]]:
     """Return success rates and ROI deltas grouped by origin.
@@ -26,8 +56,9 @@ def per_origin_stats(db: Union[VectorMetricsDB, str, Path]) -> Dict[str, Dict[st
     considered.
     """
 
-    if not isinstance(db, VectorMetricsDB):
-        db = VectorMetricsDB(db)
+    db = _resolve_metrics_db(db)
+    if db is None:
+        return {}
 
     cur = db.conn.execute(
         """
@@ -59,8 +90,9 @@ def origin_roi(
     path to the metrics database.
     """
 
-    if not isinstance(db, VectorMetricsDB):
-        db = VectorMetricsDB(db)
+    db = _resolve_metrics_db(db)
+    if db is None:
+        return {k: {} for k in kinds}
 
     cur = db.conn.execute(
         """
