@@ -47,6 +47,7 @@ _CONSERVATIVE_STAGE_TIMEOUTS = {
 
 _BOOTSTRAP_STAGE_TIMEOUT = 3.0
 _HEAVY_STAGE_CEILING = 30.0
+_BACKGROUND_QUEUE_FLAG = "queued"
 
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
     _metrics,
@@ -187,7 +188,7 @@ def _note_model_background(state: str, logger: logging.Logger, *, emit_metric: b
 def _queue_background_model_download(
     logger: logging.Logger, *, download_timeout: float | None = None
 ) -> None:
-    global _MODEL_BACKGROUND_THREAD
+    global _MODEL_BACKGROUND_THREAD, _MODEL_READY
 
     with _MODEL_BACKGROUND_LOCK:
         if _MODEL_READY:
@@ -707,6 +708,11 @@ def warmup_vector_service(
             if priority.get(current_status, 0) >= priority.get(status, 0):
                 return
         summary[stage] = status
+        if stage in {"handlers", "vectorise"}:
+            if status.startswith("deferred"):
+                summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+            elif status.startswith("skipped"):
+                summary[f"{stage}_skipped"] = status
         if status.startswith("deferred"):
             recorded_deferred.add(stage)
         memoised_results[stage] = status
@@ -732,6 +738,7 @@ def warmup_vector_service(
 
     def _record_background(stage: str, status: str) -> None:
         _record(stage, status)
+        summary[f"{stage}_background"] = status
         if stage == "model" and status.startswith("deferred"):
             _queue_background_model_download(
                 log, download_timeout=_effective_timeout(stage)
@@ -1555,6 +1562,10 @@ def warmup_vector_service(
                 timeout_candidates.append(stage_timeout)
             elif fallback_budget is not None:
                 timeout_candidates.append(fallback_budget)
+            elif stage_hard_cap is not None:
+                timeout_candidates.append(stage_hard_cap)
+            else:
+                timeout_candidates.append(_HEAVY_STAGE_CEILING)
             timeout_candidates = [t for t in timeout_candidates if t is not None]
             timeout = min(timeout_candidates) if timeout_candidates else None
             effective_timeouts[stage] = timeout
