@@ -91,6 +91,8 @@ _BUNDLED_MODEL_CACHE_ROOT = Path(tempfile.gettempdir()) / "vector_service" / "mi
 _LOCAL_TOKENIZER: AutoTokenizer | None = None
 _LOCAL_MODEL: AutoModel | None = None
 _LOCAL_BUNDLE_CHECKSUM: str | None = None
+_LOCAL_MODEL_PREP_FUTURE: Future | None = None
+_LOCAL_MODEL_PREP_LOCK = threading.Lock()
 
 
 logger = logging.getLogger(__name__)
@@ -154,8 +156,15 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
         warmup_heavy=True,
         download_timeout=_REMOTE_TIMEOUT,
     )
+    prep_future = _get_local_model_prep_future(model_future)
+    warmup_thread = _is_warmup_thread()
+    if warmup_thread and not prep_future.done():
+        deferred = TimeoutError("local embedding model download deferred")
+        setattr(deferred, "_deferred_status", _BACKGROUND_QUEUE_FLAG)
+        setattr(deferred, "_deferred_timeout", wait_timeout)
+        raise deferred
     try:
-        model_future.result(timeout=wait_timeout)
+        cache_dir = prep_future.result(timeout=wait_timeout)
     except FutureTimeout as exc:
         _trace(
             "local-model.deferred",
@@ -166,19 +175,61 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
         setattr(deferred, "_deferred_status", _BACKGROUND_QUEUE_FLAG)
         setattr(deferred, "_deferred_timeout", wait_timeout)
         raise deferred from exc
-    bundle_checksum = _compute_bundle_checksum()
-    if bundle_checksum != _LOCAL_BUNDLE_CHECKSUM:
-        _trace("local-model.bundle-changed")
-        _LOCAL_TOKENIZER = None
-        _LOCAL_MODEL = None
-        _LOCAL_BUNDLE_CHECKSUM = bundle_checksum
-        _cleanup_stale_bundle_caches(bundle_checksum)
+    except TimeoutError as exc:
+        if getattr(exc, "_deferred_status", None) == _BACKGROUND_QUEUE_FLAG:
+            raise
+        raise
     if _LOCAL_TOKENIZER is None or _LOCAL_MODEL is None:
-        cache_dir = _ensure_cached_model(bundle_checksum)
         _LOCAL_TOKENIZER = AutoTokenizer.from_pretrained(cache_dir)
         _LOCAL_MODEL = AutoModel.from_pretrained(cache_dir)
         _LOCAL_MODEL.eval()
     return _LOCAL_TOKENIZER, _LOCAL_MODEL
+
+
+def _is_warmup_thread() -> bool:
+    name = threading.current_thread().name.lower()
+    return "warmup" in name or "bootstrap" in name
+
+
+def _get_local_model_prep_future(model_future: Future) -> Future:
+    global _LOCAL_MODEL_PREP_FUTURE, _LOCAL_BUNDLE_CHECKSUM, _LOCAL_TOKENIZER, _LOCAL_MODEL
+    with _LOCAL_MODEL_PREP_LOCK:
+        if _LOCAL_MODEL_PREP_FUTURE is not None and not _LOCAL_MODEL_PREP_FUTURE.cancelled():
+            if _LOCAL_MODEL_PREP_FUTURE.done() and _LOCAL_MODEL_PREP_FUTURE.exception() is not None:
+                _LOCAL_MODEL_PREP_FUTURE = None
+            else:
+                return _LOCAL_MODEL_PREP_FUTURE
+
+        prep_future: Future = Future()
+
+        def _prepare() -> None:
+            try:
+                result = model_future.result()
+                bundle_path = result[0] if isinstance(result, tuple) else result
+                if bundle_path is None:
+                    deferred = TimeoutError("local embedding model download deferred")
+                    setattr(deferred, "_deferred_status", _BACKGROUND_QUEUE_FLAG)
+                    setattr(deferred, "_deferred_timeout", None)
+                    raise deferred
+                bundle_checksum = _compute_bundle_checksum()
+                if bundle_checksum != _LOCAL_BUNDLE_CHECKSUM:
+                    _trace("local-model.bundle-changed")
+                    _LOCAL_TOKENIZER = None
+                    _LOCAL_MODEL = None
+                    _LOCAL_BUNDLE_CHECKSUM = bundle_checksum
+                    _cleanup_stale_bundle_caches(bundle_checksum)
+                cache_dir = _ensure_cached_model(bundle_checksum)
+            except Exception as exc:  # pragma: no cover - background preparation
+                prep_future.set_exception(exc)
+            else:
+                prep_future.set_result(cache_dir)
+
+        thread = threading.Thread(
+            target=_prepare, name="local-embedder-cache", daemon=True
+        )
+        thread.start()
+        _LOCAL_MODEL_PREP_FUTURE = prep_future
+        return prep_future
 
 
 def _compute_bundle_checksum() -> str:
@@ -877,6 +928,9 @@ class SharedVectorService:
             _trace("shared_vector_service.embedder.resolve.deferred")
             return None
         except Exception as exc:  # pragma: no cover - defensive logging
+            if getattr(exc, "_deferred_status", None) == _BACKGROUND_QUEUE_FLAG:
+                _trace("shared_vector_service.embedder.resolve.deferred")
+                return None
             _trace(
                 "shared_vector_service.embedder.resolve.failed",
                 error=str(exc),
