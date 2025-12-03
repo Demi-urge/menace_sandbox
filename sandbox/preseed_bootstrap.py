@@ -3627,7 +3627,7 @@ def initialize_bootstrap_context(
     is available or heavy vector work is expected.
     """
 
-    global _BOOTSTRAP_CACHE
+    global _BOOTSTRAP_CACHE, _BOOTSTRAP_EMBEDDER_JOB
 
     def _env_flag(name: str) -> bool:
         return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -3711,6 +3711,7 @@ def initialize_bootstrap_context(
     vector_budget_guarded = False
     vector_budget_guard_reason: str | None = None
     vector_background_cap: float | None = None
+    vector_heavy = False
     if heavy_bootstrap or vector_force_warmup:
         if warmup_lite_context:
             LOGGER.info(
@@ -3735,6 +3736,7 @@ def initialize_bootstrap_context(
         else:
             vector_bootstrap_hint = True
             vector_warmup_requested = True
+            vector_heavy = True
     vector_env_snapshot: dict[str, str | float] = {}
     LOGGER.info(
         "initialize_bootstrap_context heavy mode=%s", heavy_bootstrap,
@@ -3868,6 +3870,12 @@ def initialize_bootstrap_context(
     embedder_stage_deadline_hint = stage_controller.stage_deadline(
         step_name="embedder_preload"
     )
+    embedder_stage_deadline_hint_remaining = (
+        max(0.0, embedder_stage_deadline_hint - time.monotonic())
+        if embedder_stage_deadline_hint is not None
+        and math.isfinite(embedder_stage_deadline_hint)
+        else None
+    )
     vector_stage_deadline_remaining = (
         max(0.0, embedder_stage_deadline_hint - time.monotonic())
         if embedder_stage_deadline_hint is not None
@@ -3943,6 +3951,46 @@ def initialize_bootstrap_context(
     embedder_preload_skip_reason = None
     embedder_preload_deferred = False
 
+    def _record_embedder_skip(reason: str) -> None:
+        nonlocal embedder_preload_enabled, embedder_preload_skip_reason, embedder_preload_deferred
+        global _BOOTSTRAP_EMBEDDER_JOB
+        embedder_preload_enabled = False
+        embedder_preload_skip_reason = reason
+        embedder_preload_deferred = True
+        stage_controller.defer_step("embedder_preload", reason=reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{reason}"
+        )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
+        warmup_summary = {
+            "deferred": True,
+            "deferred_reason": reason,
+            "deferral_reason": reason,
+            "stage": "skipped-preload",
+        }
+        _BOOTSTRAP_EMBEDDER_JOB = {
+            "placeholder": _BOOTSTRAP_PLACEHOLDER,
+            "placeholder_reason": reason,
+            "warmup_placeholder_reason": reason,
+            "deferral_reason": reason,
+            "background_enqueue_reason": reason,
+            "result": _BOOTSTRAP_PLACEHOLDER,
+            "warmup_summary": warmup_summary,
+        }
+
+    positive_stage_timebox = any(
+        candidate is not None and candidate > 0
+        for candidate in (embedder_stage_budget_hint, embedder_stage_deadline_hint_remaining)
+    )
+    full_preload_requested = full_embedder_preload or force_embedder_preload
+    if full_preload_requested and not positive_stage_timebox:
+        _record_embedder_skip("embedder_full_preload_budget_required")
+    elif not positive_stage_timebox:
+        _record_embedder_skip("embedder_preload_no_budget_window")
+    elif warmup_lite_context and not full_embedder_preload:
+        _record_embedder_skip("embedder_warmup_lite_forced")
+
     def _task_embedder(_: dict[str, Any]) -> None:
         global _BOOTSTRAP_EMBEDDER_JOB
         nonlocal warmup_lite_context
@@ -3952,9 +4000,14 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_SCHEDULER, "_embedder_background_future", None
         )
         if existing_background is not None:
-            resume_reason = existing_job_snapshot.get("deferral_reason") or existing_job_snapshot.get(
-                "background_enqueue_reason", "embedder_background_resume"
+            resume_reason = (
+                existing_job_snapshot.get("deferral_reason")
+                or existing_job_snapshot.get("background_enqueue_reason")
+                or getattr(_BOOTSTRAP_SCHEDULER, "_embedder_background_reason", None)
+                or "embedder_background_resume"
             )
+            existing_job_snapshot.setdefault("deferral_reason", resume_reason)
+            _BOOTSTRAP_EMBEDDER_JOB = existing_job_snapshot
             LOGGER.info(
                 "embedder preload resuming from background state",
                 extra={
