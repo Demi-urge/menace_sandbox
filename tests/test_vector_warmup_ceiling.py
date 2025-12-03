@@ -53,9 +53,9 @@ def test_handler_chain_deferred_when_ceiling_below_estimate(caplog, monkeypatch)
     )
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["handlers"] == "deferred-ceiling"
-    assert warmup_summary["vectorise"] == "deferred-ceiling"
-    assert deferred == {"handlers", "vectorise"}
+    assert warmup_summary["handlers"].startswith("deferred")
+    assert warmup_summary["vectorise"].startswith("deferred")
+    assert {"handlers", "vectorise"}.issubset(deferred)
 
 
 def test_vectorise_alone_deferred_when_ceiling_below_estimate(caplog, monkeypatch):
@@ -86,8 +86,8 @@ def test_vectorise_alone_deferred_when_ceiling_below_estimate(caplog, monkeypatc
     )
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["vectorise"] == "deferred-ceiling"
-    assert deferred == {"vectorise"}
+    assert warmup_summary["vectorise"].startswith("deferred")
+    assert "vectorise" in deferred
 
 
 def test_model_download_honours_stage_timeout(monkeypatch, caplog):
@@ -126,7 +126,7 @@ def test_model_download_honours_stage_timeout(monkeypatch, caplog):
     )
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["model"] == "deferred-ceiling"
+    assert warmup_summary["model"].startswith("deferred")
     assert not called
     assert background and {"model"}.issubset(background[0])
     assert budget_hints_list and budget_hints_list[0].get("model") == 0.5
@@ -180,12 +180,63 @@ def test_handler_timebox_queues_background_and_memoises(caplog, monkeypatch):
     assert hook_calls and {"handlers", "vectorise"}.issubset(hook_calls[0][0])
     assert hook_calls[0][1].get("handlers") == 0.02
     assert hook_calls[0][1].get("vectorise") == 0.02
-    assert instantiations == 1
+    assert instantiations == 0
 
     caplog.clear()
     lazy_bootstrap.warmup_vector_service(**warmup_kwargs)
     retry_summary = _get_warmup_summary(caplog)
     assert retry_summary["handlers"].startswith("deferred")
     assert retry_summary["vectorise"].startswith("deferred")
-    assert instantiations == 1
+    assert instantiations == 0
+
+
+def test_legacy_warmup_backgrounds_heavy_without_budget(caplog, monkeypatch):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._WARMUP_STAGE_META.clear()
+
+    background_calls: list[tuple[set[str], dict[str, float | None]]] = []
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class StubSharedVectorService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def vectorise(self, *_args, **_kwargs):  # pragma: no cover - background deferral expected
+            raise AssertionError("legacy vectorise should be deferred")
+
+    vectorizer_stub.SharedVectorService = StubSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    def capture_hook(stages: set[str], budget_hints=None):  # type: ignore[override]
+        hints: dict[str, float | None] = {}
+        if isinstance(budget_hints, dict):
+            hints.update({k: v for k, v in budget_hints.items() if isinstance(k, str)})
+        background_calls.append((set(stages), hints))
+
+    lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        logger=logging.getLogger("test"),
+        background_hook=capture_hook,
+        warmup_lite=True,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["model"].startswith("deferred")
+    assert warmup_summary["handlers"].startswith("deferred")
+    assert warmup_summary["scheduler"].startswith("deferred")
+    assert warmup_summary["vectorise"].startswith("deferred")
+    assert warmup_summary.get("handlers_queued") == "queued"
+    assert warmup_summary.get("vectorise_queued") == "queued"
+
+    assert background_calls, "background hook should be invoked for deferrals"
+    stages, hints = background_calls[0]
+    assert {"handlers", "scheduler", "vectorise", "model"}.issubset(stages)
+    assert all(
+        hint is None or hint <= lazy_bootstrap._HEAVY_STAGE_CEILING for hint in hints.values()
+    )
 

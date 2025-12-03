@@ -1308,6 +1308,8 @@ def warmup_vector_service(
         stage_hard_cap = bootstrap_hard_timebox
     elif (bootstrap_fast or warmup_lite) and not force_heavy:
         stage_hard_cap = _BOOTSTRAP_STAGE_TIMEOUT
+    elif not force_heavy and not (budget_remaining_supplied or check_budget_supplied):
+        stage_hard_cap = _BOOTSTRAP_STAGE_TIMEOUT
     if bootstrap_guard_ceiling is not None:
         stage_hard_cap = (
             bootstrap_guard_ceiling
@@ -1791,11 +1793,12 @@ def warmup_vector_service(
                 _record_background("vectorise", status)
                 _hint_background_budget("vectorise", _effective_timeout("vectorise"))
                 run_vectorise = False
-        if download_model or model_probe_only:
+        if download_model or model_probe_only or probe_model:
             _record_background("model", status)
             download_model = False
             probe_model = False
-        warmup_lite = True
+            warmup_lite = True
+            model_probe_only = False
 
     def _apply_bootstrap_deferrals() -> None:
         for stage in bootstrap_deferred_records:
