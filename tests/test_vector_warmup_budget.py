@@ -330,6 +330,38 @@ def test_missing_budget_marks_deferred(caplog):
     assert retry_summary["vectorise"] == "deferred-no-budget"
 
 
+def test_missing_budget_hooks_short_circuits_heavy(caplog):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+
+    background_calls: list[tuple[set[str], dict[str, float | None]]] = []
+
+    def record_background(stages, budget_hints=None):  # type: ignore[override]
+        hints: dict[str, float | None] = {}
+        if isinstance(budget_hints, Mapping):
+            hints.update(budget_hints)
+        background_calls.append((set(stages), hints))
+
+    summary = lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        logger=logging.getLogger("test"),
+        stage_timeouts={"budget": 12.0},
+        background_hook=record_background,
+    )
+
+    assert summary["budget_hooks"] == "missing"
+    for stage in ("model", "handlers", "scheduler", "vectorise"):
+        assert summary[stage] == "deferred-budget-hooks"
+    assert background_calls, "background hook should receive deferrals"
+    stages, hints = background_calls[0]
+    assert {"model", "handlers", "scheduler", "vectorise"}.issubset(stages)
+    assert hints.get("budget") == 12.0
+
+
 def test_handler_timeout_stops_background(caplog, monkeypatch):
     caplog.set_level(logging.INFO)
     lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
