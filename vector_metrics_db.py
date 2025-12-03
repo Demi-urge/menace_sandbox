@@ -1787,6 +1787,7 @@ class VectorMetricsDB:
         self._persistence_activation_pending = bool(self._boot_stub_active)
         self._bootstrap_timer_stub_enforced = bool(timer_stub_enforced)
         self._activate_on_first_write = bool(timer_stub_enforced)
+        self._activation_requested = bool(not self._boot_stub_active)
         self._prometheus_ready = False
         self._warmup_complete = threading.Event()
         if not self._warmup_mode:
@@ -1891,8 +1892,27 @@ class VectorMetricsDB:
                 ),
             )
             if self._pending_readiness_hook:
-                self._register_readiness_hook()
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_readiness_deferred",
+                    extra=_timestamp_payload(
+                        init_start,
+                        warmup_mode=self._warmup_mode,
+                        bootstrap_fast=self.bootstrap_fast,
+                        menace_bootstrap=self._bootstrap_context,
+                    ),
+                )
             self._conn = self._stub_conn
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_io_skipped",
+                extra=_timestamp_payload(
+                    init_start,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    menace_bootstrap=self._bootstrap_context,
+                    stub_mode=self._boot_stub_active,
+                ),
+            )
+            _increment_deferral_metric("stub_io_skipped")
             return
 
         eager_resolve = bool(ensure_exists)
@@ -2051,6 +2071,7 @@ class VectorMetricsDB:
             self._mark_warmup_complete(reason=reason)
         self._read_only = False
         self._boot_stub_active = False
+        self._activation_requested = True
         self._lazy_mode = False
         self._lazy_primed = False
         self._persistence_activated = True
@@ -2163,6 +2184,7 @@ class VectorMetricsDB:
                 stub_mode=self._boot_stub_active,
             ),
         )
+        self._activation_requested = True
         self._persistence_activation_pending = False
         self._exit_lazy_mode(reason=reason)
         _apply_pending_weights(self)
@@ -2326,6 +2348,17 @@ class VectorMetricsDB:
     def _prepare_connection(self, init_start: float | None = None) -> None:
         init_start = init_start or time.perf_counter()
         if self._conn is not None:
+            return
+        if not self._activation_requested:
+            logger.info(
+                "vector_metrics_db.bootstrap.activation_not_requested",
+                extra=_timestamp_payload(
+                    init_start,
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    stub_mode=self._boot_stub_active,
+                ),
+            )
             return
         if self._warmup_mode or self._boot_stub_active:
             logger.info(
