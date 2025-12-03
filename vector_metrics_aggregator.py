@@ -27,6 +27,9 @@ GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 from analytics.session_roi import per_origin_stats  # noqa: E402
 from vector_metrics_db import (  # noqa: E402
     VectorMetricsDB,
+    default_vector_metrics_path,
+    get_bootstrap_shared_vector_metrics_db,
+    get_shared_vector_metrics_db,
     resolve_vector_bootstrap_flags,
 )
 
@@ -154,12 +157,34 @@ class VectorMetricsAggregator:
     # ------------------------------------------------------------------
     def origin_stats(self) -> Dict[str, Dict[str, float]]:
         """Return per-origin success rates and ROI deltas."""
+        if self._warmup_stub:
+            logger.info(
+                "vector_metrics_aggregator.bootstrap.origin_stats_stub", extra={"path": str(self.db_path)}
+            )
+            return {}
+
+        helper = get_bootstrap_shared_vector_metrics_db or get_shared_vector_metrics_db
+        default_path = default_vector_metrics_path(
+            ensure_exists=False,
+            bootstrap_read_only=True,
+            read_only=True,
+        )
+        if helper and self.db_path.resolve() == default_path.resolve():
+            db = helper(
+                read_only=True,
+                warmup=bool(self._warmup_mode or self._bootstrap_fast),
+            )
+            if getattr(db, "_boot_stub_active", False):
+                return {}
+            return per_origin_stats(db)
+
         if not self.db_path.exists():
             return {}
         db = VectorMetricsDB(
             self.db_path,
             bootstrap_fast=self._bootstrap_fast,
             warmup=self._warmup_stub,
+            read_only=True,
         )
         return per_origin_stats(db)
 

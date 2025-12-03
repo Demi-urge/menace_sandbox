@@ -127,7 +127,13 @@ The mapping highlights which databases yield successful patches and how much
 value they contribute. The same summary is accessible via
 `VectorMetricsAggregator.origin_stats`, and programmatically through
 `CognitionLayer.roi_stats()` for external dashboards. Running the aggregator
-also writes `vector_origin_stats.json`.
+also writes `vector_origin_stats.json`. During bootstrap/warmup flows, metrics
+consumers should request the shared database via
+`get_bootstrap_shared_vector_metrics_db(read_only=True, warmup=True)` (falling
+back to `get_shared_vector_metrics_db`) rather than instantiating
+`VectorMetricsDB` directly; helpers return cached defaults while warmup guards
+are active and only promote the persistent store after readiness signals or the
+first real write.
 
 ## Failure embeddings and risk penalties
 
