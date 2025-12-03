@@ -50,9 +50,12 @@ except Exception:  # pragma: no cover - fallback when executed directly
     from retrieval_training_dataset import build_dataset  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from .vector_metrics_db import VectorMetricsDB
+    from .vector_metrics_db import VectorMetricsDB, bootstrap_vector_metrics_stub
 except Exception:  # pragma: no cover - fallback when executed directly
-    from vector_metrics_db import VectorMetricsDB  # type: ignore
+    from vector_metrics_db import (  # type: ignore
+        VectorMetricsDB,
+        bootstrap_vector_metrics_stub,
+    )
 
 
 def needs_retrain(vector_db: Path | str, win_rate_threshold: float = 0.5) -> bool:
@@ -66,15 +69,21 @@ def needs_retrain(vector_db: Path | str, win_rate_threshold: float = 0.5) -> boo
     """
 
     try:
-        db = VectorMetricsDB(vector_db)
+        db = bootstrap_vector_metrics_stub(path=vector_db)
+        if db is None:
+            db = VectorMetricsDB(vector_db)
         try:
             win_rate = db.retriever_win_rate()
         finally:
             try:
-                db.conn.close()
+                conn = getattr(db, "conn", None)
+                if conn is not None:
+                    conn.close()
             except Exception:
                 pass
-        return win_rate < win_rate_threshold
+        if win_rate is None:
+            return False
+        return float(win_rate) < win_rate_threshold
     except Exception:
         # When metrics cannot be read we err on the side of retraining to
         # recover from potential corruption.

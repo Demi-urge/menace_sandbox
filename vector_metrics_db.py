@@ -967,6 +967,68 @@ def _menace_bootstrap_active() -> bool:
     return _MENACE_BOOTSTRAP_ENV_ACTIVE
 
 
+def _vector_metrics_bootstrap_requested(
+    *, bootstrap_fast: bool | None = None, warmup: bool | None = None
+) -> bool:
+    state_flags = _bootstrap_state_flags()
+    menace_bootstrap = _menace_bootstrap_active()
+    (
+        resolved_fast,
+        warmup_mode,
+        env_requested,
+        bootstrap_env,
+    ) = resolve_vector_bootstrap_flags(
+        bootstrap_fast=bootstrap_fast, warmup=warmup
+    )
+
+    return bool(
+        warmup_mode
+        or env_requested
+        or bootstrap_env
+        or resolved_fast
+        or menace_bootstrap
+        or state_flags["bootstrap_state"]
+        or state_flags["warmup_lite"]
+    )
+
+
+def bootstrap_vector_metrics_stub(
+    *, path: str | Path | None = None, warmup: bool | None = None
+) -> "VectorMetricsDB | _BootstrapVectorMetricsStub | None":
+    """Return a warmup stub during bootstrap without touching SQLite.
+
+    The helper mirrors :func:`get_bootstrap_vector_metrics_db` but accepts an
+    optional ``path`` for callers that would otherwise initialise
+    :class:`VectorMetricsDB` directly.  When bootstrap or warmup flags are
+    active the stub is returned with ``warmup=True``, ``read_only=True``, and
+    ``ensure_exists=False`` so readiness checks avoid hitting the filesystem.
+    """
+
+    warmup_requested = _vector_metrics_bootstrap_requested(warmup=warmup)
+    if not warmup_requested:
+        return None
+
+    if get_bootstrap_vector_metrics_db is not None:
+        try:
+            return get_bootstrap_vector_metrics_db(
+                warmup=True, ensure_exists=False, read_only=True
+            )
+        except Exception:  # pragma: no cover - defensive stub fallback
+            logger.debug(
+                "vector_metrics_db.bootstrap.stub_helper_fallback", exc_info=True
+            )
+
+    resolved_path = path or default_vector_metrics_path(
+        ensure_exists=False, bootstrap_read_only=True, read_only=True
+    )
+    return VectorMetricsDB(
+        resolved_path,
+        warmup=True,
+        ensure_exists=False,
+        read_only=True,
+    )
+
+
 def get_bootstrap_vector_metrics_db(
     *,
     bootstrap_fast: bool | None = None,
@@ -2850,6 +2912,7 @@ __all__ = [
     "VectorMetric",
     "VectorMetricsDB",
     "resolve_vector_bootstrap_flags",
+    "bootstrap_vector_metrics_stub",
     "get_bootstrap_vector_metrics_db",
     "get_bootstrap_shared_vector_metrics_db",
     "get_shared_vector_metrics_db",
