@@ -3052,12 +3052,24 @@ def start_embedder_warmup(
         elapsed = perf_counter() - warmup_started
         return max(0.0, stage_timebox_cap - elapsed)
 
+    def _mark_budget_deferral(job_snapshot: dict[str, Any]) -> None:
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.setdefault("embedder_warmup_deferred_budget", True)
+        job_snapshot["warmup_summary"] = warmup_summary
+        job_snapshot.setdefault("embedder_warmup_deferred_budget", True)
+        try:
+            bootstrap_state = getattr(_coding_bot_interface, "_BOOTSTRAP_STATE", None)
+            if bootstrap_state is not None:
+                bootstrap_state.embedder_warmup_deferred_budget = True
+        except Exception:  # pragma: no cover - advisory only
+            LOGGER.debug("unable to persist budget deferral flag", exc_info=True)
+
     def _schedule_background_preload_safe(
-        reason: str, *, strict_timebox: float | None = None
+        reason: str, *, strict_timebox: float | None = None, budget_flag: bool = False
     ) -> dict[str, Any]:
         global _BOOTSTRAP_EMBEDDER_JOB
         try:
-            return _schedule_background_preload(  # type: ignore[name-defined]
+            job_snapshot = _schedule_background_preload(  # type: ignore[name-defined]
                 reason, strict_timebox=strict_timebox
             )
         except NameError:
@@ -3072,9 +3084,11 @@ def start_embedder_warmup(
             if strict_timebox is not None:
                 job_snapshot.setdefault("strict_timebox", strict_timebox)
                 job_snapshot.setdefault("background_join_timeout", strict_timebox)
-            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
-            _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
-            return job_snapshot
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
+        if budget_flag:
+            _mark_budget_deferral(job_snapshot)
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        return job_snapshot
 
     def _defer_stage(reason: str) -> None:
         controller = globals().get("stage_controller")
@@ -3349,6 +3363,25 @@ def start_embedder_warmup(
         return stage_budget_cap - elapsed
 
     budget_remaining = _remaining_stage_budget()
+    budget_deferral_threshold = 5.0
+    try:
+        budget_deferral_threshold = float(
+            os.getenv("BOOTSTRAP_EMBEDDER_BUDGET_DEFERRAL", budget_deferral_threshold)
+        )
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("unable to parse embedder budget deferral threshold", exc_info=True)
+    if budget_deferral_threshold < 0:
+        budget_deferral_threshold = 0.0
+
+    def _background_timebox(strict_hint: float | None = None) -> float | None:
+        wall_cap: float | None = None
+        if budget_remaining is not None:
+            wall_cap = max(0.0, budget_remaining) + max(presence_cap, 0.0)
+        elif presence_cap > 0:
+            wall_cap = presence_cap
+        if strict_hint is not None:
+            wall_cap = strict_hint if wall_cap is None else min(wall_cap, strict_hint)
+        return wall_cap
     presence_fastpath_threshold = 8.0
     try:
         presence_fastpath_threshold = float(
@@ -3362,7 +3395,7 @@ def start_embedder_warmup(
     def _schedule_presence_fastpath(reason: str) -> Any:
         budget_hint = budget_remaining if budget_remaining is not None else stage_budget_cap
         job_snapshot = _schedule_background_preload_safe(
-            reason, strict_timebox=budget_hint
+            reason, strict_timebox=_background_timebox(budget_hint)
         )
         job_snapshot.update(
             {
@@ -3433,7 +3466,9 @@ def start_embedder_warmup(
                 "input_stage_budget": input_stage_budget,
             },
         )
-        job_snapshot = _schedule_background_preload_safe(timeout_reason)
+        job_snapshot = _schedule_background_preload_safe(
+            timeout_reason, strict_timebox=_background_timebox(), budget_flag=True
+        )
         job_snapshot.update(
             {
                 "timed_out": True,
@@ -3469,6 +3504,56 @@ def start_embedder_warmup(
         )
         return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
 
+    if budget_remaining < budget_deferral_threshold:
+        budget_reason = "embedder_budget_remaining_low"
+        LOGGER.info(
+            "embedder preload budget below deferral threshold; returning placeholder",
+            extra={
+                "event": "embedder-preload-budget-threshold",
+                "budget_remaining": budget_remaining,
+                "budget_deferral_threshold": budget_deferral_threshold,
+                "stage_budget": stage_budget,
+                "bootstrap_window": deadline_remaining,
+                "stage_budget_cap": stage_budget_cap,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+            },
+        )
+        job_snapshot = existing_job or {}
+        placeholder_obj = job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+        job_snapshot.setdefault("placeholder", placeholder_obj)
+        job_snapshot.setdefault("placeholder_reason", budget_reason)
+        job_snapshot.setdefault("warmup_placeholder_reason", budget_reason)
+        job_snapshot.setdefault("deferral_reason", budget_reason)
+        job_snapshot.setdefault("deferred", True)
+        job_snapshot.setdefault("ready_after_bootstrap", True)
+        job_snapshot.setdefault("background_join_timeout", _background_timebox())
+        job_snapshot.setdefault("background_enqueue_reason", budget_reason)
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": budget_reason,
+                "stage_budget": stage_budget,
+                "budget_remaining": budget_remaining,
+                "bootstrap_window": deadline_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+                "budget_deferral_threshold": budget_deferral_threshold,
+            }
+        )
+        job_snapshot["warmup_summary"] = warmup_summary
+        _mark_budget_deferral(job_snapshot)
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
+        _defer_stage(budget_reason)
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=budget_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{budget_reason}"
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=budget_reason)
+        return placeholder_obj
+
     if budget_remaining < minimum_launch_window:
         window_reason = "embedder_budget_window_too_short"
         LOGGER.info(
@@ -3484,7 +3569,9 @@ def start_embedder_warmup(
             },
         )
         job_snapshot = _schedule_background_preload_safe(
-            window_reason, strict_timebox=budget_remaining
+            window_reason,
+            strict_timebox=_background_timebox(budget_remaining),
+            budget_flag=True,
         )
         job_snapshot.update(
             {
@@ -3573,7 +3660,9 @@ def start_embedder_warmup(
             "background_loops", reason=f"embedder_placeholder:{timeout_reason}"
         )
         _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=timeout_reason)
-        job_snapshot = _schedule_background_preload_safe(timeout_reason)
+        job_snapshot = _schedule_background_preload_safe(
+            timeout_reason, strict_timebox=_background_timebox(), budget_flag=True
+        )
         job_snapshot.update(
             {
                 "timed_out": True,
