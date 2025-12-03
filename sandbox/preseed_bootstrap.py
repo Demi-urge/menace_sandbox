@@ -3350,6 +3350,23 @@ def start_embedder_warmup(
     if stage_budget_cap is None:
         stage_budget_cap = _PREPARE_VECTOR_TIMEOUT_FLOOR
 
+    precomputed_caps: dict[str, float | None] | None = None
+    strict_join_cap_candidates: list[float] = []
+
+    remaining_timebox_cap = _remaining_timebox_cap()
+    if remaining_timebox_cap is not None:
+        strict_join_cap_candidates.append(remaining_timebox_cap)
+
+    if deadline_remaining is not None:
+        strict_join_cap_candidates.append(deadline_remaining)
+
+    strict_join_cap: float | None = None
+    if strict_join_cap_candidates:
+        strict_join_cap = max(0.0, min(strict_join_cap_candidates))
+        precomputed_caps = {"stage_wall_cap": strict_join_cap}
+        if bootstrap_deadline is not None:
+            precomputed_caps["stage_deadline"] = bootstrap_deadline
+
     def _run_bootstrap_embedder(local_stop_event: threading.Event | None) -> Any:
         return _bootstrap_embedder(
             resolved_timeout,
@@ -3360,6 +3377,7 @@ def start_embedder_warmup(
             bootstrap_fast=tight_budget,
             force_placeholder=tight_budget,
             bootstrap_deadline=bootstrap_deadline,
+            precomputed_caps=precomputed_caps,
         )
 
     def _remaining_stage_budget() -> float:
@@ -3630,11 +3648,56 @@ def start_embedder_warmup(
     )
 
     join_timeout = 5.0 if budget_remaining is None else min(budget_remaining, 5.0)
+    join_cap_reason = None
+    if strict_join_cap is not None:
+        join_timeout = min(join_timeout, strict_join_cap)
+        join_cap_reason = "embedder_preload_join_cap"
+
+    if join_timeout <= 0:
+        join_cap_reason = join_cap_reason or "embedder_preload_join_cap"
+        job_snapshot = _schedule_background_preload_safe(
+            join_cap_reason,
+            strict_timebox=_background_timebox(strict_join_cap),
+            budget_flag=True,
+        )
+        job_snapshot.update(
+            {
+                "budget_remaining": budget_remaining,
+                "stage_budget": stage_budget,
+                "bootstrap_window": deadline_remaining,
+                "background_join_timeout": strict_join_cap,
+                "deferral_reason": join_cap_reason,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+            }
+        )
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": join_cap_reason,
+                "stage_budget": stage_budget,
+                "budget_remaining": budget_remaining,
+                "bootstrap_window": deadline_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+                "strict_join_cap": strict_join_cap,
+            }
+        )
+        job_snapshot["warmup_summary"] = warmup_summary
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        _defer_stage(join_cap_reason)
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=join_cap_reason)
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops", reason=f"embedder_placeholder:{join_cap_reason}"
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=join_cap_reason)
+        return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
 
     try:
         return embedder_future.result(timeout=join_timeout)
     except FuturesTimeoutError:
-        timeout_reason = presence_reason or "embedder_stage_budget_timeout"
+        timeout_reason = presence_reason or join_cap_reason or "embedder_stage_budget_timeout"
         elapsed = time.monotonic() - warmup_started
         embedder_stop_event.set()
         with contextlib.suppress(Exception):
