@@ -9,6 +9,7 @@ routine to pre-populate caches before the first real request.
 """
 
 import ctypes
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
 import importlib.util
 import json
 import logging
@@ -31,6 +32,9 @@ _MODEL_LOCK = threading.Lock()
 _MODEL_READY = False
 _MODEL_BACKGROUND_LOCK = threading.Lock()
 _MODEL_BACKGROUND_THREAD: threading.Thread | None = None
+_MODEL_FUTURE_LOCK = threading.Lock()
+_MODEL_FUTURE: Future | None = None
+_MODEL_EXECUTOR: ThreadPoolExecutor | None = None
 _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
 _WARMUP_STAGE_MEMO: dict[str, str] = {}
@@ -49,6 +53,15 @@ _BOOTSTRAP_STAGE_TIMEOUT = 3.0
 _HANDLER_VECTOR_MIN_BUDGET = 1.0
 _HEAVY_STAGE_CEILING = 30.0
 _BACKGROUND_QUEUE_FLAG = "queued"
+
+
+def _model_executor() -> ThreadPoolExecutor:
+    global _MODEL_EXECUTOR
+    if _MODEL_EXECUTOR is None:
+        _MODEL_EXECUTOR = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="vector-model"
+        )
+    return _MODEL_EXECUTOR
 
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
     _metrics,
@@ -438,6 +451,55 @@ def ensure_embedding_model(
             if warmup:
                 return _result(None, "failed")
             raise
+
+
+def ensure_embedding_model_future(
+    *,
+    logger: logging.Logger | None = None,
+    warmup: bool = False,
+    warmup_lite: bool | None = None,
+    warmup_heavy: bool = False,
+    stop_event: threading.Event | None = None,
+    budget_check: Callable[[threading.Event | None], None] | None = None,
+    download_timeout: float | None = None,
+) -> Future:
+    """Schedule embedding model preparation and return a cached future.
+
+    The download task is only submitted once per process; subsequent callers
+    reuse the same future so repeated warmups and bootstrap probes avoid
+    re-downloading or re-extracting the bundle.  Callers can wait on the future
+    with a timeout to respect their stage ceilings.
+    """
+
+    log = logger or logging.getLogger(__name__)
+    with _MODEL_FUTURE_LOCK:
+        if _MODEL_READY:
+            ready = Future()
+            ready.set_result(_model_bundle_path())
+            _MODEL_FUTURE = ready
+            return ready
+
+        if _MODEL_FUTURE is not None and not _MODEL_FUTURE.cancelled():
+            if not _MODEL_FUTURE.done():
+                return _MODEL_FUTURE
+            if _MODEL_FUTURE.exception() is None:
+                return _MODEL_FUTURE
+
+        executor = _model_executor()
+
+        def _task() -> Path | tuple[Path | None, str | None] | None:
+            return ensure_embedding_model(
+                logger=log,
+                warmup=warmup,
+                warmup_lite=warmup_lite,
+                warmup_heavy=warmup_heavy,
+                stop_event=stop_event,
+                budget_check=budget_check,
+                download_timeout=download_timeout,
+            )
+
+        _MODEL_FUTURE = executor.submit(_task)
+        return _MODEL_FUTURE
 
 
 def ensure_scheduler_started(*, logger: logging.Logger | None = None) -> Any | None:
@@ -2470,26 +2532,18 @@ def warmup_vector_service(
             if not _has_estimated_budget("model", budget_cap=model_timeout):
                 _record_cancelled("model", "budget")
                 return _finalise()
-            model_gate_budget, model_gate_start = _start_stage_gate("model", model_timeout)
-            completed, path, elapsed, cancelled = _run_with_budget(
-                "model",
-                lambda stop_event: ensure_embedding_model(
-                    logger=log,
-                    warmup=True,
-                    warmup_lite=False,
-                    warmup_heavy=not warmup_lite or force_heavy,
-                    stop_event=stop_event,
-                    budget_check=lambda evt: _cooperative_budget_check(
-                        "model", evt
-                    ),
-                    download_timeout=model_timeout,
-                ),
-                timeout=model_timeout,
+            start = time.monotonic()
+            model_future = ensure_embedding_model_future(
+                logger=log,
+                warmup=True,
+                warmup_lite=False,
+                warmup_heavy=not warmup_lite or force_heavy,
+                download_timeout=model_timeout,
             )
-            _record_elapsed("model", elapsed)
-            if cancelled:
-                _record_cancelled("model", cancelled)
-            if completed:
+            try:
+                path = model_future.result(timeout=model_timeout)
+                elapsed = time.monotonic() - start
+                _record_elapsed("model", elapsed)
                 resolved_path: Path | None
                 status: str | None
                 if isinstance(path, tuple):
@@ -2509,8 +2563,7 @@ def warmup_vector_service(
                 try:
                     _apply_stage_gate(
                         "model",
-                        model_gate_budget,
-                        model_gate_start,
+                        *_start_stage_gate("model", model_timeout),
                         model_timeout,
                         elapsed_hint=elapsed,
                     )
@@ -2518,16 +2571,28 @@ def warmup_vector_service(
                     _record_cancelled(
                         "model", "ceiling" if model_timeout is not None else "budget"
                     )
+                    _record_background(
+                        "model", "deferred-timebox", stage_timeout=model_timeout
+                    )
                     log.info(
                         "Vector warmup model gate exceeded; deferring", extra={"error": str(exc)}
                     )
                     return _finalise()
-            elif budget_exhausted:
-                if "model" not in summary:
-                    _record_deferred("model", "deferred-budget")
-                log.info("Vector warmup model download deferred after budget exhaustion")
+            except FutureTimeout:
+                elapsed = time.monotonic() - start
+                _record_elapsed("model", elapsed)
+                _record_cancelled("model", "ceiling")
+                _record_background("model", "deferred-timebox", stage_timeout=model_timeout)
+                log.info(
+                    "Vector warmup model download deferred after stage ceiling", extra={"timeout": model_timeout}
+                )
                 return _finalise()
-            else:
+            except TimeoutError as exc:
+                _record_cancelled("model", "budget")
+                _record_background(
+                    "model", "deferred-budget", stage_timeout=model_timeout
+                )
+                log.info("Vector warmup model download deferred: %s", exc)
                 return _finalise()
         elif probe_model or model_probe_only:
             def _probe(stop_event: threading.Event) -> tuple[Path | None, str | None] | Path:
@@ -3106,4 +3171,9 @@ def warmup_vector_service(
     return _finalise()
 
 
-__all__ = ["ensure_embedding_model", "ensure_scheduler_started", "warmup_vector_service"]
+__all__ = [
+    "ensure_embedding_model",
+    "ensure_embedding_model_future",
+    "ensure_scheduler_started",
+    "warmup_vector_service",
+]
