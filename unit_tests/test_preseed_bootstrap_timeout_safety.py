@@ -2,6 +2,7 @@ import importlib
 import logging
 import os
 import sys
+import contextlib
 import time
 import types
 from contextlib import nullcontext
@@ -22,7 +23,19 @@ def _load_preseed_bootstrap_module():
 
     # Stubs for dependencies used during module import.
     _install_stub_module(
-        "lock_utils", {"SandboxLock": type("SandboxLock", (), {}), "LOCK_TIMEOUT": 1.0}
+        "lock_utils",
+        {
+            "SandboxLock": type(
+                "SandboxLock",
+                (),
+                {
+                    "__init__": lambda self, *_, **__: None,
+                    "__enter__": lambda self: self,
+                    "__exit__": lambda *_, **__: None,
+                },
+            ),
+            "LOCK_TIMEOUT": 1.0,
+        },
     )
     _install_stub_module("safe_repr", {"summarise_value": lambda value: f"summary:{value}"})
     _install_stub_module("security.secret_redactor", {"redact_dict": lambda data: data})
@@ -46,14 +59,17 @@ def _load_preseed_bootstrap_module():
                 {
                     "__init__": lambda self, *_, **__: None,
                     "mark_component_state": lambda *_, **__: None,
-                    "allocate_timeout": lambda *_, **__: None,
+                    "allocate_timeout": lambda self, *_, **__: contextlib.nullcontext((None, {})),
+                    "consume": lambda self, *_, **__: contextlib.nullcontext((None, {})),
+                    "remaining_budget": 100.0,
+                    "snapshot": lambda self: {},
                 },
             ),
             "_host_load_average": lambda: 0.0,
             "_host_load_scale": lambda *_args, **_kwargs: 1.0,
             "build_progress_signal_hook": lambda *_, **__: lambda *_a, **_k: None,
             "collect_timeout_telemetry": lambda *_, **__: {},
-            "enforce_bootstrap_timeout_policy": lambda *_, **__: None,
+            "enforce_bootstrap_timeout_policy": lambda *_, **__: {},
             "get_bootstrap_guard_context": lambda *_, **__: contextlib.nullcontext(),
             "load_component_timeout_floors": lambda *_, **__: {},
             "read_bootstrap_heartbeat": lambda *_, **__: {},
@@ -81,8 +97,8 @@ def _load_preseed_bootstrap_module():
             "_PREPARE_PIPELINE_WATCHDOG": {"stages": []},
             "_pop_bootstrap_context": lambda *_, **__: None,
             "_push_bootstrap_context": lambda *_, **__: None,
-            "fallback_helper_manager": nullcontext,
-            "prepare_pipeline_for_bootstrap": lambda *_, **__: None,
+            "fallback_helper_manager": lambda *_, **__: nullcontext(),
+            "prepare_pipeline_for_bootstrap": lambda *_, **__: (object(), lambda **_: None),
         },
     )
 
@@ -103,13 +119,18 @@ def _load_preseed_bootstrap_module():
     }
 
     for module_name, attr_name in stub_classes.items():
-        stub = _install_stub_module(module_name, {attr_name: type(attr_name, (), {})})
+        stub_class = type(attr_name, (), {"__init__": lambda self, *_, **__: None})
+        stub = _install_stub_module(module_name, {attr_name: stub_class})
         if attr_name == "create_context_builder":
             stub.create_context_builder = lambda **_: object()
         if attr_name == "SelfCodingManager":
             stub.internalize_coding_bot = lambda *_, **__: None
         if attr_name == "DataBot":
             stub.persist_sc_thresholds = lambda *_, **__: None
+        if attr_name == "get_thresholds":
+            stub.get_thresholds = lambda *_, **__: types.SimpleNamespace(
+                roi_drop=0.0, roi_warning=0.0, error_increase=0.0, test_failure_increase=0.0
+            )
 
     sys.modules.pop("sandbox.preseed_bootstrap", None)
     module = importlib.import_module("sandbox.preseed_bootstrap")
