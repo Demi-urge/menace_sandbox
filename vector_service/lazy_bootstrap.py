@@ -467,6 +467,20 @@ def warmup_vector_service(
     budget_remaining_supplied = budget_remaining is not None
     check_budget_supplied = check_budget is not None
     stage_timeouts_supplied = stage_timeouts is not None
+
+    def _normalise_stage_timeouts(
+        value: dict[str, float] | float | bool | None,
+    ) -> dict[str, float] | float | None:
+        if value is None:
+            return None
+        if isinstance(value, Mapping):
+            return dict(value)
+        if isinstance(value, bool):
+            return dict(_CONSERVATIVE_STAGE_TIMEOUTS) if value else None
+        numeric_timeout = _coerce_timeout(value)
+        if numeric_timeout is None:
+            return dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+        return numeric_timeout
     env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"))
     if env_budget is None:
         env_budget = _coerce_timeout(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT"))
@@ -490,6 +504,8 @@ def warmup_vector_service(
             warmup_lite,
         )
     )
+
+    stage_timeouts = _normalise_stage_timeouts(stage_timeouts)
 
     if stage_timeouts is None:
         if bootstrap_context or warmup_requested:
@@ -805,17 +821,29 @@ def warmup_vector_service(
     budget_exhausted = False
     timebox_skipped: set[str] = set()
 
+    stage_budget_cap: float | None = None
+
+    def _shared_budget_remaining() -> float | None:
+        if stage_budget_cap is None:
+            return None
+        elapsed = time.monotonic() - budget_start
+        remaining = stage_budget_cap - max(elapsed, cumulative_elapsed)
+        return max(0.0, remaining)
+
     def _remaining_budget() -> float | None:
+        shared_remaining = _shared_budget_remaining()
         if budget_remaining is None:
+            if shared_remaining is not None:
+                return shared_remaining
             return _timebox_remaining()
         try:
             remaining = budget_remaining()
             timebox_remaining = _timebox_remaining()
-            if timebox_remaining is None:
-                return remaining
-            if remaining is None:
-                return timebox_remaining
-            return min(remaining, timebox_remaining)
+            candidates = [remaining, shared_remaining, timebox_remaining]
+            candidates = [value for value in candidates if value is not None]
+            if not candidates:
+                return None
+            return min(candidates)
         except Exception:  # pragma: no cover - budget hint is advisory
             log.debug("budget_remaining callback failed", exc_info=True)
             return None
@@ -1113,7 +1141,7 @@ def warmup_vector_service(
             )
         if background_candidates and background_hook is not None:
             try:
-                hook_kwargs = {"budget_hints": background_stage_timeouts}
+                hook_kwargs = {"budget_hints": background_stage_timeouts or {}}
                 hook_code = getattr(background_hook, "__code__", None)
                 if hook_code is not None and "budget_hints" in hook_code.co_varnames:
                     background_hook(set(background_candidates), **hook_kwargs)
@@ -1924,6 +1952,50 @@ def warmup_vector_service(
         log.info("No stage budget available for %s; deferring to background", stage)
         return True
 
+    def _shared_budget_probe(
+        stage: str,
+        *,
+        stage_timeout: float | None,
+        stage_enabled: bool,
+        chain_vectorise: bool = False,
+        vectorise_timeout: float | None = None,
+    ) -> bool:
+        nonlocal hydrate_handlers, run_vectorise, budget_gate_reason, budget_exhausted
+
+        if not stage_enabled:
+            return False
+
+        shared_remaining = _shared_budget_remaining()
+        if shared_remaining is None:
+            return False
+
+        stage_window = _stage_budget_window(stage_timeout)
+        if stage_window is not None:
+            shared_remaining = min(shared_remaining, stage_window)
+
+        estimate = base_stage_cost.get(stage)
+        if shared_remaining > 0 and (estimate is None or shared_remaining >= estimate):
+            return False
+
+        status = "deferred-shared-budget" if stage_budget_cap is not None else "deferred-budget"
+        budget_gate_reason = budget_gate_reason or status
+        budget_exhausted = True
+        _record_deferred_background(stage, status)
+        _hint_background_budget(stage, stage_timeout)
+
+        if chain_vectorise and run_vectorise:
+            _record_deferred_background("vectorise", status)
+            _hint_background_budget("vectorise", vectorise_timeout)
+            run_vectorise = False
+
+        if stage == "handlers":
+            hydrate_handlers = False
+        elif stage == "vectorise":
+            run_vectorise = False
+
+        log.info("Shared warmup budget depleted before %s; deferring", stage)
+        return True
+
     def _shared_budget_preflight() -> None:
         nonlocal hydrate_handlers, start_scheduler, run_vectorise, budget_gate_reason, heavy_admission
 
@@ -2134,6 +2206,15 @@ def warmup_vector_service(
         handler_timeout = _effective_timeout("handlers")
         vectorise_timeout = _effective_timeout("vectorise")
         handler_budget_window = _stage_budget_window(handler_timeout)
+        if _shared_budget_probe(
+            "handlers",
+            stage_timeout=handler_timeout,
+            stage_enabled=hydrate_handlers,
+            chain_vectorise=bool(run_vectorise),
+            vectorise_timeout=vectorise_timeout,
+        ):
+            _record_cancelled("handlers", "budget")
+            return _finalise()
         admitted, handler_timeout = _admit_stage_budget(
             "handlers", handler_timeout, stage_cap=stage_budget_ceiling.get("handlers")
         )
@@ -2326,6 +2407,13 @@ def warmup_vector_service(
     else:
         vectorise_timeout = _effective_timeout("vectorise")
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
+        if _shared_budget_probe(
+            "vectorise",
+            stage_timeout=vectorise_timeout,
+            stage_enabled=should_vectorise,
+        ):
+            _record_cancelled("vectorise", "budget")
+            return _finalise()
         admitted, vectorise_timeout = _admit_stage_budget(
             "vectorise", vectorise_timeout, stage_cap=stage_budget_ceiling.get("vectorise")
         )
