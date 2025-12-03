@@ -4652,6 +4652,105 @@ def initialize_bootstrap_context(
                 fallback_timebox_reason = "embedder_preload_fallback_timebox"
                 fallback_timebox_applied = True
 
+        warmup_cap_guard_threshold_candidates = [
+            candidate
+            for candidate in (
+                warmup_timebox_cap,
+                warmup_join_ceiling,
+                BOOTSTRAP_EMBEDDER_WARMUP_CAP
+                if BOOTSTRAP_EMBEDDER_WARMUP_CAP > 0
+                else None,
+                BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
+                if BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP > 0
+                else None,
+            )
+            if candidate is not None and candidate > 0
+        ]
+        warmup_cap_guard_threshold = (
+            min(warmup_cap_guard_threshold_candidates)
+            if warmup_cap_guard_threshold_candidates
+            else None
+        )
+
+        if warmup_cap_guard_threshold is not None:
+            warmup_guard_window_candidates = [
+                candidate
+                for candidate in (
+                    embedder_stage_budget,
+                    embedder_stage_budget_hint,
+                    embedder_stage_deadline_remaining,
+                    stage_deadline_hint_remaining,
+                    remaining_bootstrap_window,
+                )
+                if candidate is not None and candidate >= 0 and math.isfinite(candidate)
+            ]
+            warmup_guard_window = (
+                min(warmup_guard_window_candidates)
+                if warmup_guard_window_candidates
+                else None
+            )
+            if warmup_guard_window is not None and warmup_guard_window < warmup_cap_guard_threshold:
+                guard_reason = "embedder_preload_budget_guard"
+                job_snapshot = _schedule_background_preload(
+                    guard_reason, strict_timebox=warmup_guard_window
+                )
+                warmup_guard_hits = int(job_snapshot.get("warmup_guard_hits", 0)) + 1
+                job_snapshot.update(
+                    {
+                        "warmup_guard_hits": warmup_guard_hits,
+                        "warmup_guard_threshold": warmup_cap_guard_threshold,
+                        "warmup_guard_window": warmup_guard_window,
+                        "presence_only": True,
+                        "budget_guarded": True,
+                        "budget_window_missing": budget_window_missing,
+                        "forced_background": True,
+                        "deferral_reason": guard_reason,
+                        "result": job_snapshot.get(
+                            "result", job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                        ),
+                    }
+                )
+                warmup_summary = job_snapshot.get("warmup_summary") or {}
+                warmup_summary.setdefault("deferred", True)
+                warmup_summary.setdefault("deferred_reason", guard_reason)
+                warmup_summary.setdefault("deferral_reason", guard_reason)
+                warmup_summary.setdefault("stage", "deferred-budget-guard")
+                warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+                warmup_summary.setdefault(
+                    "stage_deadline_remaining", embedder_stage_deadline_remaining
+                )
+                warmup_summary.setdefault("bootstrap_remaining", remaining_bootstrap_window)
+                warmup_summary.setdefault(
+                    "warmup_guard_threshold", warmup_cap_guard_threshold
+                )
+                warmup_summary.setdefault("warmup_guard_window", warmup_guard_window)
+                warmup_summary.setdefault("warmup_guard_hits", warmup_guard_hits)
+                job_snapshot["warmup_summary"] = warmup_summary
+                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=guard_reason)
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "vectorizer_preload", reason=guard_reason
+                )
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "background_loops", reason=f"embedder_placeholder:{guard_reason}"
+                )
+                _set_component_state("vector_seeding", "deferred")
+                stage_controller.defer_step("embedder_preload", reason=guard_reason)
+                stage_controller.complete_step("embedder_preload", 0.0)
+                LOGGER.info(
+                    "embedder preload short-circuited due to tight stage budget",  # pragma: no cover - telemetry
+                    extra={
+                        "event": "embedder-preload-budget-guard",
+                        "warmup_cap_guard_threshold": warmup_cap_guard_threshold,
+                        "warmup_guard_window": warmup_guard_window,
+                        "warmup_guard_hits": warmup_guard_hits,
+                        "stage_budget": embedder_stage_budget,
+                        "stage_deadline": embedder_stage_deadline,
+                        "bootstrap_deadline": bootstrap_deadline,
+                    },
+                )
+                _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+                return job_snapshot.get("result", _BOOTSTRAP_PLACEHOLDER)
+
         timebox_insufficient = (
             warmup_timebox_cap is None or warmup_timebox_cap < estimated_preload_cost
         )
