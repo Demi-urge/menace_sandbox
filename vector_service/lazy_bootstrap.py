@@ -415,7 +415,7 @@ def warmup_vector_service(
     probe_model: bool = False,
     hydrate_handlers: bool = False,
     start_scheduler: bool = False,
-    run_vectorise: bool | None = None,
+    run_vectorise: bool | None = False,
     check_budget: Callable[[], None] | None = None,
     budget_remaining: Callable[[], float | None] | None = None,
     logger: logging.Logger | None = None,
@@ -435,8 +435,8 @@ def warmup_vector_service(
     The default behaviour favours a "light" warmup that validates scheduler
     configuration and optional model presence without instantiating
     ``SharedVectorService``.  Callers may opt-in to handler hydration and
-    vectorisation by setting ``hydrate_handlers=True`` (and optionally
-    ``run_vectorise=True``) when a heavier warmup is desired.  ``warmup_lite``
+    vectorisation by setting ``hydrate_handlers=True`` and opting into
+    ``run_vectorise=True`` when a heavier warmup is desired.  ``warmup_lite``
     defaults to True so bootstrap flows skip handler hydration and vectorise
     steps unless explicitly requested.
 
@@ -631,6 +631,12 @@ def warmup_vector_service(
 
     if bootstrap_context and not force_heavy:
         bootstrap_hard_timebox = _BOOTSTRAP_STAGE_TIMEOUT
+
+    if bootstrap_lite and not force_heavy and run_vectorise:
+        log.info("Bootstrap-lite enabled; deferring vectorise warmup")
+        run_vectorise = False
+        bootstrap_deferred_records.add("vectorise")
+        deferred_bootstrap.add("vectorise")
 
     warmup_lite = bool(warmup_lite)
     budget_hooks_missing = not (budget_remaining_supplied or check_budget_supplied)
@@ -1403,7 +1409,7 @@ def warmup_vector_service(
             stage_timeout=stage_budget_ceiling.get("handlers"),
             vectorise_timeout=stage_budget_ceiling.get("vectorise"),
         )
-    pending_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
+    pending_vectorise = bool(run_vectorise)
     if pending_vectorise and not hydrate_handlers and _insufficient_stage_budget("vectorise"):
         status = "deferred-ceiling"
         _record_deferred_background("vectorise", status)
@@ -1501,10 +1507,7 @@ def warmup_vector_service(
             ),
             ("handlers", hydrate_handlers),
             ("scheduler", start_scheduler),
-            (
-                "vectorise",
-                run_vectorise if run_vectorise is not None else hydrate_handlers,
-            ),
+            ("vectorise", bool(run_vectorise)),
         ):
             if not enabled:
                 continue
@@ -1934,7 +1937,7 @@ def warmup_vector_service(
             for stage, enabled in (
                 ("handlers", hydrate_handlers),
                 ("scheduler", start_scheduler),
-                ("vectorise", run_vectorise if run_vectorise is not None else hydrate_handlers),
+                ("vectorise", bool(run_vectorise)),
             )
             if _needs_stage_estimate(stage, enabled)
         ]
@@ -2317,7 +2320,7 @@ def warmup_vector_service(
             _record_cancelled("scheduler", "ceiling")
             return _finalise()
 
-    should_vectorise = run_vectorise if run_vectorise is not None else hydrate_handlers
+    should_vectorise = bool(run_vectorise)
     if _reuse("vectorise"):
         pass
     else:
