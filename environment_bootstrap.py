@@ -1228,21 +1228,27 @@ class EnvironmentBootstrapper:
         budget_hints: Mapping[str, float | None] | None = None,
     ) -> None:
         state = dict(self._phase_readiness.get("vector_warmup", {}) or {})
+        normalized_budget_hints: dict[str, float | None] | None = None
         if deferred is not None:
             if deferred:
                 state["deferred"] = sorted(set(state.get("deferred", [])) | set(deferred))
             elif "deferred" in state:
                 state.pop("deferred", None)
             state["ts"] = time.time()
-        if budget_hints:
-            state["budget_hints"] = {
+        if budget_hints is not None:
+            normalized_budget_hints = {
                 key: float(value) if value is not None else None
                 for key, value in budget_hints.items()
                 if value is None or isinstance(value, (int, float))
             }
-            state["ts"] = time.time()
+            if normalized_budget_hints:
+                state["budget_hints"] = normalized_budget_hints
+                state["ts"] = time.time()
         if summary:
-            state["summary"] = dict(summary)
+            summary_payload = dict(summary)
+            if summary_payload.get("background") and normalized_budget_hints:
+                summary_payload.setdefault("budget_hints", normalized_budget_hints)
+            state["summary"] = summary_payload
             state["ts"] = time.time()
         if mode:
             state["mode"] = mode
@@ -2498,6 +2504,28 @@ class EnvironmentBootstrapper:
             )
             warmup_background: set[str] = set()
             background_ticket_only = False
+
+            def _budget_hint_payload() -> dict[str, float | None] | None:
+                hints_source: Mapping[str, float | None] | None
+                if isinstance(background_stage_timeouts, Mapping):
+                    hints_source = background_stage_timeouts
+                elif isinstance(stage_timeouts, Mapping):
+                    hints_source = stage_timeouts
+                else:
+                    hints_source = None
+
+                if not isinstance(hints_source, Mapping):
+                    return None
+
+                payload: dict[str, float | None] = {}
+                for _hint_stage, _hint_value in hints_source.items():
+                    try:
+                        payload[_hint_stage] = (
+                            float(_hint_value) if _hint_value is not None else None
+                        )
+                    except (TypeError, ValueError):
+                        continue
+                return payload or None
             if budget_guard_deferred:
                 pending_background_stages |= budget_guard_deferred
             if raw == "":
@@ -2577,7 +2605,7 @@ class EnvironmentBootstrapper:
                         "handlers": "deferred",
                         "vectorise": "deferred",
                     },
-                    mode="deferred",
+                    mode="timeout" if stage_budget_cap == 0 else "deferred",
                     budget_hints=stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
                 )
                 return
@@ -2928,6 +2956,9 @@ class EnvironmentBootstrapper:
                 }
                 if capped_hint is not None:
                     summary["stage_caps"] = capped_hint
+                hint_payload = _budget_hint_payload()
+                if (background_status or summary.get("background")) and hint_payload:
+                    summary["budget_hints"] = hint_payload
                 self._persist_vector_warmup_state(
                     deferred=deferred_stages,
                     summary=summary,
@@ -3000,6 +3031,9 @@ class EnvironmentBootstrapper:
                         for stage in pending_background_stages:
                             final_summary.setdefault(stage, "pending")
                         final_summary.setdefault("bootstrap", "deferred")
+                    hint_payload = _budget_hint_payload()
+                    if (background_status or final_summary.get("background")) and hint_payload:
+                        final_summary.setdefault("budget_hints", hint_payload)
                     if warmup_background:
                         final_summary.setdefault("background", "pending")
                         final_summary.setdefault("deferred", ",".join(sorted(warmup_background)))
