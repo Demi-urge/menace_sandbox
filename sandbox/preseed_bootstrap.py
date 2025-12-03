@@ -3539,6 +3539,12 @@ def initialize_bootstrap_context(
             if embedder_stage_deadline is not None
             else None
         )
+        stage_deadline_hint_remaining = (
+            max(0.0, embedder_stage_deadline_hint - time.monotonic())
+            if embedder_stage_deadline_hint is not None
+            and math.isfinite(embedder_stage_deadline_hint)
+            else None
+        )
         embedder_warmup_cap = (
             BOOTSTRAP_EMBEDDER_WARMUP_CAP if BOOTSTRAP_EMBEDDER_WARMUP_CAP > 0 else None
         )
@@ -4126,7 +4132,46 @@ def initialize_bootstrap_context(
                 _set_component_state("vector_seeding", "deferred")
                 stage_controller.complete_step("embedder_preload", 0.0)
                 return _BOOTSTRAP_PLACEHOLDER
-    
+
+        constrained_presence_reason = None
+        constrained_presence_only = False
+        if warmup_lite_context:
+            constrained_presence_only = True
+            constrained_presence_reason = "embedder_presence_warmup_lite_hint"
+        elif embedder_stage_budget_hint is not None and math.isfinite(embedder_stage_budget_hint):
+            constrained_presence_only = True
+            constrained_presence_reason = "embedder_presence_budget_hint"
+        elif stage_deadline_hint_remaining is not None:
+            constrained_presence_only = True
+            constrained_presence_reason = "embedder_presence_deadline_hint"
+
+        if constrained_presence_only and not full_preload_requested:
+            warmup_summary = warmup_summary or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault("deferred_reason", constrained_presence_reason)
+            warmup_summary.setdefault("deferral_reason", constrained_presence_reason)
+            strict_timebox_hint = (
+                embedder_stage_budget_hint
+                if embedder_stage_budget_hint is not None
+                else stage_deadline_hint_remaining
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "vectorizer_preload", reason=constrained_presence_reason
+            )
+            _BOOTSTRAP_SCHEDULER.mark_partial(
+                "background_loops",
+                reason=f"embedder_placeholder:{constrained_presence_reason}",
+            )
+            return _defer_to_presence(
+                constrained_presence_reason,
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=True,
+                strict_timebox=strict_timebox_hint,
+                non_blocking_probe=True,
+                resume_download=True,
+            )
+
         early_background_required = presence_only or guard_blocks_preload or not explicit_budget_available
         if early_background_required:
             skip_reason = presence_reason or (
@@ -4980,6 +5025,79 @@ def initialize_bootstrap_context(
             warmup_hard_cap=warmup_hard_cap,
             warmup_join_ceiling=warmup_join_ceiling,
         )
+        strict_join_cap_candidates = [
+            candidate
+            for candidate in (
+                warmup_join_cap,
+                stage_guard_timebox,
+                embedder_stage_budget_hint,
+                embedder_stage_deadline_remaining,
+                stage_deadline_hint_remaining,
+                warmup_timebox_cap,
+                enforced_timebox,
+                warmup_hard_cap,
+            )
+            if candidate is not None and candidate > 0
+        ]
+        strict_join_cap = min(strict_join_cap_candidates) if strict_join_cap_candidates else None
+        if strict_join_cap is not None:
+            if warmup_join_timeout is None or warmup_join_timeout > strict_join_cap:
+                warmup_summary = warmup_summary or {}
+                warmup_summary.setdefault("deferred", True)
+                warmup_summary.setdefault(
+                    "deferral_reason", "embedder_preload_join_timebox_exceeded"
+                )
+                warmup_summary.setdefault(
+                    "deferred_reason", "embedder_preload_join_timebox_exceeded"
+                )
+                warmup_summary.setdefault("stage", "deferred-timebox")
+                warmup_summary.setdefault("strict_timebox", strict_join_cap)
+                warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+                return _defer_to_presence(
+                    "embedder_preload_join_timebox_exceeded",
+                    budget_guarded=True,
+                    budget_window_missing=budget_window_missing,
+                    forced_background=full_preload_requested,
+                    strict_timebox=strict_join_cap,
+                    non_blocking_probe=non_blocking_presence_probe,
+                    resume_download=True,
+                )
+            warmup_join_cap = (
+                min(strict_join_cap, warmup_join_cap)
+                if warmup_join_cap is not None
+                else strict_join_cap
+            )
+            warmup_join_timeout = (
+                strict_join_cap
+                if warmup_join_timeout is None
+                else min(warmup_join_timeout, strict_join_cap)
+            )
+        elif warmup_join_timeout is None:
+            warmup_summary = warmup_summary or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault(
+                "deferral_reason", "embedder_preload_join_timebox_missing"
+            )
+            warmup_summary.setdefault(
+                "deferred_reason", "embedder_preload_join_timebox_missing"
+            )
+            warmup_summary.setdefault("stage", "deferred-timebox")
+            warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+            fallback_timebox_hint = (
+                enforced_timebox
+                if enforced_timebox is not None
+                else (warmup_timebox_cap or stage_guard_timebox)
+            )
+            warmup_summary.setdefault("strict_timebox", fallback_timebox_hint)
+            return _defer_to_presence(
+                "embedder_preload_join_timebox_missing",
+                budget_guarded=True,
+                budget_window_missing=budget_window_missing,
+                forced_background=full_preload_requested,
+                strict_timebox=fallback_timebox_hint,
+                non_blocking_probe=non_blocking_presence_probe,
+                resume_download=True,
+            )
         warmup_result, warmup_timeout_reason = _guarded_embedder_warmup(
             join_timeout=warmup_join_timeout, join_cap=warmup_join_cap
         )
