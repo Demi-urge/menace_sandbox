@@ -97,3 +97,14 @@ def test_bootstrap_fast_does_not_create_db_file(tmp_path):
     assert not db_path.exists()
     assert vm.planned_path() == db_path
     assert not db_path.exists()
+
+
+def test_bootstrap_getter_returns_stub_without_creating_db(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VECTOR_METRICS_BOOTSTRAP_WARMUP", "1")
+    monkeypatch.setattr(vdb, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vdb.get_vector_metrics_db(warmup=True)
+
+    assert isinstance(vm, vdb._BootstrapVectorMetricsStub)
+    assert not (tmp_path / "vector_metrics.db").exists()
