@@ -675,6 +675,7 @@ def _embedder_presence_policy(
     embedder_deferred: bool,
     bootstrap_fast_context: bool,
     warmup_lite_context: bool,
+    bootstrap_guard_active: bool,
 ) -> tuple[bool, str, bool]:
     """Compute whether embedder preload should fall back to a presence probe.
 
@@ -685,17 +686,20 @@ def _embedder_presence_policy(
     budget_guarded = False
     low_budget_guard = False
     default_presence = not force_full_preload
+    guard_presence = bootstrap_guard_active and not force_full_preload
     if stage_budget is not None:
         budget_guarded = stage_budget < 5.0
         tight_budget_threshold = embedder_timeout if embedder_timeout is not None else 0.0
         tight_budget_threshold = max(3.0, min(tight_budget_threshold * 0.75, 15.0))
         low_budget_guard = stage_budget < tight_budget_threshold
 
-    presence_only = default_presence or fast_or_lite or gate_constrained or embedder_deferred
+    presence_only = default_presence or guard_presence or fast_or_lite or gate_constrained or embedder_deferred
     presence_only = presence_only or budget_guarded or low_budget_guard
 
     presence_reason = "embedder_presence_default" if default_presence else "embedder_presence_probe"
-    if gate_constrained:
+    if guard_presence:
+        presence_reason = "embedder_presence_bootstrap_guard"
+    elif gate_constrained:
         presence_reason = "embedder_preload_guarded"
     elif budget_guarded:
         presence_reason = "embedder_budget_guarded"
@@ -3248,6 +3252,7 @@ def initialize_bootstrap_context(
         "component_floors", load_component_timeout_floors()
     )
     resolved_stage_deadlines = stage_deadlines
+    guard_context: Mapping[str, object] = get_bootstrap_guard_context() or {}
     if resolved_stage_deadlines is None:
         baseline_timeout = float(
             os.getenv("BOOTSTRAP_STEP_TIMEOUT", str(BOOTSTRAP_STEP_TIMEOUT))
@@ -3261,7 +3266,6 @@ def initialize_bootstrap_context(
             stats=stage_stats,
             floors={stage.name: _COMPONENT_BASELINES.get(stage.name, 0.0) for stage in READINESS_STAGES},
         )
-        guard_context = get_bootstrap_guard_context() or {}
         try:
             guard_scale = max(float(guard_context.get("budget_scale", 1.0) or 1.0), 1.0)
         except Exception:
@@ -3382,9 +3386,7 @@ def initialize_bootstrap_context(
             },
         )
         warmup_lite_context = True
-    embedder_preload_enabled = force_embedder_preload or not (
-        bootstrap_fast_context and not force_vector_warmup
-    )
+    embedder_preload_enabled = True
     embedder_preload_stage_blocked = bool(
         embedder_stage_budget_hint is not None and embedder_stage_budget_hint <= 0.0
     )
@@ -3426,6 +3428,19 @@ def initialize_bootstrap_context(
         embedder_stage_deadline = stage_controller.stage_deadline(
             step_name="embedder_preload"
         )
+        bootstrap_guard_active = False
+        guard_budget_scale = 1.0
+        guard_delay = 0.0
+        if guard_context:
+            try:
+                guard_budget_scale = float(guard_context.get("budget_scale", 1.0) or 1.0)
+            except Exception:
+                guard_budget_scale = 1.0
+            try:
+                guard_delay = float(guard_context.get("delay", 0.0) or 0.0)
+            except Exception:
+                guard_delay = 0.0
+            bootstrap_guard_active = bool(guard_delay > 0 or guard_budget_scale > 1.0 or guard_context)
         embedder_stage_deadline_remaining = (
             max(0.0, embedder_stage_deadline - time.monotonic())
             if embedder_stage_deadline is not None
@@ -3489,7 +3504,12 @@ def initialize_bootstrap_context(
             guard_budget_guarded = True
             guard_presence_reason = presence_reason
         else:
-            presence_default_enforced = not full_preload_requested
+            presence_default_enforced = (
+                (bootstrap_fast_context or warmup_lite_context or bootstrap_guard_active)
+                and not full_preload_requested
+            )
+            if not presence_default_enforced:
+                presence_default_enforced = not full_preload_requested
         embedder_deferred, embedder_deferral_reason = _BOOTSTRAP_SCHEDULER.embedder_deferral()
         fast_or_lite = bootstrap_fast_context or warmup_lite_context
         gate_constrained = bool(embedder_gate.get("contention"))
@@ -3502,6 +3522,7 @@ def initialize_bootstrap_context(
             embedder_deferred=embedder_deferred,
             bootstrap_fast_context=bootstrap_fast_context,
             warmup_lite_context=warmup_lite_context,
+            bootstrap_guard_active=bootstrap_guard_active,
         )
         presence_only = presence_only or guard_presence_only
         budget_guarded = budget_guarded or guard_budget_guarded
@@ -3512,6 +3533,8 @@ def initialize_bootstrap_context(
             fast_presence_reason = "embedder_presence_bootstrap_fast"
         elif warmup_lite_context:
             fast_presence_reason = "embedder_presence_warmup_lite"
+        elif bootstrap_guard_active:
+            fast_presence_reason = "embedder_presence_bootstrap_guard"
         if bootstrap_context_active and not full_preload_requested:
             presence_only = True
             budget_guarded = True
@@ -3669,6 +3692,9 @@ def initialize_bootstrap_context(
                     "full_preload_flag": full_embedder_preload,
                     "bootstrap_fast": bootstrap_fast_context,
                     "warmup_lite": warmup_lite_context,
+                    "bootstrap_guard_active": bootstrap_guard_active,
+                    "guard_budget_scale": guard_budget_scale,
+                    "guard_delay": guard_delay,
                     "embedder_deferred": embedder_deferred,
                     "budget_guarded": budget_guarded,
                     "presence_default": presence_default_enforced,
@@ -3700,7 +3726,8 @@ def initialize_bootstrap_context(
             ]
             probe_timeout = min(probe_timeout_candidates) if probe_timeout_candidates else 0.75
             probe_timeout_hard_cap = 1.5
-            probe_timeout = min(probe_timeout, probe_timeout_hard_cap)
+            presence_probe_stage_cap = 0.65
+            probe_timeout = min(probe_timeout, probe_timeout_hard_cap, presence_probe_stage_cap)
             probe_stop_event = threading.Event()
             presence_available = False
             probe_timed_out = False
