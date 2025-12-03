@@ -605,6 +605,13 @@ class PatchRetriever:
         path = "vectors.index"
         dim = 0
         metric = "cosine"
+        warmup_flag = bool(self.bootstrap_fast)
+        resolved_fast = self.bootstrap_fast
+        if resolve_vector_bootstrap_flags is not None:
+            resolved_fast, warmup_flag, _, _ = resolve_vector_bootstrap_flags(
+                bootstrap_fast=self.bootstrap_fast, warmup=self.bootstrap_fast
+            )
+            self.bootstrap_fast = bool(resolved_fast)
         try:  # pragma: no cover - configuration optional in tests
             from config import CONFIG
             cfg = getattr(CONFIG, "vector_store", None)
@@ -622,17 +629,12 @@ class PatchRetriever:
                 from .vector_store import create_vector_store  # type: ignore
             except Exception:  # pragma: no cover - fallback
                 from vector_service.vector_store import create_vector_store  # type: ignore
-            self.store = create_vector_store(dim or 0, path, backend=backend)
+            lazy_store = bool(warmup_flag or resolved_fast)
+            self.store = create_vector_store(
+                dim or 0, path, backend=backend, lazy=lazy_store
+            )
         if not self.metric and not self.service_url:
             self.metric = str(metric).lower()
-
-        warmup_flag = bool(self.bootstrap_fast)
-        resolved_fast = self.bootstrap_fast
-        if resolve_vector_bootstrap_flags is not None:
-            resolved_fast, warmup_flag, _, _ = resolve_vector_bootstrap_flags(
-                bootstrap_fast=self.bootstrap_fast, warmup=self.bootstrap_fast
-            )
-            self.bootstrap_fast = bool(resolved_fast)
         if self.vector_metrics is None and VectorMetricsDB is not None and not self.service_url:
             try:
                 self.vector_metrics = get_bootstrap_vector_metrics_db(

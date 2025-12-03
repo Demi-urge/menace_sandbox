@@ -534,6 +534,15 @@ class SharedVectorService:
         budget_hook = budget_check or self.budget_check
         if self.vector_store is not None:
             return
+        if force and self.lazy_vector_store and self._should_skip_vector_store():
+            logger.info(
+                "shared_vector_service.vector_store.lazy_deferred",
+                extra={
+                    "bootstrap_fast": bool(self.bootstrap_fast),
+                    "warmup_lite": bool(self.warmup_lite),
+                },
+            )
+            return
         if not force and (self.lazy_vector_store or self._should_skip_vector_store()):
             logger.info(
                 "shared_vector_service.vector_store.deferred",
