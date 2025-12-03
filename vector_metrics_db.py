@@ -50,6 +50,7 @@ _VECTOR_DB_INSTANCE: "VectorMetricsDB | _BootstrapVectorMetricsStub | None" = No
 _VECTOR_DB_LOCK = threading.Lock()
 _PENDING_WEIGHTS: dict[str, float] = {}
 _READINESS_HOOK_ARMED = False
+_FIRST_WRITE_BUDGET_ENV = "VECTOR_METRICS_FIRST_WRITE_BUDGET_SECS"
 
 _BOOTSTRAP_TIMER_ENVS = (
     "MENACE_BOOTSTRAP_WAIT_SECS",
@@ -99,6 +100,8 @@ class _BootstrapVectorMetricsStub:
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
         )
+        self._created_at = time.perf_counter()
+        self._first_write_budget = _first_write_activation_budget_seconds()
         logger.info(
             "vector_metrics_db.bootstrap.stub_created",
             extra={
@@ -260,9 +263,9 @@ class _BootstrapVectorMetricsStub:
                 self._release_activation_block(
                     reason="bootstrap_ready", configure_ready=True
                 )
-                activate_shared_vector_metrics_db(
-                    reason="bootstrap_ready", post_warmup=True
-                )
+                delegate = self._promote_from_stub(reason="bootstrap_ready")
+                if delegate is None:
+                    self.activate_on_first_write()
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True
@@ -369,6 +372,10 @@ class _BootstrapVectorMetricsStub:
         if delegate is not None:
             return delegate
         if self._activation_blocked:
+            self._log_deferred_activation(reason=f"blocked:{method}")
+            _increment_deferral_metric("blocked_first_write")
+            return None
+        if self._first_write_deferred():
             return None
         if not self._activate_on_first_write:
             return None
@@ -376,6 +383,26 @@ class _BootstrapVectorMetricsStub:
         if delegate is self:
             return None
         return delegate
+
+    def _first_write_deferred(self) -> bool:
+        if self._first_write_budget is None:
+            return False
+        remaining = self._first_write_budget - (time.perf_counter() - self._created_at)
+        if remaining > 0:
+            self._queued_first_write = True
+            self._log_deferred_activation(reason="first_write_budget")
+            logger.info(
+                "vector_metrics_db.bootstrap.first_write_deferred",
+                extra={
+                    "remaining_ms": round(remaining * 1000, 2),
+                    "budget_secs": self._first_write_budget,
+                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                },
+            )
+            _increment_deferral_metric("first_write_budget")
+            return True
+        return False
 
     def planned_path(self) -> Path:
         return Path(self._activation_kwargs["path"]).expanduser()
@@ -720,6 +747,31 @@ def _bootstrap_timers_active() -> bool:
     if _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False):
         return True
     return any(os.getenv(name) for name in _BOOTSTRAP_TIMER_ENVS)
+
+
+def _first_write_activation_budget_seconds() -> float | None:
+    """Return the warmup activation budget for first-write promotion."""
+
+    def _parse_budget(value: str | None) -> float | None:
+        if not value:
+            return None
+        try:
+            budget = float(value)
+        except Exception:
+            return None
+        return budget if budget > 0 else None
+
+    env_budget = _parse_budget(os.getenv(_FIRST_WRITE_BUDGET_ENV))
+    if env_budget is not None:
+        return env_budget
+
+    timer_budgets = [
+        _parse_budget(os.getenv(name)) for name in _BOOTSTRAP_TIMER_ENVS
+    ]
+    timer_budgets = [b for b in timer_budgets if b is not None]
+    if timer_budgets:
+        return min(timer_budgets)
+    return None
 
 
 def _detect_bootstrap_environment() -> dict[str, bool]:
