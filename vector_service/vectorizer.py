@@ -257,9 +257,10 @@ class SharedVectorService:
         self._background_handler_timeouts = self.handler_timeouts
         if self.bootstrap_fast is None:
             self.bootstrap_fast = resolved_fast
-        if self.hydrate_handlers is None:
+        requested_hydration = self.hydrate_handlers
+        if self.hydrate_handlers is None or (resolved_fast or warmup_lite):
             self.hydrate_handlers = False
-        explicit_hydration = self.hydrate_handlers is True
+        explicit_hydration = requested_hydration is True
         self._explicit_hydration_request = explicit_hydration
         if self.lazy_vector_store is None:
             self.lazy_vector_store = bootstrap_context or resolved_fast
@@ -350,6 +351,15 @@ class SharedVectorService:
 
         self._schedule_background_hydration()
 
+    def kick_off_background_hydration(self) -> None:
+        """Start handler hydration once the service is considered ready."""
+
+        if self._handler_bootstrap_flag:
+            self._handler_bootstrap_flag = False
+        if self.warmup_lite:
+            self.warmup_lite = False
+        self._schedule_background_hydration()
+
     def hydrate_all_handlers(
         self,
         *,
@@ -396,22 +406,15 @@ class SharedVectorService:
                 effective_timeouts = numeric_timeout if numeric_timeout is not None else None
 
         self._background_handler_timeouts = effective_timeouts
-        if (self.warmup_lite and not self._explicit_hydration_request) or (
-            self._handler_bootstrap_flag
-            and handler_timeouts is not None
-            and not self._explicit_hydration_request
-        ):
-            self._mark_handler_deferral(
-                "warmup-lite" if self.warmup_lite else "bootstrap-fast",
-                schedule_background=True,
-            )
+        if self.warmup_lite or self._handler_bootstrap_flag:
+            reason = "warmup-lite" if self.warmup_lite else "bootstrap-fast"
+            self._mark_handler_deferral(reason, schedule_background=True)
             logger.info(
                 "shared_vector_service.handlers.deferred",
                 extra={
-                    "reason": "warmup-lite"
-                    if self.warmup_lite
-                    else "bootstrap-budget",
+                    "reason": reason,
                     "bootstrap_fast_active": self._handler_bootstrap_flag,
+                    "explicit_hydration_request": self._explicit_hydration_request,
                 },
             )
             return
@@ -616,7 +619,13 @@ class SharedVectorService:
 
     def _schedule_background_hydration(self) -> None:
         if self._background_hydration_started:
-            return
+            if (
+                self._background_hydration_thread is not None
+                and not self._background_hydration_thread.is_alive()
+            ):
+                self._background_hydration_started = False
+            else:
+                return
         if self.stop_event is not None and self.stop_event.is_set():
             return
         self._background_hydration_started = True
