@@ -6007,7 +6007,9 @@ def initialize_bootstrap_context(
                     embedder_stage_budget_hint - (time.monotonic() - warmup_started)
                 )
             if embedder_timeout is not None:
-                remaining_candidates.append(embedder_timeout - (time.monotonic() - warmup_started))
+                remaining_candidates.append(
+                    embedder_timeout - (time.monotonic() - warmup_started)
+                )
             if embedder_stage_deadline is not None:
                 remaining_candidates.append(embedder_stage_deadline - time.monotonic())
             if bootstrap_deadline is not None:
@@ -6019,10 +6021,41 @@ def initialize_bootstrap_context(
                     warmup_timebox_cap - (time.monotonic() - warmup_started)
                 )
 
-            remaining_filtered = [candidate for candidate in remaining_candidates if candidate is not None]
+            remaining_filtered = [
+                candidate for candidate in remaining_candidates if candidate is not None
+            ]
             if not remaining_filtered:
                 return None
             return max(0.0, min(remaining_filtered))
+
+        def _stage_budget_remaining() -> float | None:
+            controller_remaining = stage_controller.stage_budget(
+                step_name="embedder_preload"
+            )
+            controller_deadline = stage_controller.stage_deadline(
+                step_name="embedder_preload"
+            )
+            controller_candidates = []
+            if controller_remaining is not None:
+                controller_candidates.append(
+                    controller_remaining - (time.monotonic() - warmup_started)
+                )
+            if controller_deadline is not None:
+                controller_candidates.append(controller_deadline - time.monotonic())
+
+            remaining = _warmup_budget_remaining()
+            if remaining is not None:
+                controller_candidates.append(remaining)
+
+            filtered = [candidate for candidate in controller_candidates if candidate is not None]
+            if not filtered:
+                return None
+            return max(0.0, min(filtered))
+
+        def _check_stage_budget() -> None:
+            remaining = _stage_budget_remaining()
+            if remaining is not None and remaining <= 0:
+                raise TimeoutError("embedder preload stage budget exhausted")
 
         warmup_stage_timeouts: dict[str, float] | float | None = None
         warmup_budget = _warmup_budget_remaining()
@@ -6044,6 +6077,50 @@ def initialize_bootstrap_context(
                     warmup_stage_timeouts[key] = min(existing, warmup_timebox_cap)
         elif warmup_timebox_cap is not None:
             warmup_stage_timeouts = {"budget": warmup_timebox_cap, "model": warmup_timebox_cap}
+
+        controller_timeouts: dict[str, float] = {}
+        controller_budget_remaining = stage_controller.stage_budget(step_name="embedder_preload")
+        controller_deadline_remaining = stage_controller.stage_deadline(step_name="embedder_preload")
+        if controller_budget_remaining is not None:
+            controller_budget_remaining = max(
+                0.0, controller_budget_remaining - (time.monotonic() - warmup_started)
+            )
+            controller_timeouts["budget"] = controller_budget_remaining
+            controller_timeouts.setdefault("model", controller_budget_remaining)
+        if controller_deadline_remaining is not None:
+            controller_timeouts["deadline"] = max(
+                0.0, controller_deadline_remaining - time.monotonic()
+            )
+
+        if controller_timeouts:
+            if isinstance(warmup_stage_timeouts, Mapping):
+                merged: dict[str, float | None] = dict(controller_timeouts)
+                for key, value in warmup_stage_timeouts.items():
+                    if value is None:
+                        merged.setdefault(key, value)
+                        continue
+                    existing = merged.get(key)
+                    merged[key] = value if existing is None else min(existing, value)
+                warmup_stage_timeouts = merged
+            elif isinstance(warmup_stage_timeouts, (int, float)):
+                merged_budget = controller_timeouts.get("budget")
+                try:
+                    numeric_timeout = float(warmup_stage_timeouts)
+                except (TypeError, ValueError):
+                    numeric_timeout = None
+                if numeric_timeout is not None:
+                    merged_budget = min(
+                        numeric_timeout,
+                        merged_budget if merged_budget is not None else numeric_timeout,
+                    )
+                warmup_stage_timeouts = {
+                    **controller_timeouts,
+                    **({"budget": merged_budget} if merged_budget is not None else {}),
+                }
+                if merged_budget is not None:
+                    warmup_stage_timeouts.setdefault("model", merged_budget)
+            else:
+                warmup_stage_timeouts = dict(controller_timeouts)
 
         warmup_cap_exceeded = False
         if warmup_join_ceiling is not None:
@@ -6092,7 +6169,9 @@ def initialize_bootstrap_context(
                         probe_model=True,
                         warmup_lite=True,
                         stage_timeouts=warmup_stage_timeouts,
-                        budget_remaining=_warmup_budget_remaining,
+                        budget_remaining=_stage_budget_remaining,
+                        check_budget=_check_stage_budget,
+                        bootstrap_lite=True,
                     )
                 )
             except Exception:  # pragma: no cover - advisory warmup only
