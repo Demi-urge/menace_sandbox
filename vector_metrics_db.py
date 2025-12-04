@@ -97,14 +97,18 @@ class _BootstrapVectorMetricsStub:
         self._readiness_hook_registered = False
         self._activate_on_first_write = False
         self._deferred_summary_emitted = False
+        self._warmup_guarded_activation = False
         self._pending_weights: dict[str, float] = {}
         self._queued_first_write = False
         self._queued_activation_kwargs: dict[str, Any] = {}
         self._queued_promotions: dict[str, Any] = {}
+        self._post_warmup_activation_reason: str | None = None
+        self._post_warmup_activation_requested = False
         self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
         )
+        self._warmup_guarded_activation = self._activation_blocked
         self._created_at = time.perf_counter()
         self._first_write_budget = _first_write_activation_budget_seconds()
         self._first_write_attempted = False
@@ -201,6 +205,21 @@ class _BootstrapVectorMetricsStub:
         self._activation_kwargs.update(self._queued_activation_kwargs)
         self._queued_activation_kwargs.clear()
 
+    def request_post_warmup_activation(self, *, reason: str = "post_warmup") -> None:
+        self._post_warmup_activation_requested = True
+        self._post_warmup_activation_reason = reason or "post_warmup"
+        if isinstance(self._delegate, VectorMetricsDB):
+            try:
+                self._delegate.end_warmup(reason=reason)
+                self._delegate.activate_persistence(reason=reason)
+            except Exception:
+                logger.debug(
+                    "vector metrics post-warmup activation failed", exc_info=True
+                )
+            return
+        if not self._activation_blocked:
+            self._apply_post_warmup_activation()
+
     def _log_deferred_activation(self, *, reason: str) -> None:
         if self._delegate is not None:
             return
@@ -229,6 +248,7 @@ class _BootstrapVectorMetricsStub:
         if self._queued_first_write:
             self._activate_on_first_write = True
         self._activation_blocked = False
+        self._warmup_guarded_activation = False
         logger.info(
             "vector_metrics_db.bootstrap.activation_unblocked",
             extra={
@@ -238,6 +258,8 @@ class _BootstrapVectorMetricsStub:
                 "read_only": bool(self._activation_kwargs.get("read_only")),
             },
         )
+        if self._post_warmup_activation_requested:
+            self._apply_post_warmup_activation()
 
     def activate(self, *, reason: str = "explicit") -> "VectorMetricsDB":
         return self._activate(reason=reason)
@@ -397,6 +419,10 @@ class _BootstrapVectorMetricsStub:
         if delegate is not None:
             return delegate
         if self._activation_blocked:
+            if self._warmup_guarded_activation:
+                self._log_deferred_activation(reason=f"warmup_guard:{method}")
+                _increment_deferral_metric("warmup_guard")
+                return None
             if self._activate_on_first_write and not self._first_write_deferred():
                 self._release_activation_block(
                     reason=f"first_write_ready:{method}", configure_ready=True
@@ -512,6 +538,16 @@ class _BootstrapVectorMetricsStub:
             extra={"reason": reason, "budget_secs": self._first_write_budget},
         )
         return vdb
+
+    def _apply_post_warmup_activation(self) -> None:
+        if not self._post_warmup_activation_requested:
+            return
+        reason = self._post_warmup_activation_reason or "post_warmup"
+        delegate = self._promote_from_stub(reason=reason, allow_override=True)
+        if isinstance(delegate, _BootstrapVectorMetricsStub):
+            return
+        if delegate is not None:
+            self._delegate = delegate
 
     def _apply_post_warmup_promotions(self, *, reason: str) -> None:
         if not self._queued_promotions:
@@ -1130,8 +1166,6 @@ def get_shared_vector_metrics_db(
         resolved_warmup = True
     state_flags = _bootstrap_state_flags()
     timer_context = _bootstrap_timers_active()
-    readiness_signal_active = bool(_READINESS_HOOK_ARMED)
-    readiness_inactive = not readiness_signal_active
     menace_bootstrap = bool(_menace_bootstrap_active() or bootstrap_env)
     bootstrap_requested = bool(
         warmup_stub_requested
@@ -1146,14 +1180,11 @@ def get_shared_vector_metrics_db(
     warmup_context_reasons = {
         "bootstrap_requested": bootstrap_requested,
         "bootstrap_timer": timer_context,
-        "readiness_signal": readiness_signal_active,
         "warmup_env": _env_flag("VECTOR_METRICS_BOOTSTRAP_WARMUP", False),
         "menace_bootstrap": menace_bootstrap,
         "warmup_lite": state_flags["warmup_lite"],
         "bootstrap_state": state_flags["bootstrap_state"],
         "warmup_stub_requested": warmup_stub_requested,
-        "readiness_hook_inactive": readiness_inactive,
-        "default_bootstrap_guard": True,
     }
     warmup_context = bool(any(warmup_context_reasons.values()))
     stub_short_circuit = bool(
@@ -1161,7 +1192,6 @@ def get_shared_vector_metrics_db(
         or resolved_warmup
         or resolved_bootstrap_fast
         or timer_context
-        or readiness_inactive
     )
     promotion_requested = bool((ensure_exists is True) or (read_only is False))
     requested_ensure_exists = ensure_exists
@@ -1480,30 +1510,6 @@ def activate_shared_vector_metrics_db(
         bootstrap_blocked = bool(
             resolved_fast or resolved_warmup or env_requested or bootstrap_env
         )
-        if getattr(vm, "_boot_stub_active", False) and bootstrap_blocked and not post_warmup:
-            logger.info(
-                "vector_metrics_db.bootstrap.stub_activation_guarded",
-                extra={
-                    "reason": reason,
-                    "bootstrap_fast": resolved_fast,
-                    "warmup": resolved_warmup,
-                    "env_requested": env_requested,
-                    "bootstrap_env": bootstrap_env,
-                },
-            )
-            return vm
-        if not allow_activation and bootstrap_blocked:
-            logger.info(
-                "vector_metrics_db.bootstrap.activation_deferred",
-                extra={
-                    "reason": reason,
-                    "bootstrap_fast": resolved_fast,
-                    "warmup": resolved_warmup,
-                    "env_requested": env_requested,
-                    "bootstrap_env": bootstrap_env,
-                },
-            )
-            return vm
         activation_path = default_vector_metrics_path(
             ensure_exists=True, bootstrap_read_only=False, read_only=False
         )
@@ -1513,6 +1519,19 @@ def activate_shared_vector_metrics_db(
             read_only=False,
             path=activation_path,
         )
+        vm.request_post_warmup_activation(reason=reason or "warmup_complete")
+        if bootstrap_blocked and not allow_activation:
+            logger.info(
+                "vector_metrics_db.bootstrap.lazy_activation_armed",
+                extra={
+                    "reason": reason,
+                    "bootstrap_fast": resolved_fast,
+                    "warmup": resolved_warmup,
+                    "env_requested": env_requested,
+                    "bootstrap_env": bootstrap_env,
+                },
+            )
+            return vm
         delegate = vm._promote_from_stub(
             reason=reason or "warmup_complete", allow_override=allow_activation
         )
