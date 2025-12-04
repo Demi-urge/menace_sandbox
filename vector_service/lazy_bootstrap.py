@@ -3304,9 +3304,13 @@ def warmup_vector_service(
 
     _record_bootstrap_deferrals()
 
+    handler_force_blocked = False
+    handler_force_status = "deferred-heavy"
+
     def _enforce_heavy_inline_flag() -> None:
         nonlocal download_model, probe_model, model_probe_only
         nonlocal hydrate_handlers, run_vectorise, heavy_admission
+        nonlocal handler_force_blocked, handler_force_status
 
         if force_heavy:
             return
@@ -3329,6 +3333,8 @@ def warmup_vector_service(
             model_probe_only = False
 
         if hydrate_handlers:
+            handler_force_blocked = True
+            handler_force_status = heavy_gate_status
             _defer("handlers", handler_timeout)
             hydrate_handlers = False
             if run_vectorise:
@@ -3340,6 +3346,86 @@ def warmup_vector_service(
             run_vectorise = False
 
     _enforce_heavy_inline_flag()
+
+    if handler_force_blocked and bootstrap_context and not force_heavy:
+        summary: dict[str, str] = {
+            "bootstrap": "presence-only",
+            "warmup_lite": "True",
+        }
+        handler_status = memoised_results.get("handlers")
+        if not isinstance(handler_status, str):
+            handler_status = handler_force_status
+        summary["handlers"] = handler_status
+        summary["deferred"] = "handlers"
+        summary["deferred_stages"] = "handlers"
+        summary["background"] = "handlers"
+
+        handler_timeout_hint = _conservative_background_hints({"handlers"}).get(
+            "handlers"
+        )
+        if background_stage_timeouts is None:
+            background_stage_timeouts = {
+                stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+                for stage in base_timeouts
+            }
+        background_candidates.add("handlers")
+        background_warmup.add("handlers")
+        _hint_background_budget("handlers", handler_timeout_hint)
+
+        if background_queue_allowed:
+            if background_hook is not None:
+                try:
+                    hook_code = getattr(background_hook, "__code__", None)
+                    if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                        background_hook({"handlers"}, budget_hints={"handlers": handler_timeout_hint})
+                    else:
+                        background_hook({"handlers"})
+                except Exception:  # pragma: no cover - advisory hook
+                    log.debug("background hook failed", exc_info=True)
+
+            summary["handlers_queued"] = _BACKGROUND_QUEUE_FLAG
+            _schedule_background_warmup(
+                {"handlers"},
+                logger=log,
+                timeouts={"handlers": handler_timeout_hint},
+                warmup_kwargs={
+                    "download_model": download_model,
+                    "probe_model": probe_model or model_probe_allowed,
+                    "hydrate_handlers": True,
+                    "start_scheduler": start_scheduler,
+                    "run_vectorise": run_vectorise,
+                    "check_budget": check_budget,
+                    "budget_remaining": budget_remaining,
+                    "logger": log,
+                    "force_heavy": True,
+                    "bootstrap_fast": bootstrap_fast,
+                    "warmup_lite": False,
+                    "warmup_model": warmup_model,
+                    "warmup_handlers": True,
+                    "warmup_probe": warmup_probe,
+                    "deferred_stages": {"handlers"},
+                    "bootstrap_lite": bootstrap_lite,
+                },
+            )
+        else:
+            _update_warmup_stage_cache(
+                "handlers",
+                handler_status,
+                log,
+                meta={
+                    "source": "bootstrap-handler-force",
+                    "background_state": "skipped-no-budget",
+                    "background_timeout": handler_timeout_hint,
+                },
+                emit_metric=False,
+            )
+
+        log.info(
+            "Bootstrap presence-only guard deferring handler hydration until heavy warmup",
+            extra={"event": "vector-warmup", "warmup": summary},
+        )
+
+        return summary
 
     def _admit_stage_budget(
         stage: str, planned_timeout: float | None, *, stage_cap: float | None = None
