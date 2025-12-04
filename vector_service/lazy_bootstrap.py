@@ -515,6 +515,11 @@ def ensure_embedding_model(
     if inline_queue_ceiling is None:
         inline_queue_ceiling = _BOOTSTRAP_STAGE_TIMEOUT
 
+    hard_inline_cap: float | None = None
+    cap_candidates = [cap for cap in (_BOOTSTRAP_STAGE_TIMEOUT, _HEAVY_STAGE_CEILING) if cap is not None]
+    if cap_candidates:
+        hard_inline_cap = min(cap_candidates)
+
     def _result(path: Path | None, status: str | None = None):
         if warmup_lite_enabled or status is not None:
             return path, status
@@ -560,6 +565,8 @@ def ensure_embedding_model(
         inline_stage_cap = (
             stage_ceiling if inline_stage_cap is None else min(inline_stage_cap, stage_ceiling)
         )
+    if warmup and hard_inline_cap is not None:
+        inline_stage_cap = hard_inline_cap if inline_stage_cap is None else min(inline_stage_cap, hard_inline_cap)
 
     if stage_ceiling is not None:
         if effective_timeout is None:
@@ -576,6 +583,13 @@ def ensure_embedding_model(
             effective_timeout = inline_stage_cap
         else:
             effective_timeout = min(effective_timeout, inline_stage_cap)
+        if (
+            warmup
+            and inline_stage_cap is not None
+            and pre_ceiling_timeout is not None
+            and inline_stage_cap < pre_ceiling_timeout
+        ):
+            insufficient_budget = True
 
     def _mandatory_timeout(current_timeout: float | None) -> float | None:
         deadline_remaining = _stage_budget_deadline()
@@ -622,6 +636,9 @@ def ensure_embedding_model(
                 "background_timeout": inline_queue_ceiling,
                 "background_state": "deferred",
             },
+        )
+        _queue_background_model_download(
+            log, download_timeout=inline_queue_ceiling, force_heavy=warmup_heavy
         )
         return (None, status)
 
