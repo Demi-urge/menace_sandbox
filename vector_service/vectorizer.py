@@ -81,6 +81,7 @@ except Exception:  # pragma: no cover - avoid hard dependency
 from .lazy_bootstrap import (
     _BACKGROUND_QUEUE_FLAG,
     _HEAVY_STAGE_CEILING,
+    _update_warmup_stage_cache,
     ensure_embedding_model,
     ensure_embedding_model_future,
 )
@@ -149,6 +150,9 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     wait_timeout = _REMOTE_TIMEOUT
     if stage_ceiling is not None:
         wait_timeout = min(stage_ceiling, wait_timeout) if wait_timeout else stage_ceiling
+    warmup_thread = _is_warmup_thread()
+    bundle_present = _BUNDLED_MODEL.exists()
+    ceiling_known = stage_ceiling is not None and wait_timeout is not None
     model_future = ensure_embedding_model_future(
         logger=logger,
         warmup=True,
@@ -157,14 +161,31 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
         download_timeout=_REMOTE_TIMEOUT,
     )
     prep_future = _get_local_model_prep_future(model_future)
-    warmup_thread = _is_warmup_thread()
-    if warmup_thread and not prep_future.done():
+    if warmup_thread and (not bundle_present or not ceiling_known):
+        _update_warmup_stage_cache(
+            "model",
+            "deferred-ceiling",
+            logger,
+            meta={"background_state": "queued", "background_timeout": wait_timeout},
+        )
         deferred = TimeoutError("local embedding model download deferred")
         setattr(deferred, "_deferred_status", _BACKGROUND_QUEUE_FLAG)
         setattr(deferred, "_deferred_timeout", wait_timeout)
         raise deferred
+    if warmup_thread and not prep_future.done():
+        _update_warmup_stage_cache(
+            "model",
+            "deferred-ceiling",
+            logger,
+            meta={"background_state": "queued", "background_timeout": wait_timeout},
+        )
+        deferred = TimeoutError("local embedding model download deferred")
+        setattr(deferred, "_deferred_status", _BACKGROUND_QUEUE_FLAG)
+        setattr(deferred, "_deferred_timeout", wait_timeout)
+        raise deferred
+    should_block = not warmup_thread and (wait_timeout is None or wait_timeout > 0)
     try:
-        cache_dir = prep_future.result(timeout=wait_timeout)
+        cache_dir = prep_future.result(timeout=wait_timeout) if should_block else prep_future.result(0)
     except FutureTimeout as exc:
         _trace(
             "local-model.deferred",
