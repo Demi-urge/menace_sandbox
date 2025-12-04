@@ -412,6 +412,51 @@ def test_warmup_join_timeout_capped(monkeypatch):
     assert join_cap == 0.5
 
 
+def test_default_inline_join_cap_defers_background(monkeypatch):
+    preseed_bootstrap = _load_preseed_bootstrap_module()
+
+    calls: dict[str, object] = {}
+
+    def slow_bootstrap_embedder(*_, stop_event: threading.Event, **__):
+        calls["start"] = time.perf_counter()
+        stop_event.wait(5)
+        calls["stop_state"] = stop_event.is_set()
+        return object()
+
+    monkeypatch.setattr(preseed_bootstrap, "_bootstrap_embedder", slow_bootstrap_embedder)
+    monkeypatch.setattr(preseed_bootstrap, "_derive_warmup_join_timeout", lambda **__: (None, None))
+    monkeypatch.setattr(preseed_bootstrap, "_EMBEDDER_HEAVY_STAGE_CEILING", 0.05)
+    monkeypatch.setattr(
+        preseed_bootstrap._StagedBootstrapController, "stage_budget", lambda *_, **__: None
+    )
+    monkeypatch.setattr(
+        preseed_bootstrap._StagedBootstrapController, "stage_deadline", lambda *_, **__: None
+    )
+
+    preseed_bootstrap._BOOTSTRAP_CACHE.clear()
+    preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+
+    preseed_bootstrap.initialize_bootstrap_context(
+        use_cache=False, full_embedder_preload=True
+    )
+
+    for _ in range(40):
+        job_snapshot = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+        if job_snapshot.get("deferral_reason"):
+            break
+        time.sleep(0.05)
+
+    job_snapshot = preseed_bootstrap._BOOTSTRAP_EMBEDDER_JOB or {}
+    warmup_summary = job_snapshot.get("warmup_summary") or {}
+
+    assert calls.get("start") is not None
+    assert calls.get("stop_state") is True
+    assert job_snapshot.get("deferral_reason") == "embedder_preload_inline_cap_default"
+    assert job_snapshot.get("background_dispatch") is True
+    assert warmup_summary.get("deferral_reason") == "embedder_preload_inline_cap_default"
+    assert warmup_summary.get("strict_timebox") == pytest.approx(0.05)
+
+
 def test_start_embedder_warmup_aborts_on_elapsed_deadline(monkeypatch):
     preseed_bootstrap = _load_preseed_bootstrap_module()
 
