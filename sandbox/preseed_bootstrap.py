@@ -4298,6 +4298,41 @@ def initialize_bootstrap_context(
                 )
     except Exception:  # pragma: no cover - advisory only
         LOGGER.debug("failed to compute embedder stage timebox hint", exc_info=True)
+    finite_stage_budget_available = bool(
+        embedder_stage_budget_hint is not None
+        and math.isfinite(embedder_stage_budget_hint)
+    )
+    background_strict_timebox = (
+        embedder_stage_timebox_hint
+        if embedder_stage_timebox_hint is not None
+        else embedder_stage_budget_hint
+    )
+    if background_strict_timebox is None:
+        background_strict_timebox = embedder_stage_timebox_ceiling
+    if (
+        embedder_preload_skip_reason is None
+        and not force_embedder_preload
+        and (
+            warmup_lite_context
+            or bootstrap_fast_context
+            or finite_stage_budget_available
+        )
+    ):
+        early_deferral_reason = (
+            "embedder_preload_warmup_lite_background"
+            if warmup_lite_context
+            else (
+                "embedder_preload_bootstrap_fast_background"
+                if bootstrap_fast_context
+                else "embedder_preload_finite_stage_budget"
+            )
+        )
+        _record_embedder_skip(
+            early_deferral_reason,
+            background_timebox=background_strict_timebox,
+            enqueue_background=True,
+            budget_flag=finite_stage_budget_available,
+        )
     background_timebox_hint = embedder_stage_timebox_hint or embedder_stage_budget_hint
     preload_budget_floor = float(
         _COMPONENT_BASELINES.get("vector_seeding") or BOOTSTRAP_EMBEDDER_TIMEOUT
