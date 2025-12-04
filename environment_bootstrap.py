@@ -1966,7 +1966,20 @@ class EnvironmentBootstrapper:
     # ------------------------------------------------------------------
     def bootstrap_vector_assets(self) -> None:
         """Download model and seed default ranking weights."""
-        if importlib.util.find_spec("huggingface_hub") is None:
+        heavy_opt_in = os.getenv("MENACE_POST_BOOTSTRAP_WARM_VECTOR", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+            "heavy",
+            "full",
+        }
+        if not heavy_opt_in:
+            self.logger.info(
+                "Deferring embedding model bundle until post-bootstrap heavy warmup opt-in",
+                extra=log_record(event="vector-model-download-deferred"),
+            )
+        elif importlib.util.find_spec("huggingface_hub") is None:
             self.logger.info(
                 "Skipping embedding model download; install huggingface-hub to enable automatic provisioning"
             )
@@ -2001,6 +2014,7 @@ class EnvironmentBootstrapper:
                     warmup=True,
                     ensure_exists=False,
                     read_only=True,
+                    warmup_stub=True,
                 )
                 self.logger.info(
                     "Queued vector metrics weight seeding for post-bootstrap promotion",
@@ -2223,17 +2237,35 @@ class EnvironmentBootstrapper:
             run_vectorise = os.getenv(
                 "MENACE_BOOTSTRAP_WARM_VECTOR_VECTORISE", ""
             ).strip().lower() in truthy or "vectorise" in tokens or "vectorize" in tokens
-            warmup_model = heavy_requested or model_requested
-            warmup_handlers = heavy_requested or handlers_requested
+            heavy_opt_in = (
+                os.getenv("MENACE_POST_BOOTSTRAP_WARM_VECTOR", "").strip().lower() in truthy
+                or os.getenv("MENACE_VECTOR_POST_BOOTSTRAP_HEAVY", "").strip().lower()
+                in truthy
+                or "postheavy" in tokens
+            )
+            warmup_model = (heavy_requested or model_requested) and heavy_opt_in
+            warmup_handlers = (heavy_requested or handlers_requested) and heavy_opt_in
             warmup_probe = (
                 False
                 if raw == ""
                 else heavy_requested or light_warmup or probe_requested
             )
-            warmup_lite = not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
+            warmup_lite = (
+                not heavy_requested or light_warmup or (warmup_probe and not warmup_handlers)
+            )
             heavy_model_requested = warmup_model
             heavy_handlers_requested = warmup_handlers
-            heavy_vectorise_requested = run_vectorise
+            heavy_vectorise_requested = run_vectorise and heavy_opt_in
+            heavy_opt_in_requested = (
+                heavy_model_requested or heavy_handlers_requested or heavy_vectorise_requested
+            )
+            opt_in_deferred: set[str] = set()
+            if heavy_requested and not heavy_opt_in:
+                opt_in_deferred |= {stage for stage, requested in (
+                    ("model", heavy_requested or model_requested),
+                    ("handlers", heavy_requested or handlers_requested),
+                    ("vectorise", run_vectorise),
+                ) if requested}
             vector_budget_hint = self._stage_budget_hint("vector_warmup") or self._stage_budget_hint("vector_seeding")
             remaining_phase_budget = None
             if phase_budget is not None:
@@ -2278,6 +2310,8 @@ class EnvironmentBootstrapper:
                     budget_guard_deferred.add(stage)
                 if phase_remaining is not None and phase_remaining < estimate:
                     budget_guard_deferred.add(stage)
+            if opt_in_deferred:
+                budget_guard_deferred |= set(opt_in_deferred)
 
             def _coerce_timeout(value: object) -> float | None:
                 try:
@@ -2560,6 +2594,9 @@ class EnvironmentBootstrapper:
             if cached_deferred:
                 pending_background_stages |= set(cached_deferred)
                 background_status = background_status or "pending"
+            if opt_in_deferred:
+                pending_background_stages |= set(opt_in_deferred)
+                background_status = background_status or "opt-in-required"
             persisted_background = set(pending_background_stages)
 
             def _budget_hint_payload() -> dict[str, float | None] | None:
@@ -2796,8 +2833,7 @@ class EnvironmentBootstrapper:
                     background_stage_timeouts = merged
 
                 heavy_opt_in = bool(
-                    heavy_requested
-                    or heavy_model_requested
+                    heavy_model_requested
                     or heavy_handlers_requested
                     or heavy_vectorise_requested
                 )
@@ -3137,6 +3173,23 @@ class EnvironmentBootstrapper:
                         for stage in pending_background_stages:
                             final_summary.setdefault(stage, "pending")
                         final_summary.setdefault("bootstrap", "deferred")
+                    if opt_in_deferred:
+                        final_summary.setdefault("background", background_status or "opt-in-required")
+                        final_summary.setdefault("bootstrap", "deferred")
+                        final_summary.setdefault(
+                            "deferred",
+                            ",".join(
+                                sorted(
+                                    set(opt_in_deferred)
+                                    | set(final_summary.get("deferred", "").split(","))
+                                    if final_summary.get("deferred")
+                                    else set(opt_in_deferred)
+                                )
+                            ),
+                        )
+                        for stage in opt_in_deferred:
+                            final_summary.setdefault(stage, "deferred")
+                        final_summary.setdefault("opt_in_required", "true")
                     hint_payload = _budget_hint_payload()
                     if (background_status or final_summary.get("background")) and hint_payload:
                         final_summary.setdefault("budget_hints", hint_payload)
@@ -3149,7 +3202,11 @@ class EnvironmentBootstrapper:
                     self._persist_vector_warmup_state(
                         deferred=deferred_stages,
                         summary=final_summary,
-                        mode="probe-only" if warmup_probe and not heavy_requested else "heavy" if heavy_requested else "light",
+                        mode="probe-only"
+                        if warmup_probe and not heavy_opt_in_requested
+                        else "heavy"
+                        if heavy_opt_in_requested
+                        else "light",
                         budget_hints=background_stage_timeouts
                         if isinstance(background_stage_timeouts, Mapping)
                         else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,

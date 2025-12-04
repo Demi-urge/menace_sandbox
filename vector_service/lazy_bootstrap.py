@@ -525,6 +525,8 @@ def ensure_embedding_model(
             return path, status
         return path
 
+    dest = _model_bundle_path()
+
     stage_budget_remaining = _stage_budget_deadline()
     effective_timeout = _coerce_timeout(download_timeout)
     pre_ceiling_timeout = effective_timeout
@@ -604,10 +606,11 @@ def ensure_embedding_model(
             return current_timeout
         return max(0.0, min(candidates))
 
+    preflight_timeout = _mandatory_timeout(effective_timeout)
+
     if warmup_no_budget:
         if _MODEL_READY:
-            return _result(_model_bundle_path(), "ready")
-        dest = _model_bundle_path()
+            return _result(dest, "ready")
         if dest.exists():
             _MODEL_READY = True
             _update_warmup_stage_cache(
@@ -641,6 +644,29 @@ def ensure_embedding_model(
             log, download_timeout=inline_queue_ceiling, force_heavy=warmup_heavy
         )
         return (None, status)
+
+    if warmup and not warmup_heavy and not dest.exists():
+        status = "deferred-absent-optin"
+        _update_warmup_stage_cache(
+            "model",
+            status,
+            log,
+            meta={
+                "background_state": "deferred",
+                "background_timeout": preflight_timeout,
+                "probe_only": True,
+            },
+        )
+        log.info(
+            "embedding model warmup deferred: archive missing and heavy opt-in not supplied",
+            extra={
+                "event": "vector-warmup",
+                "stage": "model",
+                "status": status,
+                "timeout": preflight_timeout,
+            },
+        )
+        return _result(None, status)
 
     def _defer_for_ceiling(status: str, timeout_hint: float | None):
         _update_warmup_stage_cache(
@@ -697,6 +723,8 @@ def ensure_embedding_model(
         )
         return _result(None, status)
 
+    effective_timeout = preflight_timeout
+
     if insufficient_budget and warmup:
         return _defer_for_ceiling("deferred-ceiling", effective_timeout)
 
@@ -724,7 +752,6 @@ def ensure_embedding_model(
     with _MODEL_LOCK:
         if _MODEL_READY:
             return _result(_model_bundle_path(), "ready")
-        dest = _model_bundle_path()
         if dest.exists():
             _MODEL_READY = True
             _update_warmup_stage_cache(
