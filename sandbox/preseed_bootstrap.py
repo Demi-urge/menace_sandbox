@@ -4011,6 +4011,7 @@ def initialize_bootstrap_context(
         coordinator=shared_timeout_coordinator,
         signal_hook=progress_signal,
     )
+    _BOOTSTRAP_SCHEDULER.stage_controller = stage_controller
     global _STEP_START_OBSERVER, _STEP_END_OBSERVER
     _STEP_START_OBSERVER = stage_controller.start_step
     _STEP_END_OBSERVER = stage_controller.complete_step
@@ -4062,6 +4063,7 @@ def initialize_bootstrap_context(
         vector_budget_window is not None
         and heavy_stage_ceiling is not None
         and vector_budget_window <= heavy_stage_ceiling
+        and not force_embedder_preload
     ):
         vector_warmup_requested = False
         vector_bootstrap_hint = False
@@ -4090,7 +4092,9 @@ def initialize_bootstrap_context(
     embedder_warmup_lite_deadline_guard = bool(
         embedder_stage_deadline_hint is not None and math.isfinite(embedder_stage_deadline_hint)
     )
-    if (embedder_warmup_lite_budget_guard or embedder_warmup_lite_deadline_guard) and not warmup_lite_context:
+    if (
+        embedder_warmup_lite_budget_guard or embedder_warmup_lite_deadline_guard
+    ) and not warmup_lite_context and not force_embedder_preload:
         LOGGER.info(
             "forcing embedder warmup-lite path due to finite stage window",
             extra={
@@ -4101,6 +4105,22 @@ def initialize_bootstrap_context(
         )
         warmup_lite_context = True
     full_preload_requested = bool(full_embedder_preload or force_embedder_preload)
+    bootstrap_lite_deferral_reason = None
+    if (
+        (bootstrap_fast_context or warmup_lite_context)
+        and full_embedder_preload
+        and not force_embedder_preload
+    ):
+        warmup_lite_context = True
+        full_preload_requested = False
+        vector_warmup_requested = False
+        vector_bootstrap_hint = False
+        vector_heavy = False
+        bootstrap_lite_deferral_reason = (
+            "embedder_preload_bootstrap_lite"
+            if bootstrap_fast_context
+            else "embedder_preload_warmup_lite"
+        )
     embedder_preload_enabled = True
     embedder_stage_timebox_hint: float | None = None
     embedder_preload_stage_blocked = bool(
@@ -4110,6 +4130,39 @@ def initialize_bootstrap_context(
     embedder_preload_deferred = False
     warmup_summary: dict[str, Any] | None = None
     embedder_stage_inline_cap: float | None = None
+
+    def _schedule_background_preload_safe(
+        reason: str, *, strict_timebox: float | None = None, budget_flag: bool = False
+    ) -> dict[str, Any]:
+        global _BOOTSTRAP_EMBEDDER_JOB
+        job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+        try:
+            job_snapshot = _schedule_background_preload(  # type: ignore[name-defined]
+                reason, strict_timebox=strict_timebox
+            )
+        except Exception:
+            job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
+            job_snapshot.setdefault("placeholder_reason", reason)
+            job_snapshot.setdefault("warmup_placeholder_reason", reason)
+            job_snapshot.setdefault("background_enqueue_reason", reason)
+            job_snapshot.setdefault("deferral_reason", reason)
+            job_snapshot.setdefault("deferred", True)
+            job_snapshot.setdefault("ready_after_bootstrap", True)
+            if strict_timebox is not None:
+                job_snapshot.setdefault("strict_timebox", strict_timebox)
+                job_snapshot.setdefault("background_join_timeout", strict_timebox)
+
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
+        if budget_flag:
+            try:
+                _mark_budget_deferral(job_snapshot)  # type: ignore[name-defined]
+            except Exception:
+                warmup_summary = job_snapshot.get("warmup_summary") or {}
+                warmup_summary.setdefault("embedder_warmup_deferred_budget", True)
+                job_snapshot["warmup_summary"] = warmup_summary
+                job_snapshot.setdefault("embedder_warmup_deferred_budget", True)
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        return job_snapshot
 
     def _record_embedder_skip(
         reason: str,
@@ -4195,9 +4248,12 @@ def initialize_bootstrap_context(
     except Exception:  # pragma: no cover - advisory only
         LOGGER.debug("failed to compute embedder stage timebox hint", exc_info=True)
     background_timebox_hint = embedder_stage_timebox_hint or embedder_stage_budget_hint
+    preload_budget_floor = float(
+        _COMPONENT_BASELINES.get("vector_seeding") or BOOTSTRAP_EMBEDDER_TIMEOUT
+    )
     budget_hint_insufficient = (
         embedder_stage_budget_hint is None
-        or embedder_stage_budget_hint < estimated_preload_cost
+        or embedder_stage_budget_hint < preload_budget_floor
     ) and not full_preload_requested
     if budget_hint_insufficient:
         _record_embedder_skip(
@@ -4207,14 +4263,20 @@ def initialize_bootstrap_context(
             disable_step=False,
             budget_flag=True,
         )
-    elif not full_preload_requested and embedder_preload_skip_reason is None:
+    elif (
+        not full_preload_requested
+        and embedder_preload_skip_reason is None
+        and bootstrap_lite_deferral_reason is None
+    ):
         _record_embedder_skip(
             "embedder_preload_background_default",
             background_timebox=background_timebox_hint,
             enqueue_background=True,
             disable_step=False,
         )
-    if full_preload_requested and not positive_stage_timebox:
+    if bootstrap_lite_deferral_reason is not None:
+        _record_embedder_skip(bootstrap_lite_deferral_reason)
+    elif full_preload_requested and not positive_stage_timebox:
         _record_embedder_skip("embedder_full_preload_budget_required")
     elif not positive_stage_timebox:
         _record_embedder_skip("embedder_preload_no_budget_window")
@@ -4223,7 +4285,7 @@ def initialize_bootstrap_context(
 
     def _task_embedder(_: dict[str, Any]) -> None:
         global _BOOTSTRAP_EMBEDDER_JOB
-        nonlocal warmup_lite_context
+        nonlocal warmup_lite_context, embedder_stage_inline_cap, warmup_summary
         _mark_bootstrap_step("embedder_preload")
         existing_job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
         existing_background = existing_job_snapshot.get("background_future") or getattr(
@@ -4463,6 +4525,23 @@ def initialize_bootstrap_context(
             "embedder_preload", vector_heavy=True, heavy=True
         )
         embedder_timeout = BOOTSTRAP_EMBEDDER_TIMEOUT * embedder_gate["timeout_scale"]
+        if force_embedder_preload:
+            result = _bootstrap_embedder(
+                embedder_timeout or BOOTSTRAP_EMBEDDER_TIMEOUT,
+                stop_event=stop_event,
+                stage_budget=embedder_stage_budget,
+                budget=shared_timeout_coordinator,
+                budget_label="vector_seeding",
+                presence_probe=False,
+                bootstrap_fast=bootstrap_fast_context,
+                schedule_background=False,
+                force_placeholder=False,
+                bootstrap_deadline=bootstrap_deadline,
+                precomputed_caps=None,
+            )
+            _BOOTSTRAP_EMBEDDER_JOB = {"result": result}
+            stage_controller.complete_step("embedder_preload", 0.0)
+            return result
         bootstrap_guard_active = False
         guard_budget_scale = 1.0
         guard_delay = 0.0
@@ -5179,7 +5258,12 @@ def initialize_bootstrap_context(
                 resume_download=True,
             )
 
-        early_background_required = presence_only or guard_blocks_preload or not explicit_budget_available
+        if force_embedder_preload:
+            presence_only = False
+            guard_blocks_preload = False
+        early_background_required = (
+            presence_only or guard_blocks_preload or not explicit_budget_available
+        ) and not force_embedder_preload
         if early_background_required:
             skip_reason = presence_reason or (
                 "embedder_budget_unavailable" if not explicit_budget_available else "embedder_presence_guarded"
