@@ -55,6 +55,13 @@ _HEAVY_STAGE_CEILING = 30.0
 _BACKGROUND_QUEUE_FLAG = "queued"
 
 
+def _default_download_timeout() -> float | None:
+    env_timeout = _coerce_timeout(os.getenv("MENACE_VECTOR_DOWNLOAD_TIMEOUT"))
+    if env_timeout is not None:
+        return env_timeout
+    return _BOOTSTRAP_STAGE_TIMEOUT
+
+
 def _model_executor() -> ThreadPoolExecutor:
     global _MODEL_EXECUTOR
     if _MODEL_EXECUTOR is None:
@@ -234,6 +241,9 @@ def _queue_background_model_download(
             _note_model_background("running", logger, timeout=_coerce_timeout(download_timeout))
             return
 
+        if download_timeout is None:
+            download_timeout = _default_download_timeout()
+
         effective_timeout = _coerce_timeout(download_timeout)
         if effective_timeout is not None and effective_timeout <= 0:
             _update_warmup_stage_cache(
@@ -277,7 +287,11 @@ def _queue_background_model_download(
                         "model",
                         "ready",
                         logger,
-                        meta={"background_state": "complete", "background_timeout": effective_timeout},
+                        meta={
+                            "background_state": "complete",
+                            "background_timeout": effective_timeout,
+                            "background_result": "success",
+                        },
                     )
                     return
                 if result_status is not None:
@@ -288,6 +302,9 @@ def _queue_background_model_download(
                         meta={
                             "background_state": "deferred",
                             "background_timeout": effective_timeout,
+                            "background_result": "timeout"
+                            if "timebox" in result_status
+                            else "deferred",
                         },
                     )
                     return
@@ -298,6 +315,7 @@ def _queue_background_model_download(
                     meta={
                         "background_state": "deferred",
                         "background_timeout": effective_timeout,
+                        "background_result": "deferred",
                     },
                 )
             except Exception:  # pragma: no cover - background best effort
@@ -358,6 +376,10 @@ def ensure_embedding_model(
     if warmup and not warmup_heavy:
         warmup_lite_enabled = True
 
+    requested_download_timeout = download_timeout
+    if download_timeout is None and warmup:
+        download_timeout = _default_download_timeout()
+
     inline_queue_ceiling = _coerce_timeout(
         os.getenv("MENACE_VECTOR_WARMUP_INLINE_CEILING")
     )
@@ -397,7 +419,7 @@ def ensure_embedding_model(
     warmup_no_budget = (
         warmup
         and budget_check is None
-        and download_timeout is None
+        and requested_download_timeout is None
         and stage_budget_remaining is None
     )
 
