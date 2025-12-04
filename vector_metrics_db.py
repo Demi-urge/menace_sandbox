@@ -105,6 +105,7 @@ class _BootstrapVectorMetricsStub:
         self._queued_promotions: dict[str, Any] = {}
         self._post_warmup_activation_reason: str | None = None
         self._post_warmup_activation_requested = False
+        self._readiness_ready = False
         self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
@@ -226,6 +227,9 @@ class _BootstrapVectorMetricsStub:
                     "vector metrics post-warmup activation failed", exc_info=True
                 )
             return
+        if self._readiness_ready and self._activation_blocked:
+            self._activate_after_readiness(reason=reason or "post_warmup")
+            return
         if not self._activation_blocked:
             self._apply_post_warmup_activation()
 
@@ -247,6 +251,15 @@ class _BootstrapVectorMetricsStub:
             },
         )
         _record_deferral_timebox(reason, self._first_write_budget)
+
+    def _activate_after_readiness(self, *, reason: str) -> None:
+        self._release_activation_block(reason=reason, configure_ready=True)
+        self._apply_post_warmup_promotions(reason=reason)
+        _record_pending_weight_values(self._pending_weights)
+        self.activate_on_first_write()
+        self._log_deferred_activation(reason=reason)
+        _increment_deferral_metric("bootstrap_ready_first_write")
+        self._schedule_background_promotion(reason=reason)
 
     def _release_activation_block(self, *, reason: str, configure_ready: bool) -> None:
         if not self._activation_blocked:
@@ -291,6 +304,7 @@ class _BootstrapVectorMetricsStub:
         def _await_ready() -> None:
             try:
                 readiness_signal().await_ready(timeout=None)
+                self._readiness_ready = True
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness gate failed", exc_info=True
@@ -302,15 +316,13 @@ class _BootstrapVectorMetricsStub:
                     "vector_metrics_db.bootstrap.stub_promotion_pending",
                     extra={"pending_weights": len(pending)},
                 )
-                self._release_activation_block(
-                    reason="bootstrap_ready", configure_ready=True
-                )
-                self._apply_post_warmup_promotions(reason="bootstrap_ready")
-                _record_pending_weight_values(self._pending_weights)
-                self.activate_on_first_write()
-                self._log_deferred_activation(reason="bootstrap_ready")
-                _increment_deferral_metric("bootstrap_ready_first_write")
-                self._schedule_background_promotion(reason="bootstrap_ready")
+                if not self._post_warmup_activation_requested:
+                    logger.info(
+                        "vector_metrics_db.bootstrap.readiness_waiting_for_activation",
+                        extra={"pending_weights": len(pending)},
+                    )
+                    return
+                self._activate_after_readiness(reason="bootstrap_ready")
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True

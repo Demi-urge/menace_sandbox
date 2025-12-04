@@ -98,10 +98,12 @@ except Exception:  # pragma: no cover - fallback for top-level imports
 try:  # pragma: no cover - optional dependency
     from .vector_metrics_db import (
         VectorMetricsDB,
+        get_bootstrap_shared_vector_metrics_db,
         get_bootstrap_vector_metrics_db,
     )
 except Exception:  # pragma: no cover - fallback when module unavailable
     VectorMetricsDB = None  # type: ignore
+    get_bootstrap_shared_vector_metrics_db = None  # type: ignore
     get_bootstrap_vector_metrics_db = None  # type: ignore
 
 from chunking import split_into_chunks
@@ -1627,16 +1629,32 @@ class PatchHistoryDB:
         )
 
     def _init_vec_db(self) -> VectorMetricsDB | None:
-        if VectorMetricsDB is None and get_bootstrap_vector_metrics_db is None:
+        if (
+            VectorMetricsDB is None
+            and get_bootstrap_vector_metrics_db is None
+            and get_bootstrap_shared_vector_metrics_db is None
+        ):
             return None
         try:
+            if get_bootstrap_shared_vector_metrics_db is not None:
+                return get_bootstrap_shared_vector_metrics_db(
+                    bootstrap_fast=self._bootstrap_fast,
+                    warmup=True,
+                    ensure_exists=False,
+                    read_only=True,
+                )
             if get_bootstrap_vector_metrics_db is not None:
                 return get_bootstrap_vector_metrics_db(
                     bootstrap_fast=self._bootstrap_fast,
-                    warmup=self._bootstrap_fast,
+                    warmup=True,
+                    ensure_exists=False,
+                    read_only=True,
                 )
             return VectorMetricsDB(
-                bootstrap_fast=self._bootstrap_fast, warmup=self._bootstrap_fast
+                bootstrap_fast=self._bootstrap_fast,
+                warmup=True,
+                ensure_exists=False,
+                read_only=True,
             )
         except Exception:  # pragma: no cover - defensive best effort
             logger.exception("failed to initialise VectorMetricsDB")

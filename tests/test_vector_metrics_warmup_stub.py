@@ -1,3 +1,7 @@
+import sys
+import threading
+import types
+
 import vector_metrics_db
 
 
@@ -114,6 +118,47 @@ def test_readiness_hook_warmup_skips_io(monkeypatch, tmp_path):
     assert not path.exists()
     assert vm.ready_probe() == str(path)
     assert not path.exists()
+
+
+def test_readiness_waits_for_activation_request(monkeypatch, tmp_path):
+    ready = threading.Event()
+
+    class DummyReadiness:
+        def await_ready(self, timeout=None):
+            ready.set()
+
+    dummy_module = types.SimpleNamespace(readiness_signal=lambda: DummyReadiness())
+    monkeypatch.setitem(sys.modules, "bootstrap_readiness", dummy_module)
+
+    class DummyRouter:
+        def resolve_path(self, *_args, **_kwargs):
+            raise FileNotFoundError()
+
+        def get_project_root(self):
+            return tmp_path
+
+    monkeypatch.setattr(vector_metrics_db, "_dynamic_path_router", lambda: DummyRouter())
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    stub = vector_metrics_db.get_bootstrap_shared_vector_metrics_db(
+        warmup=True, ensure_exists=False, read_only=True
+    )
+
+    ready.wait(1)
+
+    path = tmp_path / "vector_metrics.db"
+
+    assert isinstance(stub, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert getattr(stub, "_readiness_ready", False) is True
+    assert getattr(stub, "_activation_blocked", False) is True
+    assert not path.exists()
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(
+        reason="post_warmup", post_warmup=True
+    )
+
+    assert isinstance(activated, vector_metrics_db.VectorMetricsDB)
+    assert path.exists()
 
 
 def test_shared_db_uses_stub_during_menace_bootstrap(monkeypatch, tmp_path):
