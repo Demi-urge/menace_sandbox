@@ -6987,6 +6987,68 @@ def initialize_bootstrap_context(
                 except BaseException as exc:  # pragma: no cover - defensive guard
                     warmup_exc.append(exc)
 
+            strict_join_cap_candidates = [
+                candidate
+                for candidate in (
+                    embedder_stage_budget,
+                    embedder_stage_deadline_remaining,
+                    remaining_bootstrap_window,
+                )
+                if candidate is not None and candidate > 0
+            ]
+            strict_preload_join_cap = (
+                min(strict_join_cap_candidates) if strict_join_cap_candidates else None
+            )
+            strict_preload_join_reason = None
+            if strict_preload_join_cap is not None:
+                strict_preload_join_reason = "embedder_preload_strict_join_cap"
+                warmup_join_cap_reason = strict_preload_join_reason
+                join_timeout = (
+                    strict_preload_join_cap
+                    if join_timeout is None
+                    else min(join_timeout, strict_preload_join_cap)
+                )
+                join_cap = (
+                    strict_preload_join_cap
+                    if join_cap is None
+                    else min(join_cap, strict_preload_join_cap)
+                )
+                if estimated_preload_cost >= strict_preload_join_cap:
+                    warmup_stop_reason = warmup_stop_reason or strict_preload_join_reason
+                    deferral_snapshot = _schedule_background_preload(
+                        warmup_stop_reason, strict_timebox=join_cap
+                    )
+                    warmup_snapshot = deferral_snapshot.get("warmup_summary") or {}
+                    warmup_snapshot.setdefault("deferred", True)
+                    warmup_snapshot.setdefault("deferred_reason", warmup_stop_reason)
+                    warmup_snapshot.setdefault("deferral_reason", warmup_stop_reason)
+                    warmup_snapshot.setdefault("stage", "deferred-strict-cap")
+                    warmup_snapshot.setdefault("strict_timebox", strict_preload_join_cap)
+                    warmup_snapshot.setdefault("stage_budget", embedder_stage_budget_hint)
+                    warmup_snapshot.setdefault(
+                        "stage_deadline_remaining", embedder_stage_deadline_remaining
+                    )
+                    warmup_snapshot.setdefault(
+                        "bootstrap_remaining", remaining_bootstrap_window
+                    )
+                    deferral_snapshot["warmup_summary"] = warmup_snapshot
+                    _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+                        reason=warmup_stop_reason
+                    )
+                    _BOOTSTRAP_SCHEDULER.mark_partial(
+                        "background_loops",
+                        reason=f"embedder_placeholder:{warmup_stop_reason}",
+                    )
+                    _BOOTSTRAP_SCHEDULER.mark_partial(
+                        "vectorizer_preload", reason=warmup_stop_reason
+                    )
+                    stage_controller.defer_step("embedder_preload", reason=warmup_stop_reason)
+                    stage_controller.complete_step("embedder_preload", 0.0)
+                    _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
+                    return deferral_snapshot.get(
+                        "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                    ), warmup_stop_reason
+
             warmup_thread = threading.Thread(
                 target=_run_warmup,
                 name="embedder-preload-warmup",
