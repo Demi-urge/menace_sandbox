@@ -789,13 +789,9 @@ def warmup_vector_service(
         )
     )
 
-    budget_hooks_missing = not (budget_remaining_supplied or check_budget_supplied)
+    budget_hooks_missing = not (budget_remaining_supplied and check_budget_supplied)
 
-    if (
-        not force_heavy
-        and budget_hooks_missing
-        and (bootstrap_context or warmup_requested)
-    ):
+    if budget_hooks_missing and (bootstrap_context or warmup_requested):
         summary: dict[str, str] = {
             "bootstrap": "short-circuit",
             "warmup_lite": "True",
@@ -820,6 +816,25 @@ def warmup_vector_service(
             if stage == "model" and model_probe is not None:
                 summary["model_probe"] = model_probe
             summary[stage] = status
+
+        background_stages = {stage for stage in heavy_stages if summary.get(stage)}
+        if background_hook is not None and background_stages:
+            hints: Mapping[str, float | None] | None = None
+            if isinstance(stage_timeouts, Mapping):
+                hints = {stage: stage_timeouts.get(stage) for stage in background_stages}
+            elif isinstance(stage_timeouts, (int, float)):
+                budget_hint = _coerce_timeout(stage_timeouts)
+                hints = {stage: budget_hint for stage in background_stages}
+                if budget_hint is not None:
+                    hints["budget"] = budget_hint
+            try:
+                hook_code = getattr(background_hook, "__code__", None)
+                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                    background_hook(set(background_stages), budget_hints=hints)
+                else:
+                    background_hook(set(background_stages))
+            except Exception:  # pragma: no cover - advisory hook
+                log.debug("background hook failed", exc_info=True)
 
         log.info(
             "Vector warmup short-circuiting due to missing budget hooks", extra=summary
@@ -984,7 +999,7 @@ def warmup_vector_service(
     if bootstrap_context and not force_heavy and not warmup_lite:
         warmup_lite = True
         warmup_lite_source = "bootstrap-default"
-    if budget_hooks_missing and not force_heavy:
+    if budget_hooks_missing:
         if warmup_lite_source == "caller":
             warmup_lite_source = "missing-budget-hooks"
         warmup_lite = True
@@ -1162,7 +1177,10 @@ def warmup_vector_service(
         if stage == "model" and status.startswith("deferred"):
             background_timeout = stage_timeout
             if background_timeout is None:
-                background_timeout = _effective_timeout(stage)
+                try:
+                    background_timeout = resolved_timeouts.get(stage)
+                except NameError:  # pragma: no cover - early short-circuit safety
+                    background_timeout = None
             _queue_background_model_download(
                 log, download_timeout=background_timeout
             )
@@ -2266,6 +2284,15 @@ def warmup_vector_service(
             deferred_bootstrap.add("vectorise")
         warmup_lite = True
 
+    def _cap_timeout(
+        timeout: float | None, ceiling: float | None
+    ) -> float | None:
+        if ceiling is None:
+            return timeout
+        if timeout is None:
+            return ceiling
+        return min(timeout, ceiling)
+
     def _effective_timeout(stage: str) -> float | None:
         remaining = _timebox_or_budget_remaining()
         stage_timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
@@ -3073,8 +3100,12 @@ def warmup_vector_service(
     if _reuse("handlers"):
         pass
     else:
-        handler_timeout = _effective_timeout("handlers")
-        vectorise_timeout = _effective_timeout("vectorise")
+        handler_timeout = _cap_timeout(
+            _effective_timeout("handlers"), stage_budget_ceiling.get("handlers")
+        )
+        vectorise_timeout = _cap_timeout(
+            _effective_timeout("vectorise"), stage_budget_ceiling.get("vectorise")
+        )
         handler_budget_window = _stage_budget_window(handler_timeout)
         if hydrate_handlers:
             if _stage_timeout_gate(
@@ -3385,7 +3416,9 @@ def warmup_vector_service(
     if _reuse("vectorise"):
         pass
     else:
-        vectorise_timeout = _effective_timeout("vectorise")
+        vectorise_timeout = _cap_timeout(
+            _effective_timeout("vectorise"), stage_budget_ceiling.get("vectorise")
+        )
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
         if should_vectorise:
             if _stage_timeout_gate(
