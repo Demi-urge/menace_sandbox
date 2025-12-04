@@ -80,6 +80,7 @@ except Exception:  # pragma: no cover - avoid hard dependency
 
 from .lazy_bootstrap import (
     _BACKGROUND_QUEUE_FLAG,
+    _HANDLER_VECTOR_MIN_BUDGET,
     _HEAVY_STAGE_CEILING,
     _update_warmup_stage_cache,
     ensure_embedding_model,
@@ -358,7 +359,6 @@ class SharedVectorService:
         )
         warmup_lite = bool(self.warmup_lite)
         self.warmup_lite = warmup_lite
-        self._background_handler_timeouts = self.handler_timeouts
         if self.bootstrap_fast is None:
             self.bootstrap_fast = resolved_fast
         requested_hydration = self.hydrate_handlers
@@ -389,19 +389,52 @@ class SharedVectorService:
                 },
             )
         self._known_kinds = set(_VECTOR_REGISTRY.keys())
+
+        def _coerce_timeout(value: object) -> float | None:
+            try:
+                return float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
+        inline_cap = _HEAVY_STAGE_CEILING
+        handler_budget = None
+        if isinstance(self.handler_timeouts, Mapping):
+            handler_budget = _coerce_timeout(self.handler_timeouts.get("budget"))
+        elif self.handler_timeouts is not None:
+            handler_budget = _coerce_timeout(self.handler_timeouts)
+        if handler_budget is not None:
+            inline_cap = handler_budget if inline_cap is None else min(inline_cap, handler_budget)
+            self._background_handler_timeouts = {"budget": handler_budget}
+        elif inline_cap is not None:
+            self._background_handler_timeouts = {"budget": inline_cap}
+        else:
+            self._background_handler_timeouts = self.handler_timeouts
+
+        estimated_inline_cost = len(self._known_kinds) * _HANDLER_VECTOR_MIN_BUDGET
+        inline_gate_exceeded = inline_cap is not None and estimated_inline_cost > inline_cap
+        if inline_gate_exceeded:
+            eager_hydration = False
+
         if eager_hydration:
             self.hydrate_all_handlers(
                 stop_event=self.stop_event,
                 handler_timeouts=self.handler_timeouts,
             )
         else:
-            self._mark_handler_deferral(
-                (
+            deferral_reason = (
+                "inline-budget"
+                if inline_gate_exceeded
+                else (
                     "warmup-lite"
                     if warmup_lite
                     else "bootstrap-fast" if resolved_fast else "deferred-init"
-                ),
+                )
+            )
+            self._mark_handler_deferral(
+                deferral_reason,
                 schedule_background=True,
+                timeout_hint=inline_cap,
+                estimated_cost=estimated_inline_cost if inline_gate_exceeded else None,
             )
             logger.info(
                 "shared_vector_service.handlers.deferred",
@@ -411,6 +444,9 @@ class SharedVectorService:
                     bootstrap_fast_active=resolved_fast,
                     bootstrap_context=bootstrap_context,
                     warmup_lite=warmup_lite,
+                    inline_budget_cap=inline_cap,
+                    estimated_inline_cost=estimated_inline_cost,
+                    inline_gate_exceeded=inline_gate_exceeded,
                 ),
             )
         if self.vector_store is not None:
@@ -719,10 +755,28 @@ class SharedVectorService:
             raise TimeoutError(f"shared vector service {context} timed out")
 
     def _mark_handler_deferral(
-        self, reason: str, *, schedule_background: bool = False
+        self,
+        reason: str,
+        *,
+        schedule_background: bool = False,
+        timeout_hint: float | None = None,
+        estimated_cost: float | None = None,
     ) -> None:
         self._handler_hydration_deferred = True
         self._handler_deferral_reasons.add(reason)
+        if _is_warmup_thread():
+            meta: Dict[str, Any] = {"reason": reason}
+            if timeout_hint is not None:
+                meta["background_timeout"] = timeout_hint
+            if estimated_cost is not None:
+                meta["estimated_cost"] = estimated_cost
+            _update_warmup_stage_cache(
+                "handlers",
+                reason,
+                logger,
+                meta={**meta, "background_state": _BACKGROUND_QUEUE_FLAG},
+                emit_metric=False,
+            )
         if schedule_background:
             self._schedule_background_hydration()
 
