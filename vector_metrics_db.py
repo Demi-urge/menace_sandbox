@@ -113,6 +113,10 @@ class _BootstrapVectorMetricsStub:
         self._created_at = time.perf_counter()
         self._first_write_budget = _first_write_activation_budget_seconds()
         self._first_write_attempted = False
+        if self._activation_blocked and self._first_write_budget is None:
+            self._first_write_budget = 0.0
+            self._log_deferred_activation(reason="warmup_first_write_budget")
+            _increment_deferral_metric("blocked_activation")
         logger.info(
             "vector_metrics_db.bootstrap.stub_created",
             extra={
@@ -1259,6 +1263,10 @@ def get_shared_vector_metrics_db(
         warmup_stub_requested
         or (warmup_context and not allow_bootstrap_activation)
     )
+    if bootstrap_protection_active:
+        resolved_bootstrap_fast = True
+        resolved_warmup = True
+        warmup_stub_requested = True
     stub_short_circuit = bool(
         warmup_context
         or resolved_warmup
@@ -1314,6 +1322,7 @@ def get_shared_vector_metrics_db(
         ensure_exists = False
         read_only = True
         _arm_shared_readiness_hook()
+        _increment_deferral_metric("bootstrap_activation_guard")
     promotion_pending_for_warmup = bool(
         bootstrap_protection_active and promotion_requested
     )
@@ -1586,6 +1595,15 @@ def get_bootstrap_shared_vector_metrics_db(
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Return the shared DB while arming warmup hooks for bootstrap callers."""
 
+    if bootstrap_fast is None:
+        bootstrap_fast = True
+    if warmup is None:
+        warmup = True
+    if ensure_exists is None:
+        ensure_exists = False
+    if read_only is None:
+        read_only = True
+
     vm = get_shared_vector_metrics_db(
         bootstrap_fast=bootstrap_fast,
         warmup=warmup,
@@ -1795,6 +1813,15 @@ def get_bootstrap_vector_metrics_db(
     access so callers that import this helper during bootstrap continue to use
     the warmup stub even if later environment mutations clear the flags.
     """
+
+    if bootstrap_fast is None:
+        bootstrap_fast = True
+    if warmup is None:
+        warmup = True
+    if ensure_exists is None:
+        ensure_exists = False
+    if read_only is None:
+        read_only = True
 
     menace_bootstrap = _menace_bootstrap_active()
     state_flags = _bootstrap_state_flags()
