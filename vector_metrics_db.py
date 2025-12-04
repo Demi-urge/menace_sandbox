@@ -427,6 +427,7 @@ class _BootstrapVectorMetricsStub:
         self._delegate = vdb
         global _VECTOR_DB_INSTANCE
         _VECTOR_DB_INSTANCE = vdb
+        activation_age_ms = round((time.perf_counter() - self._created_at) * 1000, 2)
         logger.info(
             "vector_metrics_db.bootstrap.stub_activated",
             extra={
@@ -434,6 +435,7 @@ class _BootstrapVectorMetricsStub:
                 "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
                 "warmup": bool(self._activation_kwargs.get("warmup")),
                 "read_only": bool(self._activation_kwargs.get("read_only")),
+                "activation_age_ms": activation_age_ms,
             },
         )
         return vdb
@@ -604,6 +606,14 @@ class _BootstrapVectorMetricsStub:
                 delegate.end_warmup(reason=reason, activate=False)
             if promotions.get("ensure_exists") is True:
                 delegate.activate_persistence(reason=reason)
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_promotions_applied",
+                extra={
+                    "reason": reason,
+                    "queued_keys": sorted(promotions),
+                    "age_ms": round((time.perf_counter() - self._created_at) * 1000, 2),
+                },
+            )
         except Exception:
             logger.debug(
                 "vector_metrics_db.bootstrap.post_warmup_promotion_failed",
@@ -1279,8 +1289,7 @@ def get_shared_vector_metrics_db(
     }
     warmup_context = bool(any(warmup_context_reasons.values()))
     bootstrap_protection_active = bool(
-        warmup_stub_requested
-        or (warmup_context and not allow_bootstrap_activation)
+        warmup_stub_requested or warmup_context or resolved_warmup or resolved_bootstrap_fast
     )
     if bootstrap_protection_active:
         resolved_bootstrap_fast = True
@@ -1357,61 +1366,60 @@ def get_shared_vector_metrics_db(
 
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
-        if (
-            bootstrap_protection_active
-            and isinstance(_VECTOR_DB_INSTANCE, VectorMetricsDB)
-            and stub_short_circuit
-        ):
-            stub = _BootstrapVectorMetricsStub(
-                path="vector_metrics.db",
-                bootstrap_fast=resolved_bootstrap_fast,
-                warmup=resolved_warmup,
-                ensure_exists=ensure_exists,
-                read_only=bool(read_only) if read_only is not None else False,
-                warmup_stub_requested=warmup_stub_requested,
-            )
-            stub.configure_activation(
-                bootstrap_fast=resolved_bootstrap_fast,
-                warmup=resolved_warmup,
-                ensure_exists=requested_ensure_exists,
-                read_only=requested_read_only,
-            )
-            _queue_promotion_for_stub(
-                stub,
-                ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
-                read_only=queued_promotion_kwargs.get("read_only"),
-            )
-            try:
-                stub.activate_on_first_write()
-            except Exception:
-                logger.debug("vector metrics stub first write arm failed", exc_info=True)
-            stub.register_readiness_hook()
-            stub._delegate = _VECTOR_DB_INSTANCE
-            _VECTOR_DB_INSTANCE = stub
-            _increment_deferral_metric("stub_short_circuit")
-            logger.info(
-                "vector_metrics_db.bootstrap.stub_short_circuit",
-                extra={
-                    "warmup_reasons": [
-                        reason
-                        for reason, active in warmup_context_reasons.items()
-                        if active
-                    ],
-                    "bootstrap_fast": resolved_bootstrap_fast,
-                    "warmup": resolved_warmup,
-                    "reuse_delegate": True,
-                },
-            )
-
-        if _VECTOR_DB_INSTANCE is None:
-            if bootstrap_protection_active:
-                _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
+        if bootstrap_protection_active:
+            if (
+                isinstance(_VECTOR_DB_INSTANCE, VectorMetricsDB)
+                and stub_short_circuit
+            ):
+                stub = _BootstrapVectorMetricsStub(
                     path="vector_metrics.db",
+                    bootstrap_fast=True,
+                    warmup=True,
+                    ensure_exists=False,
+                    read_only=True,
+                    warmup_stub_requested=True,
+                )
+                stub.configure_activation(
                     bootstrap_fast=resolved_bootstrap_fast,
                     warmup=resolved_warmup,
-                    ensure_exists=ensure_exists,
-                    read_only=bool(read_only) if read_only is not None else False,
-                    warmup_stub_requested=warmup_stub_requested,
+                    ensure_exists=requested_ensure_exists,
+                    read_only=requested_read_only,
+                )
+                _queue_promotion_for_stub(
+                    stub,
+                    ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
+                    read_only=queued_promotion_kwargs.get("read_only"),
+                )
+                try:
+                    stub.activate_on_first_write()
+                except Exception:
+                    logger.debug("vector metrics stub first write arm failed", exc_info=True)
+                stub.register_readiness_hook()
+                stub._delegate = _VECTOR_DB_INSTANCE
+                _VECTOR_DB_INSTANCE = stub
+                _increment_deferral_metric("stub_short_circuit")
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_short_circuit",
+                    extra={
+                        "warmup_reasons": [
+                            reason
+                            for reason, active in warmup_context_reasons.items()
+                            if active
+                        ],
+                        "bootstrap_fast": resolved_bootstrap_fast,
+                        "warmup": resolved_warmup,
+                        "reuse_delegate": True,
+                    },
+                )
+
+            if _VECTOR_DB_INSTANCE is None:
+                _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
+                    path="vector_metrics.db",
+                    bootstrap_fast=True,
+                    warmup=True,
+                    ensure_exists=False,
+                    read_only=True,
+                    warmup_stub_requested=True,
                 )
                 _queue_promotion_for_stub(
                     _VECTOR_DB_INSTANCE,
@@ -1443,36 +1451,28 @@ def get_shared_vector_metrics_db(
                         "bootstrap_fast": resolved_bootstrap_fast,
                         "warmup": resolved_warmup,
                         "read_only": bool(read_only) if read_only is not None else True,
+                        "bootstrap_stub_forced": True,
                     },
                 )
-            else:
-                _VECTOR_DB_INSTANCE = VectorMetricsDB(
-                    "vector_metrics.db",
+            elif isinstance(_VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub):
+                _queue_promotion_for_stub(
+                    _VECTOR_DB_INSTANCE,
+                    ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
+                    read_only=queued_promotion_kwargs.get("read_only"),
+                )
+                _VECTOR_DB_INSTANCE.configure_activation(
                     bootstrap_fast=resolved_bootstrap_fast,
                     warmup=resolved_warmup,
-                    ensure_exists=ensure_exists,
-                    read_only=bool(read_only) if read_only is not None else False,
+                    ensure_exists=requested_ensure_exists,
+                    read_only=requested_read_only,
                 )
-        elif isinstance(_VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub):
-            _queue_promotion_for_stub(
-                _VECTOR_DB_INSTANCE,
-                ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
-                read_only=queued_promotion_kwargs.get("read_only"),
-            )
-            _VECTOR_DB_INSTANCE.configure_activation(
-                bootstrap_fast=resolved_bootstrap_fast,
-                warmup=resolved_warmup,
-                ensure_exists=requested_ensure_exists,
-                read_only=requested_read_only,
-            )
-            try:
-                _VECTOR_DB_INSTANCE.activate_on_first_write()
-            except Exception:
-                logger.debug(
-                    "vector metrics stub first write arm failed", exc_info=True
-                )
-            _VECTOR_DB_INSTANCE.register_readiness_hook()
-            if bootstrap_protection_active:
+                try:
+                    _VECTOR_DB_INSTANCE.activate_on_first_write()
+                except Exception:
+                    logger.debug(
+                        "vector metrics stub first write arm failed", exc_info=True
+                    )
+                _VECTOR_DB_INSTANCE.register_readiness_hook()
                 logger.info(
                     "vector_metrics_db.bootstrap.stub_reused",
                     extra={
@@ -1484,8 +1484,17 @@ def get_shared_vector_metrics_db(
                         "bootstrap_fast": resolved_bootstrap_fast,
                         "warmup": resolved_warmup,
                         "read_only": bool(read_only) if read_only is not None else True,
+                        "bootstrap_stub_forced": True,
                     },
                 )
+        elif _VECTOR_DB_INSTANCE is None:
+            _VECTOR_DB_INSTANCE = VectorMetricsDB(
+                "vector_metrics.db",
+                bootstrap_fast=resolved_bootstrap_fast,
+                warmup=resolved_warmup,
+                ensure_exists=ensure_exists,
+                read_only=bool(read_only) if read_only is not None else False,
+            )
 
     if bootstrap_protection_active and isinstance(
         _VECTOR_DB_INSTANCE, (VectorMetricsDB, _BootstrapVectorMetricsStub)
@@ -1550,6 +1559,7 @@ def get_shared_vector_metrics_db(
                 _VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub
             ),
             "stub_requested": warmup_stub_requested,
+            "bootstrap_stub_forced": bootstrap_protection_active,
         }
         if warmup_context and not warmup_stub_requested:
             logger.info(
