@@ -6162,8 +6162,35 @@ def initialize_bootstrap_context(
         except Exception:
             LOGGER.debug("vector warmup unavailable during embedder preload", exc_info=True)
         else:
-            try:
-                warmup_summary = dict(
+            warmup_hard_timebox: float | None = None
+            hard_timebox_candidates: list[float] = []
+            if warmup_timebox_cap is not None and warmup_timebox_cap > 0:
+                hard_timebox_candidates.append(warmup_timebox_cap)
+            stage_budget_remaining = _stage_budget_remaining()
+            if stage_budget_remaining is not None and stage_budget_remaining > 0:
+                hard_timebox_candidates.append(stage_budget_remaining)
+            if isinstance(warmup_stage_timeouts, Mapping):
+                hard_timebox_candidates.extend(
+                    candidate
+                    for candidate in (
+                        warmup_stage_timeouts.get("budget"),
+                        warmup_stage_timeouts.get("model"),
+                        warmup_stage_timeouts.get("deadline"),
+                    )
+                    if candidate is not None and candidate > 0
+                )
+            elif isinstance(warmup_stage_timeouts, (int, float)):
+                try:
+                    candidate_timebox = float(warmup_stage_timeouts)
+                except (TypeError, ValueError):
+                    candidate_timebox = None
+                if candidate_timebox is not None and candidate_timebox > 0:
+                    hard_timebox_candidates.append(candidate_timebox)
+            if hard_timebox_candidates:
+                warmup_hard_timebox = min(hard_timebox_candidates)
+
+            def _run_warmup() -> dict[str, Any]:
+                return dict(
                     warmup_vector_service(
                         logger=LOGGER,
                         probe_model=True,
@@ -6174,6 +6201,37 @@ def initialize_bootstrap_context(
                         bootstrap_lite=True,
                     )
                 )
+
+            warmup_future = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(_run_warmup)
+            try:
+                warmup_summary = warmup_future.result(timeout=warmup_hard_timebox)
+            except FuturesTimeoutError:
+                warmup_deferral_reason = "embedder_warmup_timebox_exhausted"
+                warmup_summary = warmup_summary or {}
+                warmup_summary.update(
+                    {
+                        "deferred": True,
+                        "deferral_reason": warmup_deferral_reason,
+                        "deferred_reason": warmup_deferral_reason,
+                        "strict_timebox": warmup_hard_timebox,
+                        "warmup_timebox_cap": warmup_timebox_cap,
+                        "stage_budget": embedder_stage_budget_hint,
+                        "stage_budget_defaulted": embedder_stage_budget_defaulted,
+                    }
+                )
+                deferral_snapshot = _schedule_background_preload_safe(
+                    warmup_deferral_reason,
+                    strict_timebox=warmup_timebox_cap,
+                    stage_ceiling=embedder_stage_inline_cap,
+                )
+                deferral_snapshot["warmup_summary"] = warmup_summary
+                deferral_snapshot.setdefault("warmup_deferral_reason", warmup_deferral_reason)
+                deferral_snapshot.setdefault("deferral_reason", warmup_deferral_reason)
+                _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
+                warmup_stop_reason = warmup_deferral_reason
+                return deferral_snapshot.get(
+                    "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                ), warmup_stop_reason
             except Exception:  # pragma: no cover - advisory warmup only
                 LOGGER.debug("embedder preload warmup-lite failed", exc_info=True)
             else:
