@@ -803,6 +803,10 @@ def warmup_vector_service(
         os.getenv("MENACE_VECTOR_BOOTSTRAP_STAGE_CEILING")
         or os.getenv("MENACE_BOOTSTRAP_STAGE_CEILING")
     )
+    heavy_stage_cap_env = _coerce_timeout(
+        os.getenv("MENACE_VECTOR_STAGE_HARD_CEILING")
+        or os.getenv("MENACE_BOOTSTRAP_STAGE_HARD_CEILING")
+    )
 
     bootstrap_context = any(
         os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -828,7 +832,9 @@ def warmup_vector_service(
     if env_budget is not None:
         env_stage_defaults["budget"] = env_budget
 
-    if stage_timeouts is None:
+    stage_budget_signals = stage_timeouts_supplied or env_budget is not None or stage_cap_env is not None
+
+    if stage_timeouts is None and stage_budget_signals:
         stage_timeouts = env_stage_defaults
     elif isinstance(stage_timeouts, Mapping) and env_budget is not None:
         if "budget" not in stage_timeouts:
@@ -998,7 +1004,7 @@ def warmup_vector_service(
 
         return summary
 
-    if stage_timeouts is None:
+    if stage_timeouts is None and stage_budget_signals:
         if bootstrap_context or warmup_requested:
             stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
         elif env_budget is None:
@@ -1112,6 +1118,44 @@ def warmup_vector_service(
             bool(run_vectorise),
         )
     )
+    if (
+        heavy_requested
+        and budget_hooks_missing
+        and not stage_budget_signals
+        and not force_heavy
+    ):
+        summary: dict[str, str] = {
+            "warmup_lite": "True",
+            "budget_hooks": "missing",
+            "stage_timeouts": "missing",
+            "bootstrap": "deferred-no-budget",
+        }
+        heavy_stages = ("model", "handlers", "scheduler", "vectorise")
+        background_hints = {
+            stage: heavy_stage_cap_env or _HEAVY_STAGE_CEILING for stage in heavy_stages
+        }
+        for stage in heavy_stages:
+            summary[stage] = "deferred-budget-hooks"
+            summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+            _record_background(stage, "deferred-budget-hooks")
+            _hint_background_budget(stage, background_hints.get(stage))
+        deferred.update(heavy_stages)
+        background_candidates.update(heavy_stages)
+        background_stage_timeouts = dict(background_hints)
+        if background_hook is not None:
+            try:
+                hook_code = getattr(background_hook, "__code__", None)
+                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                    background_hook(set(heavy_stages), budget_hints=background_hints)
+                else:
+                    background_hook(set(heavy_stages))
+            except Exception:  # pragma: no cover - advisory hook
+                log.debug("background hook failed", exc_info=True)
+        log.info(
+            "Vector warmup deferring heavy stages until timeouts or budget hooks are provided",
+            extra={"event": "vector-warmup", "warmup": summary},
+        )
+        return summary
     deferred_bootstrap: set[str] = set()
 
     if bootstrap_force_lite:
@@ -2094,13 +2138,19 @@ def warmup_vector_service(
             else:
                 timeouts[stage] = min(timeout, stage_hard_cap)
 
+    heavy_stage_ceiling = (
+        heavy_stage_cap_env
+        if heavy_stage_cap_env is not None and heavy_stage_cap_env > 0
+        else _HEAVY_STAGE_CEILING
+    )
+
     def _apply_heavy_stage_cap(timeouts: dict[str, float | None]) -> None:
         for stage in ("handlers", "model", "vectorise"):
             timeout = timeouts.get(stage)
             if timeout is None:
-                continue
-            capped_timeout = min(timeout, _HEAVY_STAGE_CEILING)
-            if capped_timeout != timeout:
+                timeout = heavy_stage_ceiling
+            capped_timeout = min(timeout, heavy_stage_ceiling)
+            if capped_timeout != timeouts.get(stage):
                 heavy_stage_cap_hits.add(stage)
             timeouts[stage] = capped_timeout
 
