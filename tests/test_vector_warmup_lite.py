@@ -271,6 +271,39 @@ def test_bootstrap_presence_only_defers_heavy_work(monkeypatch, caplog):
     assert not scheduler_calls
 
 
+def test_bootstrap_presence_only_queues_background(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    _reset_state()
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    def _stub_shared_vector_service(*_args, **_kwargs):  # pragma: no cover - guard
+        raise AssertionError("Handler hydration should be deferred during bootstrap")
+
+    vectorizer_stub.SharedVectorService = _stub_shared_vector_service
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    scheduled: list[tuple[set[str], Mapping[str, float | None] | None]] = []
+
+    def _record_schedule(stages, **kwargs):
+        scheduled.append((set(stages), kwargs.get("timeouts")))
+
+    monkeypatch.setattr(lazy_bootstrap, "_schedule_background_warmup", _record_schedule)
+
+    summary = lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        hydrate_handlers=True,
+        run_vectorise=True,
+    )
+
+    assert summary["handlers"].startswith("deferred-bootstrap")
+    assert summary["vectorise"].startswith("deferred-bootstrap")
+    assert scheduled and {"handlers", "vectorise"}.issubset(scheduled[-1][0])
+    timeout_hints = scheduled[-1][1] or {}
+    assert "handlers" in timeout_hints and "vectorise" in timeout_hints
+
+
 def test_warmup_cache_reused(monkeypatch, caplog, tmp_path):
     caplog.set_level(logging.INFO)
     cache_dir = tmp_path / "cache"

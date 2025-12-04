@@ -1061,16 +1061,26 @@ def warmup_vector_service(
             for stage in heavy_stages
             if summary.get(stage, "").startswith("deferred") and stage in new_deferred
         }
-
-        if background_hook is not None and background_stages:
-            hints: Mapping[str, float | None] | None = None
+        background_hints: dict[str, float | None] = {}
+        if background_stages:
             if isinstance(stage_timeouts, Mapping):
-                hints = {stage: stage_timeouts.get(stage) for stage in background_stages}
+                background_hints = {
+                    stage: _coerce_timeout(stage_timeouts.get(stage))
+                    for stage in background_stages
+                }
             elif isinstance(stage_timeouts, (int, float)):
                 budget_hint = _coerce_timeout(stage_timeouts)
-                hints = {stage: budget_hint for stage in background_stages}
+                background_hints = {stage: budget_hint for stage in background_stages}
                 if budget_hint is not None:
-                    hints["budget"] = budget_hint
+                    background_hints["budget"] = budget_hint
+            else:
+                background_hints = {
+                    stage: _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
+                    for stage in background_stages
+                }
+
+        if background_hook is not None and background_stages:
+            hints: Mapping[str, float | None] | None = background_hints
             try:
                 hook_code = getattr(background_hook, "__code__", None)
                 if hook_code is not None and "budget_hints" in hook_code.co_varnames:
@@ -1079,6 +1089,33 @@ def warmup_vector_service(
                     background_hook(set(background_stages))
             except Exception:  # pragma: no cover - advisory hook
                 log.debug("background hook failed", exc_info=True)
+
+        if background_stages:
+            for stage in background_stages:
+                summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+            _schedule_background_warmup(
+                set(background_stages),
+                logger=log,
+                timeouts=background_hints or None,
+                warmup_kwargs={
+                    "download_model": download_model,
+                    "probe_model": probe_model or model_probe_allowed,
+                    "hydrate_handlers": True,
+                    "start_scheduler": True,
+                    "run_vectorise": True,
+                    "check_budget": check_budget,
+                    "budget_remaining": budget_remaining,
+                    "logger": log,
+                    "force_heavy": True,
+                    "bootstrap_fast": bootstrap_fast,
+                    "warmup_lite": False,
+                    "warmup_model": True,
+                    "warmup_handlers": True,
+                    "warmup_probe": True,
+                    "deferred_stages": set(background_stages),
+                    "bootstrap_lite": bootstrap_lite,
+                },
+            )
 
         log.info(
             "Bootstrap presence-only guard deferring vector warmup stages",
@@ -3322,6 +3359,46 @@ def warmup_vector_service(
                     _hint_background_budget("scheduler", _effective_timeout("scheduler"))
 
     _apply_bootstrap_deferrals()
+
+    def _conservative_hint(stage: str) -> float | None:
+        hint = stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+        if hint is None:
+            hint = _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
+        return hint
+
+    presence_only_vector = warmup_lite and not force_heavy and not bootstrap_context
+    if presence_only_vector:
+        presence_deferred: set[str] = set()
+        if hydrate_handlers:
+            hint = _conservative_hint("handlers")
+            _record_lazy_sentinel(
+                "handlers",
+                reason="deferred-lite-presence",
+                stage_timeout=hint,
+                chain_vectorise=bool(run_vectorise),
+                vectorise_timeout=_conservative_hint("vectorise"),
+            )
+            hydrate_handlers = False
+            presence_deferred.add("handlers")
+            run_vectorise = False
+        if run_vectorise:
+            hint = _conservative_hint("vectorise")
+            _record_lazy_sentinel(
+                "vectorise",
+                reason="deferred-lite-presence",
+                stage_timeout=hint,
+            )
+            run_vectorise = False
+            presence_deferred.add("vectorise")
+
+        if presence_deferred:
+            if background_stage_timeouts is None:
+                background_stage_timeouts = {}
+            for stage in presence_deferred:
+                background_stage_timeouts.setdefault(stage, _conservative_hint(stage))
+            background_candidates.update(presence_deferred)
+            background_warmup.update(presence_deferred)
+            return _finalise()
 
     def _should_defer_upfront(
         stage: str, *, stage_timeout: float | None, stage_enabled: bool
