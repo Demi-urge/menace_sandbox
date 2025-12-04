@@ -235,7 +235,93 @@ def test_first_write_timeboxed_activation_falls_back(monkeypatch):
 
     assert elapsed < 0.15
     delegate = vector_metrics_db._VECTOR_DB_INSTANCE
-    assert isinstance(delegate, SlowVectorDB)
-    assert delegate.path == ":memory:"
-    assert any(entry == "activate_on_first_write" for entry in delegate.logged)
-    assert any(call for call in delegate.logged if isinstance(call, tuple))
+    assert isinstance(delegate, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert delegate._boot_stub_active
+
+
+def test_configure_activation_defers_until_post_warmup(monkeypatch):
+    calls = []
+
+    class RecordingVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            calls.append("activate_on_first_write")
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("end_warmup")
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("activate_persistence")
+            return self
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", RecordingVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vector_metrics_db.get_vector_metrics_db(warmup=True)
+
+    vm.configure_activation(
+        warmup=False, ensure_exists=True, read_only=False, path="/tmp/sqlite.db"
+    )
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert calls == []
+    assert vm._queued_activation_kwargs["ensure_exists"] is True
+    assert vm._queued_activation_kwargs["read_only"] is False
+    assert vm._queued_activation_kwargs["warmup"] is False
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(
+        post_warmup=True
+    )
+
+    assert isinstance(activated, RecordingVectorDB)
+    assert calls and calls[0][0] == "init"
+
+
+def test_bootstrap_callers_keep_stub_until_activation_signal(monkeypatch):
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+    calls = []
+
+    class RecordingVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append(("init", args, kwargs))
+            self._boot_stub_active = False
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            calls.append("activate_on_first_write")
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("end_warmup")
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("activate_persistence")
+            return self
+
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", RecordingVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vector_metrics_db.get_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+    assert calls == []
+
+    monkeypatch.delenv("MENACE_BOOTSTRAP")
+
+    vm_again = vector_metrics_db.get_vector_metrics_db(
+        warmup=False, ensure_exists=True, read_only=False
+    )
+
+    assert vm_again is vm
+    assert calls == []
+
+    activated = vector_metrics_db.activate_shared_vector_metrics_db(
+        post_warmup=True
+    )
+
+    assert isinstance(activated, RecordingVectorDB)
+    assert calls and calls[0][0] == "init"
+    assert any(entry == "end_warmup" for entry in calls)
+    assert any(entry == "activate_persistence" for entry in calls)

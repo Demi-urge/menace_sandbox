@@ -156,36 +156,40 @@ class _BootstrapVectorMetricsStub:
     ) -> None:
         if self._delegate is not None:
             return
-        if bootstrap_fast is not None:
-            self._activation_kwargs["bootstrap_fast"] = bool(bootstrap_fast)
-        if warmup is not None:
-            self._activation_kwargs["warmup"] = bool(warmup)
-        self._activation_blocked = bool(
-            self._activation_kwargs.get("bootstrap_fast")
-            or self._activation_kwargs.get("warmup")
-        )
         updates: dict[str, Any] = {}
+        if bootstrap_fast is not None:
+            updates["bootstrap_fast"] = bool(bootstrap_fast)
+        if warmup is not None:
+            updates["warmup"] = bool(warmup)
         if ensure_exists is not None:
             updates["ensure_exists"] = ensure_exists
         if read_only is not None:
             updates["read_only"] = read_only
         if path is not None:
             updates["path"] = path
-        if self._activation_blocked and updates:
+        requested_blocked = bool(
+            updates.get("bootstrap_fast", self._activation_kwargs.get("bootstrap_fast"))
+            or updates.get("warmup", self._activation_kwargs.get("warmup"))
+        )
+        if self._activation_blocked or requested_blocked:
             self._log_deferred_activation(reason="activation_blocked")
-            self._queued_activation_kwargs.update(updates)
-            logger.info(
-                "vector_metrics_db.bootstrap.stub_activation_deferred",
-                extra={
-                    "queued_keys": sorted(self._queued_activation_kwargs),
-                    "bootstrap_fast": bool(
-                        self._activation_kwargs.get("bootstrap_fast")
-                    ),
-                    "warmup": bool(self._activation_kwargs.get("warmup")),
-                    "read_only": bool(self._activation_kwargs.get("read_only")),
-                },
-            )
-            _increment_deferral_metric("activation")
+            if updates:
+                self._queued_activation_kwargs.update(updates)
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_activation_deferred",
+                    extra={
+                        "queued_keys": sorted(self._queued_activation_kwargs),
+                        "bootstrap_fast": bool(
+                            self._activation_kwargs.get("bootstrap_fast")
+                        ),
+                        "warmup": bool(self._activation_kwargs.get("warmup")),
+                        "read_only": bool(self._activation_kwargs.get("read_only")),
+                    },
+                )
+                _increment_deferral_metric("activation")
+            if requested_blocked:
+                self._activation_blocked = True
+                self._warmup_guarded_activation = True
             return
         if updates:
             self._activation_kwargs.update(updates)
