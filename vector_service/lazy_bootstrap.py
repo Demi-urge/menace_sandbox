@@ -999,6 +999,18 @@ def warmup_vector_service(
             stage_timeouts = dict(stage_timeouts)
             stage_timeouts["budget"] = env_budget
 
+    def _conservative_background_hints(stages: set[str]) -> dict[str, float | None]:
+        if isinstance(stage_timeouts, Mapping):
+            return {stage: _coerce_timeout(stage_timeouts.get(stage)) for stage in stages}
+
+        budget_hint = _coerce_timeout(stage_timeouts)
+        if budget_hint is not None and budget_hint >= 0:
+            weights = {stage: _CONSERVATIVE_STAGE_TIMEOUTS.get(stage, 1.0) or 1.0 for stage in stages}
+            weight_total = sum(weights.values()) or 1.0
+            return {stage: max(0.0, budget_hint * (weights[stage] / weight_total)) for stage in stages}
+
+        return {stage: _CONSERVATIVE_STAGE_TIMEOUTS.get(stage) for stage in stages}
+
     if bootstrap_context and not force_heavy:
         summary: dict[str, str] = {
             "bootstrap": "presence-only",
@@ -1070,14 +1082,11 @@ def warmup_vector_service(
                 }
             elif isinstance(stage_timeouts, (int, float)):
                 budget_hint = _coerce_timeout(stage_timeouts)
-                background_hints = {stage: budget_hint for stage in background_stages}
+                background_hints = _conservative_background_hints(set(background_stages))
                 if budget_hint is not None:
                     background_hints["budget"] = budget_hint
             else:
-                background_hints = {
-                    stage: _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
-                    for stage in background_stages
-                }
+                background_hints = _conservative_background_hints(set(background_stages))
 
         if background_hook is not None and background_stages:
             hints: Mapping[str, float | None] | None = background_hints
@@ -1489,7 +1498,7 @@ def warmup_vector_service(
             "bootstrap": "deferred-no-budget",
         }
         heavy_stages = ("model", "handlers", "scheduler", "vectorise")
-        conservative_hints = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+        conservative_hints = _conservative_background_hints(set(heavy_stages))
         background_hints = {}
         for stage in heavy_stages:
             conservative_cap = conservative_hints.get(stage)
@@ -1497,6 +1506,9 @@ def warmup_vector_service(
             if conservative_cap is not None:
                 stage_cap = min(stage_cap, conservative_cap)
             background_hints[stage] = stage_cap
+        budget_hint = _coerce_timeout(stage_timeouts)
+        if budget_hint is not None:
+            background_hints["budget"] = budget_hint
         background_stage_timeouts = dict(background_hints)
         for stage in heavy_stages:
             summary[stage] = "deferred-budget-hooks"
@@ -4055,6 +4067,31 @@ def warmup_vector_service(
                 },
             )
             return _finalise()
+        if (
+            hydrate_handlers
+            and handler_timeout is not None
+            and handler_budget_window is not None
+            and handler_budget_window < handler_timeout
+        ):
+            status = "deferred-timebox"
+            _defer_handler_chain(
+                status,
+                stage_timeout=handler_timeout,
+                vectorise_timeout=vectorise_timeout,
+            )
+            _record_cancelled("handlers", "ceiling")
+            log.info(
+                "Vector warmup handler hydration deferred; window %.2fs below requested cap %.2fs",
+                handler_budget_window,
+                handler_timeout,
+                extra={
+                    "event": "vector-warmup-budget-window",
+                    "stage": "handlers",
+                    "remaining": handler_budget_window,
+                    "cap": handler_timeout,
+                },
+            )
+            return _finalise()
         if hydrate_handlers:
             if _conservative_future_gate(
                 "handlers",
@@ -4450,6 +4487,29 @@ def warmup_vector_service(
         if _background_first_gate(
             "vectorise", vectorise_timeout, stage_enabled=should_vectorise
         ):
+            return _finalise()
+        if (
+            should_vectorise
+            and vectorise_timeout is not None
+            and vectorise_budget_window is not None
+            and vectorise_budget_window < vectorise_timeout
+        ):
+            status = "deferred-timebox"
+            _record_deferred_background(
+                "vectorise", status, stage_timeout=vectorise_timeout
+            )
+            _record_cancelled("vectorise", "ceiling")
+            log.info(
+                "Vector warmup vectorise deferred; window %.2fs below requested cap %.2fs",
+                vectorise_budget_window,
+                vectorise_timeout,
+                extra={
+                    "event": "vector-warmup-budget-window",
+                    "stage": "vectorise",
+                    "remaining": vectorise_budget_window,
+                    "cap": vectorise_timeout,
+                },
+            )
             return _finalise()
         remaining_hint = _remaining_budget()
         shared_hint = _remaining_shared_budget()
