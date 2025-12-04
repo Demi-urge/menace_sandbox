@@ -916,6 +916,11 @@ def warmup_vector_service(
     check_budget_supplied = check_budget is not None
     stage_timeouts_supplied = stage_timeouts is not None
 
+    def _split_budget_caps(budget: float) -> dict[str, float]:
+        weights = {stage: (_CONSERVATIVE_STAGE_TIMEOUTS.get(stage) or 1.0) for stage in _CONSERVATIVE_STAGE_TIMEOUTS}
+        total_weight = sum(weights.values()) or 1.0
+        return {stage: max(0.0, budget * (weight / total_weight)) for stage, weight in weights.items()}
+
     def _normalise_stage_timeouts(
         value: dict[str, float] | float | bool | None,
     ) -> dict[str, float] | float | None:
@@ -928,7 +933,9 @@ def warmup_vector_service(
         numeric_timeout = _coerce_timeout(value)
         if numeric_timeout is None:
             return dict(_CONSERVATIVE_STAGE_TIMEOUTS)
-        return numeric_timeout
+        split_caps = _split_budget_caps(numeric_timeout)
+        split_caps["budget"] = numeric_timeout
+        return split_caps
     env_budget = _coerce_timeout(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"))
     if env_budget is None:
         env_budget = _coerce_timeout(os.getenv("BOOTSTRAP_VECTOR_STEP_TIMEOUT"))
@@ -975,7 +982,9 @@ def warmup_vector_service(
 
     budget_hooks_missing = not (budget_remaining_supplied and check_budget_supplied)
 
-    stage_timeouts = _normalise_stage_timeouts(stage_timeouts)
+    stage_timeouts_input = stage_timeouts
+    stage_timeouts = _normalise_stage_timeouts(stage_timeouts_input)
+    stage_timeouts_from_budget = isinstance(stage_timeouts_input, (int, float))
     default_stage_timeouts_applied = False
     env_stage_defaults: dict[str, float] = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
     if env_budget is not None:
@@ -1781,10 +1790,18 @@ def warmup_vector_service(
                 continue
             _record_background(stage, "deferred-lite")
 
-    def _record_background(stage: str, status: str, *, stage_timeout: float | None = None) -> None:
+    def _record_background(
+        stage: str,
+        status: str,
+        *,
+        stage_timeout: float | None = None,
+        extra_meta: Mapping[str, object] | None = None,
+    ) -> None:
         nonlocal quick_ready
 
         meta = _deferral_meta(stage_timeout)
+        if extra_meta:
+            meta.update(extra_meta)
         _record(stage, status, meta=meta)
         summary[f"{stage}_background"] = status
         budget_hint = meta.get("budget_remaining")
@@ -3003,6 +3020,28 @@ def warmup_vector_service(
                 "needed": heavy_budget_needed,
             },
         )
+
+    if stage_timeouts_from_budget and (hydrate_handlers or run_vectorise):
+        missing_ceiling_meta = {"missing_ceiling": True, "stage_timeouts_source": "budget"}
+        if hydrate_handlers:
+            _record_background(
+                "handlers",
+                "deferred-missing-ceiling",
+                stage_timeout=stage_budget_ceiling.get("handlers"),
+                extra_meta=missing_ceiling_meta,
+            )
+        if run_vectorise:
+            _record_background(
+                "vectorise",
+                "deferred-missing-ceiling",
+                stage_timeout=stage_budget_ceiling.get("vectorise"),
+                extra_meta=missing_ceiling_meta,
+            )
+        if background_stage_timeouts is None:
+            background_stage_timeouts = dict(stage_budget_ceiling)
+            if stage_budget_cap is not None:
+                background_stage_timeouts["budget"] = stage_budget_cap
+        return _finalise()
 
     def _has_stage_budget(stage: str) -> bool:
         timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
