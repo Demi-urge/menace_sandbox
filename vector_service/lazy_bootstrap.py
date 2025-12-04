@@ -724,6 +724,7 @@ def warmup_vector_service(
     *,
     download_model: bool = False,
     probe_model: bool = False,
+    skip_model_probe: bool = False,
     hydrate_handlers: bool = False,
     start_scheduler: bool = False,
     run_vectorise: bool | None = False,
@@ -813,6 +814,17 @@ def warmup_vector_service(
         for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
     )
 
+    model_probe_allowed = not skip_model_probe
+
+    if skip_model_probe:
+        _update_warmup_stage_cache(
+            "model",
+            _WARMUP_STAGE_MEMO.get("model", "probe-opt-out"),
+            log,
+            meta={"probe_opt_out": True},
+            emit_metric=False,
+        )
+
     warmup_requested = any(
         flag
         for flag in (
@@ -856,16 +868,32 @@ def warmup_vector_service(
         new_deferred: set[str] = set()
         model_probe: str | None = None
 
-        if download_model or probe_model or warmup_lite:
+        if model_probe_allowed and (download_model or probe_model or warmup_lite):
             try:
                 if _model_bundle_path().exists():
                     model_probe = "ready"
             except Exception:  # pragma: no cover - best effort presence probe
                 pass
 
+        if not model_probe_allowed:
+            summary["model_probe"] = "skipped"
+
         for stage in heavy_stages:
             cached_status = memoised_results.get(stage)
             status = cached_status if isinstance(cached_status, str) else None
+            if stage == "model" and not model_probe_allowed:
+                if not status:
+                    status = "probe-opt-out"
+                summary[stage] = status
+                if _WARMUP_STAGE_MEMO.get(stage) != status:
+                    _update_warmup_stage_cache(
+                        stage,
+                        status,
+                        log,
+                        meta={"probe_opt_out": True, "source": "bootstrap-presence"},
+                        emit_metric=False,
+                    )
+                continue
             if not status or not status.startswith("deferred"):
                 status = "deferred-bootstrap-presence"
             if stage == "model" and model_probe is not None:
@@ -936,16 +964,43 @@ def warmup_vector_service(
                 return _coerce_timeout(stage_timeouts)
             return None
 
-        if "model" not in memoised_results and (download_model or probe_model or warmup_lite):
+        if (
+            model_probe_allowed
+            and "model" not in memoised_results
+            and (download_model or probe_model or warmup_lite)
+        ):
             try:
                 if _model_bundle_path().exists():
                     model_probe = "ready"
             except Exception:  # pragma: no cover - best effort presence probe
                 pass
 
+        if not model_probe_allowed:
+            summary["model_probe"] = "skipped"
+
         for stage in heavy_stages:
             cached_status = memoised_results.get(stage)
             status = cached_status if isinstance(cached_status, str) else None
+            if stage == "model" and not model_probe_allowed:
+                if not status:
+                    status = "probe-opt-out"
+                summary[stage] = status
+                deferral_meta = {
+                    "source": "missing-budget-hooks",
+                    "background_state": _BACKGROUND_QUEUE_FLAG,
+                    "probe_opt_out": True,
+                }
+                stage_timeout_hint = _stage_timeout_hint(stage)
+                if stage_timeout_hint is not None:
+                    deferral_meta["background_timeout"] = stage_timeout_hint
+                _update_warmup_stage_cache(
+                    stage,
+                    status,
+                    log,
+                    meta=deferral_meta,
+                    emit_metric=False,
+                )
+                continue
             if not status or (not status.startswith("deferred")) and status not in {"complete", "ready"}:
                 status = "deferred-budget-hooks"
             if stage == "model" and model_probe is not None:
@@ -1035,16 +1090,39 @@ def warmup_vector_service(
         new_deferred: set[str] = set()
         model_probe: str | None = None
 
-        if download_model or probe_model or warmup_lite:
+        if model_probe_allowed and (download_model or probe_model or warmup_lite):
             try:
                 if _model_bundle_path().exists():
                     model_probe = "ready"
             except Exception:  # pragma: no cover - best effort presence probe
                 pass
 
+        if not model_probe_allowed:
+            summary["model_probe"] = "skipped"
+
         for stage in heavy_stages:
             cached_status = memoised_results.get(stage)
             status = cached_status if isinstance(cached_status, str) else None
+            if stage == "model" and not model_probe_allowed:
+                if not status:
+                    status = "probe-opt-out"
+                summary[stage] = status
+                deferral_meta = {
+                    "source": "missing-budget-guard",
+                    "background_state": _BACKGROUND_QUEUE_FLAG,
+                    "probe_opt_out": True,
+                }
+                stage_timeout_hint = conservative_hints.get(stage)
+                if stage_timeout_hint is not None:
+                    deferral_meta["background_timeout"] = stage_timeout_hint
+                _update_warmup_stage_cache(
+                    stage,
+                    status,
+                    log,
+                    meta=deferral_meta,
+                    emit_metric=(_WARMUP_STAGE_MEMO.get(stage) != status),
+                )
+                continue
             if not status or (not status.startswith("deferred")) and status not in {"complete", "ready"}:
                 status = "deferred-presence-guard"
             if stage == "model" and model_probe is not None:
@@ -1192,9 +1270,9 @@ def warmup_vector_service(
         warmup_lite_source = "bootstrap"
 
     if fast_vector_env and not force_heavy:
-        if download_model:
+        if download_model and model_probe_allowed:
             log.info("Fast vector warmup requested; skipping embedding model download")
-        if probe_model:
+        if probe_model and model_probe_allowed:
             log.info("Fast vector warmup requested; skipping embedding model probe")
         if hydrate_handlers:
             log.info("Fast vector warmup requested; skipping handler hydration")
@@ -1203,10 +1281,12 @@ def warmup_vector_service(
         hydrate_handlers = False
         run_vectorise = False
 
-    model_probe_only = True
+    model_probe_only = model_probe_allowed
     requested_handlers = bool(hydrate_handlers)
     requested_scheduler = bool(start_scheduler)
-    requested_model = bool(download_model or probe_model or model_probe_only)
+    requested_model = bool(
+        download_model or probe_model or (model_probe_only and model_probe_allowed)
+    )
     requested_vectorise = bool(run_vectorise)
     heavy_requested = any(
         flag
@@ -1278,7 +1358,7 @@ def warmup_vector_service(
             log.info("Bootstrap context detected; forcing warmup_lite")
         warmup_lite = True
         run_vectorise = False
-        if download_model:
+        if download_model and model_probe_allowed:
             log.info("Bootstrap context detected; skipping embedding model download")
             model_probe_only = True
             download_model = False
@@ -1363,7 +1443,7 @@ def warmup_vector_service(
     lite_deferrals: set[str] = set()
     if warmup_lite and not force_heavy:
         lite_deferrals.update({"handlers", "scheduler", "vectorise"})
-        if download_model or model_probe_only:
+        if model_probe_allowed and (download_model or model_probe_only):
             model_probe_only = True
             probe_model = True
             download_model = False
@@ -1415,9 +1495,10 @@ def warmup_vector_service(
                 "Embedding model download already queued; falling back to probe-only warmup",
                 extra={"event": "vector-warmup", "model_status": model_background_state},
             )
-        model_probe_only = True
-        probe_model = True
-        download_model = False
+        if model_probe_allowed:
+            model_probe_only = True
+            probe_model = True
+            download_model = False
 
     def _deferral_meta(stage_timeout: float | None = None) -> dict[str, object]:
         meta: dict[str, object] = {"recorded_at": time.time()}
@@ -2430,7 +2511,7 @@ def warmup_vector_service(
         _record_deferred_background("model", status, stage_timeout=stage_budget_ceiling.get("model"))
         budget_gate_reason = budget_gate_reason or status
         download_model = False
-        if not probe_model:
+        if model_probe_allowed and not probe_model:
             model_probe_only = True
             probe_model = True
     pending_vectorise = bool(run_vectorise)
@@ -2656,8 +2737,8 @@ def warmup_vector_service(
         hydrate_handlers = False
         start_scheduler = False
         run_vectorise = False
-        probe_model = True
-        model_probe_only = True
+        probe_model = model_probe_allowed
+        model_probe_only = model_probe_allowed
 
         if background_stage_timeouts is None:
             background_stage_timeouts = {
