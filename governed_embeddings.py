@@ -216,6 +216,8 @@ _EMBEDDER_SOFT_WAIT_LOGGED = False
 _EMBEDDER_TIMEOUT_REACHED = False
 _EMBEDDER_BOOTSTRAP_DEFERRED = False
 _EMBEDDER_BOOTSTRAP_PLACEHOLDER: Any | None = None
+_EMBEDDER_BOOTSTRAP_DEFERRALS: Set[str] = set()
+_EMBEDDER_BOOTSTRAP_DEFERRALS_LOCK = threading.Lock()
 _FALLBACK_ANNOUNCED = False
 _HF_LOCK_CLEANUP_TIMEOUT = float(os.getenv("HF_LOCK_CLEANUP_TIMEOUT", "5"))
 _BUNDLED_EMBEDDER: Any | None = None
@@ -491,6 +493,115 @@ def _record_bootstrap_placeholder(reason: str) -> Any:
         _trace("bootstrap.deferred", reason=reason)
     _EMBEDDER_BOOTSTRAP_DEFERRED = True
     return _EMBEDDER_BOOTSTRAP_PLACEHOLDER
+
+
+def _bootstrap_budget_remaining(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    return deadline - time.perf_counter()
+
+
+def _bootstrap_background_executor() -> Any | None:
+    try:  # pragma: no cover - optional dependency
+        from vector_service.lazy_bootstrap import _background_executor  # type: ignore
+    except Exception as exc:  # pragma: no cover - best effort diagnostics
+        logger.debug("bootstrap background executor unavailable: %s", exc)
+        _trace("bootstrap.executor.unavailable", error=str(exc))
+        return None
+
+    try:
+        return _background_executor()
+    except Exception as exc:  # pragma: no cover - diagnostic only
+        logger.debug("failed to access bootstrap executor: %s", exc)
+        _trace("bootstrap.executor.error", error=str(exc))
+        return None
+
+
+def _schedule_deferred_embedder_load(
+    *,
+    reason: str,
+    requester: str | None,
+) -> bool:
+    executor = _bootstrap_background_executor()
+    if executor is None:
+        return False
+
+    background_event = threading.Event()
+
+    def _resume() -> None:
+        _ensure_embedder_thread_locked(
+            background_event,
+            load_context={
+                "budget_deadline": None,
+                "bootstrap_mode": False,
+                "requester": requester or "bootstrap-background",
+            },
+        )
+
+    try:
+        executor.submit(_resume)
+    except Exception as exc:  # pragma: no cover - background scheduling best effort
+        logger.debug("failed to schedule deferred embedder load: %s", exc)
+        _trace("bootstrap.executor.submit_error", error=str(exc), reason=reason)
+        return False
+
+    return True
+
+
+def _defer_bootstrap_load(
+    *,
+    reason: str,
+    requester: str | None = None,
+) -> Any:
+    scheduled = False
+    with _EMBEDDER_BOOTSTRAP_DEFERRALS_LOCK:
+        first_seen = reason not in _EMBEDDER_BOOTSTRAP_DEFERRALS
+        _EMBEDDER_BOOTSTRAP_DEFERRALS.add(reason)
+    if first_seen or not _EMBEDDER_BOOTSTRAP_DEFERRED:
+        scheduled = _schedule_deferred_embedder_load(
+            reason=reason,
+            requester=requester,
+        )
+    placeholder = _record_bootstrap_placeholder(reason)
+    if scheduled:
+        logger.info(
+            "embedder load deferred (%s); scheduled background bootstrap load",
+            reason,
+            extra={"model": _MODEL_NAME, "requester": requester},
+        )
+    _trace(
+        "load.deferred", reason=reason, scheduled=scheduled, requester=requester
+    )
+    return placeholder
+
+
+def _guard_bootstrap_budget(
+    *,
+    budget_deadline: float | None,
+    stop_event: threading.Event | None,
+    bootstrap_mode: bool,
+    requester: str | None,
+    stage: str,
+) -> Any | None:
+    remaining = _bootstrap_budget_remaining(budget_deadline)
+    if not bootstrap_mode:
+        return None
+
+    if _embedder_stop_requested(stop_event):
+        return _defer_bootstrap_load(
+            reason=f"{stage}_cancelled",
+            requester=requester,
+        )
+
+    if remaining is not None and remaining <= 0:
+        if stop_event is not None:
+            stop_event.set()
+        return _defer_bootstrap_load(
+            reason=f"{stage}_budget_exhausted",
+            requester=requester,
+        )
+
+    return None
 
 
 def _load_bundled_embedder() -> Any | None:
@@ -1282,6 +1393,8 @@ def _embedder_disabled(stop_event: threading.Event | None = None) -> bool:
 
 def _ensure_embedder_thread_locked(
     stop_event: threading.Event | None = None,
+    *,
+    load_context: dict[str, object] | None = None,
 ) -> threading.Event:
     """Ensure the background embedder initialisation thread is running."""
 
@@ -1320,7 +1433,8 @@ def _ensure_embedder_thread_locked(
                 )
                 _trace("thread.loader.cancelled", reason="pre-start")
                 return
-            result = _load_embedder(stop_event=_EMBEDDER_STOP_EVENT)
+            load_kwargs = load_context or {}
+            result = _load_embedder(stop_event=_EMBEDDER_STOP_EVENT, **load_kwargs)
             if result is not None and not _embedder_stop_requested():
                 _EMBEDDER = result
         except Exception:  # pragma: no cover - defensive logging
@@ -1364,6 +1478,7 @@ def _initialise_embedder_with_timeout(
     fallback_on_timeout: bool = False,
     max_wait_override: float | None = None,
     allow_background_wait: bool = False,
+    load_budget_deadline: float | None = None,
 ) -> SentenceTransformer | Any | None:
     """Initialise the shared embedder without blocking indefinitely.
 
@@ -1382,7 +1497,12 @@ def _initialise_embedder_with_timeout(
             _EMBEDDER_STOP_EVENT = None
         if stop_event is not None:
             _EMBEDDER_STOP_EVENT = stop_event
-        event = _ensure_embedder_thread_locked(stop_event)
+        load_context = {
+            "budget_deadline": load_budget_deadline,
+            "bootstrap_mode": allow_background_wait,
+            "requester": requester,
+        }
+        event = _ensure_embedder_thread_locked(stop_event, load_context=load_context)
 
     if _embedder_disabled(stop_event):
         logger.info(
@@ -1762,15 +1882,37 @@ def _embedder_stop_requested(stop_event: threading.Event | None = None) -> bool:
     return bool(event and event.is_set())
 
 
-def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransformer | None:
+def _load_embedder(
+    stop_event: threading.Event | None = None,
+    *,
+    budget_deadline: float | None = None,
+    bootstrap_mode: bool = False,
+    requester: str | None = None,
+) -> SentenceTransformer | None:
     """Load the shared ``SentenceTransformer`` instance with offline fallbacks."""
 
     global model
+
+    budget_placeholder = _guard_bootstrap_budget(
+        budget_deadline=budget_deadline,
+        stop_event=stop_event,
+        bootstrap_mode=bootstrap_mode,
+        requester=requester,
+        stage="prefetch",
+    )
+    if budget_placeholder is not None:
+        return cast("SentenceTransformer", budget_placeholder)
 
     if _embedder_stop_requested(stop_event):
         logger.info("embedder initialisation cancelled", extra={"model": _MODEL_NAME})
         _trace("load.cancelled")
         return None
+
+    _trace(
+        "load.sync.start",
+        bootstrap_mode=bootstrap_mode,
+        requester=requester,
+    )
 
     if SentenceTransformer is None:  # pragma: no cover - optional dependency missing
         fallback = _load_bundled_embedder()
@@ -1800,6 +1942,15 @@ def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransfo
             "cache_dir": str(cache_dir) if cache_dir is not None else None,
         },
     )
+    budget_placeholder = _guard_bootstrap_budget(
+        budget_deadline=budget_deadline,
+        stop_event=stop_event,
+        bootstrap_mode=bootstrap_mode,
+        requester=requester,
+        stage="cache_preflight",
+    )
+    if budget_placeholder is not None:
+        return cast("SentenceTransformer", budget_placeholder)
     if cache_dir is not None:
         model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
         focus_dir = model_cache if model_cache.exists() else model_cache.parent
@@ -1823,6 +1974,15 @@ def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransfo
                 "load.snapshot.detected",
                 snapshot=str(snapshot_path),
             )
+            budget_placeholder = _guard_bootstrap_budget(
+                budget_deadline=budget_deadline,
+                stop_event=stop_event,
+                bootstrap_mode=bootstrap_mode,
+                requester=requester,
+                stage="snapshot_detected",
+            )
+            if budget_placeholder is not None:
+                return cast("SentenceTransformer", budget_placeholder)
 
         cache_has_refs = False
         cache_has_blobs = False
@@ -1967,6 +2127,15 @@ def _load_embedder(stop_event: threading.Event | None = None) -> SentenceTransfo
             local_only=bool(local_kwargs.get("local_files_only", False)),
         )
         _ensure_hf_timeouts()
+        budget_placeholder = _guard_bootstrap_budget(
+            budget_deadline=budget_deadline,
+            stop_event=stop_event,
+            bootstrap_mode=bootstrap_mode,
+            requester=requester,
+            stage="hub_load",
+        )
+        if budget_placeholder is not None:
+            return cast("SentenceTransformer", budget_placeholder)
         if SENTENCE_TRANSFORMER_DEVICE and "device" not in local_kwargs:
             local_kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
         model = initialise_sentence_transformer(_MODEL_ID, **local_kwargs)
@@ -2065,6 +2234,7 @@ def get_embedder(
     to avoid blocking for the full global timeout.
     """
     global _EMBEDDER
+    call_start = time.perf_counter()
     if _EMBEDDER is not None:
         return _EMBEDDER
 
@@ -2080,6 +2250,7 @@ def get_embedder(
     bootstrap_wait_cap: float | None = None
     bootstrap_deadline: float | None = None
     max_wait_override: float | None = None
+    budget_deadline: float | None = None
     if bootstrap_mode or bootstrap_timeout is not None:
         cap_budget = bootstrap_timeout if bootstrap_timeout is not None else timeout
         bootstrap_wait_cap = apply_bootstrap_timeout_caps(cap_budget)
@@ -2091,6 +2262,8 @@ def get_embedder(
             wait_override = min(wait_override, bootstrap_wait_cap)
         elif bootstrap_wait_cap is not None:
             wait_override = bootstrap_wait_cap
+        if bootstrap_wait_cap is not None and bootstrap_wait_cap >= 0:
+            budget_deadline = call_start + bootstrap_wait_cap
 
     if bootstrap_deadline is not None and stop_event is None:
         stop_event = threading.Event()
@@ -2116,6 +2289,16 @@ def get_embedder(
     if bootstrap_mode and stop_event is not None and stop_event.is_set():
         reason = "bootstrap_budget_exhausted" if bootstrap_deadline is not None else "bootstrap_cancelled"
         return _record_bootstrap_placeholder(reason)
+
+    placeholder = _guard_bootstrap_budget(
+        budget_deadline=budget_deadline,
+        stop_event=stop_event,
+        bootstrap_mode=bootstrap_mode,
+        requester=requester,
+        stage="pre_lock",
+    )
+    if placeholder is not None:
+        return placeholder
 
     lock = _embedder_lock()
     placeholder_embedder = None
@@ -2152,16 +2335,17 @@ def get_embedder(
         lock_timeout = lock_cap
 
     if lock is None:
-            placeholder_embedder = _initialise_embedder_with_timeout(
-                timeout_override=wait_override,
-                suppress_timeout_log=wait_override is not None,
-                requester=requester,
-                stop_event=stop_event,
-                fallback_on_timeout=bootstrap_mode or wait_override is not None,
-                max_wait_override=max_wait_override,
-                allow_background_wait=bootstrap_mode,
-            )
-            return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
+        placeholder_embedder = _initialise_embedder_with_timeout(
+            timeout_override=wait_override,
+            suppress_timeout_log=wait_override is not None,
+            requester=requester,
+            stop_event=stop_event,
+            fallback_on_timeout=bootstrap_mode or wait_override is not None,
+            max_wait_override=max_wait_override,
+            allow_background_wait=bootstrap_mode,
+            load_budget_deadline=budget_deadline,
+        )
+        return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
 
     cleaned_once = False
     while True:
@@ -2175,6 +2359,7 @@ def get_embedder(
                     fallback_on_timeout=bootstrap_mode or wait_override is not None,
                     max_wait_override=max_wait_override,
                     allow_background_wait=bootstrap_mode,
+                    load_budget_deadline=budget_deadline,
                 )
                 break
         except LockTimeout:
@@ -2303,6 +2488,8 @@ def rearm_bootstrap_embedder_placeholder() -> None:
 
     _EMBEDDER_BOOTSTRAP_DEFERRED = False
     _EMBEDDER_BOOTSTRAP_PLACEHOLDER = None
+    with _EMBEDDER_BOOTSTRAP_DEFERRALS_LOCK:
+        _EMBEDDER_BOOTSTRAP_DEFERRALS.clear()
 
 
 __all__ = [
