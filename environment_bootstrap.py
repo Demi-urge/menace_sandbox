@@ -2471,6 +2471,35 @@ class EnvironmentBootstrapper:
                 if budget_ceiling is None:
                     budget_ceiling = warmup_budget if warmup_budget is not None else phase_remaining
                 preflight_skipped: set[str] = set()
+            cached_warmup_status: dict[str, str] = {}
+            cached_warmup_meta: dict[str, Mapping[str, object]] = {}
+            cached_ceiling_hints: dict[str, float | None] = {}
+            try:
+                from .vector_service import lazy_bootstrap as warmup_cache
+
+                warmup_cache._load_warmup_cache(self.logger)
+                cached_warmup_status = {
+                    stage: status
+                    for stage, status in warmup_cache._WARMUP_STAGE_MEMO.items()
+                    if isinstance(stage, str) and isinstance(status, str)
+                }
+                cached_warmup_meta = {
+                    stage: meta
+                    for stage, meta in warmup_cache._WARMUP_STAGE_META.items()
+                    if isinstance(stage, str) and isinstance(meta, Mapping)
+                }
+                for _stage, _meta in cached_warmup_meta.items():
+                    if not isinstance(_meta, Mapping):
+                        continue
+                    hint = _coerce_timeout(
+                        _meta.get("stage_timeout") or _meta.get("timebox_remaining")
+                    )
+                    if hint is not None:
+                        cached_ceiling_hints[_stage] = hint
+            except Exception:
+                cached_warmup_status = {}
+                cached_warmup_meta = {}
+                cached_ceiling_hints = {}
             for _stage, enabled in (
                 ("handlers", warmup_handlers),
                 ("vectorise", run_vectorise),
@@ -2516,6 +2545,17 @@ class EnvironmentBootstrapper:
                 if isinstance(vector_state, Mapping)
                 else set()
             )
+            cached_deferred = {
+                stage
+                for stage, status in cached_warmup_status.items()
+                if status.startswith("deferred")
+            }
+            cached_ready = {
+                stage
+                for stage, status in cached_warmup_status.items()
+                if status.startswith("ready") or status == "ready"
+            }
+            persisted_deferred |= set(cached_deferred)
             background_pending = (
                 isinstance(vector_state, Mapping)
                 and vector_state.get("background") == "pending"
@@ -2532,8 +2572,25 @@ class EnvironmentBootstrapper:
             background_stage_timeouts: dict[str, float | None] | None = (
                 dict(stored_budget_hints) if isinstance(stored_budget_hints, Mapping) else None
             )
+            if cached_ceiling_hints:
+                merged = dict(background_stage_timeouts or {})
+                merged.update({k: v for k, v in cached_ceiling_hints.items() if v is not None})
+                background_stage_timeouts = merged
             warmup_background: set[str] = set()
             background_ticket_only = False
+            cached_background = {
+                stage
+                for stage, meta in cached_warmup_meta.items()
+                if isinstance(meta.get("background_state"), str)
+                and meta.get("background_state") in {"pending", "queued", "running"}
+            }
+            if cached_background:
+                pending_background_stages |= set(cached_background)
+                background_status = background_status or "pending"
+            if cached_deferred:
+                pending_background_stages |= set(cached_deferred)
+                background_status = background_status or "pending"
+            persisted_background = set(pending_background_stages)
 
             def _budget_hint_payload() -> dict[str, float | None] | None:
                 hints_source: Mapping[str, float | None] | None
@@ -2648,6 +2705,16 @@ class EnvironmentBootstrapper:
                 self.logger.info(
                     "Vector handler hydration requested but deferred until heavy mode is enabled",
                 )
+
+            if "model" in cached_ready or "model" in cached_deferred:
+                warmup_model = False
+                heavy_model_requested = False
+            if "handlers" in cached_ready or "handlers" in cached_deferred:
+                warmup_handlers = False
+                heavy_handlers_requested = False
+            if "vectorise" in cached_ready or "vectorise" in cached_deferred:
+                run_vectorise = False
+                heavy_vectorise_requested = False
 
             warm_requested = (
                 heavy_requested
@@ -2793,8 +2860,9 @@ class EnvironmentBootstrapper:
                     if pending_background_stages:
                         background_status = background_status or "pending"
                     return set()
-                heavy_to_schedule |= pending_background_stages
-                heavy_to_schedule = {stage for stage in heavy_to_schedule if _stage_allowed(stage)}
+                new_pending = {stage for stage in pending_background_stages if stage not in persisted_background}
+                heavy_to_schedule |= new_pending
+                heavy_to_schedule = {stage for stage in heavy_to_schedule if _stage_allowed(stage) and stage not in persisted_background}
                 if pending_background_stages:
                     background_status = background_status or "pending"
                 return set(heavy_to_schedule)
@@ -3061,11 +3129,17 @@ class EnvironmentBootstrapper:
                         for stage in pending_background_stages:
                             final_summary.setdefault(stage, "pending")
                         final_summary.setdefault("bootstrap", "deferred")
+                    elif pending_background_stages:
+                        final_summary.setdefault("background", "pending")
+                        for stage in pending_background_stages:
+                            final_summary.setdefault(stage, "pending")
+                        final_summary.setdefault("bootstrap", "deferred")
                     hint_payload = _budget_hint_payload()
                     if (background_status or final_summary.get("background")) and hint_payload:
                         final_summary.setdefault("budget_hints", hint_payload)
                     if warmup_background:
                         final_summary.setdefault("background", "pending")
+                        final_summary.setdefault("bootstrap", "deferred")
                         final_summary.setdefault("deferred", ",".join(sorted(warmup_background)))
                         for stage in warmup_background:
                             final_summary.setdefault(stage, (summary or {}).get(stage, "deferred"))
