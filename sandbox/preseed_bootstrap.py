@@ -6103,6 +6103,7 @@ def initialize_bootstrap_context(
 
         warmup_stage_timeouts: dict[str, float] | float | None = None
         warmup_budget = _warmup_budget_remaining()
+        warmup_stage_budget_cap = warmup_budget if warmup_budget is not None else 30.0
         if warmup_budget is not None:
             warmup_stage_timeouts = {"budget": warmup_budget, "model": warmup_budget}
         elif embedder_stage_budget_hint is not None or embedder_timeout is not None:
@@ -6131,6 +6132,27 @@ def initialize_bootstrap_context(
             warmup_stage_ceiling = max(0.0, float(warmup_stage_ceiling))
         except (TypeError, ValueError):
             warmup_stage_ceiling = None
+
+        if warmup_stage_budget_cap is not None and warmup_stage_budget_cap > 0:
+            if warmup_stage_timeouts is None:
+                warmup_stage_timeouts = {
+                    "budget": warmup_stage_budget_cap,
+                    "model": warmup_stage_budget_cap,
+                }
+            elif isinstance(warmup_stage_timeouts, Mapping):
+                warmup_stage_timeouts["budget"] = min(
+                    warmup_stage_budget_cap,
+                    warmup_stage_timeouts.get("budget", warmup_stage_budget_cap),
+                )
+                warmup_stage_timeouts["model"] = min(
+                    warmup_stage_budget_cap,
+                    warmup_stage_timeouts.get("model", warmup_stage_budget_cap),
+                )
+            warmup_hard_cap = (
+                warmup_stage_budget_cap
+                if warmup_hard_cap is None
+                else min(warmup_hard_cap, warmup_stage_budget_cap)
+            )
 
         controller_timeouts: dict[str, float] = {}
         controller_budget_remaining = stage_controller.stage_budget(step_name="embedder_preload")
@@ -7243,6 +7265,27 @@ def initialize_bootstrap_context(
                 non_blocking_probe=non_blocking_presence_probe,
                 resume_download=True,
             )
+        strict_stage_warmup_cap = warmup_budget
+        if strict_stage_warmup_cap is None:
+            strict_stage_warmup_cap = 30.0
+        if strict_stage_warmup_cap is not None:
+            if warmup_join_timeout is None:
+                warmup_join_timeout = strict_stage_warmup_cap
+            else:
+                warmup_join_timeout = min(warmup_join_timeout, strict_stage_warmup_cap)
+            if warmup_join_cap is None:
+                warmup_join_cap = strict_stage_warmup_cap
+            else:
+                warmup_join_cap = min(warmup_join_cap, strict_stage_warmup_cap)
+            warmup_hard_cap = (
+                strict_stage_warmup_cap
+                if warmup_hard_cap is None
+                else min(warmup_hard_cap, strict_stage_warmup_cap)
+            )
+            warmup_join_cap_reason = (
+                warmup_join_cap_reason or "embedder_preload_stage_warmup_cap"
+            )
+
         warmup_result, warmup_timeout_reason = _guarded_embedder_warmup(
             join_timeout=warmup_join_timeout,
             join_cap=warmup_join_cap,
@@ -7280,6 +7323,34 @@ def initialize_bootstrap_context(
                 "embedder_preload_fallback_timebox",
                 "embedder_preload_fallback_warmup_cap_exceeded",
             }
+            warmup_summary.setdefault("warmup_stop_reason", warmup_deferral_reason)
+            warmup_result_summary = None
+            if isinstance(warmup_result, Mapping):
+                warmup_result_summary = warmup_result.get("warmup_summary")
+                if warmup_result_summary is not None:
+                    warmup_result_summary.setdefault("deferred", True)
+                    warmup_result_summary.setdefault(
+                        "deferred_reason", warmup_deferral_reason
+                    )
+                    warmup_result_summary.setdefault(
+                        "deferral_reason", warmup_deferral_reason
+                    )
+                    warmup_result_summary.setdefault(
+                        "strict_timebox", strict_timebox_value
+                    )
+                    warmup_summary.update(warmup_result_summary)
+                warmup_result.setdefault("warmup_summary", warmup_summary)
+                warmup_result.setdefault("deferred", True)
+                warmup_result.setdefault("deferral_reason", warmup_deferral_reason)
+                warmup_result.setdefault("deferred_reason", warmup_deferral_reason)
+                warmup_result.setdefault("strict_timebox", strict_timebox_value)
+                warmup_result.setdefault("background_enqueue_reason", warmup_deferral_reason)
+                stage_controller.defer_step(
+                    "embedder_preload", reason=warmup_deferral_reason
+                )
+                stage_controller.complete_step("embedder_preload", 0.0)
+                return warmup_result
+
             return _defer_to_presence(
                 warmup_deferral_reason,
                 budget_guarded=True,
