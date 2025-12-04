@@ -813,6 +813,15 @@ def warmup_vector_service(
 
     budget_hooks_missing = not (budget_remaining_supplied and check_budget_supplied)
 
+    stage_timeouts = _normalise_stage_timeouts(stage_timeouts)
+    if (
+        stage_timeouts is None
+        and not stage_timeouts_supplied
+        and not budget_remaining_supplied
+        and not check_budget_supplied
+    ):
+        stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+
     if bootstrap_context and not force_heavy:
         summary: dict[str, str] = {
             "bootstrap": "presence-only",
@@ -897,6 +906,13 @@ def warmup_vector_service(
         heavy_stages = ("model", "handlers", "scheduler", "vectorise")
         model_probe: str | None = None
 
+        def _stage_timeout_hint(stage: str) -> float | None:
+            if isinstance(stage_timeouts, Mapping):
+                return _coerce_timeout(stage_timeouts.get(stage))
+            if isinstance(stage_timeouts, (int, float)):
+                return _coerce_timeout(stage_timeouts)
+            return None
+
         if "model" not in memoised_results and (download_model or probe_model or warmup_lite):
             try:
                 if _model_bundle_path().exists():
@@ -915,7 +931,13 @@ def warmup_vector_service(
             summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
             prior_background_state = _WARMUP_STAGE_META.get(stage, {}).get("background_state")
             changed_status = _WARMUP_STAGE_MEMO.get(stage) != status
-            deferral_meta = {"source": "missing-budget-hooks", "background_state": _BACKGROUND_QUEUE_FLAG}
+            deferral_meta = {
+                "source": "missing-budget-hooks",
+                "background_state": _BACKGROUND_QUEUE_FLAG,
+            }
+            stage_timeout_hint = _stage_timeout_hint(stage)
+            if stage_timeout_hint is not None:
+                deferral_meta["background_timeout"] = stage_timeout_hint
             _update_warmup_stage_cache(
                 stage,
                 status,
@@ -963,16 +985,19 @@ def warmup_vector_service(
 
         return summary
 
-    stage_timeouts = _normalise_stage_timeouts(stage_timeouts)
-
     if stage_timeouts is None:
         if bootstrap_context or warmup_requested:
             stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
-            if env_budget is not None:
-                stage_timeouts = dict(stage_timeouts)
-                stage_timeouts["budget"] = env_budget
         elif env_budget is None:
             stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+
+    if (
+        env_budget is not None
+        and isinstance(stage_timeouts, Mapping)
+        and "budget" not in stage_timeouts
+    ):
+        stage_timeouts = dict(stage_timeouts)
+        stage_timeouts["budget"] = env_budget
 
     budget_start = time.monotonic()
     timebox_deadline: float | None = None
