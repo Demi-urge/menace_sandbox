@@ -1205,6 +1205,7 @@ def _mark_bootstrap_step(step_name: str) -> None:
     global _BOOTSTRAP_TIMELINE_START
 
     now = time.monotonic()
+    now_perf = perf_counter()
     with _BOOTSTRAP_TIMELINE_LOCK:
         if _BOOTSTRAP_TIMELINE_START is None:
             _BOOTSTRAP_TIMELINE_START = now
@@ -1880,6 +1881,14 @@ def _bootstrap_embedder(
     stage_deadline_remaining = (
         max(0.0, stage_deadline_hint - now) if stage_deadline_hint is not None else None
     )
+    warmup_cap_deadline_hint = caps.get("warmup_cap_deadline")
+    if warmup_cap_deadline_hint is not None:
+        warmup_cap_remaining = max(0.0, warmup_cap_deadline_hint - now_perf)
+        stage_deadline_remaining = (
+            warmup_cap_remaining
+            if stage_deadline_remaining is None
+            else min(stage_deadline_remaining, warmup_cap_remaining)
+        )
     remaining_bootstrap_window = (
         max(0.0, bootstrap_deadline - now) if bootstrap_deadline is not None else None
     )
@@ -1955,6 +1964,13 @@ def _bootstrap_embedder(
     if stage_wall_cap_hint is not None and stage_wall_cap_hint >= 0:
         stage_wall_cap = (
             stage_wall_cap_hint if stage_wall_cap is None else min(stage_wall_cap, stage_wall_cap_hint)
+        )
+    stage_timebox_cap_hint = caps.get("stage_timebox_cap")
+    if stage_timebox_cap_hint is not None and stage_timebox_cap_hint >= 0:
+        stage_wall_cap = (
+            stage_timebox_cap_hint
+            if stage_wall_cap is None
+            else min(stage_wall_cap, stage_timebox_cap_hint)
         )
     if remaining_bootstrap_window is not None:
         stage_wall_cap = (
@@ -2033,6 +2049,13 @@ def _bootstrap_embedder(
     presence_deadline = (
         start_time + presence_cap if presence_cap and presence_cap > 0 else None
     )
+    presence_cap_deadline_hint = caps.get("presence_cap_deadline")
+    if presence_cap_deadline_hint is not None:
+        presence_deadline = (
+            presence_cap_deadline_hint
+            if presence_deadline is None
+            else min(presence_deadline, presence_cap_deadline_hint)
+        )
     tight_cap_for_presence = (
         max_duration_cap is not None
         and presence_cap > 0
@@ -2258,6 +2281,8 @@ def _bootstrap_embedder(
                     remaining_candidates.append(stage_deadline_hint - now_perf)
                 if remaining_bootstrap_window is not None:
                     remaining_candidates.append((start_time + remaining_bootstrap_window) - now_perf)
+                if warmup_cap_deadline is not None:
+                    remaining_candidates.append(warmup_cap_deadline - now_perf)
                 if bootstrap_deadline is not None:
                     remaining_candidates.append(bootstrap_deadline - time.monotonic())
 
@@ -2281,6 +2306,10 @@ def _bootstrap_embedder(
                     deadlines.append((max_wait_deadline, max_wait_reason))
                 if presence_deadline is not None:
                     deadlines.append((presence_deadline, "embedder_presence_timeout"))
+                if warmup_cap_deadline is not None:
+                    deadlines.append((warmup_cap_deadline, "embedder_warmup_cap_exhausted"))
+                if presence_cap_deadline is not None:
+                    deadlines.append((presence_cap_deadline, "embedder_presence_cap_exhausted"))
 
                 if not deadlines:
                     return None, None
@@ -2333,9 +2362,28 @@ def _bootstrap_embedder(
             ).start()
 
             try:
-                ready_timeout = (
+                ready_timeout_candidates = [
                     stage_wall_cap if stage_wall_cap is not None else max_duration_cap
-                )
+                ]
+                if stage_timebox_cap is not None:
+                    ready_timeout_candidates.append(stage_timebox_cap)
+                if warmup_cap_deadline is not None:
+                    ready_timeout_candidates.append(
+                        max(warmup_cap_deadline - perf_counter(), 0.0)
+                    )
+                if presence_cap_deadline is not None:
+                    ready_timeout_candidates.append(
+                        max(presence_cap_deadline - perf_counter(), 0.0)
+                    )
+                ready_timeout: float | None = None
+                for candidate in ready_timeout_candidates:
+                    if candidate is None:
+                        continue
+                    ready_timeout = (
+                        candidate
+                        if ready_timeout is None
+                        else min(ready_timeout, candidate)
+                    )
                 remaining_budget, remaining_reason = _remaining_budget()
                 if remaining_budget is not None and remaining_budget < 0:
                     _abort_background(remaining_reason or "embedder_background_timeout")
@@ -2993,6 +3041,10 @@ def start_embedder_warmup(
     if presence_cap < 0:
         presence_cap = 0.0
     warmup_started = time.monotonic()
+    warmup_started_perf = perf_counter()
+    presence_cap_deadline = (
+        warmup_started_perf + presence_cap if presence_cap and presence_cap > 0 else None
+    )
     bootstrap_context_active = False
     warmup_lite_context = False
     resume_embedder_download_default = False
@@ -3074,7 +3126,7 @@ def start_embedder_warmup(
     else:
         stage_timebox_cap = min(stage_timebox_cap, warmup_cap_ceiling)
     warmup_cap_deadline = (
-        warmup_started + stage_timebox_cap if stage_timebox_cap is not None else None
+        warmup_started_perf + stage_timebox_cap if stage_timebox_cap is not None else None
     )
 
     presence_cache_hit = False
@@ -3101,7 +3153,7 @@ def start_embedder_warmup(
     def _remaining_timebox_cap() -> float | None:
         if stage_timebox_cap is None:
             return None
-        elapsed = perf_counter() - warmup_started
+        elapsed = perf_counter() - warmup_started_perf
         return max(0.0, stage_timebox_cap - elapsed)
 
     def _mark_budget_deferral(job_snapshot: dict[str, Any]) -> None:
@@ -3220,8 +3272,26 @@ def start_embedder_warmup(
             _BOOTSTRAP_EMBEDDER_JOB = existing_job
             return placeholder
         if background_future is not None and capped_join is not None:
-            with contextlib.suppress(Exception):
+            try:
                 background_future.result(timeout=capped_join)
+            except FuturesTimeoutError:
+                timeout_reason = "embedder_background_join_timeout"
+                existing_job.setdefault("deferral_reason", timeout_reason)
+                existing_job.setdefault("warmup_placeholder_reason", timeout_reason)
+                existing_job.setdefault("placeholder_reason", timeout_reason)
+                warmup_summary = existing_job.get("warmup_summary") or {}
+                warmup_summary.setdefault("deferred", True)
+                warmup_summary.setdefault("deferral_reason", timeout_reason)
+                warmup_summary.setdefault("deferred_reason", timeout_reason)
+                warmup_summary.setdefault("stage", "deferred-timebox")
+                warmup_summary.setdefault("strict_timebox", capped_join)
+                existing_job["warmup_summary"] = warmup_summary
+                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=timeout_reason)
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "background_loops", reason=f"embedder_placeholder:{timeout_reason}"
+                )
+            except Exception:
+                pass
         if not placeholder_reason:
             placeholder_reason = existing_job.get("background_enqueue_reason")
         existing_job["warmup_placeholder_reason"] = placeholder_reason
@@ -5978,6 +6048,10 @@ def initialize_bootstrap_context(
                     "stage_deadline": embedder_stage_deadline,
                     "bootstrap_deadline": bootstrap_deadline,
                     "inline_timebox_cap": inline_join_cap,
+                    "stage_timebox_cap": stage_timebox_cap,
+                    "warmup_cap_deadline": warmup_cap_deadline,
+                    "presence_cap": presence_cap,
+                    "presence_cap_deadline": presence_cap_deadline,
                 },
             )
             job_snapshot.setdefault("result", job_snapshot["placeholder"])
@@ -5995,6 +6069,7 @@ def initialize_bootstrap_context(
                     "background_dispatch": True,
                     "warmup_timebox_cap": strict_timebox,
                     "inline_timebox_cap": inline_join_cap,
+                    "background_join_timeout": strict_timebox,
                 },
             )
             warmup_summary = job_snapshot.get("warmup_summary") or {}
@@ -6014,7 +6089,7 @@ def initialize_bootstrap_context(
             warmup_summary.setdefault("strict_timebox", strict_timebox)
             job_snapshot["warmup_summary"] = warmup_summary
 
-                return job_snapshot
+            return job_snapshot
 
             if pending_background_resume and existing_background is None:
                 resume_reason = existing_job_snapshot.get(
@@ -6039,10 +6114,21 @@ def initialize_bootstrap_context(
                         if strict_timebox is not None
                         else embedder_stage_budget
                     )
+                    if stage_timebox_cap is not None:
+                        background_cap = (
+                            stage_timebox_cap
+                            if background_cap is None
+                            else min(background_cap, stage_timebox_cap)
+                        )
                     cap_deadline = (
-                        time.monotonic() + background_cap
+                        perf_counter() + background_cap
                         if background_cap is not None and background_cap > 0
                         else None
+                    )
+                    cap_deadline_candidates = [cap_deadline, warmup_cap_deadline, presence_cap_deadline]
+                    cap_deadline = min(
+                        (candidate for candidate in cap_deadline_candidates if candidate is not None),
+                        default=None,
                     )
 
                     def _record_background_placeholder(reason: str) -> None:
@@ -6129,7 +6215,26 @@ def initialize_bootstrap_context(
                         )
                         return
 
-                    ready_timeout = background_cap if background_cap is not None else None
+                    ready_timeout_candidates: list[float | None] = [background_cap]
+                    if cap_deadline is not None:
+                        ready_timeout_candidates.append(max(cap_deadline - perf_counter(), 0.0))
+                    if warmup_cap_deadline is not None:
+                        ready_timeout_candidates.append(
+                            max(warmup_cap_deadline - perf_counter(), 0.0)
+                        )
+                    if presence_cap_deadline is not None:
+                        ready_timeout_candidates.append(
+                            max(presence_cap_deadline - perf_counter(), 0.0)
+                        )
+                    ready_timeout: float | None = None
+                    for candidate in ready_timeout_candidates:
+                        if candidate is None:
+                            continue
+                        ready_timeout = (
+                            candidate
+                            if ready_timeout is None
+                            else min(ready_timeout, candidate)
+                        )
                     embedder_deferred, _ = _BOOTSTRAP_SCHEDULER.embedder_deferral()
                     if embedder_deferred and not _BOOTSTRAP_EMBEDDER_READY.is_set():
                         _record_background_placeholder("embedder_background_deferred")
@@ -6167,6 +6272,10 @@ def initialize_bootstrap_context(
                         "bootstrap_deadline": bootstrap_deadline,
                         "stage_deadline": embedder_stage_deadline,
                         "stage_wall_cap": strict_timebox,
+                        "stage_timebox_cap": stage_timebox_cap,
+                        "warmup_cap_deadline": warmup_cap_deadline,
+                        "presence_cap": presence_cap,
+                        "presence_cap_deadline": presence_cap_deadline,
                     }
                     resolved_caps = {
                         key: value
