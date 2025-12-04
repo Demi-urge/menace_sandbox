@@ -2867,11 +2867,17 @@ class EnvironmentBootstrapper:
                     background_status = background_status or "pending"
                 return set(heavy_to_schedule)
 
+            deferred_post_ready: set[str] = set()
+
             def _background_resume_hook(
                 stages: set[str], budget_hints: Mapping[str, float | None] | None = None
             ) -> set[str]:
                 deferred_stages.update(stages)
                 warmup_background.update(stages)
+                if not self._online_event.is_set() and not heavy_requested:
+                    deferred_post_ready.update(stages)
+                    background_status = background_status or "deferred-readiness"
+                    return set()
                 return _schedule_heavy_background(stages, _cap_timeouts(budget_hints))
                 if preflight_skipped:
                     _background_resume_hook(
@@ -3082,18 +3088,18 @@ class EnvironmentBootstrapper:
                         logger=self.logger,
                         check_budget=check_budget,
                         budget_remaining=_vector_budget_remaining,
-                        download_model=warmup_model,
-                        probe_model=warmup_probe,
+                        download_model=False,
+                        probe_model=True,
                         hydrate_handlers=False,
-                        start_scheduler=False,
+                        start_scheduler=True,
                         run_vectorise=False,
                         force_heavy=False,
                         bootstrap_fast=True,
                         warmup_lite=True,
                         bootstrap_lite=True,
-                        warmup_model=warmup_model,
-                        warmup_handlers=warmup_handlers,
-                        warmup_probe=warmup_probe,
+                        warmup_model=False,
+                        warmup_handlers=False,
+                        warmup_probe=True,
                         stage_timeouts=stage_timeouts,
                         deferred_stages=deferred_stages,
                         background_hook=_background_resume_hook,
@@ -3101,7 +3107,24 @@ class EnvironmentBootstrapper:
                     self.logger.info(
                         "Vector warmup invoked with flags: %s", selected_flags
                     )
-                    heavy_to_schedule = _schedule_heavy_background(warmup_background)
+                    heavy_to_schedule = set()
+                    if self._online_event.is_set():
+                        heavy_to_schedule |= _schedule_heavy_background(warmup_background)
+                        heavy_to_schedule |= _schedule_heavy_background(deferred_post_ready)
+                    else:
+                        if deferred_post_ready:
+                            background_status = background_status or "deferred-readiness"
+                            self._queue_background_task(
+                                "vector-warmup-ready",
+                                lambda: _schedule_heavy_background(deferred_post_ready),
+                                delay_until_ready=True,
+                                join_inner=False,
+                                ready_gate="online",
+                                stage="vector_warmup",
+                                budget_hint=vector_budget_hint,
+                            )
+                        heavy_to_schedule |= _schedule_heavy_background(warmup_background)
+
                     if heavy_to_schedule and not background_ticket_only:
                         self._queue_background_task(
                             "vector-warmup-heavy",
@@ -3127,7 +3150,7 @@ class EnvironmentBootstrapper:
                     if background_status:
                         final_summary["background"] = background_status
                         for stage in pending_background_stages:
-                            final_summary.setdefault(stage, "pending")
+                            final_summary.setdefault(stage, "deferred")
                         final_summary.setdefault("bootstrap", "deferred")
                     elif pending_background_stages:
                         final_summary.setdefault("background", "pending")
