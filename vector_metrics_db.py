@@ -298,6 +298,7 @@ class _BootstrapVectorMetricsStub:
                 self.activate_on_first_write()
                 self._log_deferred_activation(reason="bootstrap_ready")
                 _increment_deferral_metric("bootstrap_ready_first_write")
+                self._schedule_background_promotion(reason="bootstrap_ready")
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True
@@ -315,6 +316,27 @@ class _BootstrapVectorMetricsStub:
         threading.Thread(
             target=_await_ready,
             name="vector-metrics-stub-readiness",
+            daemon=True,
+        ).start()
+
+    def _schedule_background_promotion(self, *, reason: str) -> None:
+        if self._delegate is not None:
+            return
+        def _promote() -> None:
+            try:
+                delegate = self._activate_with_timeout(
+                    reason=f"{reason}_background"
+                )
+                if isinstance(delegate, VectorMetricsDB):
+                    _apply_pending_weights(delegate)
+            except Exception:  # pragma: no cover - background guard
+                logger.debug(
+                    "vector metrics stub background promotion failed", exc_info=True
+                )
+
+        threading.Thread(
+            target=_promote,
+            name="vector-metrics-promotion",
             daemon=True,
         ).start()
 
@@ -1009,7 +1031,7 @@ def _first_write_activation_budget_seconds() -> float | None:
     timer_budgets = [b for b in timer_budgets if b is not None]
     if timer_budgets:
         return min(timer_budgets)
-    return None
+    return 10.0
 
 
 def _warmup_activation_allowed(
@@ -1217,9 +1239,19 @@ def get_shared_vector_metrics_db(
                 "timer_context": timer_context,
                 "bootstrap_state": state_flags["bootstrap_state"],
             },
-        )
+            )
 
     if bootstrap_protection_active:
+        logger.info(
+            "vector_metrics_db.bootstrap.stub_deferral",
+            extra={
+                "ensure_exists_requested": ensure_exists,
+                "read_only_requested": read_only,
+                "warmup_reasons": [
+                    reason for reason, active in warmup_context_reasons.items() if active
+                ],
+            },
+        )
         if promotion_requested:
             promotion_deferred = True
             logger.info(
@@ -1280,8 +1312,10 @@ def get_shared_vector_metrics_db(
                 ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
                 read_only=queued_promotion_kwargs.get("read_only"),
             )
-            if not getattr(stub, "_activation_blocked", False):
+            try:
                 stub.activate_on_first_write()
+            except Exception:
+                logger.debug("vector metrics stub first write arm failed", exc_info=True)
             stub.register_readiness_hook()
             stub._delegate = _VECTOR_DB_INSTANCE
             _VECTOR_DB_INSTANCE = stub
@@ -1322,8 +1356,12 @@ def get_shared_vector_metrics_db(
                     ensure_exists=requested_ensure_exists,
                     read_only=requested_read_only,
                 )
-                if not getattr(_VECTOR_DB_INSTANCE, "_activation_blocked", False):
+                try:
                     _VECTOR_DB_INSTANCE.activate_on_first_write()
+                except Exception:
+                    logger.debug(
+                        "vector metrics stub first write arm failed", exc_info=True
+                    )
                 _VECTOR_DB_INSTANCE.register_readiness_hook()
                 logger.info(
                     "vector_metrics_db.bootstrap.stub_selected",
@@ -1358,8 +1396,12 @@ def get_shared_vector_metrics_db(
                 ensure_exists=requested_ensure_exists,
                 read_only=requested_read_only,
             )
-            if not getattr(_VECTOR_DB_INSTANCE, "_activation_blocked", False):
+            try:
                 _VECTOR_DB_INSTANCE.activate_on_first_write()
+            except Exception:
+                logger.debug(
+                    "vector metrics stub first write arm failed", exc_info=True
+                )
             _VECTOR_DB_INSTANCE.register_readiness_hook()
             if bootstrap_protection_active:
                 logger.info(
@@ -1380,8 +1422,12 @@ def get_shared_vector_metrics_db(
         _VECTOR_DB_INSTANCE, (VectorMetricsDB, _BootstrapVectorMetricsStub)
     ):
         if getattr(_VECTOR_DB_INSTANCE, "_boot_stub_active", False):
-            if not getattr(_VECTOR_DB_INSTANCE, "_activation_blocked", False):
+            try:
                 _VECTOR_DB_INSTANCE.activate_on_first_write()
+            except Exception:
+                logger.debug(
+                    "vector metrics stub first write arm failed", exc_info=True
+                )
             if promotion_pending_for_warmup:
                 logger.info(
                     "vector_metrics_db.bootstrap.first_write_activation_deferred",
