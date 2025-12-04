@@ -3539,6 +3539,39 @@ def warmup_vector_service(
             run_vectorise = False
             presence_deferred.add("vectorise")
 
+        if requested_model:
+            presence_deferred.add("model")
+            download_model = False
+            probe_model = True
+            model_probe_only = True
+            model_hint = _conservative_hint("model")
+            if model_hint is None:
+                model_hint = _CONSERVATIVE_STAGE_TIMEOUTS.get("model")
+            if model_hint is not None:
+                resolved_timeouts["model"] = min(
+                    model_hint,
+                    resolved_timeouts.get("model", model_hint)
+                    if resolved_timeouts.get("model") is not None
+                    else model_hint,
+                )
+                stage_budget_ceiling["model"] = resolved_timeouts.get("model")
+                explicit_stage_timeouts["model"] = resolved_timeouts.get("model")
+            _record_background(
+                "model",
+                "deferred-lite-presence",
+                stage_timeout=model_hint,
+                extra_meta={"presence_only": True},
+            )
+            log.info(
+                "Presence-only warmup deferring model download; probe only",
+                extra={
+                    "event": "vector-warmup",
+                    "stage": "model",
+                    "status": "deferred-lite-presence",
+                    "timeout": model_hint,
+                },
+            )
+
         if presence_deferred:
             if background_stage_timeouts is None:
                 background_stage_timeouts = {}
