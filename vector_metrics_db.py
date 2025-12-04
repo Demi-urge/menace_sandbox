@@ -927,12 +927,20 @@ def _arm_shared_readiness_hook() -> None:
             logger.debug("vector_metrics_db.bootstrap.readiness_gate_failed", exc_info=True)
             return
         try:
-            activate_shared_vector_metrics_db(
+            logger.info(
+                "vector_metrics_db.bootstrap.readiness_promotion_wait", 
+                extra={"stub_active": isinstance(_VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub)},
+            )
+            promoted = activate_shared_vector_metrics_db(
                 reason="bootstrap_ready", post_warmup=True
             )
-            instance = _VECTOR_DB_INSTANCE
+            instance = promoted or _VECTOR_DB_INSTANCE
             if isinstance(instance, VectorMetricsDB):
                 _apply_pending_weights(instance)
+                logger.info(
+                    "vector_metrics_db.bootstrap.readiness_promotion_complete",
+                    extra={"path": str(instance.path)},
+                )
         except Exception:  # pragma: no cover - best effort
             logger.debug(
                 "vector_metrics_db.bootstrap.readiness_activation_failed", exc_info=True
@@ -1219,7 +1227,9 @@ def get_shared_vector_metrics_db(
         bootstrap_env,
     ) = resolve_vector_bootstrap_flags(bootstrap_fast=bootstrap_fast, warmup=warmup)
 
-    warmup_stub_requested = bool(warmup_stub)
+    warmup_stub_requested = bool(
+        warmup_stub or resolved_bootstrap_fast or resolved_warmup
+    )
     if warmup_stub_requested:
         resolved_warmup = True
     state_flags = _bootstrap_state_flags()
@@ -1811,6 +1821,7 @@ def get_bootstrap_vector_metrics_db(
         warmup_mode = True
         ensure_exists = False
         read_only = True
+        warmup_stub = True
         _arm_shared_readiness_hook()
 
     return get_shared_vector_metrics_db(
@@ -1850,6 +1861,7 @@ def ensure_vector_db_weights(
     bootstrap_context = bool(
         bootstrap_fast or resolved_warmup or env_requested or bootstrap_env
     )
+    warmup_stub = bool(bootstrap_context)
 
     if bootstrap_fast:
         logger.info(
@@ -1868,6 +1880,7 @@ def ensure_vector_db_weights(
                 warmup=resolved_warmup,
                 ensure_exists=ensure_exists,
                 read_only=read_only,
+                warmup_stub=warmup_stub,
             )
         else:
             vdb = get_shared_vector_metrics_db(
@@ -1875,6 +1888,7 @@ def ensure_vector_db_weights(
                 warmup=resolved_warmup,
                 ensure_exists=ensure_exists,
                 read_only=read_only,
+                warmup_stub=warmup_stub,
             )
 
         if isinstance(vdb, _BootstrapVectorMetricsStub):
