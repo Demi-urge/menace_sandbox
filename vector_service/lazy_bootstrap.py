@@ -958,6 +958,7 @@ def warmup_vector_service(
     )
 
     model_probe_allowed = not skip_model_probe
+    background_queue_allowed = force_heavy or not warmup_lite or stage_budget_signals
 
     if skip_model_probe:
         _update_warmup_stage_cache(
@@ -1097,18 +1098,18 @@ def warmup_vector_service(
             else:
                 background_hints = _conservative_background_hints(set(background_stages))
 
-        if background_hook is not None and background_stages:
-            hints: Mapping[str, float | None] | None = background_hints
-            try:
-                hook_code = getattr(background_hook, "__code__", None)
-                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
-                    background_hook(set(background_stages), budget_hints=hints)
-                else:
-                    background_hook(set(background_stages))
-            except Exception:  # pragma: no cover - advisory hook
-                log.debug("background hook failed", exc_info=True)
+        if background_stages and background_queue_allowed:
+            if background_hook is not None:
+                hints: Mapping[str, float | None] | None = background_hints
+                try:
+                    hook_code = getattr(background_hook, "__code__", None)
+                    if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                        background_hook(set(background_stages), budget_hints=hints)
+                    else:
+                        background_hook(set(background_stages))
+                except Exception:  # pragma: no cover - advisory hook
+                    log.debug("background hook failed", exc_info=True)
 
-        if background_stages:
             for stage in background_stages:
                 summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
             _schedule_background_warmup(
@@ -1132,6 +1133,27 @@ def warmup_vector_service(
                     "warmup_probe": True,
                     "deferred_stages": set(background_stages),
                     "bootstrap_lite": bootstrap_lite,
+                },
+            )
+        elif background_stages:
+            for stage in background_stages:
+                _update_warmup_stage_cache(
+                    stage,
+                    summary[stage],
+                    log,
+                    meta={
+                        "source": "bootstrap-presence",
+                        "background_state": "skipped-no-budget",
+                        "background_timeout": background_hints.get(stage),
+                    },
+                    emit_metric=False,
+                )
+            log.info(
+                "Bootstrap presence-only guard recorded deferrals without queuing background warmup",
+                extra={
+                    "event": "vector-warmup",
+                    "warmup": summary,
+                    "background_queue": "skipped-no-budget",
                 },
             )
 
@@ -1203,13 +1225,15 @@ def warmup_vector_service(
             if stage == "model" and model_probe is not None:
                 summary["model_probe"] = model_probe
             summary[stage] = status
-            summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+            if background_queue_allowed:
+                summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
             prior_background_state = _WARMUP_STAGE_META.get(stage, {}).get("background_state")
             changed_status = _WARMUP_STAGE_MEMO.get(stage) != status
             deferral_meta = {
                 "source": "missing-budget-hooks",
-                "background_state": _BACKGROUND_QUEUE_FLAG,
             }
+            if background_queue_allowed:
+                deferral_meta["background_state"] = _BACKGROUND_QUEUE_FLAG
             stage_timeout_hint = _stage_timeout_hint(stage)
             if stage_timeout_hint is not None:
                 deferral_meta["background_timeout"] = stage_timeout_hint
@@ -1236,23 +1260,45 @@ def warmup_vector_service(
             summary["deferred"] = ",".join(sorted(new_deferred))
             summary["deferred_stages"] = summary["deferred"]
 
-        if background_hook is not None and background_stages:
-            hints: Mapping[str, float | None] | None = None
-            if isinstance(stage_timeouts, Mapping):
-                hints = {stage: stage_timeouts.get(stage) for stage in background_stages}
-            elif isinstance(stage_timeouts, (int, float)):
-                budget_hint = _coerce_timeout(stage_timeouts)
-                hints = {stage: budget_hint for stage in background_stages}
-                if budget_hint is not None:
-                    hints["budget"] = budget_hint
-            try:
-                hook_code = getattr(background_hook, "__code__", None)
-                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
-                    background_hook(set(background_stages), budget_hints=hints)
-                else:
-                    background_hook(set(background_stages))
-            except Exception:  # pragma: no cover - advisory hook
-                log.debug("background hook failed", exc_info=True)
+        if background_stages and background_queue_allowed:
+            if background_hook is not None:
+                hints: Mapping[str, float | None] | None = None
+                if isinstance(stage_timeouts, Mapping):
+                    hints = {stage: stage_timeouts.get(stage) for stage in background_stages}
+                elif isinstance(stage_timeouts, (int, float)):
+                    budget_hint = _coerce_timeout(stage_timeouts)
+                    hints = {stage: budget_hint for stage in background_stages}
+                    if budget_hint is not None:
+                        hints["budget"] = budget_hint
+                try:
+                    hook_code = getattr(background_hook, "__code__", None)
+                    if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                        background_hook(set(background_stages), budget_hints=hints)
+                    else:
+                        background_hook(set(background_stages))
+                except Exception:  # pragma: no cover - advisory hook
+                    log.debug("background hook failed", exc_info=True)
+        elif background_stages:
+            for stage in background_stages:
+                _update_warmup_stage_cache(
+                    stage,
+                    summary.get(stage, _WARMUP_STAGE_MEMO.get(stage, "deferred-budget-hooks")),
+                    log,
+                    meta={
+                        "source": "missing-budget-hooks",
+                        "background_state": "skipped-no-budget",
+                        "background_timeout": background_hints.get(stage),
+                    },
+                    emit_metric=False,
+                )
+            log.info(
+                "Vector warmup recorded deferrals without queueing because budget hooks were missing",
+                extra={
+                    "event": "vector-warmup",
+                    "warmup": summary,
+                    "background_queue": "skipped-no-budget",
+                },
+            )
 
         log.info(
             "Vector warmup short-circuiting due to missing budget hooks", extra=summary
@@ -1521,43 +1567,66 @@ def warmup_vector_service(
         background_stage_timeouts = dict(background_hints)
         for stage in heavy_stages:
             summary[stage] = "deferred-budget-hooks"
-            summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
-            _record_background(stage, "deferred-budget-hooks")
-            _hint_background_budget(stage, background_stage_timeouts.get(stage))
+            if background_queue_allowed:
+                summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+                _record_background(stage, "deferred-budget-hooks")
+                _hint_background_budget(stage, background_stage_timeouts.get(stage))
+            else:
+                _update_warmup_stage_cache(
+                    stage,
+                    summary[stage],
+                    log,
+                    meta={
+                        "source": "missing-budget-hooks",
+                        "background_state": "skipped-no-budget",
+                        "background_timeout": background_stage_timeouts.get(stage),
+                    },
+                    emit_metric=False,
+                )
         deferred.update(heavy_stages)
         background_candidates.update(heavy_stages)
-        _schedule_background_warmup(
-            set(heavy_stages),
-            logger=log,
-            timeouts=background_hints,
-            warmup_kwargs={
-                "download_model": download_model,
-                "probe_model": probe_model or model_probe_allowed,
-                "hydrate_handlers": True,
-                "start_scheduler": True,
-                "run_vectorise": True,
-                "check_budget": check_budget,
-                "budget_remaining": budget_remaining,
-                "logger": log,
-                "force_heavy": True,
-                "bootstrap_fast": bootstrap_fast,
-                "warmup_lite": False,
-                "warmup_model": True,
-                "warmup_handlers": True,
-                "warmup_probe": True,
-                "deferred_stages": set(heavy_stages),
-                "bootstrap_lite": bootstrap_lite,
-            },
-        )
-        if background_hook is not None:
-            try:
-                hook_code = getattr(background_hook, "__code__", None)
-                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
-                    background_hook(set(heavy_stages), budget_hints=background_hints)
-                else:
-                    background_hook(set(heavy_stages))
-            except Exception:  # pragma: no cover - advisory hook
-                log.debug("background hook failed", exc_info=True)
+        if background_queue_allowed:
+            _schedule_background_warmup(
+                set(heavy_stages),
+                logger=log,
+                timeouts=background_hints,
+                warmup_kwargs={
+                    "download_model": download_model,
+                    "probe_model": probe_model or model_probe_allowed,
+                    "hydrate_handlers": True,
+                    "start_scheduler": True,
+                    "run_vectorise": True,
+                    "check_budget": check_budget,
+                    "budget_remaining": budget_remaining,
+                    "logger": log,
+                    "force_heavy": True,
+                    "bootstrap_fast": bootstrap_fast,
+                    "warmup_lite": False,
+                    "warmup_model": True,
+                    "warmup_handlers": True,
+                    "warmup_probe": True,
+                    "deferred_stages": set(heavy_stages),
+                    "bootstrap_lite": bootstrap_lite,
+                },
+            )
+            if background_hook is not None:
+                try:
+                    hook_code = getattr(background_hook, "__code__", None)
+                    if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                        background_hook(set(heavy_stages), budget_hints=background_hints)
+                    else:
+                        background_hook(set(heavy_stages))
+                except Exception:  # pragma: no cover - advisory hook
+                    log.debug("background hook failed", exc_info=True)
+        elif background_hook is not None:
+            log.info(
+                "Background hook skipped because heavy stages were deferred without budget signals",
+                extra={
+                    "event": "vector-warmup",
+                    "warmup": summary,
+                    "background_queue": "skipped-no-budget",
+                },
+            )
         log.info(
             "Vector warmup deferring heavy stages until timeouts or budget hooks are provided",
             extra={"event": "vector-warmup", "warmup": summary},
@@ -1617,6 +1686,7 @@ def warmup_vector_service(
         deferred_bootstrap.add("vectorise")
 
     warmup_lite = bool(warmup_lite)
+    background_queue_allowed = force_heavy or not warmup_lite or stage_budget_signals
     missing_budget_deferred: set[str] = set()
     recorded_deferred: set[str] = set()
     proactive_deferred: set[str] = set()
