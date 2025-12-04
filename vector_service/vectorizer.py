@@ -55,6 +55,7 @@ import metrics_exporter as _metrics
 try:  # pragma: no cover - prefer package-relative imports
     from .registry import (
         _VECTOR_REGISTRY,
+        HandlerLoadResult,
         load_handler,
         load_handlers,
         _resolve_bootstrap_fast,
@@ -65,6 +66,7 @@ except ImportError as exc:  # pragma: no cover - fallback when executed as a scr
         raise
     from vector_service.registry import (  # type: ignore
         _VECTOR_REGISTRY,
+        HandlerLoadResult,
         load_handler,
         load_handlers,
         _resolve_bootstrap_fast,
@@ -360,6 +362,7 @@ class SharedVectorService:
     _handler_requires_store: Dict[str, bool] = field(init=False)
     _handler_bootstrap_flag: bool = field(init=False, default=False)
     _known_kinds: set[str] = field(init=False, default_factory=set)
+    _handlers_ready_flag: bool = field(init=False, default=False)
     _handler_hydration_deferred: bool = field(init=False, default=False)
     _handler_deferral_reasons: set[str] = field(init=False, default_factory=set)
     _handler_deferral_details: Dict[str, Dict[str, Any]] = field(
@@ -522,6 +525,10 @@ class SharedVectorService:
             kind: dict(details) for kind, details in self._handler_deferral_details.items()
         }
 
+    @property
+    def handlers_ready(self) -> bool:
+        return self._handlers_ready_flag or bool(self._handlers)
+
     def schedule_background_hydration(self) -> None:
         """Expose a best-effort background hydration trigger."""
 
@@ -594,6 +601,12 @@ class SharedVectorService:
                 },
             )
             return
+        handler_list_timeout = timeout
+        remaining_budget: float | None = None
+        if handler_list_timeout is not None:
+            remaining_budget = handler_list_timeout
+        handlers: HandlerLoadResult = HandlerLoadResult()
+        timed_out = False
         try:
             self._check_budget_deadline(
                 "hydrate-handlers", handler_start, timeout, stop_event, budget_check
@@ -605,18 +618,59 @@ class SharedVectorService:
                 stop_event=stop_event or self.stop_event,
                 budget_check=budget_check or self.budget_check,
             )
-            self._check_budget_deadline(
-                "hydrate-handlers", handler_start, timeout, stop_event, budget_check
-            )
         except TimeoutError:
-            self._mark_handler_deferral("timeout", schedule_background=True)
-            logger.info(
-                "shared_vector_service.handlers.deferred", extra={"reason": "timeout"}
-            )
-            return
+            timed_out = True
 
         deferral_statuses = getattr(handlers, "deferral_statuses", {})
         deferral_budgets = getattr(handlers, "deferral_budgets", {})
+        processed: set[str] = set()
+        handler_items = list(handlers.items())
+        for index, (kind, handler) in enumerate(handler_items):
+            self._handlers[kind] = handler
+            processed.add(kind)
+            self._handler_requires_store[kind] = self._handler_requires_store.get(
+                kind, self._handler_requires_store_flag(handler)
+            )
+            try:
+                self._check_budget_deadline(
+                    "hydrate-handlers",
+                    handler_start,
+                    timeout,
+                    stop_event,
+                    budget_check,
+                )
+            except TimeoutError:
+                timed_out = True
+                remaining_budget = (
+                    None
+                    if timeout is None
+                    else max(0.0, timeout - (time.perf_counter() - handler_start))
+                )
+                remaining_handlers = handler_items[index + 1 :]
+                for pending_kind, _ in remaining_handlers:
+                    deferral_statuses[pending_kind] = deferral_statuses.get(
+                        pending_kind, "timeout"
+                    )
+                    if remaining_budget is not None:
+                        deferral_budgets.setdefault(pending_kind, remaining_budget)
+                break
+
+        pending_known = [
+            kind
+            for kind in self._known_kinds
+            if kind not in self._handlers and kind not in deferral_statuses
+        ]
+        if timed_out:
+            for kind in pending_known:
+                deferral_statuses[kind] = "timeout"
+                if remaining_budget is not None:
+                    deferral_budgets.setdefault(kind, remaining_budget)
+            if deferral_statuses and not handlers:
+                logger.info(
+                    "shared_vector_service.handlers.deferred",
+                    extra={"reason": "timeout"},
+                )
+
         self._handler_deferral_details = {
             kind: {
                 "reason": reason,
@@ -630,11 +684,8 @@ class SharedVectorService:
             self._schedule_background_hydration()
         else:
             self._clear_handler_deferral()
-        self._handlers.update(handlers)
-        for kind, handler in handlers.items():
-            self._handler_requires_store[kind] = self._handler_requires_store.get(
-                kind, self._handler_requires_store_flag(handler)
-            )
+        if self._handlers or deferral_statuses:
+            self._handlers_ready_flag = True
         logger.info(
             "shared_vector_service.handlers.loaded",
             extra=_timestamp_payload(
@@ -798,6 +849,7 @@ class SharedVectorService:
         estimated_cost: float | None = None,
     ) -> None:
         self._handler_hydration_deferred = True
+        self._handlers_ready_flag = True
         self._handler_deferral_reasons.add(reason)
         if _is_warmup_thread():
             meta: Dict[str, Any] = {"reason": reason}
@@ -819,6 +871,7 @@ class SharedVectorService:
         self._handler_hydration_deferred = False
         self._handler_deferral_reasons.clear()
         self._handler_deferral_details.clear()
+        self._handlers_ready_flag = bool(self._handlers)
 
     def _schedule_background_hydration(self) -> None:
         if self._background_hydration_started:
@@ -1166,6 +1219,8 @@ class SharedVectorService:
         """Return ``True`` when the service can respond to a request."""
 
         if _REMOTE_ENDPOINT is not None and not _REMOTE_DISABLED:
+            return True
+        if self.handlers_ready:
             return True
         if self._handlers:
             return True
