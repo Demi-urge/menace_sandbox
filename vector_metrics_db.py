@@ -122,6 +122,7 @@ class _BootstrapVectorMetricsStub:
         self._created_at = time.perf_counter()
         self._first_write_budget = _first_write_activation_budget_seconds()
         self._first_write_attempted = False
+        self._path_resolution_allowed = False
         if self._activation_blocked and self._first_write_budget is None:
             self._first_write_budget = 0.0
             self._log_deferred_activation(reason="warmup_first_write_budget")
@@ -337,6 +338,7 @@ class _BootstrapVectorMetricsStub:
         _record_deferral_timebox(reason, self._first_write_budget)
 
     def _activate_after_readiness(self, *, reason: str) -> None:
+        self._allow_path_resolution(reason=reason)
         self._release_activation_block(reason=reason, configure_ready=True)
         if self._delegate is not None:
             return
@@ -361,6 +363,17 @@ class _BootstrapVectorMetricsStub:
     def _resolve_deferred_path(self) -> None:
         if self._delegate is not None:
             return
+        if not self._path_resolution_allowed:
+            logger.info(
+                "vector_metrics_db.bootstrap.path_resolution_deferred",
+                extra={
+                    "awaiting_readiness": self._awaiting_readiness_signal,
+                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                },
+            )
+            _increment_deferral_metric("path_resolution_guarded")
+            return
         if self._activation_kwargs.get("path") is not None:
             return
         if self._warmup_cwd is not None and self._deferred_path_kwargs.get(
@@ -376,6 +389,19 @@ class _BootstrapVectorMetricsStub:
             )
         except Exception:  # pragma: no cover - fallback logging only
             logger.debug("vector metrics stub path resolution failed", exc_info=True)
+
+    def _allow_path_resolution(self, *, reason: str) -> None:
+        if self._path_resolution_allowed:
+            return
+        self._path_resolution_allowed = True
+        logger.info(
+            "vector_metrics_db.bootstrap.path_resolution_armed",
+            extra={
+                "reason": reason,
+                "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                "warmup": bool(self._activation_kwargs.get("warmup")),
+            },
+        )
 
     def _release_activation_block(self, *, reason: str, configure_ready: bool) -> None:
         if not self._activation_blocked:
@@ -716,6 +742,7 @@ class _BootstrapVectorMetricsStub:
             return None
         if not self._activate_on_first_write:
             return None
+        self._allow_path_resolution(reason=f"first_write:{method}")
         delegate = self._activate_with_timeout(reason=f"write:{method}")
         if delegate is self:
             return None
@@ -1927,8 +1954,18 @@ def get_vector_metrics_db(
     read_only: bool | None = None,
     warmup_stub: bool | None = None,
     allow_bootstrap_activation: bool = False,
-) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+    ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Return the shared DB while preserving warmup/bootstrap stubs."""
+
+    bootstrap_context = _vector_metrics_bootstrap_requested(
+        bootstrap_fast=bootstrap_fast, warmup=warmup
+    )
+
+    if bootstrap_context:
+        bootstrap_fast = True if bootstrap_fast is None else bootstrap_fast
+        warmup = True if warmup is None else warmup
+        if warmup_stub is None:
+            warmup_stub = True
 
     vm = get_shared_vector_metrics_db(
         bootstrap_fast=bootstrap_fast,
@@ -1939,11 +1976,22 @@ def get_vector_metrics_db(
         allow_bootstrap_activation=allow_bootstrap_activation,
     )
 
-    bootstrap_context = _vector_metrics_bootstrap_requested(
-        bootstrap_fast=bootstrap_fast, warmup=warmup
-    )
-
     if isinstance(vm, _BootstrapVectorMetricsStub):
+        if bootstrap_context:
+            vm.configure_activation(
+                bootstrap_fast=True,
+                warmup=True,
+                ensure_exists=False if ensure_exists is None else ensure_exists,
+                read_only=True if read_only is None else read_only,
+            )
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_warmup_selected",
+                extra={
+                    "bootstrap_fast": True,
+                    "warmup": True,
+                    "warmup_stub": True,
+                },
+            )
         if not bootstrap_context and not getattr(vm, "_activation_blocked", False):
             vm.activate_on_first_write()
         if not bootstrap_context:
