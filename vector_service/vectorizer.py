@@ -50,6 +50,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run as ``python 
 
 import governed_embeddings
 from governed_embeddings import governed_embed, get_embedder
+import metrics_exporter as _metrics
 
 try:  # pragma: no cover - prefer package-relative imports
     from .registry import (
@@ -97,6 +98,17 @@ _LOCAL_MODEL_PREP_FUTURE: Future | None = None
 _LOCAL_MODEL_PREP_LOCK = threading.Lock()
 
 
+VECTOR_EMBEDDER_RESOLVE_TOTAL = getattr(
+    _metrics,
+    "vector_embedder_resolve_total",
+    _metrics.Gauge(
+        "vector_embedder_resolve_total",
+        "Vector embedder resolution outcomes",  # type: ignore[arg-type]
+        ["status"],
+    ),
+)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -135,10 +147,32 @@ def _remote_timeout() -> float | None:
     return value
 
 
+def _embedder_ceiling() -> float | None:
+    raw = os.getenv("VECTOR_SERVICE_EMBEDDER_CEILING", "").strip()
+    if raw == "":
+        return _HEAVY_STAGE_CEILING
+    try:
+        value = float(raw)
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_EMBEDDER_CEILING=%r; using heavy stage ceiling %s",
+            raw,
+            _HEAVY_STAGE_CEILING,
+        )
+        return _HEAVY_STAGE_CEILING
+    if value <= 0:
+        logger.warning(
+            "VECTOR_SERVICE_EMBEDDER_CEILING must be positive; disabling ceiling",
+        )
+        return None
+    return value
+
+
 _REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
 _REMOTE_ENDPOINT = _REMOTE_URL.rstrip("/") if _REMOTE_URL else None
 _REMOTE_TIMEOUT = _remote_timeout()
 _REMOTE_DISABLED = False
+_EMBEDDER_WAIT_CEILING = _embedder_ceiling()
 
 
 def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
@@ -341,6 +375,7 @@ class SharedVectorService:
     )
     _embedder_future: Future | None = field(init=False, default=None)
     _embedder_future_lock: threading.RLock | None = field(init=False, default=None)
+    _embedder_deferred: bool = field(init=False, default=False)
 
 
     def __post_init__(self) -> None:
@@ -906,6 +941,32 @@ class SharedVectorService:
 
         return self._probe_embedder_state()
 
+    def _record_embedder_metric(self, status: str) -> None:
+        try:
+            VECTOR_EMBEDDER_RESOLVE_TOTAL.labels(status).inc()
+        except Exception:  # pragma: no cover - metrics best effort
+            logger.debug("failed emitting embedder metric", exc_info=True)
+
+    def _trigger_background_embedder_download(self) -> None:
+        try:
+            ensure_embedding_model_future(
+                logger=logger,
+                warmup=True,
+                warmup_lite=False,
+                warmup_heavy=True,
+                download_timeout=_REMOTE_TIMEOUT,
+            )
+        except Exception:  # pragma: no cover - background best effort
+            logger.debug("failed to trigger background embedder download", exc_info=True)
+
+    def _build_deferred_placeholder(self) -> SentenceTransformer | None:
+        builder = getattr(governed_embeddings, "_build_stub_embedder", None)
+        if not callable(builder):
+            return None
+        placeholder = builder()
+        setattr(placeholder, "_placeholder_reason", "deferred-ceiling")
+        return placeholder
+
     def _get_embedder_future(self, *, force: bool, bootstrap_mode: bool) -> Future:
         lock = self._embedder_future_lock
         if lock is None:
@@ -990,42 +1051,77 @@ class SharedVectorService:
         if SentenceTransformer is None:
             return None
 
+        self._embedder_deferred = False
         bootstrap_mode = bool(self.bootstrap_fast or self.warmup_lite)
         future = self._get_embedder_future(force=force, bootstrap_mode=bootstrap_mode)
         wait_timeout = 0.0 if (bootstrap_mode and not force) else None
+        ceiling = None if bootstrap_mode else _EMBEDDER_WAIT_CEILING
+        if wait_timeout is None and ceiling is not None:
+            wait_timeout = ceiling
         stop_event = self.stop_event
-        _trace("shared_vector_service.embedder.resolve.start", bootstrap_mode=bootstrap_mode)
+        _trace(
+            "shared_vector_service.embedder.resolve.start",
+            bootstrap_mode=bootstrap_mode,
+            ceiling=wait_timeout,
+        )
         try:
             embedder = self._wait_for_embedder_future(
                 future, timeout=wait_timeout, stop_event=stop_event
             )
         except TimeoutError:
-            _trace("shared_vector_service.embedder.resolve.deferred")
-            return None
+            self._embedder_deferred = True
+            placeholder = self._build_deferred_placeholder()
+            self._record_embedder_metric("deferred")
+            self._trigger_background_embedder_download()
+            _trace(
+                "shared_vector_service.embedder.resolve.deferred",
+                ceiling=wait_timeout,
+                placeholder=bool(placeholder),
+            )
+            return placeholder
         except Exception as exc:  # pragma: no cover - defensive logging
             if getattr(exc, "_deferred_status", None) == _BACKGROUND_QUEUE_FLAG:
-                _trace("shared_vector_service.embedder.resolve.deferred")
-                return None
+                self._embedder_deferred = True
+                placeholder = self._build_deferred_placeholder()
+                self._record_embedder_metric("deferred")
+                _trace(
+                    "shared_vector_service.embedder.resolve.deferred",
+                    ceiling=wait_timeout,
+                    placeholder=bool(placeholder),
+                )
+                return placeholder
             _trace(
                 "shared_vector_service.embedder.resolve.failed",
                 error=str(exc),
             )
+            self._record_embedder_metric("failed")
             return None
         if embedder is None:
             _trace("shared_vector_service.embedder.resolve.failed")
+            self._record_embedder_metric("failed")
             return None
         self.text_embedder = embedder
+        self._record_embedder_metric("success")
         _trace("shared_vector_service.embedder.resolve.success")
         return embedder
 
     def _encode_text(self, text: str) -> List[float]:
         embedder = self._ensure_text_embedder(force=True)
         embedder_available = embedder is not None
+        placeholder_reason = getattr(embedder, "_placeholder_reason", None)
+        if not embedder_available and self._embedder_deferred:
+            _trace(
+                "shared_vector_service.encode_text.embedder.deferred",
+                ceiling=_EMBEDDER_WAIT_CEILING,
+            )
+            raise RuntimeError("text embedder initialisation deferred")
+
         if embedder_available or SentenceTransformer is not None:
             _trace(
                 "shared_vector_service.encode_text.embedder",
                 source="governed",
                 embedder_available=embedder_available,
+                placeholder_reason=placeholder_reason,
             )
             vec = governed_embed(text, embedder)
             if vec is not None:
