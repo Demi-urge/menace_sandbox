@@ -123,6 +123,8 @@ class _BootstrapVectorMetricsStub:
         self._first_write_budget = _first_write_activation_budget_seconds()
         self._first_write_attempted = False
         self._path_resolution_allowed = False
+        self._first_write_deferral_reason: str | None = None
+        self._first_write_deferral_metric_emitted = False
         if self._activation_blocked and self._first_write_budget is None:
             self._first_write_budget = 0.0
             self._log_deferred_activation(reason="warmup_first_write_budget")
@@ -337,6 +339,19 @@ class _BootstrapVectorMetricsStub:
         )
         _record_deferral_timebox(reason, self._first_write_budget)
 
+    def _record_first_write_deferral(self, *, reason: str) -> None:
+        if self._delegate is not None:
+            return
+        self._queued_first_write = True
+        self._first_write_attempted = True
+        self._pending_readiness_reason = self._pending_readiness_reason or reason
+        if self._first_write_deferral_reason is None:
+            self._first_write_deferral_reason = reason
+        if not self._first_write_deferral_metric_emitted:
+            _increment_deferral_metric(reason)
+            self._first_write_deferral_metric_emitted = True
+        self._log_deferred_activation(reason=reason)
+
     def _activate_after_readiness(self, *, reason: str) -> None:
         self._allow_path_resolution(reason=reason)
         self._release_activation_block(reason=reason, configure_ready=True)
@@ -509,7 +524,7 @@ class _BootstrapVectorMetricsStub:
                     self._pending_readiness_reason = "bootstrap_ready"
                     return
                 self._pending_readiness_reason = "bootstrap_ready"
-                self._activate_after_readiness(reason="bootstrap_ready")
+                self.promote_after_readiness_async(reason="bootstrap_ready")
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True
@@ -770,7 +785,10 @@ class _BootstrapVectorMetricsStub:
         cap = 1.0
         budget = cap if budget is None else min(budget, cap)
         if budget <= 0:
-            self._log_deferred_activation(reason="first_write_activation_timeboxed")
+            reason = self._first_write_deferral_reason or "first_write_activation_timeboxed"
+            if self._first_write_budget == 0:
+                reason = "first_write_budget_missing"
+            self._record_first_write_deferral(reason=reason)
             self.register_readiness_hook()
             return self
 
@@ -896,6 +914,8 @@ class _BootstrapVectorMetricsStub:
             )
 
     def _first_write_deferred(self) -> bool:
+        if self._first_write_deferral_reason is not None:
+            return True
         if self._first_write_budget is None:
             return False
         remaining = self._first_write_budget - (time.perf_counter() - self._created_at)
@@ -1389,6 +1409,8 @@ def _first_write_activation_budget_seconds() -> float | None:
     timer_budgets = [b for b in timer_budgets if b is not None]
     if timer_budgets:
         return min(timer_budgets)
+    if _bootstrap_timers_active():
+        return 0.0
     return 10.0
 
 
