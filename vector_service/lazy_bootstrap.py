@@ -821,6 +821,7 @@ def warmup_vector_service(
         }
 
         memoised_results = dict(_WARMUP_STAGE_MEMO)
+        new_deferred: set[str] = set()
         heavy_stages = ("model", "handlers", "scheduler", "vectorise")
         model_probe: str | None = None
 
@@ -832,14 +833,31 @@ def warmup_vector_service(
                 pass
 
         for stage in heavy_stages:
-            status = memoised_results.get(stage)
-            if not isinstance(status, str) or not status.startswith("deferred"):
+            cached_status = memoised_results.get(stage)
+            status = cached_status if isinstance(cached_status, str) else None
+            if not status or (not status.startswith("deferred")) and status not in {"complete", "ready"}:
                 status = "deferred-budget-hooks"
             if stage == "model" and model_probe is not None:
                 summary["model_probe"] = model_probe
             summary[stage] = status
+            if _WARMUP_STAGE_MEMO.get(stage) != status:
+                _update_warmup_stage_cache(
+                    stage,
+                    status,
+                    log,
+                    meta={"source": "missing-budget-hooks"},
+                    emit_metric=False,
+                )
+            if status.startswith("deferred") and cached_status != status:
+                new_deferred.add(stage)
 
-        background_stages = {stage for stage in heavy_stages if summary.get(stage)}
+        background_stages = {
+            stage
+            for stage in heavy_stages
+            if summary.get(stage)
+            and summary.get(stage, "").startswith("deferred")
+            and stage in new_deferred
+        }
         if background_hook is not None and background_stages:
             hints: Mapping[str, float | None] | None = None
             if isinstance(stage_timeouts, Mapping):

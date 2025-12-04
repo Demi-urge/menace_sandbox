@@ -406,7 +406,7 @@ def test_missing_budget_hooks_force_lite_background(caplog):
 
 def test_missing_budget_hooks_short_circuits_heavy(caplog):
     caplog.set_level(logging.INFO)
-    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._clear_warmup_cache()
 
     background_calls: list[tuple[set[str], dict[str, float | None]]] = []
 
@@ -434,6 +434,54 @@ def test_missing_budget_hooks_short_circuits_heavy(caplog):
     stages, hints = background_calls[0]
     assert {"model", "handlers", "scheduler", "vectorise"}.issubset(stages)
     assert hints.get("budget") == 12.0
+
+
+def test_missing_budget_hooks_short_circuit_memoises_deferrals(caplog):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._clear_warmup_cache()
+
+    background_calls: list[tuple[set[str], dict[str, float | None]]] = []
+
+    def record_background(stages, budget_hints=None):  # type: ignore[override]
+        hints: dict[str, float | None] = {}
+        if isinstance(budget_hints, Mapping):
+            hints.update(budget_hints)
+        background_calls.append((set(stages), hints))
+
+    summary = lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        logger=logging.getLogger("test"),
+        stage_timeouts={"budget": 12.0},
+        background_hook=record_background,
+    )
+
+    assert summary["budget_hooks"] == "missing"
+    for stage in ("model", "handlers", "scheduler", "vectorise"):
+        assert summary[stage] == "deferred-budget-hooks"
+    assert background_calls, "background hook should receive first deferrals"
+
+    caplog.clear()
+
+    repeat_summary = lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        logger=logging.getLogger("test"),
+        stage_timeouts={"budget": 12.0},
+        background_hook=record_background,
+    )
+
+    assert repeat_summary["budget_hooks"] == "missing"
+    for stage in ("model", "handlers", "scheduler", "vectorise"):
+        assert repeat_summary[stage] == "deferred-budget-hooks"
+
+    assert len(background_calls) == 1, "deferrals should not be re-queued"
 
 
 def test_handler_timeout_stops_background(caplog, monkeypatch):
