@@ -5348,6 +5348,24 @@ def initialize_bootstrap_context(
         if inline_cap_applied and enforced_timebox is not None:
             enforced_timebox = min(enforced_timebox, inline_join_cap)
 
+        inline_cap_ceiling = 30.0
+        inline_cap_candidates = [
+            candidate
+            for candidate in (
+                inline_join_cap,
+                warmup_timebox_cap,
+                enforced_timebox,
+                embedder_stage_budget_hint,
+                stage_guard_timebox,
+            )
+            if candidate is not None
+        ]
+        inline_cap_enforced = min([inline_cap_ceiling, *inline_cap_candidates])
+        if embedder_stage_inline_cap is None:
+            embedder_stage_inline_cap = inline_cap_enforced
+        else:
+            embedder_stage_inline_cap = min(embedder_stage_inline_cap, inline_cap_enforced)
+
         warmup_join_ceiling = (
             BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
             if BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP > 0
@@ -5598,6 +5616,43 @@ def initialize_bootstrap_context(
         warmup_started = time.monotonic()
         warmup_stop_reason: str | None = None
         warmup_join_cap_reason = "embedder_preload_warmup_ceiling"
+
+        inline_cap_reason = "embedder_preload_inline_cap_enforced"
+        inline_cap_remaining = None
+        if embedder_stage_inline_cap is not None:
+            inline_cap_remaining = max(
+                0.0, embedder_stage_inline_cap - (time.monotonic() - warmup_started)
+            )
+        if inline_cap_remaining is not None and inline_cap_remaining <= 0:
+            warmup_stop_reason = inline_cap_reason
+            warmup_summary = warmup_summary or {}
+            warmup_summary.update(
+                {
+                    "deferred": True,
+                    "deferral_reason": inline_cap_reason,
+                    "deferred_reason": inline_cap_reason,
+                    "strict_timebox": embedder_stage_inline_cap,
+                    "inline_cap": embedder_stage_inline_cap,
+                }
+            )
+            LOGGER.info(
+                "embedder preload inline cap exceeded; deferring to background",
+                extra={
+                    "event": "embedder-preload-inline-cap",
+                    "inline_cap": embedder_stage_inline_cap,
+                    "stage_budget": embedder_stage_budget_hint,
+                    "enforced_timebox": enforced_timebox,
+                },
+            )
+            deferral_snapshot = _schedule_background_preload_safe(
+                inline_cap_reason, strict_timebox=embedder_stage_inline_cap
+            )
+            warmup_summary.setdefault("stage", "deferred-inline-cap")
+            deferral_snapshot["warmup_summary"] = warmup_summary
+            _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
+            return deferral_snapshot.get(
+                "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+            ), warmup_stop_reason
 
         def _warmup_budget_remaining() -> float | None:
             remaining_candidates = []

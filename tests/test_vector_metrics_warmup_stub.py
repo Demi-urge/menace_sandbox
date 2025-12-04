@@ -148,3 +148,23 @@ def test_lazy_activation_promotes_after_warmup(monkeypatch, tmp_path):
     assert isinstance(delegate, vector_metrics_db.VectorMetricsDB)
     assert delegate._warmup_mode is False
 
+
+def test_warmup_stub_avoids_first_write(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+    vector_metrics_db._MENACE_BOOTSTRAP_ENV_ACTIVE = None
+    vector_metrics_db._VECTOR_DB_INSTANCE = None
+
+    vm = vector_metrics_db.get_vector_metrics_db(warmup=True)
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert vm._activation_blocked is True
+    assert vm._activate_on_first_write is False
+
+    promoted = vector_metrics_db.promote_vector_metrics_db_stub(
+        reason="bootstrap_complete"
+    )
+
+    assert isinstance(promoted, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert promoted._activate_on_first_write is True
+
