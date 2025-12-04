@@ -123,6 +123,9 @@ _VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
 _EMBEDDER_STAGE_BUDGET_FALLBACK = 30.0
 _EMBEDDER_HEAVY_STAGE_CEILING = 30.0
+_EMBEDDER_INLINE_PROBE_CEILING = float(
+    os.getenv("BOOTSTRAP_EMBEDDER_INLINE_PROBE_CEILING", "1.5")
+)
 
 
 class _BootstrapStepScheduler:
@@ -4313,7 +4316,7 @@ def initialize_bootstrap_context(
         and math.isfinite(embedder_stage_deadline_hint)
         else None
     )
-    embedder_background_opt_in = bool(force_embedder_preload)
+    embedder_background_opt_in = not force_embedder_preload
     embedder_probe_only_window = 5.0
     embedder_probe_guard_window = [
         candidate
@@ -4324,9 +4327,11 @@ def initialize_bootstrap_context(
         if candidate is not None and candidate >= 0.0
     ]
     embedder_probe_only_guard = (
-        not force_embedder_preload
-        and embedder_probe_guard_window
-        and min(embedder_probe_guard_window) < embedder_probe_only_window
+        (not force_embedder_preload)
+        or (
+            embedder_probe_guard_window
+            and min(embedder_probe_guard_window) < embedder_probe_only_window
+        )
     )
     heavy_stage_ceiling = (
         BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
@@ -4474,6 +4479,27 @@ def initialize_bootstrap_context(
                 job_snapshot["warmup_summary"] = warmup_summary
                 job_snapshot.setdefault("embedder_warmup_deferred_budget", True)
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        job_snapshot.setdefault("background_enqueue_reason", reason)
+        job_snapshot.setdefault("stage_budget_hint", embedder_stage_budget_hint)
+        job_snapshot.setdefault("stage_deadline_hint", embedder_stage_deadline_hint)
+        job_snapshot.setdefault("inline_cap", embedder_stage_inline_cap)
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.setdefault("background_timebox", effective_timebox)
+        warmup_summary.setdefault("stage_ceiling", stage_ceiling)
+        warmup_summary.setdefault("awaiting_background", True)
+        warmup_summary.setdefault("background_enqueue_reason", reason)
+        job_snapshot["warmup_summary"] = warmup_summary
+        LOGGER.info(
+            "embedder preload background hook primed",  # pragma: no cover - telemetry
+            extra={
+                "event": "embedder-preload-background-hook",
+                "reason": reason,
+                "strict_timebox": effective_timebox,
+                "stage_ceiling": stage_ceiling,
+                "stage_budget_hint": embedder_stage_budget_hint,
+                "stage_deadline_hint": embedder_stage_deadline_hint,
+            },
+        )
         if stage_ceiling is not None:
             try:
                 job_snapshot.setdefault("stage_ceiling", float(stage_ceiling))
@@ -4526,19 +4552,23 @@ def initialize_bootstrap_context(
         background_timebox = (
             background_timebox if background_timebox is not None else embedder_stage_timebox_hint
         )
-        background_requested = enqueue_background and not probe_only
-        background_allowed = (
-            background_requested
-            and embedder_background_opt_in
-            and embedder_stage_budget_hint is not None
-            and embedder_stage_budget_hint > 0
-        )
+        background_requested = enqueue_background
+        background_allowed = background_requested and embedder_background_opt_in
         if background_allowed:
             _BOOTSTRAP_EMBEDDER_JOB = _schedule_background_preload_safe(
                 reason,
                 strict_timebox=background_timebox,
                 stage_ceiling=embedder_stage_inline_cap,
                 budget_flag=budget_flag,
+            )
+            LOGGER.info(
+                "embedder preload queued for background",  # pragma: no cover - telemetry
+                extra={
+                    "event": "embedder-preload-background-enqueue",
+                    "reason": reason,
+                    "timebox": background_timebox,
+                    "stage_ceiling": embedder_stage_inline_cap,
+                },
             )
         else:
             warmup_summary = {
@@ -4573,6 +4603,8 @@ def initialize_bootstrap_context(
         warmup_summary.setdefault("stage_budget_hint", embedder_stage_budget_hint)
         warmup_summary.setdefault("stage_deadline_hint", embedder_stage_deadline_hint)
         warmup_summary.setdefault("background_timebox", background_timebox)
+        warmup_summary.setdefault("awaiting_background", background_allowed)
+        warmup_summary.setdefault("background_enqueue_reason", reason if background_allowed else None)
         job_snapshot["warmup_summary"] = warmup_summary
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         if not probe_only:
@@ -4638,7 +4670,7 @@ def initialize_bootstrap_context(
     if embedder_probe_only_guard and embedder_preload_skip_reason is None:
         _record_embedder_skip(
             "embedder_preload_probe_only_guard",
-            enqueue_background=False,
+            enqueue_background=True,
             disable_step=True,
             probe_only=True,
         )
@@ -5863,7 +5895,9 @@ def initialize_bootstrap_context(
         if inline_cap_applied and enforced_timebox is not None:
             enforced_timebox = min(enforced_timebox, inline_join_cap)
 
-        inline_cap_ceiling = 30.0
+        inline_cap_ceiling = (
+            _EMBEDDER_INLINE_PROBE_CEILING if not force_embedder_preload else 30.0
+        )
         inline_cap_candidates = [
             candidate
             for candidate in (
@@ -6164,6 +6198,8 @@ def initialize_bootstrap_context(
                 stage_ceiling=embedder_stage_inline_cap,
             )
             warmup_summary.setdefault("stage", "deferred-inline-cap")
+            warmup_summary.setdefault("awaiting_background", True)
+            warmup_summary.setdefault("background_enqueue_reason", inline_cap_reason)
             deferral_snapshot["warmup_summary"] = warmup_summary
             _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
             return deferral_snapshot.get(
