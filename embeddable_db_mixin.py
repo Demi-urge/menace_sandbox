@@ -327,10 +327,19 @@ class _VectorMetricsWarmupPlaceholder:
         self._pending_weights: dict[str, float] = {}
         self._readiness_hook_requested = False
         self._first_write_requested = False
+        self._delegate: Any | None = None
+        self._activation_kwargs: dict[str, Any] | None = None
+        self._activation_factory: type[Any] | None = None
         self._warmup_kwargs = dict(warmup_kwargs)
         self._stub_trigger = stub_trigger
 
     def log_embedding(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - noop
+        if self._delegate is None and self._activation_factory and self._activation_kwargs:
+            self._delegate = self.promote(
+                self._activation_factory, dict(self._activation_kwargs)
+            )
+        if self._delegate is not None:
+            return self._delegate.log_embedding(*args, **kwargs)
         return None
 
     def activate_on_first_write(self) -> None:
@@ -340,14 +349,40 @@ class _VectorMetricsWarmupPlaceholder:
         # The concrete DB registers its own readiness hook; we only need to
         # remember that the request happened.
         self._readiness_hook_requested = True
+        if self._delegate is None and self._activation_factory and self._activation_kwargs:
+            self._delegate = self.promote(
+                self._activation_factory, dict(self._activation_kwargs)
+            )
         if callable(hook):  # pragma: no cover - optional passthrough
             try:
-                hook()
+                if self._delegate is not None:
+                    delegate_hook = getattr(self._delegate, "register_readiness_hook", None)
+                    if callable(delegate_hook):
+                        delegate_hook(hook)
+                    else:
+                        hook()
+                else:
+                    hook()
             except Exception:
                 logger.debug("vector metrics warmup readiness hook failed", exc_info=True)
 
     def set_db_weights(self, weights: Mapping[str, float]) -> None:
         self._pending_weights.update({str(k): float(v) for k, v in weights.items()})
+
+    def prepare_promotion(
+        self, *, factory: type[Any], activation_kwargs: dict[str, Any]
+    ) -> None:
+        if self._delegate is not None:
+            return
+        self._activation_factory = factory
+        self._activation_kwargs = dict(activation_kwargs)
+        logger.info(
+            "embeddable_db_mixin.vector_metrics.warmup_promotion_armed",
+            extra={
+                "stub_trigger": self._stub_trigger,
+                "activation_keys": sorted(self._activation_kwargs),
+            },
+        )
 
     def promote(self, factory: type[Any], activation_kwargs: dict[str, Any]) -> Any:
         combined_kwargs = dict(self._warmup_kwargs)
@@ -370,6 +405,7 @@ class _VectorMetricsWarmupPlaceholder:
             "embeddable_db_mixin.vector_metrics.warmup_promoted",
             extra={"stub_trigger": self._stub_trigger},
         )
+        self._delegate = delegate
         return delegate
 
 
@@ -435,22 +471,6 @@ def _vector_metrics_db(
     bootstrap_state_active = False
     warmup_state_flag = False
 
-    if _VEC_METRICS is not None:
-        if isinstance(_VEC_METRICS, _VectorMetricsWarmupPlaceholder):
-            if not any((bootstrap_fast, warmup, warmup_lite, vector_warmup)):
-                _VEC_METRICS = _VEC_METRICS.promote(
-                    VectorMetricsDB,
-                    {
-                        "bootstrap_fast": False,
-                        "warmup": False,
-                        "ensure_exists": True,
-                        "read_only": False,
-                    },
-                )
-            return _VEC_METRICS
-        return _VEC_METRICS
-    if VectorMetricsDB is None:
-        return None
     if resolve_vector_bootstrap_flags is not None:
         (
             bootstrap_fast_flag,
@@ -478,6 +498,46 @@ def _vector_metrics_db(
         state = getattr(cbi, "_BOOTSTRAP_STATE", None)
         bootstrap_state_active = bool(getattr(state, "depth", 0) or state)
         warmup_state_flag = bool(getattr(state, "warmup_lite", False))
+
+    warmup_stub_requested = bool(
+        env_requested
+        or bootstrap_env
+        or bootstrap_fast_flag
+        or warmup_state_flag
+        or vector_warmup_flag
+        or bootstrap_state_active
+    )
+    warmup_mode = bool(
+        warmup_mode or warmup_lite_flag or vector_warmup_flag or warmup_state_flag
+    )
+
+    if _VEC_METRICS is not None:
+        if isinstance(_VEC_METRICS, _VectorMetricsWarmupPlaceholder):
+            if warmup_stub_requested or warmup_mode:
+                return _VEC_METRICS
+
+            activation_kwargs = {
+                "bootstrap_fast": bootstrap_fast_flag,
+                "warmup": False,
+                "ensure_exists": True,
+                "read_only": False,
+            }
+            _VEC_METRICS.prepare_promotion(
+                factory=VectorMetricsDB, activation_kwargs=activation_kwargs
+            )
+            logger.info(
+                "embeddable_db_mixin.vector_metrics.warmup_promotion_delayed",
+                extra={
+                    "callsite_requested": callsite_requested,
+                    "env_requested": env_requested,
+                    "bootstrap_env": bootstrap_env,
+                },
+            )
+            return _VEC_METRICS
+        return _VEC_METRICS
+
+    if VectorMetricsDB is None:
+        return None
 
     warmup_mode = bool(
         warmup_mode or warmup_lite_flag or vector_warmup_flag or warmup_state_flag
