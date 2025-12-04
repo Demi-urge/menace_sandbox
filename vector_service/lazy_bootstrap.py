@@ -925,9 +925,22 @@ def warmup_vector_service(
     if bootstrap_context and env_budget is None and not stage_timeouts_supplied:
         bootstrap_guard_ceiling = _BOOTSTRAP_STAGE_TIMEOUT
 
+    stage_budget_signals = stage_timeouts_supplied or env_budget is not None or stage_cap_env is not None
+
     if bootstrap_fast is None:
         bootstrap_fast = bootstrap_context
     bootstrap_fast = bool(bootstrap_fast)
+    if not force_heavy and (warmup_lite or stage_budget_signals):
+        if not bootstrap_fast:
+            log.info(
+                "Forcing bootstrap-fast vector warmup to defer heavy index hydration",
+                extra={
+                    "event": "vector-warmup",
+                    "warmup_lite": bool(warmup_lite),
+                    "stage_budget_signals": bool(stage_budget_signals),
+                },
+            )
+        bootstrap_fast = True
     bootstrap_lite = bool(bootstrap_context if bootstrap_lite is None else bootstrap_lite)
 
     fast_vector_env = os.getenv("MENACE_VECTOR_WARMUP_FAST", "").strip().lower() in {
@@ -2061,6 +2074,20 @@ def warmup_vector_service(
             )
             return False, None, 0.0, "ceiling"
         return _run_with_budget(stage, func, timeout=timeout)
+
+    if bootstrap_fast and not force_heavy and (warmup_lite or stage_budget_signals):
+        if hydrate_handlers:
+            _record_deferred_background(
+                "handlers", "deferred-ceiling", stage_timeout=stage_budget_ceiling.get("handlers")
+            )
+            bootstrap_deferred_records.add("handlers")
+            hydrate_handlers = False
+        if run_vectorise:
+            _record_deferred_background(
+                "vectorise", "deferred-ceiling", stage_timeout=stage_budget_ceiling.get("vectorise")
+            )
+            bootstrap_deferred_records.add("vectorise")
+            run_vectorise = False
 
     if hydrate_handlers and _insufficient_stage_budget("handlers"):
         _defer_handler_chain(
