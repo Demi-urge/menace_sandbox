@@ -3254,6 +3254,57 @@ def warmup_vector_service(
             return ceiling
         return min(timeout, ceiling)
 
+    inline_stage_ceiling = min(
+        (cap for cap in (_BOOTSTRAP_STAGE_TIMEOUT, _HEAVY_STAGE_CEILING) if cap is not None),
+        default=None,
+    )
+
+    def _mandatory_ceiling_gate(
+        stage: str,
+        stage_timeout: float | None,
+        *,
+        stage_enabled: bool,
+        chain_vectorise: bool = False,
+        vectorise_timeout: float | None = None,
+    ) -> tuple[float | None, bool]:
+        nonlocal background_stage_timeouts, budget_gate_reason, run_vectorise
+
+        capped_timeout = _cap_timeout(stage_timeout, inline_stage_ceiling)
+        remaining_window = _stage_timer_remaining(stage, capped_timeout)
+        if remaining_window is not None:
+            capped_timeout = remaining_window
+
+        if not stage_enabled:
+            return capped_timeout, False
+
+        if capped_timeout is not None and capped_timeout <= 0:
+            status = "deferred-ceiling"
+            budget_gate_reason = budget_gate_reason or status
+            background_targets = {stage}
+            if background_stage_timeouts is None:
+                background_stage_timeouts = {}
+            timeout_hint = stage_timeout if stage_timeout is not None else inline_stage_ceiling
+            background_stage_timeouts.setdefault(stage, timeout_hint)
+            _record_deferred_background(stage, status, stage_timeout=timeout_hint)
+            _record_cancelled(stage, "ceiling")
+            summary[f"{stage}_ceiling_guard"] = (
+                f"{inline_stage_ceiling:.3f}" if inline_stage_ceiling is not None else "applied"
+            )
+
+            if chain_vectorise and run_vectorise:
+                background_targets.add("vectorise")
+                if vectorise_timeout is not None:
+                    background_stage_timeouts.setdefault("vectorise", vectorise_timeout)
+                _record_deferred_background(
+                    "vectorise", status, stage_timeout=vectorise_timeout
+                )
+                run_vectorise = False
+
+            _launch_background_warmup(background_targets)
+            return capped_timeout, True
+
+        return capped_timeout, False
+
     def _effective_timeout(stage: str) -> float | None:
         remaining = _timebox_or_budget_remaining()
         stage_timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
@@ -4114,6 +4165,12 @@ def warmup_vector_service(
             _record_cancelled("model", "ceiling")
             return _finalise()
 
+        model_timeout, model_ceiling_deferred = _mandatory_ceiling_gate(
+            "model", model_timeout, stage_enabled=download_model
+        )
+        if model_ceiling_deferred:
+            return _finalise()
+
         if download_model:
             if model_timeout is None:
                 model_timeout = _CONSERVATIVE_STAGE_TIMEOUTS.get("model")
@@ -4358,6 +4415,15 @@ def warmup_vector_service(
             handler_cap_hint = stage_budget_ceiling.get("handlers")
         if handler_cap_hint is not None and remaining_cap is not None:
             handler_cap_hint = min(handler_cap_hint, remaining_cap)
+        handler_timeout, handler_ceiling_deferred = _mandatory_ceiling_gate(
+            "handlers",
+            handler_timeout,
+            stage_enabled=hydrate_handlers,
+            chain_vectorise=bool(run_vectorise),
+            vectorise_timeout=vectorise_timeout,
+        )
+        if handler_ceiling_deferred:
+            return _finalise()
         if (
             hydrate_handlers
             and handler_cap_hint is not None
