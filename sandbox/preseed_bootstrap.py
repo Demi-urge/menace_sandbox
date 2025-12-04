@@ -4219,32 +4219,27 @@ def initialize_bootstrap_context(
     embedder_stage_timebox_ceiling = 30.0
     try:
         stage_budget_remaining = stage_controller.stage_budget(step_name="embedder_preload")
-        if stage_budget_remaining is not None:
+        if stage_budget_remaining is None:
+            embedder_stage_timebox_hint = embedder_stage_timebox_ceiling
+            embedder_stage_inline_cap = embedder_stage_timebox_hint
+            if not force_embedder_preload:
+                _record_embedder_skip(
+                    "embedder_preload_stage_budget_missing",
+                    background_timebox=embedder_stage_timebox_hint,
+                    enqueue_background=True,
+                    budget_flag=True,
+                )
+        else:
             embedder_stage_timebox_hint = min(
                 embedder_stage_timebox_ceiling, max(float(stage_budget_remaining), 0.0)
             )
             embedder_stage_inline_cap = embedder_stage_timebox_hint
-            if stage_budget_remaining < embedder_stage_timebox_ceiling:
-                embedder_preload_enabled = False
-                embedder_preload_skip_reason = "embedder_preload_stage_timebox_shortfall"
-                embedder_preload_deferred = True
-                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
-                    reason=embedder_preload_skip_reason
-                )
-                _BOOTSTRAP_SCHEDULER.mark_partial(
-                    "vectorizer_preload", reason=embedder_preload_skip_reason
-                )
-                LOGGER.info(
-                    "embedder preload deferred due to limited stage budget",  # pragma: no cover - telemetry
-                    extra={
-                        "event": "embedder-preload-stage-budget-shortfall",
-                        "stage_budget_remaining": stage_budget_remaining,
-                        "stage_timebox": embedder_stage_timebox_hint,
-                        "timebox_ceiling": embedder_stage_timebox_ceiling,
-                    },
-                )
-                stage_controller.defer_step(
-                    "embedder_preload", reason=embedder_preload_skip_reason
+            if stage_budget_remaining < embedder_stage_timebox_ceiling and not force_embedder_preload:
+                _record_embedder_skip(
+                    "embedder_preload_stage_timebox_shortfall",
+                    background_timebox=embedder_stage_timebox_hint,
+                    enqueue_background=True,
+                    budget_flag=True,
                 )
     except Exception:  # pragma: no cover - advisory only
         LOGGER.debug("failed to compute embedder stage timebox hint", exc_info=True)
@@ -4256,7 +4251,7 @@ def initialize_bootstrap_context(
         embedder_stage_budget_hint is None
         or embedder_stage_budget_hint < preload_budget_floor
     ) and not full_preload_requested
-    if budget_hint_insufficient:
+    if budget_hint_insufficient and embedder_preload_skip_reason is None:
         _record_embedder_skip(
             "embedder_preload_background_budget_hint",
             background_timebox=background_timebox_hint,
@@ -5773,51 +5768,53 @@ def initialize_bootstrap_context(
             if strict_timebox is None:
                 strict_timebox = warmup_timebox_cap
             _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
-                job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
-                job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
-                job_snapshot.setdefault("placeholder_reason", reason)
-                job_snapshot.setdefault(
-                    "budget_hints",
-                    {
-                        "strict_timebox": strict_timebox,
-                        "stage_budget": embedder_stage_budget,
-                        "stage_budget_hint": embedder_stage_budget_hint,
-                        "stage_deadline": embedder_stage_deadline,
-                        "bootstrap_deadline": bootstrap_deadline,
-                        "inline_timebox_cap": inline_join_cap,
-                    },
-                )
-                job_snapshot.update(
-                    {
-                        "deferred": True,
-                        "ready_after_bootstrap": True,
-                        "background_enqueue_reason": reason,
-                        "warmup_placeholder_reason": reason,
-                        "deferral_reason": reason,
-                        "background_full_warmup": True,
-                        "strict_timebox": strict_timebox,
-                        "background_gate": background_dispatch_gate,
-                        "background_dispatch": True,
-                        "warmup_timebox_cap": strict_timebox,
-                        "inline_timebox_cap": inline_join_cap,
-                    },
-                )
-                warmup_summary = job_snapshot.get("warmup_summary") or {}
-                warmup_summary.setdefault("deferred", True)
-                warmup_summary.setdefault("deferred_reason", reason)
-                warmup_summary.setdefault("deferral_reason", reason)
-                warmup_summary.setdefault("stage", "deferred-timebox")
-                warmup_summary.setdefault(
-                    "stage_budget",
-                    embedder_stage_budget
-                    if embedder_stage_budget is not None
-                    else embedder_stage_budget_hint,
-                )
-                warmup_summary.setdefault(
-                    "stage_budget_defaulted", embedder_stage_budget_defaulted
-                )
-                warmup_summary.setdefault("strict_timebox", strict_timebox)
-                job_snapshot["warmup_summary"] = warmup_summary
+            job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+            job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
+            job_snapshot.setdefault("placeholder_reason", reason)
+            job_snapshot.setdefault(
+                "budget_hints",
+                {
+                    "strict_timebox": strict_timebox,
+                    "stage_budget": embedder_stage_budget,
+                    "stage_budget_hint": embedder_stage_budget_hint,
+                    "stage_deadline": embedder_stage_deadline,
+                    "bootstrap_deadline": bootstrap_deadline,
+                    "inline_timebox_cap": inline_join_cap,
+                },
+            )
+            job_snapshot.setdefault("result", job_snapshot["placeholder"])
+            job_snapshot.update(
+                {
+                    "deferred": True,
+                    "ready_after_bootstrap": True,
+                    "awaiting_full_preload": True,
+                    "background_enqueue_reason": reason,
+                    "warmup_placeholder_reason": reason,
+                    "deferral_reason": reason,
+                    "background_full_warmup": True,
+                    "strict_timebox": strict_timebox,
+                    "background_gate": background_dispatch_gate,
+                    "background_dispatch": True,
+                    "warmup_timebox_cap": strict_timebox,
+                    "inline_timebox_cap": inline_join_cap,
+                },
+            )
+            warmup_summary = job_snapshot.get("warmup_summary") or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault("deferred_reason", reason)
+            warmup_summary.setdefault("deferral_reason", reason)
+            warmup_summary.setdefault("stage", "deferred-timebox")
+            warmup_summary.setdefault(
+                "stage_budget",
+                embedder_stage_budget
+                if embedder_stage_budget is not None
+                else embedder_stage_budget_hint,
+            )
+            warmup_summary.setdefault(
+                "stage_budget_defaulted", embedder_stage_budget_defaulted
+            )
+            warmup_summary.setdefault("strict_timebox", strict_timebox)
+            job_snapshot["warmup_summary"] = warmup_summary
 
                 return job_snapshot
 
