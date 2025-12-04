@@ -3768,6 +3768,7 @@ def warmup_vector_service(
                     wait_timeout = max(0.0, wait_timeout)
                 if wait_timeout is None:
                     wait_timeout = _BOOTSTRAP_STAGE_TIMEOUT
+                wait_timeout = _cap_timeout(wait_timeout, _HEAVY_STAGE_CEILING)
                 if _conservative_future_gate(
                     "model", wait_timeout, stage_enabled=download_model
                 ):
@@ -3833,8 +3834,13 @@ def warmup_vector_service(
                 warmup_lite = True
                 if warmup_lite_source == "caller":
                     warmup_lite_source = "timebox"
-                _record_background(
+                _record_deferred_background(
                     "model", "deferred-timebox", stage_timeout=wait_timeout
+                )
+                _queue_background_model_download(
+                    log,
+                    download_timeout=wait_timeout,
+                    force_heavy=not warmup_lite or force_heavy,
                 )
                 log.info(
                     "Vector warmup model download deferred after stage ceiling",
@@ -3846,8 +3852,18 @@ def warmup_vector_service(
                 warmup_lite = True
                 if warmup_lite_source == "caller":
                     warmup_lite_source = "timebox"
-                _record_background(
-                    "model", "deferred-budget", stage_timeout=model_timeout
+                status = (
+                    "deferred-timebox"
+                    if getattr(exc, "_warmup_timebox", False)
+                    else "deferred-budget"
+                )
+                _record_deferred_background(
+                    "model", status, stage_timeout=wait_timeout
+                )
+                _queue_background_model_download(
+                    log,
+                    download_timeout=wait_timeout,
+                    force_heavy=not warmup_lite or force_heavy,
                 )
                 log.info("Vector warmup model download deferred: %s", exc)
                 return _finalise()

@@ -3,7 +3,9 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
+import time
 import types
+from concurrent.futures import Future
 from pathlib import Path
 
 
@@ -130,6 +132,54 @@ def test_model_download_honours_stage_timeout(monkeypatch, caplog):
     assert not called
     assert background and {"model"}.issubset(background[0])
     assert budget_hints_list and budget_hints_list[0].get("model") == 0.5
+
+
+def test_model_download_wait_bounded_and_deferred(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._MODEL_FUTURE = None
+    lazy_bootstrap._MODEL_BACKGROUND_THREAD = None
+
+    monkeypatch.setenv("MENACE_VECTOR_STAGE_HARD_CEILING", "0.05")
+
+    queue_calls: list[tuple[float | None, bool]] = []
+
+    def fake_queue(logger, download_timeout=None, force_heavy=False):  # noqa: ARG001
+        queue_calls.append((download_timeout, force_heavy))
+
+    slow_future = Future()
+
+    def slow_future_factory(**_kwargs):  # noqa: ARG001
+        return slow_future
+
+    background: list[tuple[set[str], dict[str, float | None]]] = []
+
+    def capture_hook(stages: set[str], budget_hints=None):  # type: ignore[override]
+        hints: dict[str, float | None] = {}
+        if isinstance(budget_hints, dict):
+            hints.update({k: v for k, v in budget_hints.items() if isinstance(k, str)})
+        background.append((set(stages), hints))
+
+    monkeypatch.setattr(
+        lazy_bootstrap, "_queue_background_model_download", fake_queue, raising=True
+    )
+    monkeypatch.setattr(
+        lazy_bootstrap, "ensure_embedding_model_future", slow_future_factory, raising=True
+    )
+
+    start = time.monotonic()
+    warmup_summary = lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        download_model=True,
+        warmup_lite=False,
+        background_hook=capture_hook,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.5
+    assert warmup_summary["model"].startswith("deferred")
+    assert background and {"model"}.issubset(background[0][0])
+    assert queue_calls and queue_calls[0][0] is not None
 
 
 def test_handler_timebox_queues_background_and_memoises(caplog, monkeypatch):
