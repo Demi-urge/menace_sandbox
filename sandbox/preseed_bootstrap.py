@@ -4405,7 +4405,7 @@ def initialize_bootstrap_context(
             if bootstrap_fast_context
             else "embedder_preload_warmup_lite"
         )
-    embedder_preload_enabled = True
+    embedder_preload_enabled = False
     embedder_stage_timebox_hint: float | None = None
     embedder_preload_stage_blocked = bool(
         embedder_stage_budget_hint is not None and embedder_stage_budget_hint <= 0.0
@@ -4452,6 +4452,10 @@ def initialize_bootstrap_context(
                 job_snapshot.setdefault("strict_timebox", effective_timebox)
                 job_snapshot.setdefault("background_join_timeout", effective_timebox)
 
+        job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
+        job_snapshot.setdefault("placeholder_reason", reason)
+        job_snapshot.setdefault("warmup_placeholder_reason", reason)
+
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
         if budget_flag:
             try:
@@ -4467,6 +4471,24 @@ def initialize_bootstrap_context(
                 job_snapshot.setdefault("stage_ceiling", float(stage_ceiling))
             except (TypeError, ValueError):
                 pass
+        return job_snapshot
+
+    def _prime_background_placeholder(
+        reason: str,
+        *,
+        strict_timebox: float | None = None,
+        budget_flag: bool = False,
+    ) -> dict[str, Any]:
+        global _BOOTSTRAP_EMBEDDER_JOB
+        job_snapshot = _schedule_background_preload_safe(
+            reason,
+            strict_timebox=strict_timebox,
+            budget_flag=budget_flag,
+            stage_ceiling=embedder_stage_inline_cap,
+        )
+        job_snapshot.setdefault("deferral_reason", reason)
+        job_snapshot.setdefault("deferred", True)
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         return job_snapshot
 
     def _record_embedder_skip(
@@ -4547,6 +4569,59 @@ def initialize_bootstrap_context(
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         if not probe_only:
             stage_controller.complete_step("embedder_preload", 0.0)
+
+    bootstrap_lite_mode = warmup_lite_context or bootstrap_fast_context
+    has_valid_embedder_budget = bool(
+        embedder_stage_budget_hint is not None
+        and math.isfinite(embedder_stage_budget_hint)
+        and embedder_stage_budget_hint > 0.0
+    )
+    initial_background_timebox = embedder_stage_budget_hint
+    if initial_background_timebox is None or initial_background_timebox <= 0:
+        initial_background_timebox = _EMBEDDER_STAGE_BUDGET_FALLBACK
+
+    if not has_valid_embedder_budget and not force_embedder_preload:
+        embedder_preload_skip_reason = "embedder_preload_stage_budget_missing"
+        embedder_preload_deferred = True
+        _prime_background_placeholder(
+            embedder_preload_skip_reason,
+            strict_timebox=initial_background_timebox,
+            budget_flag=True,
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops",
+            reason=f"embedder_placeholder:{embedder_preload_skip_reason}",
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "vectorizer_preload", reason=embedder_preload_skip_reason
+        )
+        stage_controller.defer_step(
+            "embedder_preload", reason=embedder_preload_skip_reason
+        )
+    elif bootstrap_lite_mode and not force_embedder_preload:
+        embedder_preload_skip_reason = (
+            "embedder_preload_bootstrap_fast_background"
+            if bootstrap_fast_context
+            else "embedder_preload_warmup_lite_background"
+        )
+        embedder_preload_deferred = True
+        _prime_background_placeholder(
+            embedder_preload_skip_reason,
+            strict_timebox=initial_background_timebox,
+            budget_flag=has_valid_embedder_budget,
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops",
+            reason=f"embedder_placeholder:{embedder_preload_skip_reason}",
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "vectorizer_preload", reason=embedder_preload_skip_reason
+        )
+        stage_controller.defer_step(
+            "embedder_preload", reason=embedder_preload_skip_reason
+        )
+    elif has_valid_embedder_budget and not bootstrap_lite_mode:
+        embedder_preload_enabled = True
 
     positive_stage_timebox = any(
         candidate is not None and candidate > 0
