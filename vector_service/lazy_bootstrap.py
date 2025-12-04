@@ -824,13 +824,16 @@ def warmup_vector_service(
     budget_hooks_missing = not (budget_remaining_supplied and check_budget_supplied)
 
     stage_timeouts = _normalise_stage_timeouts(stage_timeouts)
-    if (
-        stage_timeouts is None
-        and not stage_timeouts_supplied
-        and not budget_remaining_supplied
-        and not check_budget_supplied
-    ):
-        stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+    env_stage_defaults: dict[str, float] = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+    if env_budget is not None:
+        env_stage_defaults["budget"] = env_budget
+
+    if stage_timeouts is None:
+        stage_timeouts = env_stage_defaults
+    elif isinstance(stage_timeouts, Mapping) and env_budget is not None:
+        if "budget" not in stage_timeouts:
+            stage_timeouts = dict(stage_timeouts)
+            stage_timeouts["budget"] = env_budget
 
     if bootstrap_context and not force_heavy:
         summary: dict[str, str] = {
@@ -1322,6 +1325,8 @@ def warmup_vector_service(
         stage: str, status: str, *, stage_timeout: float | None = None
     ) -> None:
         _record_background(stage, status, stage_timeout=stage_timeout)
+        if stage_timeout is not None:
+            _hint_background_budget(stage, stage_timeout)
         if stage in prior_deferred:
             return
 
@@ -1351,6 +1356,17 @@ def warmup_vector_service(
                 )
             except Exception:  # pragma: no cover - metrics best effort
                 log.debug("failed emitting deferral timebox gauge", exc_info=True)
+        if status == "deferred-timebox":
+            log.info(
+                "Vector warmup %s deferred after timebox exhaustion", stage,
+                extra={
+                    "event": "vector-warmup",
+                    "stage": stage,
+                    "status": status,
+                    "timebox_remaining": meta.get("timebox_remaining"),
+                    "stage_timeout": stage_timeout,
+                },
+            )
         if stage in {"handlers", "vectorise"} and status.startswith("deferred"):
             quick_ready = True
         if stage == "model" and status == "deferred-no-budget":
@@ -1831,7 +1847,18 @@ def warmup_vector_service(
         hook_dispatched = False
         if budget_gate_reason is not None:
             summary["budget_gate"] = budget_gate_reason
+
+        def _ensure_background_timeouts() -> None:
+            nonlocal background_stage_timeouts
+            if background_stage_timeouts is None:
+                background_stage_timeouts = {
+                    stage: _effective_timeout(stage) for stage in base_timeouts
+                }
+                if stage_budget_cap is not None:
+                    background_stage_timeouts["budget"] = stage_budget_cap
+
         if background_candidates and (bootstrap_context or bootstrap_fast or warmup_lite):
+            _ensure_background_timeouts()
             log.info(
                 "Vector warmup deferrals queued for background completion",
                 extra={
@@ -1846,6 +1873,8 @@ def warmup_vector_service(
             and bootstrap_context
             and background_candidates
         ):
+            _ensure_background_timeouts()
+
             def _queue_background(
                 stages: set[str], *, budget_hints: Mapping[str, float | None] | None = None
             ) -> None:
@@ -1857,6 +1886,7 @@ def warmup_vector_service(
 
         if background_candidates and effective_background_hook is not None:
             try:
+                _ensure_background_timeouts()
                 hook_kwargs = {"budget_hints": background_stage_timeouts or {}}
                 hook_code = getattr(effective_background_hook, "__code__", None)
                 if hook_code is not None and "budget_hints" in hook_code.co_varnames:
