@@ -188,6 +188,89 @@ def test_bootstrap_fast_defers_handlers_and_reports_background(monkeypatch, capl
     assert deferred_calls and {"handlers", "vectorise"}.issubset(deferred_calls[-1])
 
 
+def test_bootstrap_presence_only_defers_heavy_work(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    _reset_state()
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+
+    download_calls: list[str] = []
+    scheduler_calls: list[str] = []
+    deferred_calls: list[set[str]] = []
+    recorded_hints: list[dict[str, float | None]] = []
+
+    def fake_model_download(**_kwargs):
+        download_calls.append("model")
+        raise AssertionError("Model download should be deferred during bootstrap")
+
+    monkeypatch.setattr(lazy_bootstrap, "ensure_embedding_model", fake_model_download)
+    monkeypatch.setattr(
+        lazy_bootstrap,
+        "ensure_scheduler_started",
+        lambda **_kwargs: scheduler_calls.append("scheduler"),
+    )
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class NoOpSharedVectorService:
+        def __init__(self, *args, **kwargs):  # noqa: ARG002
+            raise AssertionError("SharedVectorService should be deferred during bootstrap")
+
+    vectorizer_stub.SharedVectorService = NoOpSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    def _background_hook(stages, budget_hints=None):
+        deferred_calls.append(set(stages))
+        hints = budget_hints or {}
+        recorded_hints.append({stage: hints.get(stage) for stage in stages})
+
+    stage_timeouts = {"model": 3.0, "handlers": 2.0, "scheduler": 1.0, "vectorise": 1.5}
+
+    warmup_summary = lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        download_model=True,
+        probe_model=True,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        background_hook=_background_hook,
+        stage_timeouts=stage_timeouts,
+    )
+
+    assert warmup_summary["model"] == "deferred-bootstrap-presence"
+    assert warmup_summary["handlers"] == "deferred-bootstrap-presence"
+    assert warmup_summary["scheduler"] == "deferred-bootstrap-presence"
+    assert warmup_summary["vectorise"] == "deferred-bootstrap-presence"
+    assert set(warmup_summary.get("deferred", "").split(",")) == {
+        "model",
+        "handlers",
+        "scheduler",
+        "vectorise",
+    }
+    assert not download_calls
+    assert not scheduler_calls
+    assert deferred_calls and deferred_calls[-1] == {"model", "handlers", "scheduler", "vectorise"}
+    assert recorded_hints[-1] == {stage: stage_timeouts[stage] for stage in deferred_calls[-1]}
+    assert lazy_bootstrap._WARMUP_STAGE_MEMO["model"] == "deferred-bootstrap-presence"
+
+    caplog.clear()
+    lazy_bootstrap.warmup_vector_service(
+        logger=logging.getLogger("test"),
+        download_model=True,
+        hydrate_handlers=True,
+        start_scheduler=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        background_hook=_background_hook,
+        stage_timeouts=stage_timeouts,
+    )
+
+    retry_summary = _get_warmup_summary(caplog)
+    assert retry_summary["model"] == "deferred-bootstrap-presence"
+    assert not download_calls
+    assert not scheduler_calls
+
+
 def test_warmup_cache_reused(monkeypatch, caplog, tmp_path):
     caplog.set_level(logging.INFO)
     cache_dir = tmp_path / "cache"
