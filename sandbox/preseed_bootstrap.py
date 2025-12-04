@@ -5061,6 +5061,8 @@ def initialize_bootstrap_context(
         guard_budget_guarded = budget_guarded
         presence_default_enforced = False
         full_preload_requested = bool(full_embedder_preload or force_embedder_preload)
+        if bootstrap_fast_context or warmup_lite_context:
+            full_preload_requested = False
         if bootstrap_lite_mode:
             presence_only = True
             budget_guarded = True
@@ -5095,7 +5097,7 @@ def initialize_bootstrap_context(
         presence_only = presence_only or guard_presence_only
         budget_guarded = budget_guarded or guard_budget_guarded
         presence_reason = presence_reason or guard_presence_reason
-        if not full_preload_requested and not embedder_deferred:
+        if not full_preload_requested:
             presence_only = True
             budget_guarded = True
             non_blocking_presence_probe = True
@@ -5133,6 +5135,10 @@ def initialize_bootstrap_context(
             budget_guarded = True
             non_blocking_presence_probe = True
             presence_reason = presence_reason or "embedder_budget_unavailable"
+            warmup_summary = warmup_summary or {}
+            warmup_summary.setdefault("deferred", True)
+            warmup_summary.setdefault("deferred_reason", presence_reason)
+            warmup_summary.setdefault("deferral_reason", presence_reason)
         if no_finite_timebox_available:
             presence_only = True
             budget_guarded = True
