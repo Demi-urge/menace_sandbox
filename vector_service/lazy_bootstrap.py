@@ -1484,6 +1484,14 @@ def warmup_vector_service(
             return _timebox_remaining()
         return budget_remaining
 
+    def _stage_timer_remaining(stage: str, stage_timeout: float | None) -> float | None:
+        budget_window = _timebox_or_budget_remaining()
+        if budget_window is None:
+            return stage_timeout
+        if stage_timeout is None:
+            return budget_window
+        return max(0.0, min(stage_timeout, budget_window))
+
     def _available_budget_hint(
         stage: str, stage_timeout: float | None = None
     ) -> float | None:
@@ -1583,6 +1591,7 @@ def warmup_vector_service(
 
     def _finalise() -> Mapping[str, str]:
         nonlocal background_stage_timeouts
+        summary["warmup_lite"] = str(warmup_lite)
         deferred_record = deferred | recorded_deferred
         if deferred_record:
             summary["deferred"] = ",".join(sorted(deferred_record))
@@ -1674,7 +1683,7 @@ def warmup_vector_service(
         *,
         timeout: float | None = None,
     ) -> tuple[bool, Any | None, float, str | None]:
-        nonlocal budget_exhausted
+        nonlocal budget_exhausted, warmup_lite, warmup_lite_source
         stop_event = threading.Event()
         start = time.monotonic()
         stage_deadline = start + timeout if timeout is not None else None
@@ -1738,12 +1747,26 @@ def warmup_vector_service(
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
         while not done.wait(timeout=0.05):
-            if timeout is not None and time.monotonic() - start >= timeout:
+            elapsed = time.monotonic() - start
+            remaining_window = _stage_timer_remaining(stage, timeout)
+            if remaining_window is not None and remaining_window <= 0:
+                timeout_reason = "timebox" if timeout is not None else "budget"
+            else:
+                timeout_reason = None
+            if timeout is not None and elapsed >= timeout:
+                timeout_reason = "timebox"
+
+            if timeout_reason is not None:
                 _stop_thread("timeout")
                 _record_timeout(stage)
                 budget_exhausted = True
+                warmup_lite = True
+                if warmup_lite_source == "caller":
+                    warmup_lite_source = "timebox"
                 _record_deferred_background(
-                    stage, "deferred-timebox", stage_timeout=timeout
+                    stage,
+                    "deferred-timebox",
+                    stage_timeout=_stage_timer_remaining(stage, timeout),
                 )
                 log.warning(
                     "Vector warmup %s timed out after %.2fs; deferring", stage, timeout
@@ -1756,9 +1779,14 @@ def warmup_vector_service(
                 except TimeoutError as exc:
                     _stop_thread("budget deadline")
                     budget_exhausted = True
+                    warmup_lite = True
+                    if warmup_lite_source == "caller":
+                        warmup_lite_source = "timebox"
                     _record_timeout(stage)
                     _record_deferred_background(
-                        stage, "deferred-budget", stage_timeout=timeout
+                        stage,
+                        "deferred-budget",
+                        stage_timeout=_stage_timer_remaining(stage, timeout),
                     )
                     log.warning("Vector warmup deadline reached during %s: %s", stage, exc)
                     return False, None, time.monotonic() - start, "budget"
@@ -2965,7 +2993,19 @@ def warmup_vector_service(
                     wait_timeout = max(0.0, wait_timeout)
                 if wait_timeout is None:
                     wait_timeout = _BOOTSTRAP_STAGE_TIMEOUT
-                path = model_future.result(timeout=wait_timeout)
+                def _wait_for_model() -> Path | tuple[Path | None, str | None] | None:
+                    while True:
+                        remaining_window = _stage_timer_remaining("model", wait_timeout)
+                        if remaining_window is not None and remaining_window <= 0:
+                            raise _stage_gate_timeout("model", wait_timeout)
+                        try:
+                            return model_future.result(timeout=max(0.05, remaining_window) if remaining_window is not None else 0.05)
+                        except FutureTimeout:
+                            if remaining_window is None:
+                                continue
+                            continue
+
+                path = _wait_for_model()
                 elapsed = time.monotonic() - start
                 _record_elapsed("model", elapsed)
                 resolved_path: Path | None
@@ -3011,6 +3051,9 @@ def warmup_vector_service(
                 elapsed = time.monotonic() - start
                 _record_elapsed("model", elapsed)
                 _record_cancelled("model", "ceiling")
+                warmup_lite = True
+                if warmup_lite_source == "caller":
+                    warmup_lite_source = "timebox"
                 _record_background(
                     "model", "deferred-timebox", stage_timeout=wait_timeout
                 )
@@ -3021,6 +3064,9 @@ def warmup_vector_service(
                 return _finalise()
             except TimeoutError as exc:
                 _record_cancelled("model", "budget")
+                warmup_lite = True
+                if warmup_lite_source == "caller":
+                    warmup_lite_source = "timebox"
                 _record_background(
                     "model", "deferred-budget", stage_timeout=model_timeout
                 )
