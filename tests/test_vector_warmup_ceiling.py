@@ -240,3 +240,62 @@ def test_legacy_warmup_backgrounds_heavy_without_budget(caplog, monkeypatch):
         hint is None or hint <= lazy_bootstrap._HEAVY_STAGE_CEILING for hint in hints.values()
     )
 
+
+def test_heavy_warmup_without_budgets_defers_at_default_ceiling(caplog, monkeypatch):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._WARMUP_STAGE_META.clear()
+
+    monkeypatch.delenv("MENACE_BOOTSTRAP", raising=False)
+    monkeypatch.delenv("MENACE_BOOTSTRAP_FAST", raising=False)
+    monkeypatch.delenv("MENACE_BOOTSTRAP_MODE", raising=False)
+
+    ceiling = 0.05
+    monkeypatch.setattr(lazy_bootstrap, "_HEAVY_STAGE_CEILING", ceiling)
+    monkeypatch.setattr(lazy_bootstrap, "_BOOTSTRAP_STAGE_TIMEOUT", ceiling)
+
+    background_calls: list[tuple[set[str], dict[str, float | None]]] = []
+
+    def capture_hook(stages, budget_hints=None):  # type: ignore[override]
+        hints: dict[str, float | None] = {}
+        if isinstance(budget_hints, dict):
+            hints.update({k: v for k, v in budget_hints.items() if isinstance(k, str)})
+        background_calls.append((set(stages), hints))
+
+    vectorizer_stub = types.ModuleType("vector_service.vectorizer")
+
+    class SlowSharedVectorService:
+        def __init__(self, *_args, stop_event=None, **_kwargs):
+            self._stop_event = stop_event
+            if stop_event is not None:
+                stop_event.wait(0.1)
+
+        def vectorise(self, *_args, stop_event=None, **_kwargs):
+            target = stop_event or self._stop_event
+            if target is not None:
+                target.wait(0.1)
+            return []
+
+    vectorizer_stub.SharedVectorService = SlowSharedVectorService
+    monkeypatch.setitem(sys.modules, "vector_service.vectorizer", vectorizer_stub)
+
+    lazy_bootstrap.warmup_vector_service(
+        hydrate_handlers=True,
+        run_vectorise=True,
+        warmup_lite=False,
+        logger=logging.getLogger("test"),
+        background_hook=capture_hook,
+    )
+
+    warmup_summary = _get_warmup_summary(caplog)
+    assert warmup_summary["handlers"].startswith("deferred")
+    assert warmup_summary["vectorise"].startswith("deferred")
+    assert warmup_summary.get("handlers_queued") == "queued"
+    assert warmup_summary.get("vectorise_queued") == "queued"
+
+    assert background_calls, "background hook should receive ceiling deferrals"
+    stages, hints = background_calls[0]
+    assert {"handlers", "vectorise"}.issubset(stages)
+    assert hints.get("handlers") == ceiling
+    assert hints.get("vectorise") == ceiling
+
