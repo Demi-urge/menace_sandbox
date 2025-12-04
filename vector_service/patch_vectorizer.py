@@ -69,6 +69,9 @@ class PatchVectorizer(EmbeddableDBMixin):
         self._activation_lock = threading.Lock()
         self._activation_thread: threading.Thread | None = None
         self._activation_started = False
+        self._bootstrap_deferral_reason: str | None = None
+        self._bootstrap_deferral_scheduled = False
+        self._bootstrap_deferral_budget: float | None = None
         self._deferred_init: Dict[str, Any] = {
             "path": path,
             "index_path": index_path,
@@ -160,6 +163,9 @@ class PatchVectorizer(EmbeddableDBMixin):
             bootstrap_fast=False,
             init_start=activation_start,
         )
+        self._bootstrap_deferral_reason = None
+        self._bootstrap_deferral_scheduled = False
+        self._bootstrap_deferral_budget = None
 
     def activate_async(self, *, reason: str | None = None) -> threading.Thread | None:
         """Hydrate the real index in the background when budgets permit."""
@@ -190,9 +196,94 @@ class PatchVectorizer(EmbeddableDBMixin):
             self._activation_thread = thread
             return thread
 
-    def _ensure_bootstrap_ready(self) -> None:
-        if self._bootstrap_warmup:
-            self._activate_full_initialisation()
+    def _bootstrap_budget_remaining(self) -> float | None:
+        budget_env = os.getenv("MENACE_BOOTSTRAP_BUDGET_REMAINING")
+        if budget_env:
+            try:
+                return float(budget_env)
+            except ValueError:
+                logger.debug("invalid MENACE_BOOTSTRAP_BUDGET_REMAINING value: %s", budget_env)
+        return None
+
+    def _bootstrap_background_executor(self) -> Any | None:
+        try:
+            from vector_service.lazy_bootstrap import _background_executor
+        except Exception:
+            return None
+
+        try:
+            return _background_executor()
+        except Exception:  # pragma: no cover - advisory
+            logger.debug("patch_vectorizer failed to acquire background executor", exc_info=True)
+            return None
+
+    def _record_bootstrap_deferral(
+        self,
+        *,
+        reason: str,
+        budget_remaining: float | None,
+        scheduled: bool,
+    ) -> None:
+        self._bootstrap_deferral_reason = reason
+        self._bootstrap_deferral_scheduled = scheduled
+        self._bootstrap_deferral_budget = budget_remaining
+        logger.info(
+            "patch_vectorizer.bootstrap_fast.deferred",
+            extra={
+                "reason": reason,
+                "budget_remaining": budget_remaining,
+                "scheduled": scheduled,
+                "warmup_context": self._warmup_context,
+            },
+        )
+        try:
+            from vector_service import lazy_bootstrap
+
+            update_cache = getattr(lazy_bootstrap, "_update_warmup_stage_cache", None)
+            if callable(update_cache):
+                update_cache(
+                    "patch_vectorizer",
+                    "deferred",
+                    logger,
+                    meta={
+                        "reason": reason,
+                        "scheduled": scheduled,
+                        "budget_remaining": budget_remaining,
+                    },
+                    emit_metric=False,
+                )
+        except Exception:  # pragma: no cover - best effort metadata
+            logger.debug("failed to record patch_vectorizer warmup deferral", exc_info=True)
+
+    def _background_activation_hook(self, *, reason: str) -> None:
+        budget_remaining = self._bootstrap_budget_remaining()
+        if budget_remaining is not None and budget_remaining <= 0:
+            self._record_bootstrap_deferral(
+                reason=reason, budget_remaining=budget_remaining, scheduled=False
+            )
+            return
+
+        scheduled = False
+        executor = self._bootstrap_background_executor()
+        if executor is not None:
+            try:
+                executor.submit(self._activate_full_initialisation)
+                scheduled = True
+            except Exception:  # pragma: no cover - background best effort
+                logger.debug("background executor scheduling failed", exc_info=True)
+
+        if not scheduled:
+            scheduled = self.activate_async(reason=reason) is not None
+
+        self._record_bootstrap_deferral(
+            reason=reason, budget_remaining=budget_remaining, scheduled=scheduled
+        )
+
+    def _gate_bootstrap_request(self, *, reason: str) -> bool:
+        if not self._bootstrap_warmup:
+            return False
+        self._background_activation_hook(reason=reason)
+        return True
 
     def _initialise_full(
         self,
@@ -326,7 +417,8 @@ class PatchVectorizer(EmbeddableDBMixin):
     vector = transform
 
     def iter_records(self) -> Iterator[Tuple[int, Dict[str, Any], str]]:
-        self._ensure_bootstrap_ready()
+        if self._gate_bootstrap_request(reason="iter_records"):
+            return iter(())
         cur = self.conn.execute("SELECT id FROM patch_history")
         for (pid,) in cur.fetchall():
             rec = self.db.get(pid)
@@ -339,8 +431,8 @@ class PatchVectorizer(EmbeddableDBMixin):
             }, "patch"
 
     def _ensure_index_loaded(self) -> None:
-        if self._bootstrap_warmup:
-            self._activate_full_initialisation()
+        if self._gate_bootstrap_request(reason="index_load"):
+            return
         if self._index_loaded:
             return
         start = time.perf_counter()
