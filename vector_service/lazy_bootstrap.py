@@ -959,15 +959,21 @@ def warmup_vector_service(
     budget_hooks_missing = not (budget_remaining_supplied and check_budget_supplied)
 
     stage_timeouts = _normalise_stage_timeouts(stage_timeouts)
+    default_stage_timeouts_applied = False
     env_stage_defaults: dict[str, float] = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
     if env_budget is not None:
         env_stage_defaults["budget"] = env_budget
 
     stage_budget_signals = stage_timeouts_supplied or env_budget is not None or stage_cap_env is not None
 
-    if stage_timeouts is None and warmup_requested and not stage_budget_signals:
+    if (
+        stage_timeouts is None
+        and not stage_budget_signals
+        and (warmup_requested or bootstrap_context)
+    ):
         stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
         stage_budget_signals = True
+        default_stage_timeouts_applied = True
 
     if stage_timeouts is None and stage_budget_signals:
         stage_timeouts = env_stage_defaults
@@ -1693,6 +1699,8 @@ def warmup_vector_service(
         stage: str, status: str, *, stage_timeout: float | None = None
     ) -> None:
         _record_background(stage, status, stage_timeout=stage_timeout)
+        background_candidates.add(stage)
+        background_warmup.add(stage)
         if stage_timeout is not None:
             _hint_background_budget(stage, stage_timeout)
         if stage in prior_deferred:
@@ -2186,6 +2194,12 @@ def warmup_vector_service(
             summary["deferred"] = ",".join(sorted(deferred_record))
         if background_candidates:
             summary["background"] = ",".join(sorted(background_candidates))
+        if default_stage_timeouts_applied:
+            summary["stage_timeouts_source"] = "conservative-defaults"
+        elif stage_timeouts_supplied:
+            summary["stage_timeouts_source"] = "caller"
+        elif stage_budget_signals:
+            summary["stage_timeouts_source"] = "environment"
         summary["deferred_stages"] = (
             ",".join(sorted(background_candidates | deferred_record))
             if (background_candidates or deferred_record)
@@ -2200,9 +2214,18 @@ def warmup_vector_service(
             summary[f"budget_ceiling_{stage}"] = (
                 f"{ceiling:.3f}" if ceiling is not None else "none"
             )
+        summary["budget_ceiling_map"] = ",".join(
+            f"{stage}:{'none' if ceiling is None else f'{ceiling:.3f}'}"
+            for stage, ceiling in sorted(stage_budget_ceiling.items())
+        )
         for stage, ceiling in background_budget_ceiling.items():
             summary[f"background_budget_ceiling_{stage}"] = (
                 f"{ceiling:.3f}" if ceiling is not None else "none"
+            )
+        if background_stage_timeouts:
+            summary["background_stage_timeouts"] = ",".join(
+                f"{stage}:{'none' if timeout is None else f'{timeout:.3f}'}"
+                for stage, timeout in sorted(background_stage_timeouts.items())
             )
         for stage, timeout in effective_timeouts.items():
             summary[f"budget_{stage}"] = (
