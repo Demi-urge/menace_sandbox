@@ -6124,6 +6124,28 @@ def initialize_bootstrap_context(
             )
             warmup_thread.start()
 
+            inline_timebox_guard = None
+            for candidate in (
+                warmup_timebox_cap,
+                embedder_stage_budget,
+                embedder_stage_budget_hint,
+                stage_guard_timebox,
+            ):
+                if candidate is not None and candidate > 0:
+                    inline_timebox_guard = (
+                        candidate
+                        if inline_timebox_guard is None
+                        else min(inline_timebox_guard, candidate)
+                    )
+
+            inline_guard_reason = None
+            if inline_timebox_guard is not None:
+                inline_guard_reason = "embedder_inline_timebox_guard"
+                if join_timeout is None or join_timeout > inline_timebox_guard:
+                    join_timeout = inline_timebox_guard
+                if join_cap is None or join_cap > inline_timebox_guard:
+                    join_cap = inline_timebox_guard
+
             if join_timeout is not None and join_timeout <= 0:
                 warmup_stop_reason = warmup_stop_reason or (
                     warmup_join_cap_reason
@@ -6132,11 +6154,25 @@ def initialize_bootstrap_context(
                         and join_cap is not None
                         and join_cap <= warmup_join_ceiling
                     )
-                    else "embedder_preload_warmup_cap_exceeded"
+                    else inline_guard_reason
+                    or "embedder_preload_warmup_cap_exceeded"
                 )
                 combined_stop_event.set()
                 warmup_thread.join(0.05)
-                return None, warmup_stop_reason
+                deferral_snapshot = _schedule_background_preload(
+                    warmup_stop_reason, strict_timebox=join_cap
+                )
+                warmup_snapshot = deferral_snapshot.get("warmup_summary") or {}
+                warmup_snapshot.setdefault("deferred", True)
+                warmup_snapshot.setdefault("deferred_reason", warmup_stop_reason)
+                warmup_snapshot.setdefault("deferral_reason", warmup_stop_reason)
+                warmup_snapshot.setdefault("stage", "deferred-inline-timebox")
+                warmup_snapshot.setdefault("strict_timebox", join_cap)
+                deferral_snapshot["warmup_summary"] = warmup_snapshot
+                _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
+                return deferral_snapshot.get(
+                    "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                ), warmup_stop_reason
             warmup_thread.join(join_timeout)
 
             if warmup_thread.is_alive():
@@ -6148,10 +6184,24 @@ def initialize_bootstrap_context(
                         and join_cap is not None
                         and join_cap <= warmup_join_ceiling
                     )
-                    else "embedder_preload_warmup_cap_exceeded"
+                    else inline_guard_reason
+                    or "embedder_preload_warmup_cap_exceeded"
                 )
                 warmup_thread.join(0.05)
-                return None, warmup_stop_reason
+                deferral_snapshot = _schedule_background_preload(
+                    warmup_stop_reason, strict_timebox=join_cap
+                )
+                warmup_snapshot = deferral_snapshot.get("warmup_summary") or {}
+                warmup_snapshot.setdefault("deferred", True)
+                warmup_snapshot.setdefault("deferred_reason", warmup_stop_reason)
+                warmup_snapshot.setdefault("deferral_reason", warmup_stop_reason)
+                warmup_snapshot.setdefault("stage", "deferred-inline-timebox")
+                warmup_snapshot.setdefault("strict_timebox", join_cap)
+                deferral_snapshot["warmup_summary"] = warmup_snapshot
+                _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
+                return deferral_snapshot.get(
+                    "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                ), warmup_stop_reason
 
             if warmup_exc:
                 raise warmup_exc[0]
