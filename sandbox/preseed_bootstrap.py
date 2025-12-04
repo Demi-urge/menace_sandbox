@@ -113,6 +113,8 @@ _STEP_START_OBSERVER: Callable[[str], None] | None = None
 _STEP_END_OBSERVER: Callable[[str, float], None] | None = None
 _BOOTSTRAP_BACKGROUND_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _BOOTSTRAP_EMBEDDER_READY = threading.Event()
+_EMBEDDER_PRESENCE_CACHE: dict[str, Any] = {}
+_EMBEDDER_PRESENCE_CACHE_LOCK = threading.Lock()
 _BOOTSTRAP_TIMEOUT_FLOOR = getattr(_coding_bot_interface, "_BOOTSTRAP_TIMEOUT_FLOOR", 720.0)
 _PREPARE_STANDARD_TIMEOUT_FLOOR = 720.0
 _PREPARE_VECTOR_TIMEOUT_FLOOR = 900.0
@@ -2513,7 +2515,11 @@ def _bootstrap_embedder(
 
     cache_available = False
     try:
-        cache_available = bool(embedder_cache_present())
+        cached_presence = _resolve_presence_cache()
+        if cached_presence is not None:
+            cache_available = bool(cached_presence)
+        else:
+            cache_available = _store_presence_cache(bool(embedder_cache_present()))
     except Exception:  # pragma: no cover - diagnostics only
         LOGGER.debug("embedder cache presence probe failed", exc_info=True)
 
@@ -2582,7 +2588,11 @@ def _bootstrap_embedder(
         if budget_deadline is None and stage_budget_hint is not None and stage_budget_hint > 0:
             budget_deadline = start_time + stage_budget_hint
         try:
-            cache_available = embedder_cache_present()
+            cached_presence = _resolve_presence_cache()
+            if cached_presence is not None:
+                cache_available = bool(cached_presence)
+            else:
+                cache_available = _store_presence_cache(embedder_cache_present())
         except Exception:  # pragma: no cover - diagnostics only
             cache_available = False
             LOGGER.debug("embedder presence probe failed", exc_info=True)
@@ -3067,6 +3077,27 @@ def start_embedder_warmup(
         warmup_started + stage_timebox_cap if stage_timebox_cap is not None else None
     )
 
+    presence_cache_hit = False
+    cached_presence_available: bool | None = None
+
+    def _get_presence_cache() -> tuple[bool | None, bool]:
+        with _EMBEDDER_PRESENCE_CACHE_LOCK:
+            if "value" in _EMBEDDER_PRESENCE_CACHE:
+                return bool(_EMBEDDER_PRESENCE_CACHE.get("value")), True
+        return None, False
+
+    def _store_presence_cache(value: bool) -> bool:
+        with _EMBEDDER_PRESENCE_CACHE_LOCK:
+            _EMBEDDER_PRESENCE_CACHE["value"] = bool(value)
+        return bool(value)
+
+    def _resolve_presence_cache() -> bool | None:
+        nonlocal presence_cache_hit, cached_presence_available
+        if presence_cache_hit:
+            return cached_presence_available
+        cached_presence_available, presence_cache_hit = _get_presence_cache()
+        return cached_presence_available
+
     def _remaining_timebox_cap() -> float | None:
         if stage_timebox_cap is None:
             return None
@@ -3090,21 +3121,23 @@ def start_embedder_warmup(
         ) -> dict[str, Any]:
             global _BOOTSTRAP_EMBEDDER_JOB
             try:
-            job_snapshot = _schedule_background_preload(  # type: ignore[name-defined]
-                reason, strict_timebox=strict_timebox
-            )
-        except NameError:
-            job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
-            job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
-            job_snapshot.setdefault("placeholder_reason", reason)
-            job_snapshot.setdefault("warmup_placeholder_reason", reason)
-            job_snapshot.setdefault("background_enqueue_reason", reason)
-            job_snapshot.setdefault("deferral_reason", reason)
-            job_snapshot.setdefault("deferred", True)
-            job_snapshot.setdefault("ready_after_bootstrap", True)
+                job_snapshot = _schedule_background_preload(  # type: ignore[name-defined]
+                    reason, strict_timebox=strict_timebox
+                )
+            except NameError:
+                job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+                job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                job_snapshot.setdefault("placeholder_reason", reason)
+                job_snapshot.setdefault("warmup_placeholder_reason", reason)
+                job_snapshot.setdefault("background_enqueue_reason", reason)
+                job_snapshot.setdefault("deferral_reason", reason)
+                job_snapshot.setdefault("deferred", True)
+                job_snapshot.setdefault("ready_after_bootstrap", True)
+                if strict_timebox is not None:
+                    job_snapshot.setdefault("strict_timebox", strict_timebox)
+                    job_snapshot.setdefault("background_join_timeout", strict_timebox)
             if strict_timebox is not None:
-                job_snapshot.setdefault("strict_timebox", strict_timebox)
-                job_snapshot.setdefault("background_join_timeout", strict_timebox)
+                job_snapshot.setdefault("background_timebox", strict_timebox)
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
         if budget_flag:
             _mark_budget_deferral(job_snapshot)
@@ -3443,6 +3476,81 @@ def start_embedder_warmup(
                 else min(timebox_cap_remaining, wall_cap)
             )
         return wall_cap
+
+    def _presence_placeholder(
+        reason: str,
+        *,
+        strict_timebox: float | None = None,
+        telemetry: Mapping[str, Any] | None = None,
+    ) -> Any:
+        job_snapshot = _schedule_background_preload_safe(
+            reason, strict_timebox=strict_timebox, budget_flag=True
+        )
+        job_snapshot.setdefault("presence_only", True)
+        job_snapshot.setdefault("warmup_placeholder_reason", reason)
+        job_snapshot.setdefault("deferral_reason", reason)
+        job_snapshot.setdefault("background_join_timeout", strict_timebox)
+        job_snapshot.setdefault("background_timebox", strict_timebox)
+        summary = job_snapshot.get("warmup_summary") or {}
+        summary.update(
+            {
+                "deferred": True,
+                "deferred_reason": reason,
+                "presence_only": True,
+                "stage_budget": stage_budget,
+                "bootstrap_window": deadline_remaining,
+                "stage_budget_defaulted": stage_budget_defaulted,
+                "input_stage_budget": input_stage_budget,
+                "background_join_timeout": strict_timebox,
+            }
+        )
+        if telemetry:
+            summary.update({f"telemetry_{k}": v for k, v in telemetry.items()})
+        job_snapshot["warmup_summary"] = summary
+        global _BOOTSTRAP_EMBEDDER_JOB
+        _BOOTSTRAP_EMBEDDER_JOB = _BOOTSTRAP_EMBEDDER_JOB or {}
+        _BOOTSTRAP_EMBEDDER_JOB.update(job_snapshot)
+        _BOOTSTRAP_EMBEDDER_ATTEMPTED = True
+        LOGGER.info(
+            "embedder warmup deferred to presence-only background preload",
+            extra={
+                "reason": reason,
+                "background_timebox": strict_timebox,
+                "stage_budget": stage_budget,
+                "bootstrap_deadline": bootstrap_deadline,
+                "bootstrap_window": deadline_remaining,
+            "telemetry": dict(telemetry or {}),
+        },
+    )
+        return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+
+    if not force_full_preload:
+        missing_budget = stage_budget is None or stage_budget <= 0
+        missing_deadline = bootstrap_deadline is None or (
+            deadline_remaining is not None and deadline_remaining <= 0
+        )
+        if missing_budget or missing_deadline:
+            return _presence_placeholder(
+                "embedder_budget_precheck",
+                strict_timebox=_background_timebox(),
+                telemetry={
+                    "missing_budget": missing_budget,
+                    "missing_deadline": missing_deadline,
+                },
+            )
+
+    contextual_presence_only = (
+        bootstrap_context_active or warmup_lite_context
+    ) and not force_full_preload
+    if contextual_presence_only and not (stage_budget and stage_budget > 0):
+        return _presence_placeholder(
+            "embedder_presence_only_context",
+            strict_timebox=_background_timebox(),
+            telemetry={
+                "bootstrap_context": bootstrap_context_active,
+                "warmup_lite": warmup_lite_context,
+            },
+        )
     presence_fastpath_threshold = 8.0
     try:
         presence_fastpath_threshold = float(
