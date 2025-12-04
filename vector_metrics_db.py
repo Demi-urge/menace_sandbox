@@ -351,6 +351,10 @@ class _BootstrapVectorMetricsStub:
                     "vector_metrics_db.bootstrap.stub_promotion_pending",
                     extra={"pending_weights": len(pending)},
                 )
+                if self._warmup_guarded_activation and self._activation_blocked:
+                    self._release_activation_block(
+                        reason="bootstrap_ready", configure_ready=True
+                    )
                 self._log_deferred_activation(reason="bootstrap_ready_cached")
                 _increment_deferral_metric("bootstrap_ready_cached")
                 if not self._post_warmup_activation_requested:
@@ -361,6 +365,7 @@ class _BootstrapVectorMetricsStub:
                     self._pending_readiness_reason = "bootstrap_ready"
                     return
                 self._pending_readiness_reason = "bootstrap_ready"
+                self._activate_after_readiness(reason="bootstrap_ready")
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True
@@ -1060,6 +1065,18 @@ def _arm_shared_readiness_hook() -> None:
     _READINESS_HOOK_ARMED = True
 
     instance = _VECTOR_DB_INSTANCE
+    if instance is None:
+        try:
+            instance = get_shared_vector_metrics_db(
+                warmup=True,
+                ensure_exists=False,
+                read_only=True,
+                warmup_stub=True,
+            )
+        except Exception:  # pragma: no cover - bootstrap-time guardrail
+            logger.debug("vector_metrics_db.bootstrap.readiness_stub_failed", exc_info=True)
+            return
+
     if isinstance(instance, _BootstrapVectorMetricsStub):
         instance.register_readiness_hook()
         return
@@ -2637,6 +2654,7 @@ class VectorMetricsDB:
                 self._mark_warmup_complete(
                     reason="bootstrap_ready", activate=False
                 )
+                self.activate_persistence(reason="bootstrap_ready")
                 if self._warmup_mode and not self._warmup_complete.is_set():
                     logger.info(
                         "vector_metrics_db.bootstrap.persistence_deferred",
@@ -2787,7 +2805,22 @@ class VectorMetricsDB:
     def activate_persistence(self, *, reason: str = "metrics_ready") -> None:
         """Exit warmup/bootstrap mode and initialise SQLite lazily."""
 
+        warmup_context = bool(
+            self._warmup_mode or self.bootstrap_fast or self._bootstrap_context
+        )
         if not self._boot_stub_active:
+            if warmup_context:
+                logger.warning(
+                    "vector_metrics_db.bootstrap.persistence_without_stub",
+                    extra=_timestamp_payload(
+                        None,
+                        warmup_mode=self._warmup_mode,
+                        bootstrap_fast=self.bootstrap_fast,
+                        menace_bootstrap=self._bootstrap_context,
+                        reason=reason,
+                    ),
+                )
+                _increment_deferral_metric("warmup_persistence_bypass")
             self._persistence_activation_pending = False
             return
         if self._bootstrap_guard_active and not self._pending_readiness_hook:
@@ -2800,6 +2833,7 @@ class VectorMetricsDB:
         )
         if warmup_guard_active and reason != "first_write":
             self._persistence_activation_pending = True
+            _increment_deferral_metric("warmup_persistence_attempt")
             logger.info(
                 "vector_metrics_db.bootstrap.persistence_pending",
                 extra=_timestamp_payload(
