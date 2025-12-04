@@ -1220,17 +1220,22 @@ def warmup_vector_service(
             "bootstrap": "deferred-no-budget",
         }
         heavy_stages = ("model", "handlers", "scheduler", "vectorise")
-        background_hints = {
-            stage: heavy_stage_cap_env or _HEAVY_STAGE_CEILING for stage in heavy_stages
-        }
+        conservative_hints = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+        background_hints = {}
+        for stage in heavy_stages:
+            conservative_cap = conservative_hints.get(stage)
+            stage_cap = heavy_stage_cap_env if heavy_stage_cap_env is not None else _HEAVY_STAGE_CEILING
+            if conservative_cap is not None:
+                stage_cap = min(stage_cap, conservative_cap)
+            background_hints[stage] = stage_cap
+        background_stage_timeouts = dict(background_hints)
         for stage in heavy_stages:
             summary[stage] = "deferred-budget-hooks"
             summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
             _record_background(stage, "deferred-budget-hooks")
-            _hint_background_budget(stage, background_hints.get(stage))
+            _hint_background_budget(stage, background_stage_timeouts.get(stage))
         deferred.update(heavy_stages)
         background_candidates.update(heavy_stages)
-        background_stage_timeouts = dict(background_hints)
         if background_hook is not None:
             try:
                 hook_code = getattr(background_hook, "__code__", None)
