@@ -108,3 +108,28 @@ def test_bootstrap_getter_returns_stub_without_creating_db(monkeypatch, tmp_path
 
     assert isinstance(vm, vdb._BootstrapVectorMetricsStub)
     assert not (tmp_path / "vector_metrics.db").exists()
+
+
+def test_bootstrap_timer_env_returns_stub(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "5")
+    monkeypatch.setattr(vdb, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vdb.get_vector_metrics_db()
+
+    assert isinstance(vm, vdb._BootstrapVectorMetricsStub)
+    assert not (tmp_path / "vector_metrics.db").exists()
+
+
+def test_bootstrap_timer_override_allows_activation(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WAIT_SECS", "5")
+    monkeypatch.setattr(vdb, "_VECTOR_DB_INSTANCE", None)
+
+    vm = vdb.get_vector_metrics_db(
+        allow_bootstrap_activation=True, ensure_exists=True, read_only=False
+    )
+
+    assert isinstance(vm, vdb.VectorMetricsDB)
+    vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
+    assert (tmp_path / "vector_metrics.db").exists()

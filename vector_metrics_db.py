@@ -1155,6 +1155,7 @@ def get_shared_vector_metrics_db(
     ensure_exists: bool | None = None,
     read_only: bool | None = None,
     warmup_stub: bool | None = None,
+    allow_bootstrap_activation: bool = False,
 ) -> "VectorMetricsDB":
     """Return a lazily initialised shared :class:`VectorMetricsDB` instance."""
 
@@ -1191,6 +1192,10 @@ def get_shared_vector_metrics_db(
         "warmup_stub_requested": warmup_stub_requested,
     }
     warmup_context = bool(any(warmup_context_reasons.values()))
+    bootstrap_protection_active = bool(
+        warmup_stub_requested
+        or (warmup_context and not allow_bootstrap_activation)
+    )
     stub_short_circuit = bool(
         warmup_context
         or resolved_warmup
@@ -1202,7 +1207,19 @@ def get_shared_vector_metrics_db(
     requested_read_only = read_only
     queued_promotion_kwargs: dict[str, Any] = {}
     promotion_deferred = False
-    if warmup_context:
+    if warmup_context and allow_bootstrap_activation and not warmup_stub_requested:
+        logger.info(
+            "vector_metrics_db.bootstrap.stub_override_requested",
+            extra={
+                "bootstrap_fast": resolved_bootstrap_fast,
+                "warmup": resolved_warmup,
+                "menace_bootstrap": menace_bootstrap,
+                "timer_context": timer_context,
+                "bootstrap_state": state_flags["bootstrap_state"],
+            },
+        )
+
+    if bootstrap_protection_active:
         if promotion_requested:
             promotion_deferred = True
             logger.info(
@@ -1224,10 +1241,12 @@ def get_shared_vector_metrics_db(
         ensure_exists = False
         read_only = True
         _arm_shared_readiness_hook()
-    promotion_pending_for_warmup = bool(warmup_context and promotion_requested)
+    promotion_pending_for_warmup = bool(
+        bootstrap_protection_active and promotion_requested
+    )
 
     global _WARMUP_DEFERRAL_EMITTED
-    if warmup_context and not _WARMUP_DEFERRAL_EMITTED:
+    if bootstrap_protection_active and not _WARMUP_DEFERRAL_EMITTED:
         _emit_warmup_summary_metric(
             reasons={**warmup_context_reasons, "activation_deferred": True},
             promotion_requested=promotion_requested,
@@ -1238,7 +1257,7 @@ def get_shared_vector_metrics_db(
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
         if (
-            warmup_context
+            bootstrap_protection_active
             and isinstance(_VECTOR_DB_INSTANCE, VectorMetricsDB)
             and stub_short_circuit
         ):
@@ -1282,7 +1301,7 @@ def get_shared_vector_metrics_db(
             )
 
         if _VECTOR_DB_INSTANCE is None:
-            if warmup_context:
+            if bootstrap_protection_active:
                 _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
                     path="vector_metrics.db",
                     bootstrap_fast=resolved_bootstrap_fast,
@@ -1342,7 +1361,7 @@ def get_shared_vector_metrics_db(
             if not getattr(_VECTOR_DB_INSTANCE, "_activation_blocked", False):
                 _VECTOR_DB_INSTANCE.activate_on_first_write()
             _VECTOR_DB_INSTANCE.register_readiness_hook()
-            if warmup_context:
+            if bootstrap_protection_active:
                 logger.info(
                     "vector_metrics_db.bootstrap.stub_reused",
                     extra={
@@ -1357,7 +1376,7 @@ def get_shared_vector_metrics_db(
                     },
                 )
 
-    if warmup_context and isinstance(
+    if bootstrap_protection_active and isinstance(
         _VECTOR_DB_INSTANCE, (VectorMetricsDB, _BootstrapVectorMetricsStub)
     ):
         if getattr(_VECTOR_DB_INSTANCE, "_boot_stub_active", False):
@@ -1386,7 +1405,7 @@ def get_shared_vector_metrics_db(
                 },
             )
 
-    if warmup_context and promotion_deferred:
+    if bootstrap_protection_active and promotion_deferred:
         _emit_warmup_summary_metric(
             reasons=warmup_context_reasons, promotion_requested=promotion_requested
         )
@@ -1402,7 +1421,7 @@ def get_shared_vector_metrics_db(
             },
         )
 
-    if warmup_context:
+    if bootstrap_protection_active:
         try:
             _VECTOR_DB_INSTANCE._log_deferred_activation(reason="bootstrap_warmup_summary")
         except Exception:
@@ -1417,6 +1436,15 @@ def get_shared_vector_metrics_db(
             ),
             "stub_requested": warmup_stub_requested,
         }
+        if warmup_context and not warmup_stub_requested:
+            logger.info(
+                "vector_metrics_db.bootstrap.protection_active",
+                extra={
+                    **context_extra,
+                    "bootstrap_state": state_flags["bootstrap_state"],
+                    "warmup_lite": state_flags["warmup_lite"],
+                },
+            )
         logger.info(
             "vector_metrics_db.bootstrap.stub_returned",
             extra=context_extra,
@@ -1449,6 +1477,7 @@ def get_vector_metrics_db(
         ensure_exists=ensure_exists,
         read_only=read_only,
         warmup_stub=warmup_stub,
+        allow_bootstrap_activation=allow_bootstrap_activation,
     )
 
     if isinstance(vm, _BootstrapVectorMetricsStub):
