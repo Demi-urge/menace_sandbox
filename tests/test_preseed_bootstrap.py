@@ -768,3 +768,93 @@ def test_prepare_pipeline_timeout_falls_back_when_resolver_none(monkeypatch, res
         timeouts["prepare_pipeline_for_bootstrap"]
         >= timeouts["_seed_research_aggregator_context placeholder"]
     )
+
+
+def test_embedder_warmup_threads_stage_budget(monkeypatch):
+    _install_menace_sandbox_stub()
+    bootstrap._BOOTSTRAP_EMBEDDER_ATTEMPTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_STARTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+
+    placeholder = object()
+    stage_controller = types.SimpleNamespace(
+        stage_budget=lambda step_name=None, stage=None: 0.05,
+        stage_deadline=lambda step_name=None, stage=None: time.monotonic() + 0.05,
+        defer_step=lambda *_, **__: None,
+        complete_step=lambda *_, **__: None,
+    )
+    bootstrap.stage_controller = stage_controller
+    bootstrap._BOOTSTRAP_SCHEDULER.stage_controller = stage_controller
+
+    governed_embeddings = types.SimpleNamespace(
+        _MAX_EMBEDDER_WAIT=0.1,
+        _activate_bundled_fallback=lambda reason: placeholder,
+        apply_bootstrap_timeout_caps=lambda budget: budget,
+        cancel_embedder_initialisation=lambda *_a, **_k: None,
+        embedder_cache_present=lambda: False,
+        get_embedder=lambda **_k: placeholder,
+    )
+    monkeypatch.setitem(sys.modules, "menace_sandbox.governed_embeddings", governed_embeddings)
+
+    captured: dict[str, object] = {}
+
+    def fake_warmup_vector_service(**kwargs):
+        captured.update(kwargs)
+        return {"bootstrap": "lite"}
+
+    vector_pkg = types.ModuleType("menace_sandbox.vector_service")
+    lazy_module = types.ModuleType("menace_sandbox.vector_service.lazy_bootstrap")
+    lazy_module.warmup_vector_service = fake_warmup_vector_service
+    monkeypatch.setitem(sys.modules, "menace_sandbox.vector_service", vector_pkg)
+    monkeypatch.setitem(sys.modules, lazy_module.__name__, lazy_module)
+
+    result = bootstrap.start_embedder_warmup(timeout=0.1, stage_budget=0.05)
+
+    assert result is placeholder or result is bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert captured.get("bootstrap_lite") is True
+    assert callable(captured.get("budget_remaining"))
+    assert callable(captured.get("check_budget"))
+    timeouts = captured.get("stage_timeouts") or {}
+    assert isinstance(timeouts, dict) and timeouts.get("budget") is not None
+    assert timeouts.get("budget") <= pytest.approx(0.05)
+
+
+def test_embedder_warmup_skips_when_stage_budget_exhausted(monkeypatch):
+    _install_menace_sandbox_stub()
+    bootstrap._BOOTSTRAP_EMBEDDER_ATTEMPTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_STARTED = False
+    bootstrap._BOOTSTRAP_EMBEDDER_JOB = None
+
+    stage_controller = types.SimpleNamespace(
+        stage_budget=lambda step_name=None, stage=None: 0.0,
+        stage_deadline=lambda step_name=None, stage=None: None,
+        defer_step=lambda *_, **__: None,
+        complete_step=lambda *_, **__: None,
+    )
+    bootstrap.stage_controller = stage_controller
+    bootstrap._BOOTSTRAP_SCHEDULER.stage_controller = stage_controller
+
+    governed_embeddings = types.SimpleNamespace(
+        _MAX_EMBEDDER_WAIT=0.1,
+        _activate_bundled_fallback=lambda reason: object(),
+        apply_bootstrap_timeout_caps=lambda budget: budget,
+        cancel_embedder_initialisation=lambda *_a, **_k: None,
+        embedder_cache_present=lambda: False,
+        get_embedder=lambda **_k: object(),
+    )
+    monkeypatch.setitem(sys.modules, "menace_sandbox.governed_embeddings", governed_embeddings)
+
+    warmup_called = threading.Event()
+
+    def fake_warmup_vector_service(**_kwargs):
+        warmup_called.set()
+        return {}
+
+    lazy_module = types.ModuleType("menace_sandbox.vector_service.lazy_bootstrap")
+    lazy_module.warmup_vector_service = fake_warmup_vector_service
+    monkeypatch.setitem(sys.modules, lazy_module.__name__, lazy_module)
+
+    result = bootstrap.start_embedder_warmup(timeout=0.1, stage_budget=0.0)
+
+    assert result is None or result is bootstrap._BOOTSTRAP_PLACEHOLDER
+    assert not warmup_called.is_set()
