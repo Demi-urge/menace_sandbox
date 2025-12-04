@@ -3050,6 +3050,22 @@ def start_embedder_warmup(
         if candidate is not None
     ]
     stage_timebox_cap = min(stage_timebox_candidates) if stage_timebox_candidates else None
+    warmup_cap_ceiling = 30.0
+    try:
+        warmup_cap_ceiling = float(
+            os.getenv("BOOTSTRAP_EMBEDDER_WARMUP_CEILING", warmup_cap_ceiling)
+        )
+    except Exception:  # pragma: no cover - advisory only
+        LOGGER.debug("unable to parse embedder warmup ceiling", exc_info=True)
+    if warmup_cap_ceiling <= 0:
+        warmup_cap_ceiling = 30.0
+    if stage_timebox_cap is None:
+        stage_timebox_cap = warmup_cap_ceiling
+    else:
+        stage_timebox_cap = min(stage_timebox_cap, warmup_cap_ceiling)
+    warmup_cap_deadline = (
+        warmup_started + stage_timebox_cap if stage_timebox_cap is not None else None
+    )
 
     def _remaining_timebox_cap() -> float | None:
         if stage_timebox_cap is None:
@@ -3069,11 +3085,11 @@ def start_embedder_warmup(
         except Exception:  # pragma: no cover - advisory only
             LOGGER.debug("unable to persist budget deferral flag", exc_info=True)
 
-    def _schedule_background_preload_safe(
-        reason: str, *, strict_timebox: float | None = None, budget_flag: bool = False
-    ) -> dict[str, Any]:
-        global _BOOTSTRAP_EMBEDDER_JOB
-        try:
+        def _schedule_background_preload_safe(
+            reason: str, *, strict_timebox: float | None = None, budget_flag: bool = False
+        ) -> dict[str, Any]:
+            global _BOOTSTRAP_EMBEDDER_JOB
+            try:
             job_snapshot = _schedule_background_preload(  # type: ignore[name-defined]
                 reason, strict_timebox=strict_timebox
             )
@@ -3092,7 +3108,22 @@ def start_embedder_warmup(
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
         if budget_flag:
             _mark_budget_deferral(job_snapshot)
+        warmup_summary_flags = {}
+        if reason in {
+            "embedder_warmup_cap_exhausted",
+            "embedder_background_cap_exhausted",
+        }:
+            warmup_summary_flags["deferred_by_cap"] = True
+        if reason in {
+            "embedder_background_deadline_elapsed",
+            "embedder_background_budget_missing",
+        }:
+            warmup_summary_flags["cancelled_by_cap"] = True
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        if warmup_summary_flags:
+            warmup_summary = job_snapshot.get("warmup_summary") or {}
+            warmup_summary.update(warmup_summary_flags)
+            job_snapshot["warmup_summary"] = warmup_summary
         return job_snapshot
 
     def _defer_stage(reason: str) -> None:
@@ -3404,6 +3435,13 @@ def start_embedder_warmup(
             wall_cap = presence_cap
         if strict_hint is not None:
             wall_cap = strict_hint if wall_cap is None else min(wall_cap, strict_hint)
+        timebox_cap_remaining = _remaining_timebox_cap()
+        if timebox_cap_remaining is not None:
+            wall_cap = (
+                timebox_cap_remaining
+                if wall_cap is None
+                else min(timebox_cap_remaining, wall_cap)
+            )
         return wall_cap
     presence_fastpath_threshold = 8.0
     try:
@@ -3653,6 +3691,11 @@ def start_embedder_warmup(
     if strict_join_cap is not None:
         join_timeout = min(join_timeout, strict_join_cap)
         join_cap_reason = "embedder_preload_join_cap"
+    cap_remaining = _remaining_timebox_cap()
+    if cap_remaining is not None:
+        join_timeout = min(join_timeout, cap_remaining)
+        if cap_remaining <= 0:
+            join_cap_reason = join_cap_reason or "embedder_warmup_cap_exhausted"
 
     if join_timeout <= 0:
         join_cap_reason = join_cap_reason or "embedder_preload_join_cap"
@@ -3670,6 +3713,8 @@ def start_embedder_warmup(
                 "deferral_reason": join_cap_reason,
                 "stage_budget_defaulted": stage_budget_defaulted,
                 "input_stage_budget": input_stage_budget,
+                "deferred_by_cap": join_cap_reason
+                == "embedder_warmup_cap_exhausted",
             }
         )
         warmup_summary = job_snapshot.get("warmup_summary") or {}
@@ -3683,6 +3728,8 @@ def start_embedder_warmup(
                 "stage_budget_defaulted": stage_budget_defaulted,
                 "input_stage_budget": input_stage_budget,
                 "strict_join_cap": strict_join_cap,
+                "deferred_by_cap": join_cap_reason
+                == "embedder_warmup_cap_exhausted",
             }
         )
         job_snapshot["warmup_summary"] = warmup_summary
@@ -3698,7 +3745,13 @@ def start_embedder_warmup(
     try:
         return embedder_future.result(timeout=join_timeout)
     except FuturesTimeoutError:
+        cap_exhausted = False
+        remaining_cap_now = _remaining_timebox_cap()
+        if remaining_cap_now is not None and remaining_cap_now <= 0:
+            cap_exhausted = True
         timeout_reason = presence_reason or join_cap_reason or "embedder_stage_budget_timeout"
+        if cap_exhausted:
+            timeout_reason = "embedder_warmup_cap_exhausted"
         elapsed = time.monotonic() - warmup_started
         embedder_stop_event.set()
         with contextlib.suppress(Exception):
@@ -3720,6 +3773,7 @@ def start_embedder_warmup(
                 "timeout_reason": timeout_reason,
                 "stage_budget_defaulted": stage_budget_defaulted,
                 "input_stage_budget": input_stage_budget,
+                "cancelled_by_cap": cap_exhausted,
             },
         )
         _defer_stage(timeout_reason)
@@ -3754,6 +3808,7 @@ def start_embedder_warmup(
                 "bootstrap_window": deadline_remaining,
                 "stage_budget_defaulted": stage_budget_defaulted,
                 "input_stage_budget": input_stage_budget,
+                "cancelled_by_cap": cap_exhausted,
             }
         )
         job_snapshot["warmup_summary"] = warmup_summary
@@ -5883,6 +5938,16 @@ def initialize_bootstrap_context(
                             if embedder_stage_budget is not None
                             else embedder_stage_budget_hint,
                         )
+                        if reason in {
+                            "embedder_background_cap_exhausted",
+                            "embedder_warmup_cap_exhausted",
+                        }:
+                            warmup_summary_local.setdefault("deferred_by_cap", True)
+                        if reason in {
+                            "embedder_background_deadline_elapsed",
+                            "embedder_background_budget_missing",
+                        }:
+                            warmup_summary_local.setdefault("cancelled_by_cap", True)
                         job_snapshot.setdefault("deferral_reason", reason)
                         job_snapshot["warmup_summary"] = warmup_summary_local
                         _BOOTSTRAP_SCHEDULER.mark_partial(
@@ -5891,6 +5956,22 @@ def initialize_bootstrap_context(
 
                     if background_cap is not None and background_cap <= 0:
                         _record_background_placeholder("embedder_background_cap_exhausted")
+                        return
+
+                    if (
+                        embedder_stage_budget is None
+                        and embedder_stage_deadline is None
+                        and bootstrap_deadline is None
+                    ):
+                        _record_background_placeholder(
+                            "embedder_background_budget_missing"
+                        )
+                        return
+
+                    if bootstrap_deadline is not None and bootstrap_deadline <= time.monotonic():
+                        _record_background_placeholder(
+                            "embedder_background_deadline_elapsed"
+                        )
                         return
 
                     shared_budget_remaining = getattr(
