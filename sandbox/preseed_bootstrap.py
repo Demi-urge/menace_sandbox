@@ -4307,6 +4307,21 @@ def initialize_bootstrap_context(
         and math.isfinite(embedder_stage_deadline_hint)
         else None
     )
+    embedder_background_opt_in = bool(force_embedder_preload)
+    embedder_probe_only_window = 5.0
+    embedder_probe_guard_window = [
+        candidate
+        for candidate in (
+            embedder_stage_budget_hint,
+            embedder_stage_deadline_hint_remaining,
+        )
+        if candidate is not None and candidate >= 0.0
+    ]
+    embedder_probe_only_guard = (
+        not force_embedder_preload
+        and embedder_probe_guard_window
+        and min(embedder_probe_guard_window) < embedder_probe_only_window
+    )
     heavy_stage_ceiling = (
         BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP
         if BOOTSTRAP_EMBEDDER_WARMUP_JOIN_CAP > 0
@@ -4460,6 +4475,7 @@ def initialize_bootstrap_context(
         enqueue_background: bool = False,
         disable_step: bool = True,
         budget_flag: bool = False,
+        probe_only: bool = False,
     ) -> None:
         nonlocal embedder_preload_enabled, embedder_preload_skip_reason, embedder_preload_deferred
         global _BOOTSTRAP_EMBEDDER_JOB
@@ -4467,7 +4483,10 @@ def initialize_bootstrap_context(
             embedder_preload_enabled = False
         embedder_preload_skip_reason = reason
         embedder_preload_deferred = True
-        stage_controller.defer_step("embedder_preload", reason=reason)
+        if probe_only:
+            stage_controller.complete_step("embedder_preload", 0.0)
+        else:
+            stage_controller.defer_step("embedder_preload", reason=reason)
         _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=reason)
         _BOOTSTRAP_SCHEDULER.mark_partial(
             "background_loops", reason=f"embedder_placeholder:{reason}"
@@ -4476,7 +4495,14 @@ def initialize_bootstrap_context(
         background_timebox = (
             background_timebox if background_timebox is not None else embedder_stage_timebox_hint
         )
-        if enqueue_background:
+        background_requested = enqueue_background and not probe_only
+        background_allowed = (
+            background_requested
+            and embedder_background_opt_in
+            and embedder_stage_budget_hint is not None
+            and embedder_stage_budget_hint > 0
+        )
+        if background_allowed:
             _BOOTSTRAP_EMBEDDER_JOB = _schedule_background_preload_safe(
                 reason,
                 strict_timebox=background_timebox,
@@ -4485,10 +4511,10 @@ def initialize_bootstrap_context(
             )
         else:
             warmup_summary = {
-                "deferred": True,
+                "deferred": not probe_only,
                 "deferred_reason": reason,
                 "deferral_reason": reason,
-                "stage": "skipped-preload",
+                "stage": "probe-only" if probe_only else "skipped-preload",
                 "stage_ceiling": embedder_stage_inline_cap,
                 "stage_budget_hint": embedder_stage_budget_hint,
                 "stage_deadline_hint": embedder_stage_deadline_hint,
@@ -4502,24 +4528,36 @@ def initialize_bootstrap_context(
                 "background_enqueue_reason": reason,
                 "result": _BOOTSTRAP_PLACEHOLDER,
                 "warmup_summary": warmup_summary,
+                "presence_only": probe_only,
+                "probe_only": probe_only,
             }
         job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
         warmup_summary = job_snapshot.get("warmup_summary") or {}
-        warmup_summary.setdefault("deferred", True)
+        warmup_summary.setdefault("deferred", not probe_only)
         warmup_summary.setdefault("deferred_reason", reason)
         warmup_summary.setdefault("deferral_reason", reason)
+        warmup_summary.setdefault("presence_only", probe_only)
+        warmup_summary.setdefault("probe_only_guard", probe_only)
         warmup_summary.setdefault("stage_ceiling", embedder_stage_inline_cap)
         warmup_summary.setdefault("stage_budget_hint", embedder_stage_budget_hint)
         warmup_summary.setdefault("stage_deadline_hint", embedder_stage_deadline_hint)
         warmup_summary.setdefault("background_timebox", background_timebox)
         job_snapshot["warmup_summary"] = warmup_summary
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
-        stage_controller.complete_step("embedder_preload", 0.0)
+        if not probe_only:
+            stage_controller.complete_step("embedder_preload", 0.0)
 
     positive_stage_timebox = any(
         candidate is not None and candidate > 0
         for candidate in (embedder_stage_budget_hint, embedder_stage_deadline_hint_remaining)
     )
+    if embedder_probe_only_guard and embedder_preload_skip_reason is None:
+        _record_embedder_skip(
+            "embedder_preload_probe_only_guard",
+            enqueue_background=False,
+            disable_step=True,
+            probe_only=True,
+        )
     embedder_stage_timebox_ceiling = 30.0
     try:
         stage_budget_remaining = stage_controller.stage_budget(step_name="embedder_preload")
