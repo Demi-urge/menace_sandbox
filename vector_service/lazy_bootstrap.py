@@ -10,6 +10,7 @@ routine to pre-populate caches before the first real request.
 
 import ctypes
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
+import queue
 import importlib.util
 import json
 import logging
@@ -35,6 +36,9 @@ _MODEL_BACKGROUND_THREAD: threading.Thread | None = None
 _MODEL_FUTURE_LOCK = threading.Lock()
 _MODEL_FUTURE: Future | None = None
 _MODEL_EXECUTOR: ThreadPoolExecutor | None = None
+_BACKGROUND_EXECUTOR_LOCK = threading.Lock()
+_BACKGROUND_EXECUTOR: "_BackgroundExecutor | None" = None
+_BACKGROUND_STAGE_FUTURES: dict[str, Future] = {}
 _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
 _WARMUP_STAGE_MEMO: dict[str, str] = {}
@@ -69,6 +73,121 @@ def _model_executor() -> ThreadPoolExecutor:
             max_workers=2, thread_name_prefix="vector-model"
         )
     return _MODEL_EXECUTOR
+
+
+class _BackgroundExecutor:
+    def __init__(self, *, max_workers: int = 2, thread_name_prefix: str = "vector-warmup"):
+        self._queue: "queue.Queue[tuple[Callable[..., object], tuple[object, ...], dict[str, object], Future]]" = queue.Queue()
+        self._threads: list[threading.Thread] = []
+        self._shutdown = False
+        for idx in range(max_workers):
+            thread = threading.Thread(
+                target=self._worker,
+                name=f"{thread_name_prefix}-{idx}",
+                daemon=True,
+            )
+            thread.start()
+            self._threads.append(thread)
+
+    def _worker(self) -> None:
+        while not self._shutdown:
+            task = self._queue.get()
+            if task is None:
+                self._queue.task_done()
+                break
+            func, args, kwargs, future = task
+            if future.set_running_or_notify_cancel():
+                try:
+                    result = func(*args, **kwargs)
+                except BaseException as exc:  # pragma: no cover - background best effort
+                    future.set_exception(exc)
+                else:
+                    future.set_result(result)
+            self._queue.task_done()
+
+    def submit(self, func: Callable[..., object], *args: object, **kwargs: object) -> Future:
+        future: Future = Future()
+        if self._shutdown:
+            future.set_exception(RuntimeError("background executor shut down"))
+            return future
+        self._queue.put((func, args, kwargs, future))
+        return future
+
+    def shutdown(self) -> None:
+        self._shutdown = True
+        for _ in self._threads:
+            self._queue.put(None)
+
+
+def _background_executor() -> _BackgroundExecutor:
+    global _BACKGROUND_EXECUTOR
+    with _BACKGROUND_EXECUTOR_LOCK:
+        if _BACKGROUND_EXECUTOR is None:
+            _BACKGROUND_EXECUTOR = _BackgroundExecutor(max_workers=2)
+    return _BACKGROUND_EXECUTOR
+
+
+def _record_background_schedule(
+    stages: set[str],
+    timeouts: Mapping[str, float | None],
+    logger: logging.Logger,
+) -> None:
+    now = time.time()
+    for stage in stages:
+        _update_warmup_stage_cache(
+            stage,
+            _WARMUP_STAGE_MEMO.get(stage, "deferred"),
+            logger,
+            meta={
+                "background_state": "queued",
+                "background_timeout": timeouts.get(stage),
+                "background_scheduled_at": now,
+            },
+            emit_metric=False,
+        )
+
+
+def _schedule_background_warmup(
+    stages: set[str],
+    *,
+    logger: logging.Logger,
+    timeouts: Mapping[str, float | None] | None,
+    warmup_kwargs: Mapping[str, object],
+) -> None:
+    if not stages:
+        return
+    remaining = set()
+    with _BACKGROUND_EXECUTOR_LOCK:
+        for stage in stages:
+            future = _BACKGROUND_STAGE_FUTURES.get(stage)
+            if future is None or future.done():
+                remaining.add(stage)
+            else:
+                logger.debug("Skipping background enqueue for %s; job still running", stage)
+    if not remaining:
+        return
+
+    timeout_map: dict[str, float | None] = {}
+    if timeouts is not None:
+        timeout_map.update(timeouts)
+    _record_background_schedule(remaining, timeout_map, logger)
+
+    def _run() -> None:
+        try:
+            warmup_vector_service(
+                **{**warmup_kwargs, "stage_timeouts": timeout_map, "background_hook": None},
+            )
+        except Exception:  # pragma: no cover - background best effort
+            logger.debug("background vector warmup failed", exc_info=True)
+        finally:
+            with _BACKGROUND_EXECUTOR_LOCK:
+                for stage in remaining:
+                    _BACKGROUND_STAGE_FUTURES.pop(stage, None)
+
+    future = _background_executor().submit(_run)
+    with _BACKGROUND_EXECUTOR_LOCK:
+        for stage in remaining:
+            _BACKGROUND_STAGE_FUTURES[stage] = future
 
 VECTOR_WARMUP_STAGE_TOTAL = getattr(
     _metrics,
@@ -1326,6 +1445,29 @@ def warmup_vector_service(
             _hint_background_budget(stage, background_stage_timeouts.get(stage))
         deferred.update(heavy_stages)
         background_candidates.update(heavy_stages)
+        _schedule_background_warmup(
+            set(heavy_stages),
+            logger=log,
+            timeouts=background_hints,
+            warmup_kwargs={
+                "download_model": download_model,
+                "probe_model": probe_model or model_probe_allowed,
+                "hydrate_handlers": True,
+                "start_scheduler": True,
+                "run_vectorise": True,
+                "check_budget": check_budget,
+                "budget_remaining": budget_remaining,
+                "logger": log,
+                "force_heavy": True,
+                "bootstrap_fast": bootstrap_fast,
+                "warmup_lite": False,
+                "warmup_model": True,
+                "warmup_handlers": True,
+                "warmup_probe": True,
+                "deferred_stages": set(heavy_stages),
+                "bootstrap_lite": bootstrap_lite,
+            },
+        )
         if background_hook is not None:
             try:
                 hook_code = getattr(background_hook, "__code__", None)
@@ -2571,40 +2713,28 @@ def warmup_vector_service(
                     )
                 return
 
-        for stage in stages:
-            _update_warmup_stage_cache(
-                stage,
-                _WARMUP_STAGE_MEMO.get(stage, "deferred"),
-                log,
-                meta={"background_state": "queued", "background_timeout": background_timeouts.get(stage)},
-                emit_metric=False,
-            )
-
-        def _run_background() -> None:
-            try:
-                warmup_vector_service(
-                    download_model=download_model,
-                    probe_model=probe_model,
-                    hydrate_handlers="handlers" in stages,
-                    start_scheduler="scheduler" in stages,
-                    run_vectorise="vectorise" in stages,
-                    check_budget=check_budget,
-                    budget_remaining=_remaining_budget,
-                    logger=log,
-                    force_heavy=False,
-                    bootstrap_fast=bootstrap_fast,
-                    warmup_lite=warmup_lite,
-                    warmup_model=warmup_model,
-                    warmup_handlers=True,
-                    warmup_probe=warmup_probe,
-                    stage_timeouts=background_timeouts,
-                    deferred_stages=recorded_deferred or set(),
-                    background_hook=None,
-                )
-            except Exception:  # pragma: no cover - background best effort
-                log.debug("background vector warmup failed", exc_info=True)
-
-        threading.Thread(target=_run_background, daemon=True).start()
+        _schedule_background_warmup(
+            set(stages),
+            logger=log,
+            timeouts=background_timeouts,
+            warmup_kwargs={
+                "download_model": download_model,
+                "probe_model": probe_model,
+                "hydrate_handlers": "handlers" in stages,
+                "start_scheduler": "scheduler" in stages,
+                "run_vectorise": "vectorise" in stages,
+                "check_budget": check_budget,
+                "budget_remaining": _remaining_budget,
+                "logger": log,
+                "force_heavy": False,
+                "bootstrap_fast": bootstrap_fast,
+                "warmup_lite": warmup_lite,
+                "warmup_model": warmup_model,
+                "warmup_handlers": True,
+                "warmup_probe": warmup_probe,
+                "deferred_stages": recorded_deferred or set(),
+            },
+        )
 
     def _stage_budget_cap() -> float | None:
         if isinstance(stage_timeouts, Mapping):
