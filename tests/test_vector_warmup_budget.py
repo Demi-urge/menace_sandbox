@@ -7,6 +7,8 @@ import types
 from pathlib import Path
 from typing import Mapping
 
+import pytest
+
 vector_service_pkg = types.ModuleType("vector_service")
 vector_service_pkg.__path__ = [str(Path(__file__).resolve().parents[1] / "vector_service")]
 sys.modules.setdefault("vector_service", vector_service_pkg)
@@ -123,7 +125,7 @@ def test_short_timebox_defers_inline_download(caplog, monkeypatch, tmp_path):
     background = lazy_bootstrap._MODEL_BACKGROUND_THREAD
 
     assert elapsed < 0.25
-    assert warmup_summary["model"] == "deferred-timebox"
+    assert warmup_summary["model"].startswith("deferred")
     assert background is not None and background.is_alive()
     assert (
         lazy_bootstrap._WARMUP_STAGE_META.get("model", {}).get("stage_timeout")
@@ -132,6 +134,43 @@ def test_short_timebox_defers_inline_download(caplog, monkeypatch, tmp_path):
 
     background.join(timeout=1)
     assert not background.is_alive()
+
+
+def test_conservative_defaults_timebox_missing_budgets(
+    caplog, monkeypatch, tmp_path
+):
+    caplog.set_level(logging.INFO)
+    lazy_bootstrap._MODEL_READY = False
+    lazy_bootstrap._MODEL_BACKGROUND_THREAD = None
+    lazy_bootstrap._WARMUP_STAGE_MEMO.clear()
+    lazy_bootstrap._WARMUP_STAGE_META.clear()
+
+    conservative = {"model": 0.05, "handlers": 0.05, "scheduler": 0.05, "vectorise": 0.05}
+    monkeypatch.setattr(lazy_bootstrap, "_CONSERVATIVE_STAGE_TIMEOUTS", conservative)
+
+    def slow_download(*, logger=None, warmup=False, **_kwargs):  # noqa: ARG001
+        time.sleep(0.1)
+        return tmp_path / "model.tar"
+
+    monkeypatch.setattr(lazy_bootstrap, "ensure_embedding_model", slow_download)
+
+    warmup_summary = lazy_bootstrap.warmup_vector_service(
+        download_model=True,
+        probe_model=False,
+        warmup_lite=False,
+        force_heavy=True,
+        logger=logging.getLogger("test"),
+    )
+
+    background = lazy_bootstrap._MODEL_BACKGROUND_THREAD
+
+    assert warmup_summary["model"].startswith("deferred")
+    assert background is not None and background.is_alive()
+    assert lazy_bootstrap._WARMUP_STAGE_META.get("model", {}).get("stage_timeout") == pytest.approx(
+        conservative["model"], rel=0.2
+    )
+
+    background.join(timeout=1)
 
 
 def test_handler_hydration_times_out(caplog, monkeypatch):

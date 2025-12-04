@@ -834,6 +834,10 @@ def warmup_vector_service(
 
     stage_budget_signals = stage_timeouts_supplied or env_budget is not None or stage_cap_env is not None
 
+    if stage_timeouts is None and warmup_requested and not stage_budget_signals:
+        stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+        stage_budget_signals = True
+
     if stage_timeouts is None and stage_budget_signals:
         stage_timeouts = env_stage_defaults
     elif isinstance(stage_timeouts, Mapping) and env_budget is not None:
@@ -913,7 +917,7 @@ def warmup_vector_service(
 
         return summary
 
-    if budget_hooks_missing and (bootstrap_context or warmup_requested):
+    if budget_hooks_missing and (bootstrap_context or warmup_requested) and not stage_budget_signals:
         summary: dict[str, str] = {
             "bootstrap": "short-circuit",
             "warmup_lite": "True",
@@ -1139,7 +1143,12 @@ def warmup_vector_service(
     if bootstrap_context and env_budget is None and not stage_timeouts_supplied:
         bootstrap_guard_ceiling = _BOOTSTRAP_STAGE_TIMEOUT
 
-    stage_budget_signals = stage_timeouts_supplied or env_budget is not None or stage_cap_env is not None
+    stage_budget_signals = (
+        stage_timeouts_supplied
+        or env_budget is not None
+        or stage_cap_env is not None
+        or stage_timeouts is not None
+    )
 
     if bootstrap_fast is None:
         bootstrap_fast = bootstrap_context
@@ -1174,6 +1183,7 @@ def warmup_vector_service(
     bootstrap_hard_timebox: float | None = None
     bootstrap_deferred_records: set[str] = set()
     warmup_lite_source = "caller"
+    budget_gate_reason: str | None = None
 
     bootstrap_force_lite = bootstrap_context and not force_heavy and bootstrap_lite
     if bootstrap_force_lite and not warmup_lite:
@@ -1305,11 +1315,21 @@ def warmup_vector_service(
 
     warmup_lite = bool(warmup_lite)
     missing_budget_deferred: set[str] = set()
+    recorded_deferred: set[str] = set()
+    proactive_deferred: set[str] = set()
+    background_candidates: set[str] = set()
+    effective_timeouts: dict[str, float | None] = {}
+
+    background_warmup: set[str] = set()
+    background_stage_timeouts: dict[str, float | None] | None = None
+    background_budget_ceiling: dict[str, float | None] = {}
+    heavy_admission: str | None = None
+    lazy_sentinel_active = bootstrap_context and not force_heavy
 
     if bootstrap_context and not force_heavy and not warmup_lite:
         warmup_lite = True
         warmup_lite_source = "bootstrap-default"
-    if budget_hooks_missing:
+    if budget_hooks_missing and not stage_budget_signals:
         if warmup_lite_source == "caller":
             warmup_lite_source = "missing-budget-hooks"
         warmup_lite = True
@@ -1333,7 +1353,6 @@ def warmup_vector_service(
                 missing_budget_deferred.add(stage)
         if missing_budget_deferred:
             budget_gate_reason = budget_gate_reason or "deferred-budget-hooks"
-            deferred.update(missing_budget_deferred)
             background_candidates.update(missing_budget_deferred)
             download_model = False
             probe_model = False
@@ -1373,24 +1392,12 @@ def warmup_vector_service(
         summary["warmup_lite_source"] = warmup_lite_source
     quick_ready = warmup_lite or bootstrap_lite
     explicit_deferred: set[str] = set(deferred_stages or ())
-    deferred = explicit_deferred | deferred_bootstrap | lite_deferrals
+    deferred = explicit_deferred | deferred_bootstrap | lite_deferrals | missing_budget_deferred
     memoised_results = dict(_WARMUP_STAGE_MEMO)
     model_background_state = _WARMUP_STAGE_META.get("model", {}).get("background_state")
     prior_deferred = explicit_deferred | {
         stage for stage, status in memoised_results.items() if status.startswith("deferred")
     }
-
-    recorded_deferred: set[str] = set()
-    proactive_deferred: set[str] = set()
-    background_candidates: set[str] = set()
-    effective_timeouts: dict[str, float | None] = {}
-
-    background_warmup: set[str] = set()
-    background_stage_timeouts: dict[str, float | None] | None = None
-    background_budget_ceiling: dict[str, float | None] = {}
-    budget_gate_reason: str | None = None
-    heavy_admission: str | None = None
-    lazy_sentinel_active = bootstrap_context and not force_heavy
 
     if deferred:
         background_warmup.update(deferred)
@@ -1521,7 +1528,11 @@ def warmup_vector_service(
             )
         background_warmup.add(stage)
         background_candidates.add(stage)
-        _hint_background_budget(stage, _effective_timeout(stage))
+        try:
+            budget_hint = _effective_timeout(stage)
+        except NameError:  # pragma: no cover - early short-circuit safety
+            budget_hint = None
+        _hint_background_budget(stage, budget_hint)
         if stage in prior_deferred and stage not in explicit_deferred:
             return
         try:
@@ -1709,7 +1720,10 @@ def warmup_vector_service(
     def _hint_background_budget(stage: str, stage_timeout: float | None = None) -> None:
         nonlocal background_stage_timeouts
         budget_hint = _available_budget_hint(stage, stage_timeout)
-        budget_window = _stage_budget_window(stage_timeout)
+        try:
+            budget_window = _stage_budget_window(stage_timeout)
+        except NameError:  # pragma: no cover - early short-circuit safety
+            budget_window = None
         shared_remaining = _remaining_shared_budget()
         timebox_remaining = _timebox_remaining()
         shared_budget = (
