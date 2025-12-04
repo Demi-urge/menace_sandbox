@@ -107,6 +107,8 @@ class _BootstrapVectorMetricsStub:
         self._post_warmup_activation_reason: str | None = None
         self._post_warmup_activation_requested = False
         self._readiness_ready = False
+        self._background_promotion_scheduled = False
+        self._pending_readiness_reason: str | None = None
         self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
@@ -140,6 +142,7 @@ class _BootstrapVectorMetricsStub:
         if self._activation_blocked:
             self._queued_first_write = True
             self._log_deferred_activation(reason="activate_on_first_write_blocked")
+            _increment_deferral_metric("activate_on_first_write")
             return
         self._activate_on_first_write = True
         logger.info(
@@ -194,6 +197,8 @@ class _BootstrapVectorMetricsStub:
                     },
                 )
                 _increment_deferral_metric("activation")
+            else:
+                _increment_deferral_metric("activation_intent_cached")
             if requested_blocked:
                 self._activation_blocked = True
                 self._warmup_guarded_activation = True
@@ -228,11 +233,14 @@ class _BootstrapVectorMetricsStub:
                     "vector metrics post-warmup activation failed", exc_info=True
                 )
             return
-        if self._readiness_ready and self._activation_blocked:
-            self._activate_after_readiness(reason=reason or "post_warmup")
+        if self._readiness_ready:
+            self.promote_after_readiness_async(reason=reason or "post_warmup")
             return
         if not self._activation_blocked:
             self._apply_post_warmup_activation()
+        else:
+            _increment_deferral_metric("post_warmup_waiting_readiness")
+            self._pending_readiness_reason = reason or "post_warmup"
 
     def _log_deferred_activation(self, *, reason: str) -> None:
         if self._delegate is not None:
@@ -317,13 +325,16 @@ class _BootstrapVectorMetricsStub:
                     "vector_metrics_db.bootstrap.stub_promotion_pending",
                     extra={"pending_weights": len(pending)},
                 )
+                self._log_deferred_activation(reason="bootstrap_ready_cached")
+                _increment_deferral_metric("bootstrap_ready_cached")
                 if not self._post_warmup_activation_requested:
                     logger.info(
                         "vector_metrics_db.bootstrap.readiness_waiting_for_activation",
                         extra={"pending_weights": len(pending)},
                     )
+                    self._pending_readiness_reason = "bootstrap_ready"
                     return
-                self._activate_after_readiness(reason="bootstrap_ready")
+                self._pending_readiness_reason = "bootstrap_ready"
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True
@@ -341,6 +352,30 @@ class _BootstrapVectorMetricsStub:
         threading.Thread(
             target=_await_ready,
             name="vector-metrics-stub-readiness",
+            daemon=True,
+        ).start()
+
+    def promote_after_readiness_async(self, *, reason: str = "bootstrap_ready") -> None:
+        if self._delegate is not None:
+            return
+        if not self._readiness_ready:
+            self._pending_readiness_reason = reason
+            self._log_deferred_activation(reason="awaiting_readiness_signal")
+            _increment_deferral_metric("awaiting_readiness")
+            return
+        if self._background_promotion_scheduled:
+            return
+        self._background_promotion_scheduled = True
+
+        def _promote() -> None:
+            try:
+                self._activate_after_readiness(reason=reason)
+            finally:
+                self._background_promotion_scheduled = False
+
+        threading.Thread(
+            target=_promote,
+            name="vector-metrics-stub-promote",
             daemon=True,
         ).start()
 
