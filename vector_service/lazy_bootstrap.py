@@ -50,7 +50,7 @@ _CONSERVATIVE_STAGE_TIMEOUTS = {
 }
 
 _BOOTSTRAP_STAGE_TIMEOUT = 8.0
-_HANDLER_VECTOR_MIN_BUDGET = 1.0
+_HANDLER_VECTOR_MIN_BUDGET = 7.0
 _HEAVY_STAGE_CEILING = 30.0
 _BACKGROUND_QUEUE_FLAG = "queued"
 
@@ -1220,6 +1220,7 @@ def warmup_vector_service(
     summary: dict[str, str] = {"bootstrap": summary_flag, "warmup_lite": str(warmup_lite)}
     if warmup_lite_source != "caller":
         summary["warmup_lite_source"] = warmup_lite_source
+    quick_ready = warmup_lite or bootstrap_lite
     explicit_deferred: set[str] = set(deferred_stages or ())
     deferred = explicit_deferred | deferred_bootstrap | lite_deferrals
     memoised_results = dict(_WARMUP_STAGE_MEMO)
@@ -1323,6 +1324,8 @@ def warmup_vector_service(
             _record_background(stage, "deferred-lite")
 
     def _record_background(stage: str, status: str, *, stage_timeout: float | None = None) -> None:
+        nonlocal quick_ready
+
         meta = _deferral_meta(stage_timeout)
         _record(stage, status, meta=meta)
         summary[f"{stage}_background"] = status
@@ -1332,6 +1335,8 @@ def warmup_vector_service(
         timebox_hint = meta.get("timebox_remaining")
         if isinstance(timebox_hint, (int, float)):
             summary[f"{stage}_timebox_remaining"] = f"{timebox_hint:.3f}"
+        if stage in {"handlers", "vectorise"} and status.startswith("deferred"):
+            quick_ready = True
         if stage == "model" and status == "deferred-no-budget":
             summary.setdefault("model_budget_hooks", "missing")
         if stage == "model" and status.startswith("deferred"):
@@ -1782,6 +1787,7 @@ def warmup_vector_service(
             summary[f"budget_{stage}"] = (
                 f"{timeout:.3f}" if timeout is not None else "none"
             )
+        summary["quick_ready"] = str(quick_ready)
         shared_remaining = _remaining_shared_budget()
         if shared_remaining is not None:
             summary["shared_budget_remaining"] = f"{shared_remaining:.3f}"
@@ -3445,6 +3451,9 @@ def warmup_vector_service(
         ):
             return _finalise()
         remaining_hint = _remaining_budget()
+        shared_hint = _remaining_shared_budget()
+        if shared_hint is not None and (remaining_hint is None or shared_hint < remaining_hint):
+            remaining_hint = shared_hint
         if (
             hydrate_handlers
             and handler_timeout is not None
@@ -3469,7 +3478,11 @@ def warmup_vector_service(
                 },
             )
             return _finalise()
-        if hydrate_handlers and remaining_hint is not None and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET:
+        if (
+            hydrate_handlers
+            and remaining_hint is not None
+            and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET
+        ):
             _defer_handler_chain(
                 "deferred-budget",
                 stage_timeout=handler_timeout,
@@ -3747,6 +3760,9 @@ def warmup_vector_service(
         ):
             return _finalise()
         remaining_hint = _remaining_budget()
+        shared_hint = _remaining_shared_budget()
+        if shared_hint is not None and (remaining_hint is None or shared_hint < remaining_hint):
+            remaining_hint = shared_hint
         if (
             should_vectorise
             and vectorise_timeout is not None
@@ -3767,8 +3783,15 @@ def warmup_vector_service(
                 },
             )
             return _finalise()
-        if should_vectorise and remaining_hint is not None and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET:
-            _record_deferred_background("vectorise", "deferred-budget")
+        if (
+            should_vectorise
+            and remaining_hint is not None
+            and remaining_hint < _HANDLER_VECTOR_MIN_BUDGET
+        ):
+            _record_deferred_background(
+                "vectorise", "deferred-budget", stage_timeout=vectorise_timeout
+            )
+            _hint_background_budget("vectorise", vectorise_timeout)
             _record_cancelled("vectorise", "budget")
             return _finalise()
         if _shared_budget_probe(
