@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterator, Tuple, List
+import threading
 from types import SimpleNamespace
 import logging
 import time
@@ -65,6 +66,9 @@ class PatchVectorizer(EmbeddableDBMixin):
         self._index_load_deferred = bool(self.bootstrap_fast or warmup_context)
         self._bootstrap_warmup = bool(self.bootstrap_fast or warmup_context)
         self._init_start = init_start
+        self._activation_lock = threading.Lock()
+        self._activation_thread: threading.Thread | None = None
+        self._activation_started = False
         self._deferred_init: Dict[str, Any] = {
             "path": path,
             "index_path": index_path,
@@ -93,22 +97,15 @@ class PatchVectorizer(EmbeddableDBMixin):
     ) -> None:
         """Initialise a lightweight placeholder during bootstrap warmup."""
 
-        fast_db_path = Path(path) if path is not None else Path(self.DB_FILE)
-        index_fallback = Path(index_path) if index_path is not None else fast_db_path.with_suffix(
-            ".patch.index"
-        )
-        metadata_fallback = index_fallback.with_suffix(".json")
-        stub_conn = SimpleNamespace(execute=lambda *_a, **_k: SimpleNamespace(fetchall=lambda: []))
-        stub_router = SimpleNamespace(get_connection=lambda *_a, **_k: stub_conn)
         self.db = SimpleNamespace(
-            path=fast_db_path,
-            router=stub_router,
+            path=path if path is not None else self.DB_FILE,
+            router=None,
             get=lambda *_a, **_k: None,
             _vec_db_enabled=False,
         )
-        self.conn = stub_router.get_connection("patch_history")
-        self.index_path = index_fallback
-        self.metadata_path = metadata_fallback
+        self.conn = None
+        self.index_path = index_path if index_path is not None else f"{self.db.path}.patch.index"
+        self.metadata_path = f"{self.index_path}.json" if self.index_path else None
         self.model_name = "sentence-transformers/all-MiniLM-L6-v2"
         self.embedding_version = embedding_version
         self.backend = backend
@@ -123,9 +120,9 @@ class PatchVectorizer(EmbeddableDBMixin):
         logger.info(
             "patch_vectorizer.bootstrap_fast.stubbed",
             extra={
-                "db_path": str(fast_db_path),
-                "index_path": str(index_fallback),
-                "metadata_path": str(metadata_fallback),
+                "db_path": str(self.db.path),
+                "index_path": str(self.index_path),
+                "metadata_path": str(self.metadata_path),
                 "warmup_context": self._warmup_context,
             },
         )
@@ -135,6 +132,13 @@ class PatchVectorizer(EmbeddableDBMixin):
 
         if not self._bootstrap_warmup:
             return
+
+        with self._activation_lock:
+            if not self._bootstrap_warmup:
+                return
+            if self._activation_started:
+                return
+            self._activation_started = True
 
         activation_start = time.perf_counter()
         deferred = dict(self._deferred_init)
@@ -156,6 +160,35 @@ class PatchVectorizer(EmbeddableDBMixin):
             bootstrap_fast=False,
             init_start=activation_start,
         )
+
+    def activate_async(self, *, reason: str | None = None) -> threading.Thread | None:
+        """Hydrate the real index in the background when budgets permit."""
+
+        if not self._bootstrap_warmup:
+            return None
+
+        with self._activation_lock:
+            if self._activation_thread and self._activation_thread.is_alive():
+                return self._activation_thread
+
+            def _runner():
+                logger.info(
+                    "patch_vectorizer.bootstrap_fast.async_activation.start",
+                    extra={"reason": reason, "warmup_context": self._warmup_context},
+                )
+                try:
+                    self._activate_full_initialisation()
+                    logger.info(
+                        "patch_vectorizer.bootstrap_fast.async_activation.complete",
+                        extra={"reason": reason, "warmup_context": self._warmup_context},
+                    )
+                except Exception:
+                    logger.exception("patch_vectorizer async activation failed")
+
+            thread = threading.Thread(target=_runner, daemon=True)
+            thread.start()
+            self._activation_thread = thread
+            return thread
 
     def _ensure_bootstrap_ready(self) -> None:
         if self._bootstrap_warmup:
