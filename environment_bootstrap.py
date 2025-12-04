@@ -3094,6 +3094,30 @@ class EnvironmentBootstrapper:
                 def _vector_budget_remaining() -> float | None:
                     return _phase_remaining_budget()
 
+                guarded_heavy: set[str] = set()
+                if stage_timeouts and not (heavy_requested or heavy_opt_in_requested):
+                    guarded_heavy = {
+                        stage
+                        for stage, enabled in (
+                            ("model", warmup_model),
+                            ("handlers", warmup_handlers),
+                            ("vectorise", run_vectorise),
+                        )
+                        if enabled
+                    }
+                if guarded_heavy:
+                    self.logger.info(
+                        "Vector warmup heavy stages guarded to background under bootstrap caps",
+                        extra=log_record(
+                            event="vector-warmup-guard", stages=sorted(guarded_heavy)
+                        ),
+                    )
+                    warmup_model = False
+                    warmup_handlers = False
+                    run_vectorise = False
+                    _persist_background_deferral("bootstrap_guard", guarded_heavy)
+                    return
+
                 try:
                     from .vector_service.lazy_bootstrap import warmup_vector_service
 
