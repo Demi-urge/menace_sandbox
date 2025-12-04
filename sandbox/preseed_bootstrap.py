@@ -4108,6 +4108,7 @@ def initialize_bootstrap_context(
     embedder_preload_skip_reason = None
     embedder_preload_deferred = False
     warmup_summary: dict[str, Any] | None = None
+    embedder_stage_inline_cap: float | None = None
 
     def _record_embedder_skip(reason: str) -> None:
         nonlocal embedder_preload_enabled, embedder_preload_skip_reason, embedder_preload_deferred
@@ -4148,6 +4149,7 @@ def initialize_bootstrap_context(
             embedder_stage_timebox_hint = min(
                 embedder_stage_timebox_ceiling, max(float(stage_budget_remaining), 0.0)
             )
+            embedder_stage_inline_cap = embedder_stage_timebox_hint
             if stage_budget_remaining < embedder_stage_timebox_ceiling:
                 embedder_preload_enabled = False
                 embedder_preload_skip_reason = "embedder_preload_stage_timebox_shortfall"
@@ -4710,6 +4712,11 @@ def initialize_bootstrap_context(
             strict_timebox = (
                 stage_guard_timebox if strict_timebox is None else min(strict_timebox, stage_guard_timebox)
             )
+            embedder_stage_inline_cap = (
+                stage_guard_timebox
+                if embedder_stage_inline_cap is None
+                else min(embedder_stage_inline_cap, stage_guard_timebox)
+            )
         if budget_window_missing and strict_timebox is None:
             strict_timebox = default_missing_budget_timebox
         background_dispatch_gate = _BOOTSTRAP_CONTENTION_COORDINATOR.negotiate_step(
@@ -5180,6 +5187,15 @@ def initialize_bootstrap_context(
                 inline_join_cap = None
             else:
                 inline_join_cap = max(15.0, min(30.0, inline_join_cap))
+
+        if embedder_stage_inline_cap is not None:
+            inline_join_cap = (
+                embedder_stage_inline_cap
+                if inline_join_cap is None
+                else min(inline_join_cap, embedder_stage_inline_cap)
+            )
+            if inline_join_cap is not None:
+                inline_cap_applied = True
 
         warmup_timebox_cap = strict_timebox
         if warmup_presence_cap is not None and warmup_presence_cap > 0:
@@ -5995,6 +6011,13 @@ def initialize_bootstrap_context(
                         "embedder_stage_timebox_guard",
                     )
                 )
+            if embedder_stage_inline_cap is not None and embedder_stage_inline_cap > 0:
+                deadlines.append(
+                    (
+                        warmup_started + embedder_stage_inline_cap,
+                        "embedder_preload_inline_cap",
+                    )
+                )
 
             if deadlines:
 
@@ -6259,6 +6282,7 @@ def initialize_bootstrap_context(
             warmup_summary.setdefault("presence_probe_timeout", False)
             resume_download = warmup_deferral_reason in {
                 "embedder_stage_timebox_guard",
+                "embedder_preload_inline_cap",
                 "embedder_preload_timebox_expired",
                 "embedder_preload_warmup_cap_exceeded",
                 "embedder_preload_fallback_timebox",
