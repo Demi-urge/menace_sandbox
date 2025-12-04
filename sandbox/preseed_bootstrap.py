@@ -122,6 +122,7 @@ _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
 _VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
 _EMBEDDER_STAGE_BUDGET_FALLBACK = 30.0
+_EMBEDDER_HEAVY_STAGE_CEILING = 30.0
 
 
 class _BootstrapStepScheduler:
@@ -4558,7 +4559,7 @@ def initialize_bootstrap_context(
             disable_step=True,
             probe_only=True,
         )
-    embedder_stage_timebox_ceiling = 30.0
+    embedder_stage_timebox_ceiling = _EMBEDDER_HEAVY_STAGE_CEILING
     try:
         stage_budget_remaining = stage_controller.stage_budget(step_name="embedder_preload")
         if stage_budget_remaining is None:
@@ -5997,7 +5998,6 @@ def initialize_bootstrap_context(
 
         warmup_started = time.monotonic()
         warmup_stop_reason: str | None = None
-        warmup_join_cap_reason = "embedder_preload_warmup_ceiling"
 
         inline_cap_reason = "embedder_preload_inline_cap_enforced"
         inline_cap_remaining = None
@@ -6903,7 +6903,10 @@ def initialize_bootstrap_context(
             return combined_stop_event
 
         def _guarded_embedder_warmup(
-            *, join_timeout: float | None, join_cap: float | None
+            *,
+            join_timeout: float | None,
+            join_cap: float | None,
+            warmup_join_cap_reason: str,
         ) -> tuple[Any, str | None]:
             combined_stop_event = _build_guarded_stop_event()
             warmup_result: dict[str, Any] = {}
@@ -7079,6 +7082,8 @@ def initialize_bootstrap_context(
             warmup_join_ceiling=warmup_join_ceiling,
         )
 
+        warmup_join_cap_reason = "embedder_preload_warmup_ceiling"
+
         if inline_cap_applied:
             warmup_join_cap = (
                 inline_join_cap
@@ -7090,6 +7095,12 @@ def initialize_bootstrap_context(
                 if warmup_join_timeout is None
                 else min(warmup_join_timeout, inline_join_cap or warmup_join_timeout)
             )
+
+        default_join_cap = embedder_stage_inline_cap or _EMBEDDER_HEAVY_STAGE_CEILING
+        if (warmup_join_timeout is None or warmup_join_cap is None) and default_join_cap is not None:
+            warmup_join_timeout = warmup_join_timeout or default_join_cap
+            warmup_join_cap = warmup_join_cap or default_join_cap
+            warmup_join_cap_reason = "embedder_preload_inline_cap_default"
         strict_join_cap_candidates = [
             candidate
             for candidate in (
@@ -7165,7 +7176,9 @@ def initialize_bootstrap_context(
                 resume_download=True,
             )
         warmup_result, warmup_timeout_reason = _guarded_embedder_warmup(
-            join_timeout=warmup_join_timeout, join_cap=warmup_join_cap
+            join_timeout=warmup_join_timeout,
+            join_cap=warmup_join_cap,
+            warmup_join_cap_reason=warmup_join_cap_reason,
         )
         if warmup_timeout_reason:
             warmup_summary = warmup_summary or {}
