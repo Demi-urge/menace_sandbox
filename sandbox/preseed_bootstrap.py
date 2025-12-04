@@ -3169,12 +3169,28 @@ def start_embedder_warmup(
             LOGGER.debug("unable to persist budget deferral flag", exc_info=True)
 
         def _schedule_background_preload_safe(
-            reason: str, *, strict_timebox: float | None = None, budget_flag: bool = False
+            reason: str,
+            *,
+            strict_timebox: float | None = None,
+            budget_flag: bool = False,
+            stage_ceiling: float | None = None,
         ) -> dict[str, Any]:
             global _BOOTSTRAP_EMBEDDER_JOB
+            effective_timebox = strict_timebox
+            if stage_ceiling is not None:
+                try:
+                    stage_cap = float(stage_ceiling)
+                    if stage_cap >= 0:
+                        effective_timebox = (
+                            stage_cap
+                            if effective_timebox is None
+                            else min(stage_cap, max(effective_timebox, 0.0))
+                        )
+                except (TypeError, ValueError):
+                    pass
             try:
                 job_snapshot = _schedule_background_preload(  # type: ignore[name-defined]
-                    reason, strict_timebox=strict_timebox
+                    reason, strict_timebox=effective_timebox
                 )
             except NameError:
                 job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
@@ -3185,14 +3201,19 @@ def start_embedder_warmup(
                 job_snapshot.setdefault("deferral_reason", reason)
                 job_snapshot.setdefault("deferred", True)
                 job_snapshot.setdefault("ready_after_bootstrap", True)
-                if strict_timebox is not None:
-                    job_snapshot.setdefault("strict_timebox", strict_timebox)
-                    job_snapshot.setdefault("background_join_timeout", strict_timebox)
-            if strict_timebox is not None:
-                job_snapshot.setdefault("background_timebox", strict_timebox)
+                if effective_timebox is not None:
+                    job_snapshot.setdefault("strict_timebox", effective_timebox)
+                    job_snapshot.setdefault("background_join_timeout", effective_timebox)
+            if effective_timebox is not None:
+                job_snapshot.setdefault("background_timebox", effective_timebox)
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
         if budget_flag:
             _mark_budget_deferral(job_snapshot)
+        if stage_ceiling is not None:
+            try:
+                job_snapshot.setdefault("stage_ceiling", float(stage_ceiling))
+            except (TypeError, ValueError):
+                pass
         warmup_summary_flags = {}
         if reason in {
             "embedder_warmup_cap_exhausted",
@@ -3554,7 +3575,10 @@ def start_embedder_warmup(
         telemetry: Mapping[str, Any] | None = None,
     ) -> Any:
         job_snapshot = _schedule_background_preload_safe(
-            reason, strict_timebox=strict_timebox, budget_flag=True
+            reason,
+            strict_timebox=strict_timebox,
+            budget_flag=True,
+            stage_ceiling=embedder_stage_inline_cap,
         )
         job_snapshot.setdefault("presence_only", True)
         job_snapshot.setdefault("warmup_placeholder_reason", reason)
@@ -3634,7 +3658,9 @@ def start_embedder_warmup(
     def _schedule_presence_fastpath(reason: str) -> Any:
         budget_hint = budget_remaining if budget_remaining is not None else stage_budget_cap
         job_snapshot = _schedule_background_preload_safe(
-            reason, strict_timebox=_background_timebox(budget_hint)
+            reason,
+            strict_timebox=_background_timebox(budget_hint),
+            stage_ceiling=embedder_stage_inline_cap,
         )
         job_snapshot.update(
             {
@@ -3706,7 +3732,10 @@ def start_embedder_warmup(
             },
         )
         job_snapshot = _schedule_background_preload_safe(
-            timeout_reason, strict_timebox=_background_timebox(), budget_flag=True
+            timeout_reason,
+            strict_timebox=_background_timebox(),
+            budget_flag=True,
+            stage_ceiling=embedder_stage_inline_cap,
         )
         job_snapshot.update(
             {
@@ -3811,6 +3840,7 @@ def start_embedder_warmup(
             window_reason,
             strict_timebox=_background_timebox(budget_remaining),
             budget_flag=True,
+            stage_ceiling=embedder_stage_inline_cap,
         )
         job_snapshot.update(
             {
@@ -3881,6 +3911,7 @@ def start_embedder_warmup(
             join_cap_reason,
             strict_timebox=_background_timebox(strict_join_cap),
             budget_flag=True,
+            stage_ceiling=embedder_stage_inline_cap,
         )
         job_snapshot.update(
             {
@@ -3961,7 +3992,10 @@ def start_embedder_warmup(
         )
         _BOOTSTRAP_SCHEDULER.mark_partial("vectorizer_preload", reason=timeout_reason)
         job_snapshot = _schedule_background_preload_safe(
-            timeout_reason, strict_timebox=_background_timebox(), budget_flag=True
+            timeout_reason,
+            strict_timebox=_background_timebox(),
+            budget_flag=True,
+            stage_ceiling=embedder_stage_inline_cap,
         )
         job_snapshot.update(
             {
@@ -4366,13 +4400,29 @@ def initialize_bootstrap_context(
     embedder_stage_inline_cap: float | None = None
 
     def _schedule_background_preload_safe(
-        reason: str, *, strict_timebox: float | None = None, budget_flag: bool = False
+        reason: str,
+        *,
+        strict_timebox: float | None = None,
+        budget_flag: bool = False,
+        stage_ceiling: float | None = None,
     ) -> dict[str, Any]:
         global _BOOTSTRAP_EMBEDDER_JOB
         job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+        effective_timebox = strict_timebox
+        if stage_ceiling is not None:
+            try:
+                stage_cap = float(stage_ceiling)
+                if stage_cap >= 0:
+                    effective_timebox = (
+                        stage_cap
+                        if effective_timebox is None
+                        else min(stage_cap, max(effective_timebox, 0.0))
+                    )
+            except (TypeError, ValueError):
+                pass
         try:
             job_snapshot = _schedule_background_preload(  # type: ignore[name-defined]
-                reason, strict_timebox=strict_timebox
+                reason, strict_timebox=effective_timebox
             )
         except Exception:
             job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
@@ -4382,9 +4432,9 @@ def initialize_bootstrap_context(
             job_snapshot.setdefault("deferral_reason", reason)
             job_snapshot.setdefault("deferred", True)
             job_snapshot.setdefault("ready_after_bootstrap", True)
-            if strict_timebox is not None:
-                job_snapshot.setdefault("strict_timebox", strict_timebox)
-                job_snapshot.setdefault("background_join_timeout", strict_timebox)
+            if effective_timebox is not None:
+                job_snapshot.setdefault("strict_timebox", effective_timebox)
+                job_snapshot.setdefault("background_join_timeout", effective_timebox)
 
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
         if budget_flag:
@@ -4396,6 +4446,11 @@ def initialize_bootstrap_context(
                 job_snapshot["warmup_summary"] = warmup_summary
                 job_snapshot.setdefault("embedder_warmup_deferred_budget", True)
         _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
+        if stage_ceiling is not None:
+            try:
+                job_snapshot.setdefault("stage_ceiling", float(stage_ceiling))
+            except (TypeError, ValueError):
+                pass
         return job_snapshot
 
     def _record_embedder_skip(
@@ -4425,6 +4480,7 @@ def initialize_bootstrap_context(
             _BOOTSTRAP_EMBEDDER_JOB = _schedule_background_preload_safe(
                 reason,
                 strict_timebox=background_timebox,
+                stage_ceiling=embedder_stage_inline_cap,
                 budget_flag=budget_flag,
             )
         else:
@@ -4433,6 +4489,10 @@ def initialize_bootstrap_context(
                 "deferred_reason": reason,
                 "deferral_reason": reason,
                 "stage": "skipped-preload",
+                "stage_ceiling": embedder_stage_inline_cap,
+                "stage_budget_hint": embedder_stage_budget_hint,
+                "stage_deadline_hint": embedder_stage_deadline_hint,
+                "background_timebox": background_timebox,
             }
             _BOOTSTRAP_EMBEDDER_JOB = {
                 "placeholder": _BOOTSTRAP_PLACEHOLDER,
@@ -4443,6 +4503,17 @@ def initialize_bootstrap_context(
                 "result": _BOOTSTRAP_PLACEHOLDER,
                 "warmup_summary": warmup_summary,
             }
+        job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.setdefault("deferred", True)
+        warmup_summary.setdefault("deferred_reason", reason)
+        warmup_summary.setdefault("deferral_reason", reason)
+        warmup_summary.setdefault("stage_ceiling", embedder_stage_inline_cap)
+        warmup_summary.setdefault("stage_budget_hint", embedder_stage_budget_hint)
+        warmup_summary.setdefault("stage_deadline_hint", embedder_stage_deadline_hint)
+        warmup_summary.setdefault("background_timebox", background_timebox)
+        job_snapshot["warmup_summary"] = warmup_summary
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
         stage_controller.complete_step("embedder_preload", 0.0)
 
     positive_stage_timebox = any(
@@ -5918,7 +5989,9 @@ def initialize_bootstrap_context(
                 },
             )
             deferral_snapshot = _schedule_background_preload_safe(
-                inline_cap_reason, strict_timebox=embedder_stage_inline_cap
+                inline_cap_reason,
+                strict_timebox=embedder_stage_inline_cap,
+                stage_ceiling=embedder_stage_inline_cap,
             )
             warmup_summary.setdefault("stage", "deferred-inline-cap")
             deferral_snapshot["warmup_summary"] = warmup_summary
