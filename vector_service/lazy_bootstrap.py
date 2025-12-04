@@ -1199,7 +1199,7 @@ def warmup_vector_service(
         missing_budget_controls
         and not stage_budget_signals
         and not force_heavy
-        and (bootstrap_context or warmup_requested)
+        and bootstrap_context
     ):
         summary: dict[str, str] = {
             "bootstrap": "presence-only" if bootstrap_context else "deferred",
@@ -2480,6 +2480,17 @@ def warmup_vector_service(
             if stage_hard_cap is None
             else min(stage_hard_cap, bootstrap_guard_ceiling)
         )
+
+    if (
+        not bootstrap_context
+        and not stage_budget_signals
+        and not stage_timeouts_supplied
+    ):
+        inline_default = _BOOTSTRAP_STAGE_TIMEOUT if bootstrap_context else _HEAVY_STAGE_CEILING
+        for stage in ("handlers", "vectorise"):
+            current_timeout = base_timeouts.get(stage)
+            current_timeout = current_timeout if current_timeout is not None else 0.0
+            base_timeouts[stage] = max(current_timeout, inline_default)
 
     provided_budget = _coerce_timeout(stage_timeouts) if not isinstance(stage_timeouts, Mapping) else None
     initial_budget_remaining = _remaining_budget()
@@ -4083,6 +4094,12 @@ def warmup_vector_service(
                         _record_elapsed("handlers", elapsed)
                         if cancelled:
                             _record_cancelled("handlers", cancelled)
+                            if cancelled == "timebox":
+                                _defer_handler_chain(
+                                    "deferred-timebox",
+                                    stage_timeout=handler_timeout,
+                                    vectorise_timeout=vectorise_timeout,
+                                )
                         if completed:
                             _record("handlers", "hydrated")
                             handler_deferrals = getattr(
