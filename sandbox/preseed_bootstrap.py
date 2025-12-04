@@ -119,6 +119,7 @@ _PREPARE_VECTOR_TIMEOUT_FLOOR = 900.0
 _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
 _VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
+_EMBEDDER_STAGE_BUDGET_FALLBACK = 30.0
 
 
 class _BootstrapStepScheduler:
@@ -4324,7 +4325,13 @@ def initialize_bootstrap_context(
             )
             placeholder_obj = existing_job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
             return existing_job_snapshot.get("result", placeholder_obj)
+        embedder_stage_budget_defaulted = False
         embedder_stage_budget = stage_controller.stage_budget(step_name="embedder_preload")
+        if embedder_stage_budget is None:
+            embedder_stage_budget_defaulted = True
+            embedder_stage_budget = _EMBEDDER_STAGE_BUDGET_FALLBACK
+            if embedder_stage_timebox_hint is None:
+                embedder_stage_timebox_hint = _EMBEDDER_STAGE_BUDGET_FALLBACK
         embedder_stage_deadline = stage_controller.stage_deadline(
             step_name="embedder_preload"
         )
@@ -4402,6 +4409,9 @@ def initialize_bootstrap_context(
             warmup_summary.setdefault("deferral_reason", no_budget_deferral_reason)
             warmup_summary.setdefault("stage", "deferred-no-budget")
             warmup_summary.setdefault("stage_budget", embedder_stage_budget)
+            warmup_summary.setdefault(
+                "stage_budget_defaulted", embedder_stage_budget_defaulted
+            )
             warmup_summary.setdefault(
                 "stage_deadline_remaining", embedder_stage_deadline_remaining
             )
@@ -5757,12 +5767,12 @@ def initialize_bootstrap_context(
                         "warmup_summary": warmup_summary
                     }
 
-            def _schedule_background_preload(
-                reason: str, *, strict_timebox: float | None = None
-            ) -> dict[str, Any]:
-                if strict_timebox is None:
-                    strict_timebox = warmup_timebox_cap
-                _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
+        def _schedule_background_preload(
+            reason: str, *, strict_timebox: float | None = None
+        ) -> dict[str, Any]:
+            if strict_timebox is None:
+                strict_timebox = warmup_timebox_cap
+            _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
                 job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
                 job_snapshot.setdefault("placeholder", _BOOTSTRAP_PLACEHOLDER)
                 job_snapshot.setdefault("placeholder_reason", reason)
@@ -5797,7 +5807,15 @@ def initialize_bootstrap_context(
                 warmup_summary.setdefault("deferred_reason", reason)
                 warmup_summary.setdefault("deferral_reason", reason)
                 warmup_summary.setdefault("stage", "deferred-timebox")
-                warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
+                warmup_summary.setdefault(
+                    "stage_budget",
+                    embedder_stage_budget
+                    if embedder_stage_budget is not None
+                    else embedder_stage_budget_hint,
+                )
+                warmup_summary.setdefault(
+                    "stage_budget_defaulted", embedder_stage_budget_defaulted
+                )
                 warmup_summary.setdefault("strict_timebox", strict_timebox)
                 job_snapshot["warmup_summary"] = warmup_summary
 
@@ -5834,6 +5852,11 @@ def initialize_bootstrap_context(
 
                     def _record_background_placeholder(reason: str) -> None:
                         nonlocal job_snapshot
+                        if (
+                            embedder_stage_budget_defaulted
+                            and reason == "embedder_background_cap_exhausted"
+                        ):
+                            reason = "embedder_background_default_timebox"
                         placeholder_obj = job_snapshot.get(
                             "placeholder", _BOOTSTRAP_PLACEHOLDER
                         )
@@ -5850,6 +5873,21 @@ def initialize_bootstrap_context(
                                 else strict_timebox,
                             }
                         )
+                        warmup_summary_local = job_snapshot.get("warmup_summary") or {}
+                        warmup_summary_local.setdefault("deferred", True)
+                        warmup_summary_local.setdefault("deferral_reason", reason)
+                        warmup_summary_local.setdefault("deferred_reason", reason)
+                        warmup_summary_local.setdefault(
+                            "stage_budget_defaulted", embedder_stage_budget_defaulted
+                        )
+                        warmup_summary_local.setdefault(
+                            "stage_budget",
+                            embedder_stage_budget
+                            if embedder_stage_budget is not None
+                            else embedder_stage_budget_hint,
+                        )
+                        job_snapshot.setdefault("deferral_reason", reason)
+                        job_snapshot["warmup_summary"] = warmup_summary_local
                         _BOOTSTRAP_SCHEDULER.mark_partial(
                             "background_loops", reason=f"embedder_placeholder:{reason}"
                         )
