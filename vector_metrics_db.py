@@ -267,11 +267,10 @@ class _BootstrapVectorMetricsStub:
                     reason="bootstrap_ready", configure_ready=True
                 )
                 self._apply_post_warmup_promotions(reason="bootstrap_ready")
-                delegate = self._promote_from_stub(reason="bootstrap_ready")
-                if delegate is None:
-                    self.activate_on_first_write()
-                elif isinstance(delegate, VectorMetricsDB):
-                    _apply_pending_weights(delegate)
+                _record_pending_weight_values(self._pending_weights)
+                self.activate_on_first_write()
+                self._log_deferred_activation(reason="bootstrap_ready")
+                _increment_deferral_metric("bootstrap_ready_first_write")
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness activation failed", exc_info=True
@@ -1175,8 +1174,7 @@ def get_shared_vector_metrics_db(
                 ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
                 read_only=queued_promotion_kwargs.get("read_only"),
             )
-            if not promotion_pending_for_warmup:
-                stub.activate_on_first_write()
+            stub.activate_on_first_write()
             stub.register_readiness_hook()
             stub._delegate = _VECTOR_DB_INSTANCE
             _VECTOR_DB_INSTANCE = stub
@@ -1211,8 +1209,7 @@ def get_shared_vector_metrics_db(
                     read_only=queued_promotion_kwargs.get("read_only"),
                 )
                 _increment_deferral_metric("stub_short_circuit")
-                if not promotion_pending_for_warmup:
-                    _VECTOR_DB_INSTANCE.activate_on_first_write()
+                _VECTOR_DB_INSTANCE.activate_on_first_write()
                 _VECTOR_DB_INSTANCE.configure_activation(
                     bootstrap_fast=resolved_bootstrap_fast,
                     warmup=resolved_warmup,
@@ -1253,8 +1250,7 @@ def get_shared_vector_metrics_db(
                 ensure_exists=requested_ensure_exists,
                 read_only=requested_read_only,
             )
-            if not promotion_pending_for_warmup:
-                _VECTOR_DB_INSTANCE.activate_on_first_write()
+            _VECTOR_DB_INSTANCE.activate_on_first_write()
             _VECTOR_DB_INSTANCE.register_readiness_hook()
             if warmup_context:
                 logger.info(
@@ -1275,6 +1271,7 @@ def get_shared_vector_metrics_db(
         _VECTOR_DB_INSTANCE, (VectorMetricsDB, _BootstrapVectorMetricsStub)
     ):
         if getattr(_VECTOR_DB_INSTANCE, "_boot_stub_active", False):
+            _VECTOR_DB_INSTANCE.activate_on_first_write()
             if promotion_pending_for_warmup:
                 logger.info(
                     "vector_metrics_db.bootstrap.first_write_activation_deferred",
@@ -1287,8 +1284,6 @@ def get_shared_vector_metrics_db(
                         "promotion_requested": promotion_requested,
                     },
                 )
-            else:
-                _VECTOR_DB_INSTANCE.activate_on_first_write()
             logger.info(
                 "vector_metrics_db.bootstrap.persistence_deferred",
                 extra={
@@ -1368,27 +1363,6 @@ def get_vector_metrics_db(
     if isinstance(vm, _BootstrapVectorMetricsStub):
         vm.activate_on_first_write()
         vm.register_readiness_hook()
-        if getattr(vm, "_boot_stub_active", False):
-            logger.info(
-                "vector_metrics_db.bootstrap.stub_enforced",
-                extra={
-                    "warmup": warmup,
-                    "bootstrap_fast": bootstrap_fast,
-                    "allow_bootstrap_activation": allow_bootstrap_activation,
-                },
-            )
-            return vm
-        if allow_bootstrap_activation:
-            vm.configure_activation(
-                warmup=False,
-                ensure_exists=True if ensure_exists is None else ensure_exists,
-                read_only=False if read_only is None else read_only,
-            )
-            promoted = vm._promote_from_stub(
-                reason="bootstrap_override", allow_override=True
-            )
-            if promoted is not None:
-                return promoted
         return vm
 
     return vm
