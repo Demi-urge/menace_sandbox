@@ -109,6 +109,7 @@ class _BootstrapVectorMetricsStub:
         self._readiness_ready = False
         self._background_promotion_scheduled = False
         self._pending_readiness_reason: str | None = None
+        self._readiness_timeout_started = False
         self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
@@ -309,15 +310,40 @@ class _BootstrapVectorMetricsStub:
             return
 
         self._readiness_hook_registered = True
+        budget = self._readiness_wait_budget_seconds()
+
+        self._schedule_readiness_timeout()
 
         def _await_ready() -> None:
+            timed_out = False
             try:
-                readiness_signal().await_ready(timeout=None)
-                self._readiness_ready = True
+                outcome = readiness_signal().await_ready(timeout=budget)
+                if budget is not None and outcome is False:
+                    timed_out = True
+                else:
+                    self._readiness_ready = True
+            except TimeoutError:
+                timed_out = True
             except Exception:  # pragma: no cover - best effort logging
                 logger.debug(
                     "vector metrics stub readiness gate failed", exc_info=True
                 )
+                return
+            if timed_out:
+                try:
+                    self._pending_readiness_reason = (
+                        self._pending_readiness_reason or "readiness_timeout"
+                    )
+                    self._log_deferred_activation(reason="readiness_timeout")
+                    _increment_deferral_metric("readiness_timeout")
+                    self.promote_after_readiness_async(
+                        reason=self._pending_readiness_reason,
+                        force=True,
+                    )
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug(
+                        "vector metrics stub readiness timeout failed", exc_info=True
+                    )
                 return
             try:
                 pending = _pending_weight_mapping()
@@ -355,13 +381,16 @@ class _BootstrapVectorMetricsStub:
             daemon=True,
         ).start()
 
-    def promote_after_readiness_async(self, *, reason: str = "bootstrap_ready") -> None:
+    def promote_after_readiness_async(
+        self, *, reason: str = "bootstrap_ready", force: bool = False
+    ) -> None:
         if self._delegate is not None:
             return
-        if not self._readiness_ready:
+        if not self._readiness_ready and not force:
             self._pending_readiness_reason = reason
             self._log_deferred_activation(reason="awaiting_readiness_signal")
             _increment_deferral_metric("awaiting_readiness")
+            self._schedule_readiness_timeout()
             return
         if self._background_promotion_scheduled:
             return
@@ -378,6 +407,46 @@ class _BootstrapVectorMetricsStub:
             name="vector-metrics-stub-promote",
             daemon=True,
         ).start()
+
+    def _readiness_wait_budget_seconds(self) -> float | None:
+        budget = self._first_write_budget
+        if budget is None:
+            budget = _first_write_activation_budget_seconds()
+        return budget if budget and budget > 0 else None
+
+    def _schedule_readiness_timeout(self) -> None:
+        budget = self._readiness_wait_budget_seconds()
+        if budget is None:
+            return
+        if self._readiness_ready or self._delegate is not None:
+            return
+        if self._readiness_timeout_started:
+            return
+        self._readiness_timeout_started = True
+
+        def _timeout() -> None:
+            try:
+                self._readiness_timeout_fallback()
+            finally:
+                self._readiness_timeout_started = False
+
+        threading.Thread(
+            target=lambda: (time.sleep(budget), _timeout()),
+            name="vector-metrics-readiness-timeout",
+            daemon=True,
+        ).start()
+
+    def _readiness_timeout_fallback(self) -> None:
+        if self._delegate is not None or self._readiness_ready:
+            return
+        self._pending_readiness_reason = (
+            self._pending_readiness_reason or "readiness_timeout"
+        )
+        self._log_deferred_activation(reason="readiness_timeout")
+        _increment_deferral_metric("readiness_timeout")
+        self.promote_after_readiness_async(
+            reason=self._pending_readiness_reason, force=True
+        )
 
     def _schedule_background_promotion(self, *, reason: str) -> None:
         if self._delegate is not None:
