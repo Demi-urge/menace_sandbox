@@ -75,7 +75,7 @@ class _BootstrapVectorMetricsStub:
     def __init__(
         self,
         *,
-        path: str | Path,
+        path: str | Path | None,
         bootstrap_fast: bool | None,
         warmup: bool | None,
         ensure_exists: bool | None,
@@ -110,6 +110,7 @@ class _BootstrapVectorMetricsStub:
         self._background_promotion_scheduled = False
         self._pending_readiness_reason: str | None = None
         self._readiness_timeout_started = False
+        self._deferred_path_kwargs: dict[str, Any] = {}
         self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
@@ -164,6 +165,7 @@ class _BootstrapVectorMetricsStub:
         ensure_exists: bool | None = None,
         read_only: bool | None = None,
         path: str | Path | None = None,
+        path_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
         if self._delegate is not None:
             return
@@ -178,6 +180,9 @@ class _BootstrapVectorMetricsStub:
             updates["read_only"] = read_only
         if path is not None:
             updates["path"] = path
+            self._deferred_path_kwargs.clear()
+        elif path_kwargs:
+            self._deferred_path_kwargs.update(path_kwargs)
         requested_blocked = bool(
             updates.get("bootstrap_fast", self._activation_kwargs.get("bootstrap_fast"))
             or updates.get("warmup", self._activation_kwargs.get("warmup"))
@@ -221,6 +226,11 @@ class _BootstrapVectorMetricsStub:
             return
         self._activation_kwargs.update(self._queued_activation_kwargs)
         self._queued_activation_kwargs.clear()
+
+    def defer_path_resolution(self, *, path_kwargs: Mapping[str, Any]) -> None:
+        if self._delegate is not None:
+            return
+        self._deferred_path_kwargs.update(path_kwargs)
 
     def request_post_warmup_activation(self, *, reason: str = "post_warmup") -> None:
         self._post_warmup_activation_requested = True
@@ -270,6 +280,20 @@ class _BootstrapVectorMetricsStub:
         self._log_deferred_activation(reason=reason)
         _increment_deferral_metric("bootstrap_ready_first_write")
         self._schedule_background_promotion(reason=reason)
+
+    def _resolve_deferred_path(self) -> None:
+        if self._delegate is not None:
+            return
+        if self._activation_kwargs.get("path") is not None:
+            return
+        if not self._deferred_path_kwargs:
+            return
+        try:
+            self._activation_kwargs["path"] = default_vector_metrics_path(
+                **self._deferred_path_kwargs,
+            )
+        except Exception:  # pragma: no cover - fallback logging only
+            logger.debug("vector metrics stub path resolution failed", exc_info=True)
 
     def _release_activation_block(self, *, reason: str, configure_ready: bool) -> None:
         if not self._activation_blocked:
@@ -542,6 +566,7 @@ class _BootstrapVectorMetricsStub:
         activation_kwargs = dict(self._activation_kwargs)
         activation_kwargs.setdefault("bootstrap_fast", False)
         activation_kwargs.setdefault("warmup", False)
+        self._resolve_deferred_path()
         vdb = VectorMetricsDB(**activation_kwargs)
         if self._activate_on_first_write:
             vdb.activate_on_first_write()
@@ -620,7 +645,13 @@ class _BootstrapVectorMetricsStub:
 
         budget = self._first_write_budget
         if budget is None:
-            return self._activate(reason=reason, allow_override=True)
+            budget = _first_write_activation_budget_seconds()
+        cap = 1.0
+        budget = cap if budget is None else min(budget, cap)
+        if budget <= 0:
+            self._log_deferred_activation(reason="first_write_activation_timeboxed")
+            self.register_readiness_hook()
+            return self
 
         result: list[Any] = []
         finished = threading.Event()
@@ -1385,13 +1416,6 @@ def _bootstrap_vector_metrics_stub(
 ) -> "_BootstrapVectorMetricsStub":
     """Return a memoized stub without touching SQLite during warmup."""
 
-    warmup_path = default_vector_metrics_path(
-        ensure_exists=False, bootstrap_read_only=True, read_only=True
-    )
-    activation_path = default_vector_metrics_path(
-        ensure_exists=False, bootstrap_read_only=False, read_only=False
-    )
-
     global _VECTOR_DB_INSTANCE, _BOOTSTRAP_VECTOR_DB_STUB
     with _VECTOR_DB_LOCK:
         instance = _VECTOR_DB_INSTANCE
@@ -1399,7 +1423,7 @@ def _bootstrap_vector_metrics_stub(
             stub = instance
         elif isinstance(instance, VectorMetricsDB):
             stub = _BootstrapVectorMetricsStub(
-                path=warmup_path,
+                path=None,
                 bootstrap_fast=True,
                 warmup=True,
                 ensure_exists=False,
@@ -1411,7 +1435,7 @@ def _bootstrap_vector_metrics_stub(
             stub = _BOOTSTRAP_VECTOR_DB_STUB
         else:
             stub = _BootstrapVectorMetricsStub(
-                path=warmup_path,
+                path=None,
                 bootstrap_fast=True,
                 warmup=True,
                 ensure_exists=False,
@@ -1425,18 +1449,23 @@ def _bootstrap_vector_metrics_stub(
             warmup=warmup,
             ensure_exists=ensure_exists,
             read_only=read_only,
-            path=activation_path,
+            path=None,
+            path_kwargs={
+                "ensure_exists": ensure_exists,
+                "bootstrap_read_only": False,
+                "read_only": bool(read_only),
+            },
         )
         _queue_promotion_for_stub(stub, ensure_exists=True, read_only=False)
         _VECTOR_DB_INSTANCE = stub
 
     stub.request_post_warmup_activation(reason="bootstrap_ready")
-    if not warmup:
-        try:  # pragma: no cover - advisory warmup wiring
-            stub.activate_on_first_write()
-        except Exception:
-            logger.debug("vector metrics stub first write arm failed", exc_info=True)
+    try:  # pragma: no cover - advisory warmup wiring
         stub.register_readiness_hook()
+        if not warmup:
+            stub.activate_on_first_write()
+    except Exception:
+        logger.debug("vector metrics stub first write arm failed", exc_info=True)
     return stub
 
 
@@ -1574,7 +1603,7 @@ def get_shared_vector_metrics_db(
                 and stub_short_circuit
             ):
                 stub = _BootstrapVectorMetricsStub(
-                    path="vector_metrics.db",
+                    path=None,
                     bootstrap_fast=True,
                     warmup=True,
                     ensure_exists=False,
@@ -1586,6 +1615,14 @@ def get_shared_vector_metrics_db(
                     warmup=resolved_warmup,
                     ensure_exists=requested_ensure_exists,
                     read_only=requested_read_only,
+                    path=None,
+                    path_kwargs={
+                        "ensure_exists": requested_ensure_exists,
+                        "bootstrap_read_only": False,
+                        "read_only": bool(requested_read_only)
+                        if requested_read_only is not None
+                        else True,
+                    },
                 )
                 _queue_promotion_for_stub(
                     stub,
@@ -1611,7 +1648,7 @@ def get_shared_vector_metrics_db(
 
             if _VECTOR_DB_INSTANCE is None:
                 _VECTOR_DB_INSTANCE = _BootstrapVectorMetricsStub(
-                    path="vector_metrics.db",
+                    path=None,
                     bootstrap_fast=True,
                     warmup=True,
                     ensure_exists=False,
@@ -1629,6 +1666,14 @@ def get_shared_vector_metrics_db(
                     warmup=resolved_warmup,
                     ensure_exists=requested_ensure_exists,
                     read_only=requested_read_only,
+                    path=None,
+                    path_kwargs={
+                        "ensure_exists": requested_ensure_exists,
+                        "bootstrap_read_only": False,
+                        "read_only": bool(requested_read_only)
+                        if requested_read_only is not None
+                        else True,
+                    },
                 )
                 logger.info(
                     "vector_metrics_db.bootstrap.stub_selected",
@@ -1867,14 +1912,17 @@ def activate_shared_vector_metrics_db(
         bootstrap_blocked = bool(
             resolved_fast or resolved_warmup or env_requested or bootstrap_env
         )
-        activation_path = default_vector_metrics_path(
-            ensure_exists=True, bootstrap_read_only=False, read_only=False
-        )
+        activation_path_kwargs = {
+            "ensure_exists": True,
+            "bootstrap_read_only": False,
+            "read_only": False,
+        }
         vm.configure_activation(
             warmup=False,
             ensure_exists=True,
             read_only=False,
-            path=activation_path,
+            path=None,
+            path_kwargs=activation_path_kwargs,
         )
         vm.request_post_warmup_activation(reason=reason or "warmup_complete")
         if bootstrap_blocked and not allow_activation:
@@ -1888,12 +1936,15 @@ def activate_shared_vector_metrics_db(
                     "bootstrap_env": bootstrap_env,
                 },
             )
+            if isinstance(vm, _BootstrapVectorMetricsStub):
+                vm._log_deferred_activation(reason="bootstrap_guard")
             return vm
         delegate = vm._promote_from_stub(
             reason=reason or "warmup_complete", allow_override=allow_activation
         )
         if delegate is not None:
             vm = delegate
+            path = vm.path if isinstance(vm, VectorMetricsDB) else None
             logger.info(
                 "vector_metrics_db.bootstrap.activated_post_ready",
                 extra={
@@ -1902,7 +1953,7 @@ def activate_shared_vector_metrics_db(
                     "warmup": resolved_warmup,
                     "env_requested": env_requested,
                     "bootstrap_env": bootstrap_env,
-                    "path": str(activation_path),
+                    "path": str(path) if path is not None else None,
                 },
             )
         else:
