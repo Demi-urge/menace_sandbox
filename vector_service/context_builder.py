@@ -1077,9 +1077,17 @@ class ContextBuilder:
                 except Exception:
                     return False
 
-            def _arm_readiness_hook(stub: _VectorMetricsWarmupStub):
-                ready_now = _is_ready()
+            cached_weights = dict(self.db_weights)
 
+            def _reapply_weights(vm: "VectorMetricsDB") -> None:
+                if not cached_weights:
+                    return
+                try:
+                    vm.set_db_weights(dict(cached_weights))
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug("vector metrics warmup weight replay failed", exc_info=True)
+
+            def _arm_readiness_hook(stub: _VectorMetricsWarmupStub):
                 def _check_ready() -> bool:
                     try:
                         state = ensure_bootstrapped()
@@ -1095,10 +1103,6 @@ class ContextBuilder:
                         require_readiness=True,
                     ),
                 )
-                if ready_now:
-                    _activate_real_db(
-                        reason="vector_metrics.warmup.readiness_ready", require_readiness=True
-                    )
                 return stub
 
             def _activate_real_db(
@@ -1108,6 +1112,7 @@ class ContextBuilder:
             ) -> "VectorMetricsDB | None":
                 vm = ContextBuilder._shared_vector_metrics
                 if isinstance(vm, _VectorMetricsWarmupStub):
+                    vm._cached_weights.update(cached_weights)
                     if getattr(vm, "_boot_stub_active", False) and (
                         require_readiness or warmup_flag
                     ):
@@ -1123,6 +1128,7 @@ class ContextBuilder:
                             return vm
                     vm = vm.activate_persistence(reason=reason)
                 if isinstance(vm, VectorMetricsDB) and getattr(vm, "_boot_stub_active", False):
+                    _reapply_weights(vm)
                     if require_readiness or warmup_flag:
                         if not _is_ready():
                             logger.info(
@@ -1132,11 +1138,13 @@ class ContextBuilder:
                             self._vector_metrics = vm
                             return vm
                     vm = vm.activate_router(reason=reason)
+                    _reapply_weights(vm)
                 if vm is None or isinstance(vm, _VectorMetricsWarmupStub):
                     vm = VectorMetricsDB(
                         bootstrap_fast=False,
                         warmup=False,
                     )
+                _reapply_weights(vm)
                 vm = _install_global(vm)
                 logger.info(
                     "vector_metrics.warmup.promoted",
@@ -1145,8 +1153,6 @@ class ContextBuilder:
                 return vm
 
             if warmup_flag or bootstrap_flag:
-                cached_weights = dict(self.db_weights)
-
                 if isinstance(existing, _VectorMetricsWarmupStub):
                     existing._cached_weights.update(cached_weights)
                     logger.info(
@@ -1157,6 +1163,7 @@ class ContextBuilder:
                         },
                     )
                     stub = existing
+                    _arm_readiness_hook(stub)
                 elif isinstance(existing, VectorMetricsDB):
                     logger.warning(
                         "vector_metrics.warmup.real_connection_detected",
@@ -1209,6 +1216,7 @@ class ContextBuilder:
                     return _arm_readiness_hook(stub)
 
             if isinstance(existing, _VectorMetricsWarmupStub):
+                existing._cached_weights.update(cached_weights)
                 return _activate_real_db(reason="context_builder.vector_metrics", require_readiness=False)
 
             if helper is not None:
