@@ -926,10 +926,10 @@ def warmup_vector_service(
         hydrate_handlers = False
         run_vectorise = False
 
-    model_probe_only = False
+    model_probe_only = True
     requested_handlers = bool(hydrate_handlers)
     requested_scheduler = bool(start_scheduler)
-    requested_model = bool(download_model or probe_model)
+    requested_model = bool(download_model or probe_model or model_probe_only)
     requested_vectorise = bool(run_vectorise)
     heavy_requested = any(
         flag
@@ -1034,9 +1034,10 @@ def warmup_vector_service(
     lite_deferrals: set[str] = set()
     if warmup_lite and not force_heavy:
         lite_deferrals.update({"handlers", "scheduler", "vectorise"})
-        if download_model:
+        if download_model or model_probe_only:
             model_probe_only = True
             probe_model = True
+            download_model = False
             lite_deferrals.add("model")
         if download_model or hydrate_handlers or start_scheduler or run_vectorise:
             log.info(
@@ -1282,6 +1283,9 @@ def warmup_vector_service(
         elapsed = time.monotonic() - budget_start
         remaining = stage_budget_cap - max(elapsed, cumulative_elapsed)
         return max(0.0, remaining)
+
+    def _conservative_estimate(stage: str) -> float | None:
+        return _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
 
     def _remaining_budget() -> float | None:
         shared_remaining = _shared_budget_remaining()
@@ -2687,6 +2691,58 @@ def warmup_vector_service(
             return True
         return False
 
+    def _conservative_future_gate(
+        stage: str,
+        wait_timeout: float | None,
+        *,
+        stage_enabled: bool,
+        chain_vectorise: bool = False,
+        vectorise_timeout: float | None = None,
+    ) -> bool:
+        nonlocal download_model, probe_model, model_probe_only
+        nonlocal hydrate_handlers, run_vectorise, budget_gate_reason
+
+        if not stage_enabled:
+            return False
+
+        estimate = _conservative_estimate(stage)
+        shared_remaining = _shared_budget_remaining()
+        status: str | None = None
+        cancelled_reason = "budget"
+
+        if estimate is None:
+            return False
+
+        if wait_timeout is not None and wait_timeout < estimate:
+            status = "deferred-timebox"
+            cancelled_reason = "ceiling"
+        elif shared_remaining is not None and shared_remaining < estimate:
+            status = "deferred-shared-budget"
+
+        if status is None:
+            return False
+
+        budget_gate_reason = budget_gate_reason or status
+        _record_background(stage, status, stage_timeout=wait_timeout)
+        if chain_vectorise and run_vectorise and stage != "vectorise":
+            _record_background("vectorise", status, stage_timeout=vectorise_timeout)
+            run_vectorise = False
+
+        if stage == "model":
+            download_model = False
+            probe_model = False
+            model_probe_only = False
+        elif stage == "handlers":
+            hydrate_handlers = False
+        elif stage == "vectorise":
+            run_vectorise = False
+
+        _record_cancelled(stage, cancelled_reason)
+        log.info(
+            "Conservative gate deferring %s before wait due to %s budget shortfall", stage, status
+        )
+        return True
+
     def _background_first_gate(
         stage: str,
         stage_timeout: float | None,
@@ -2975,6 +3031,12 @@ def warmup_vector_service(
             if not _has_estimated_budget("model", budget_cap=model_timeout):
                 _record_cancelled("model", "budget")
                 return _finalise()
+            if (warmup_lite or bootstrap_context) and not force_heavy:
+                status = "deferred-lite" if warmup_lite else "deferred-bootstrap"
+                _record_background("model", status, stage_timeout=model_timeout)
+                _record_cancelled("model", "budget")
+                log.info("Vector warmup model download deferred for lightweight bootstrap mode")
+                return _finalise()
             start = time.monotonic()
             model_future = ensure_embedding_model_future(
                 logger=log,
@@ -2993,6 +3055,10 @@ def warmup_vector_service(
                     wait_timeout = max(0.0, wait_timeout)
                 if wait_timeout is None:
                     wait_timeout = _BOOTSTRAP_STAGE_TIMEOUT
+                if _conservative_future_gate(
+                    "model", wait_timeout, stage_enabled=download_model
+                ):
+                    return _finalise()
                 def _wait_for_model() -> Path | tuple[Path | None, str | None] | None:
                     while True:
                         remaining_window = _stage_timer_remaining("model", wait_timeout)
@@ -3154,6 +3220,14 @@ def warmup_vector_service(
         )
         handler_budget_window = _stage_budget_window(handler_timeout)
         if hydrate_handlers:
+            if _conservative_future_gate(
+                "handlers",
+                handler_timeout,
+                stage_enabled=hydrate_handlers,
+                chain_vectorise=bool(run_vectorise),
+                vectorise_timeout=vectorise_timeout,
+            ):
+                return _finalise()
             if _stage_timeout_gate(
                 "handlers",
                 handler_timeout,
@@ -3467,6 +3541,10 @@ def warmup_vector_service(
         )
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
         if should_vectorise:
+            if _conservative_future_gate(
+                "vectorise", vectorise_timeout, stage_enabled=should_vectorise
+            ):
+                return _finalise()
             if _stage_timeout_gate(
                 "vectorise", vectorise_timeout, stage_enabled=should_vectorise
             ):
