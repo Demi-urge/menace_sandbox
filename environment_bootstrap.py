@@ -2837,7 +2837,55 @@ class EnvironmentBootstrapper:
                     background_status = background_status or "pending"
                 return set(heavy_to_schedule)
 
-            deferred_post_ready: set[str] = set()
+                deferred_post_ready: set[str] = set()
+
+            def _persist_background_deferral(
+                reason: str, additional: Iterable[str] = ()
+            ) -> None:
+                hints = _cap_timeouts(stage_timeouts) if isinstance(stage_timeouts, Mapping) else None
+                heavy_to_schedule = _schedule_heavy_background(additional, hints)
+                deferred_stages.update(pending_background_stages)
+                deferred_stages.update(heavy_to_schedule)
+                summary = {
+                    "bootstrap": "deferred",
+                    "background": background_status or "pending",
+                    "deferred": ",".join(sorted(deferred_stages)) if deferred_stages else "",
+                    reason: "true",
+                }
+                capped_hint = None
+                if isinstance(stage_timeouts, Mapping):
+                    capped_hint = ",".join(
+                        sorted(
+                            stage
+                            for stage, timeout in stage_timeouts.items()
+                            if stage != "budget" and timeout is not None
+                        )
+                    )
+                if capped_hint is not None:
+                    summary["stage_caps"] = capped_hint
+                hint_payload = _budget_hint_payload()
+                if summary.get("background") and hint_payload:
+                    summary["budget_hints"] = hint_payload
+                self._persist_vector_warmup_state(
+                    deferred=deferred_stages,
+                    summary=summary,
+                    mode="deferred",
+                    budget_hints=background_stage_timeouts
+                    if isinstance(background_stage_timeouts, Mapping)
+                    else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
+                )
+                if heavy_to_schedule and not background_ticket_only:
+                    self._queue_background_task(
+                        "vector-warmup-heavy",
+                        _run_heavy_background,
+                        delay_until_ready=True,
+                        join_inner=False,
+                        ready_gate="online",
+                        stage="vector_warmup",
+                        budget_hint=vector_budget_hint,
+                    )
+                check_budget()
+                return
 
             def _background_resume_hook(
                 stages: set[str], budget_hints: Mapping[str, float | None] | None = None
@@ -2994,58 +3042,17 @@ class EnvironmentBootstrapper:
                 except Exception:
                     budget_exhausted = budget_exhausted
                 if budget_exhausted:
-                    heavy_to_schedule = _schedule_heavy_background()
-                    deferred_stages |= set(pending_background_stages)
-                    deferred_stages |= heavy_to_schedule
                     self.logger.info(
                         "Vector warmup budget exhausted; deferring heavy stages to background",
                         extra=log_record(
                             event="vector-warmup-budget-exhausted",
                             budget=stage_budget_cap,
                             remaining=phase_remaining,
-                            deferred=sorted(deferred_stages),
+                            deferred=sorted(deferred_stages | set(pending_background_stages)),
                         ),
                     )
-                    if heavy_to_schedule and not background_ticket_only:
-                        self._queue_background_task(
-                            "vector-warmup-heavy",
-                            _run_heavy_background,
-                            delay_until_ready=True,
-                            join_inner=False,
-                            ready_gate="online",
-                            stage="vector_warmup",
-                            budget_hint=vector_budget_hint,
-                        )
-                capped_hint = None
-                if isinstance(stage_timeouts, Mapping):
-                    capped_hint = ",".join(
-                        sorted(
-                            stage
-                            for stage, timeout in stage_timeouts.items()
-                            if stage != "budget" and timeout is not None
-                        )
-                    )
-                summary = {
-                    "bootstrap": "deferred",
-                    "budget_exhausted": "true",
-                    "background": background_status or "pending",
-                    "deferred": ",".join(sorted(deferred_stages)) if deferred_stages else "",
-                }
-                if capped_hint is not None:
-                    summary["stage_caps"] = capped_hint
-                hint_payload = _budget_hint_payload()
-                if (background_status or summary.get("background")) and hint_payload:
-                    summary["budget_hints"] = hint_payload
-                self._persist_vector_warmup_state(
-                    deferred=deferred_stages,
-                    summary=summary,
-                    mode="deferred",
-                    budget_hints=background_stage_timeouts
-                    if isinstance(background_stage_timeouts, Mapping)
-                    else stage_timeouts if isinstance(stage_timeouts, Mapping) else None,
-                )
-                check_budget()
-                return
+                    _persist_background_deferral("budget_exhausted", pending_background_stages)
+                    return
                 summary: Mapping[str, str] | None = None
 
                 def _vector_budget_remaining() -> float | None:
@@ -3077,6 +3084,9 @@ class EnvironmentBootstrapper:
                     self.logger.info(
                         "Vector warmup invoked with flags: %s", selected_flags
                     )
+                    if not self._online_event.is_set():
+                        _persist_background_deferral("awaiting_online", warmup_background)
+                        return
                     heavy_to_schedule = set()
                     if self._online_event.is_set():
                         heavy_to_schedule |= _schedule_heavy_background(warmup_background)
