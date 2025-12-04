@@ -52,6 +52,7 @@ _PENDING_WEIGHTS: dict[str, float] = {}
 _READINESS_HOOK_ARMED = False
 _FIRST_WRITE_BUDGET_ENV = "VECTOR_METRICS_FIRST_WRITE_BUDGET_SECS"
 _BOOTSTRAP_PERSISTENCE_OVERRIDE_ENV = "VECTOR_METRICS_ALLOW_BOOTSTRAP_PERSISTENCE"
+_WARMUP_DEFERRAL_EMITTED = False
 
 _BOOTSTRAP_TIMER_ENVS = (
     "MENACE_BOOTSTRAP_WAIT_SECS",
@@ -414,6 +415,21 @@ class _BootstrapVectorMetricsStub:
         return delegate
 
     def _activate_with_timeout(self, *, reason: str) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+        if _bootstrap_thread_context():
+            self._queued_first_write = True
+            self._log_deferred_activation(reason="bootstrap_thread")
+            _increment_deferral_metric("bootstrap_thread")
+            self.register_readiness_hook()
+            logger.info(
+                "vector_metrics_db.bootstrap.activation_queued_from_warmup",
+                extra={
+                    "reason": reason,
+                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                },
+            )
+            return self
+
         budget = self._first_write_budget
         if budget is None:
             return self._activate(reason=reason, allow_override=True)
@@ -459,6 +475,21 @@ class _BootstrapVectorMetricsStub:
         return self._activate_in_memory(reason=reason)
 
     def _activate_in_memory(self, *, reason: str) -> "VectorMetricsDB":
+        if _bootstrap_thread_context():
+            self._queued_first_write = True
+            self._log_deferred_activation(reason="bootstrap_thread_in_memory")
+            _increment_deferral_metric("bootstrap_thread_in_memory")
+            self.register_readiness_hook()
+            logger.info(
+                "vector_metrics_db.bootstrap.in_memory_queued_from_warmup",
+                extra={
+                    "reason": reason,
+                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                },
+            )
+            return self
+
         if self._delegate is not None and self._delegate is not self:
             return self._delegate
         activation_kwargs = dict(self._activation_kwargs)
@@ -958,6 +989,19 @@ def _warmup_activation_allowed(
     return not warmup_requested
 
 
+def _bootstrap_thread_context() -> bool:
+    thread_name = threading.current_thread().name.lower()
+    return any(
+        marker in thread_name
+        for marker in (
+            "bootstrap",
+            "warmup",
+            "prepare_pipeline",
+            "vector-metrics-stub-readiness",
+        )
+    )
+
+
 def _detect_bootstrap_environment() -> dict[str, bool]:
     vector_bootstrap_env = _env_flag("VECTOR_METRICS_BOOTSTRAP_FAST", False)
     patch_bootstrap_env = _env_flag("PATCH_HISTORY_BOOTSTRAP", False)
@@ -1147,6 +1191,15 @@ def get_shared_vector_metrics_db(
         read_only = True
         _arm_shared_readiness_hook()
     promotion_pending_for_warmup = bool(warmup_context and promotion_requested)
+
+    global _WARMUP_DEFERRAL_EMITTED
+    if warmup_context and not _WARMUP_DEFERRAL_EMITTED:
+        _emit_warmup_summary_metric(
+            reasons={**warmup_context_reasons, "activation_deferred": True},
+            promotion_requested=promotion_requested,
+        )
+        _increment_deferral_metric("warmup_activation")
+        _WARMUP_DEFERRAL_EMITTED = True
 
     global _VECTOR_DB_INSTANCE
     with _VECTOR_DB_LOCK:
