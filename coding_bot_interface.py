@@ -639,6 +639,56 @@ def _mark_deferred_gates(
     return degraded_payload
 
 
+def _satisfy_placeholder_readiness(
+    *,
+    reason: str,
+    pending_gates: Iterable[str] | None = None,
+) -> Mapping[str, Any]:
+    """Mark readiness as satisfied while background placeholders hydrate."""
+
+    readiness = _initialize_prepare_readiness()
+    timestamp = time.time()
+    placeholder_pending = tuple(pending_gates or DEFERRED_COMPONENTS)
+    for gate in _CRITICAL_READINESS_GATES:
+        if gate not in readiness:
+            continue
+        readiness[gate].update(
+            {
+                "ready": True,
+                "timestamp": readiness[gate].get("timestamp") or timestamp,
+                "status": "ready",
+                "reason": reason,
+            }
+        )
+    for gate in placeholder_pending:
+        if gate not in readiness:
+            continue
+        readiness[gate].update(
+            {
+                "ready": False,
+                "timestamp": readiness[gate].get("timestamp") or timestamp,
+                "status": "deferred",
+                "reason": reason,
+                "deferred_class": "background",
+            }
+        )
+
+    _PREPARE_PIPELINE_WATCHDOG["readiness"] = readiness
+    payload = _mark_staged_readiness(
+        "bootstrap-placeholder",
+        ready_gates=[gate for gate, meta in readiness.items() if meta.get("ready")],
+        pending_gates=placeholder_pending,
+        deferred_pending=placeholder_pending,
+        all_pending_gates=placeholder_pending,
+        readiness_ratio=1.0,
+        remaining_window=0.0,
+        stage_budget=0.0,
+        vector_heavy=False,
+    )
+    _PREPARE_PIPELINE_WATCHDOG["placeholder_ready"] = payload
+    return payload
+
+
 def _extend_component_windows(
     gate_windows: Mapping[str, dict[str, Any]],
     *,
@@ -1970,6 +2020,17 @@ def advertise_bootstrap_placeholder(
         },
     )
     broker.advertise(pipeline=pipeline_candidate, sentinel=sentinel, owner=owner)
+    try:
+        placeholder_ready = _satisfy_placeholder_readiness(
+            reason="bootstrap_placeholder",
+            pending_gates=DEFERRED_COMPONENTS,
+        )
+        logger.info(
+            "bootstrap placeholder readiness satisfied",
+            extra={"event": "bootstrap-placeholder-ready", "readiness": placeholder_ready},
+        )
+    except Exception:  # pragma: no cover - readiness is best effort
+        logger.debug("failed to record placeholder readiness", exc_info=True)
     return pipeline_candidate, sentinel
 
 

@@ -80,6 +80,16 @@ VECTOR_WARMUP_STAGE_TOTAL = getattr(
     ),
 )
 
+VECTOR_WARMUP_DEFERRAL_TIMEBOX = getattr(
+    _metrics,
+    "vector_warmup_deferral_timebox_seconds",
+    _metrics.Gauge(
+        "vector_warmup_deferral_timebox_seconds",
+        "Background timebox advertised when a warmup stage is deferred",
+        ["stage", "status"],
+    ),
+)
+
 
 def _update_warmup_stage_cache(
     stage: str,
@@ -1335,6 +1345,12 @@ def warmup_vector_service(
         timebox_hint = meta.get("timebox_remaining")
         if isinstance(timebox_hint, (int, float)):
             summary[f"{stage}_timebox_remaining"] = f"{timebox_hint:.3f}"
+            try:
+                VECTOR_WARMUP_DEFERRAL_TIMEBOX.labels(stage, status).set(
+                    float(timebox_hint)
+                )
+            except Exception:  # pragma: no cover - metrics best effort
+                log.debug("failed emitting deferral timebox gauge", exc_info=True)
         if stage in {"handlers", "vectorise"} and status.startswith("deferred"):
             quick_ready = True
         if stage == "model" and status == "deferred-no-budget":
@@ -1354,6 +1370,20 @@ def warmup_vector_service(
         _hint_background_budget(stage, _effective_timeout(stage))
         if stage in prior_deferred and stage not in explicit_deferred:
             return
+        try:
+            log.info(
+                "Vector warmup stage deferred",  # structured telemetry for schedulers
+                extra={
+                    "event": "vector-warmup-deferred",
+                    "stage": stage,
+                    "status": status,
+                    "budget_hints": background_stage_timeouts or {},
+                    "timebox_remaining": meta.get("timebox_remaining"),
+                    "shared_budget_remaining": meta.get("shared_budget_remaining"),
+                },
+            )
+        except Exception:  # pragma: no cover - defensive logging only
+            log.debug("failed to log deferred stage", exc_info=True)
 
     def _record_proactive_deferral(
         stage: str, status: str, *, stage_timeout: float | None

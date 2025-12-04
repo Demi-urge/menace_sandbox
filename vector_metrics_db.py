@@ -39,6 +39,7 @@ _RETRIEVAL_HIT_RATE = None
 _RETRIEVER_WIN_RATE = None
 _RETRIEVER_REGRET_RATE = None
 _BOOTSTRAP_DEFERRALS = None
+_BOOTSTRAP_DEFERRAL_TIMEBOX = None
 
 
 logger = logging.getLogger(__name__)
@@ -238,8 +239,10 @@ class _BootstrapVectorMetricsStub:
                 "warmup": bool(self._activation_kwargs.get("warmup")),
                 "read_only": bool(self._activation_kwargs.get("read_only")),
                 "ensure_exists": self._activation_kwargs.get("ensure_exists"),
+                "background_timebox": self._first_write_budget,
             },
         )
+        _record_deferral_timebox(reason, self._first_write_budget)
 
     def _release_activation_block(self, *, reason: str, configure_ready: bool) -> None:
         if not self._activation_blocked:
@@ -773,6 +776,34 @@ def _increment_deferral_metric(reason: str) -> None:
             _BOOTSTRAP_DEFERRALS.labels(reason).inc()
         except Exception:
             logger.debug("vector metrics deferral metric increment failed", exc_info=True)
+
+
+def _record_deferral_timebox(reason: str, timebox: float | None) -> None:
+    """Record the queued background timebox for a deferred activation."""
+
+    global _BOOTSTRAP_DEFERRAL_TIMEBOX
+    if timebox is None:
+        return
+    if _BOOTSTRAP_DEFERRAL_TIMEBOX is False:
+        return
+    if _BOOTSTRAP_DEFERRAL_TIMEBOX is None:
+        try:
+            _BOOTSTRAP_DEFERRAL_TIMEBOX = _me.Gauge(
+                "vector_metrics_bootstrap_deferral_timebox_seconds",
+                "Background activation budget advertised when persistence is deferred",
+                ["reason"],
+            )
+        except Exception:
+            logger.debug("vector metrics deferral timebox metric unavailable", exc_info=True)
+            _BOOTSTRAP_DEFERRAL_TIMEBOX = False
+            return
+    if _BOOTSTRAP_DEFERRAL_TIMEBOX:
+        try:
+            _BOOTSTRAP_DEFERRAL_TIMEBOX.labels(reason).set(float(timebox))
+        except Exception:
+            logger.debug(
+                "vector metrics deferral timebox metric increment failed", exc_info=True
+            )
 
 
 def _emit_warmup_summary_metric(
