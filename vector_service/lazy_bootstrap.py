@@ -1008,7 +1008,24 @@ def warmup_vector_service(
         )
     )
 
+    heavy_work_requested = any(
+        flag
+        for flag in (
+            force_heavy,
+            hydrate_handlers,
+            start_scheduler,
+            download_model,
+            bool(run_vectorise),
+            warmup_handlers,
+            warmup_model,
+            not warmup_lite,
+        )
+    )
+
     budget_hooks_missing = not (budget_remaining_supplied and check_budget_supplied)
+    lightweight_missing_budget = budget_hooks_missing and not heavy_work_requested and (
+        bootstrap_context or warmup_requested
+    )
 
     stage_timeouts_input = stage_timeouts
     stage_timeouts = _normalise_stage_timeouts(stage_timeouts_input)
@@ -1025,9 +1042,12 @@ def warmup_vector_service(
         and not stage_budget_signals
         and (warmup_requested or bootstrap_context)
     ):
-        stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
-        stage_budget_signals = True
-        default_stage_timeouts_applied = True
+        if lightweight_missing_budget:
+            background_queue_allowed = True
+        else:
+            stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+            stage_budget_signals = True
+            default_stage_timeouts_applied = True
 
     if stage_timeouts is None and stage_budget_signals:
         stage_timeouts = env_stage_defaults
@@ -1208,6 +1228,8 @@ def warmup_vector_service(
                 return _coerce_timeout(stage_timeouts.get(stage))
             if isinstance(stage_timeouts, (int, float)):
                 return _coerce_timeout(stage_timeouts)
+            if lightweight_missing_budget:
+                return _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
             return None
 
         if (
@@ -1287,6 +1309,7 @@ def warmup_vector_service(
             summary["deferred"] = ",".join(sorted(new_deferred))
             summary["deferred_stages"] = summary["deferred"]
 
+        background_hints: dict[str, float | None] = {}
         if background_stages and background_queue_allowed:
             if background_hook is not None:
                 hints: Mapping[str, float | None] | None = None
@@ -1297,6 +1320,11 @@ def warmup_vector_service(
                     hints = {stage: budget_hint for stage in background_stages}
                     if budget_hint is not None:
                         hints["budget"] = budget_hint
+                elif lightweight_missing_budget:
+                    background_hints = _conservative_background_hints(set(background_stages))
+                    hints = dict(background_hints)
+                else:
+                    background_hints = {}
                 try:
                     hook_code = getattr(background_hook, "__code__", None)
                     if hook_code is not None and "budget_hints" in hook_code.co_varnames:

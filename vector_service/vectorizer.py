@@ -190,6 +190,18 @@ def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     warmup_thread = _is_warmup_thread()
     bundle_present = _BUNDLED_MODEL.exists()
     ceiling_known = stage_ceiling is not None and wait_timeout is not None
+    if warmup_thread and (not bundle_present or not ceiling_known):
+        background_timeout = wait_timeout if wait_timeout is not None else stage_ceiling
+        _update_warmup_stage_cache(
+            "model",
+            "deferred-ceiling",
+            logger,
+            meta={"background_state": "queued", "background_timeout": background_timeout},
+        )
+        deferred = TimeoutError("local embedding model download deferred")
+        setattr(deferred, "_deferred_status", _BACKGROUND_QUEUE_FLAG)
+        setattr(deferred, "_deferred_timeout", background_timeout)
+        raise deferred
     model_future = ensure_embedding_model_future(
         logger=logger,
         warmup=True,
