@@ -1529,7 +1529,7 @@ def warmup_vector_service(
     if bootstrap_fast is None:
         bootstrap_fast = bootstrap_context
     bootstrap_fast = bool(bootstrap_fast)
-    if not force_heavy and (warmup_lite or stage_budget_signals):
+    if not force_heavy and warmup_lite:
         if not bootstrap_fast:
             log.info(
                 "Forcing bootstrap-fast vector warmup to defer heavy index hydration",
@@ -1741,6 +1741,7 @@ def warmup_vector_service(
         deferred_bootstrap.add("vectorise")
 
     warmup_lite = bool(warmup_lite)
+    caller_requested_warmup_lite = warmup_lite
     background_queue_allowed = force_heavy or not warmup_lite or stage_budget_signals
     missing_budget_deferred: set[str] = set()
     recorded_deferred: set[str] = set()
@@ -2836,6 +2837,8 @@ def warmup_vector_service(
         for stage in ("handlers", "vectorise"):
             legacy_baseline = legacy_stage_baseline.get(stage)
             stage_ceiling = stage_budget_ceiling.get(stage)
+            if not caller_requested_warmup_lite and not stage_timeouts_supplied:
+                continue
             if (
                 legacy_baseline is not None
                 and stage_ceiling is not None
@@ -3542,7 +3545,12 @@ def warmup_vector_service(
             hint = _CONSERVATIVE_STAGE_TIMEOUTS.get(stage)
         return hint
 
-    presence_only_vector = warmup_lite and not force_heavy and not bootstrap_context
+    presence_only_vector = (
+        warmup_lite
+        and caller_requested_warmup_lite
+        and not force_heavy
+        and not bootstrap_context
+    )
     if presence_only_vector:
         presence_deferred: set[str] = set()
         if hydrate_handlers:
@@ -4021,6 +4029,30 @@ def warmup_vector_service(
             return _finalise()
 
         if download_model:
+            if model_timeout is None:
+                model_timeout = _CONSERVATIVE_STAGE_TIMEOUTS.get("model")
+                effective_timeouts["model"] = model_timeout
+            if (bootstrap_fast or warmup_lite) and not force_heavy:
+                status = "deferred-lite" if warmup_lite else "deferred-bootstrap"
+                try:
+                    if _model_bundle_path().exists():
+                        _record("model", "ready")
+                        summary["model_probe"] = "ready"
+                except Exception:  # pragma: no cover - best effort presence probe
+                    pass
+
+                _record_deferred_background(
+                    "model", status, stage_timeout=model_timeout
+                )
+                _record_cancelled("model", "budget")
+                download_model = False
+                probe_model = False
+                model_probe_only = False
+                model_enabled = False
+                log.info(
+                    "Vector warmup model download deferred for lightweight bootstrap mode",
+                    extra={"event": "vector-warmup", "background": status},
+                )
             if model_timeout is not None and model_timeout <= 0:
                 budget_exhausted = True
                 _record_deferred_background("model", "skipped-budget")
