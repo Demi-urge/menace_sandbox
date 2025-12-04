@@ -2228,6 +2228,12 @@ def warmup_vector_service(
         summary["capped_stages"] = ",".join(sorted(capped_stages)) if capped_stages else ""
         if heavy_admission is not None:
             summary["heavy_admission"] = heavy_admission
+        if heavy_stage_cap_hits:
+            summary["heavy_stage_ceiling_hits"] = ",".join(
+                sorted(heavy_stage_cap_hits)
+            )
+            for stage in heavy_stage_cap_hits:
+                summary[f"{stage}_ceiling_guard"] = f"{heavy_stage_ceiling:.3f}"
         for stage, ceiling in stage_budget_ceiling.items():
             summary[f"budget_ceiling_{stage}"] = (
                 f"{ceiling:.3f}" if ceiling is not None else "none"
@@ -2267,9 +2273,10 @@ def warmup_vector_service(
         def _ensure_background_timeouts() -> None:
             nonlocal background_stage_timeouts
             if background_stage_timeouts is None:
-                background_stage_timeouts = {
-                    stage: _effective_timeout(stage) for stage in base_timeouts
-                }
+                background_stage_timeouts = dict(explicit_stage_timeouts)
+                for stage, timeout in list(background_stage_timeouts.items()):
+                    if timeout is None:
+                        background_stage_timeouts[stage] = _effective_timeout(stage)
                 if stage_budget_cap is not None:
                     background_stage_timeouts["budget"] = stage_budget_cap
 
@@ -2623,6 +2630,12 @@ def warmup_vector_service(
             timeout = resolved_timeouts.get(stage)
             if timeout is None or timeout > bootstrap_hard_timebox:
                 resolved_timeouts[stage] = bootstrap_hard_timebox
+    explicit_stage_timeouts: dict[str, float | None] = {
+        stage: resolved_timeouts.get(stage, base_timeouts.get(stage)) for stage in base_timeouts
+    }
+    if provided_budget is not None:
+        explicit_stage_timeouts["budget"] = provided_budget
+
     stage_budget_ceiling = {stage: resolved_timeouts.get(stage) for stage in base_timeouts}
     capped_stages: set[str] = {
         stage for stage, timeout in stage_budget_ceiling.items() if timeout is not None
@@ -2673,6 +2686,8 @@ def warmup_vector_service(
             stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
             for stage in base_timeouts
         }
+        if provided_budget is not None and "budget" not in background_stage_timeouts:
+            background_stage_timeouts["budget"] = provided_budget
         if stage_budget_cap is not None:
             background_stage_timeouts["budget"] = stage_budget_cap
 
@@ -3917,6 +3932,36 @@ def warmup_vector_service(
             _effective_timeout("vectorise"), stage_budget_ceiling.get("vectorise")
         )
         handler_budget_window = _stage_budget_window(handler_timeout)
+        remaining_cap = _remaining_budget()
+        handler_cap_hint = handler_timeout
+        if handler_cap_hint is None:
+            handler_cap_hint = stage_budget_ceiling.get("handlers")
+        if handler_cap_hint is not None and remaining_cap is not None:
+            handler_cap_hint = min(handler_cap_hint, remaining_cap)
+        if (
+            hydrate_handlers
+            and handler_cap_hint is not None
+            and base_stage_cost.get("handlers") is not None
+            and handler_cap_hint < base_stage_cost["handlers"]
+        ):
+            _defer_handler_chain(
+                "deferred-budget",
+                stage_timeout=handler_timeout,
+                vectorise_timeout=vectorise_timeout,
+            )
+            _record_cancelled("handlers", "budget")
+            log.info(
+                "Vector warmup handler hydration deferred before start; remaining budget %.2fs below estimate %.2fs",
+                handler_cap_hint,
+                base_stage_cost["handlers"],
+                extra={
+                    "event": "vector-warmup-budget-remaining",
+                    "stage": "handlers",
+                    "remaining": handler_cap_hint,
+                    "estimate": base_stage_cost["handlers"],
+                },
+            )
+            return _finalise()
         if hydrate_handlers:
             if _conservative_future_gate(
                 "handlers",
@@ -4251,6 +4296,35 @@ def warmup_vector_service(
             _effective_timeout("vectorise"), stage_budget_ceiling.get("vectorise")
         )
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
+        remaining_cap = _remaining_budget()
+        vectorise_cap_hint = vectorise_timeout
+        if vectorise_cap_hint is None:
+            vectorise_cap_hint = stage_budget_ceiling.get("vectorise")
+        if vectorise_cap_hint is not None and remaining_cap is not None:
+            vectorise_cap_hint = min(vectorise_cap_hint, remaining_cap)
+        if (
+            should_vectorise
+            and vectorise_cap_hint is not None
+            and base_stage_cost.get("vectorise") is not None
+            and vectorise_cap_hint < base_stage_cost["vectorise"]
+        ):
+            _record_deferred_background(
+                "vectorise", "deferred-budget", stage_timeout=vectorise_timeout
+            )
+            _hint_background_budget("vectorise", vectorise_timeout)
+            _record_cancelled("vectorise", "budget")
+            log.info(
+                "Vector warmup vectorise deferred before start; remaining budget %.2fs below estimate %.2fs",
+                vectorise_cap_hint,
+                base_stage_cost["vectorise"],
+                extra={
+                    "event": "vector-warmup-budget-remaining",
+                    "stage": "vectorise",
+                    "remaining": vectorise_cap_hint,
+                    "estimate": base_stage_cost["vectorise"],
+                },
+            )
+            return _finalise()
         if should_vectorise:
             if _conservative_future_gate(
                 "vectorise", vectorise_timeout, stage_enabled=should_vectorise
