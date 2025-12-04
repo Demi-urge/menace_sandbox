@@ -47,10 +47,10 @@ _WARMUP_CACHE_LOADED = False
 _PROCESS_START = int(time.time())
 
 _CONSERVATIVE_STAGE_TIMEOUTS = {
-    "model": 7.5,
-    "handlers": 7.5,
-    "scheduler": 4.5,
-    "vectorise": 5.0,
+    "model": 5.0,
+    "handlers": 5.0,
+    "scheduler": 3.5,
+    "vectorise": 4.0,
 }
 
 _BOOTSTRAP_STAGE_TIMEOUT = 8.0
@@ -1669,6 +1669,7 @@ def warmup_vector_service(
             priority = {
                 "deferred-heavy": 6,
                 "deferred-bootstrap": 5,
+                "deferred-legacy-ceiling": 4,
                 "deferred-ceiling": 4,
                 "deferred-timebox": 3,
                 "deferred-budget": 2,
@@ -2451,6 +2452,12 @@ def warmup_vector_service(
     base_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
     min_vectorise_budget = 0.5
     base_stage_cost = {
+        "model": 4.0,
+        "handlers": 4.5,
+        "vectorise": 3.5,
+        "scheduler": 3.0,
+    }
+    legacy_stage_baseline = {
         "model": 20.0,
         "handlers": 25.0,
         "vectorise": 8.0,
@@ -2592,6 +2599,38 @@ def warmup_vector_service(
     capped_stages: set[str] = {
         stage for stage, timeout in stage_budget_ceiling.items() if timeout is not None
     }
+
+    if not force_heavy:
+        for stage in ("handlers", "vectorise"):
+            legacy_baseline = legacy_stage_baseline.get(stage)
+            stage_ceiling = stage_budget_ceiling.get(stage)
+            if (
+                legacy_baseline is not None
+                and stage_ceiling is not None
+                and stage_ceiling < legacy_baseline
+            ):
+                status = "deferred-legacy-ceiling"
+                log.info(
+                    "Vector warmup %s ceiling %.2fs below legacy baseline %.2fs; deferring to background",
+                    stage,
+                    stage_ceiling,
+                    legacy_baseline,
+                    extra={
+                        "event": "vector-warmup",
+                        "stage": stage,
+                        "status": status,
+                        "ceiling": stage_ceiling,
+                        "legacy_baseline": legacy_baseline,
+                    },
+                )
+                _record_deferred_background(
+                    stage, status, stage_timeout=stage_ceiling
+                )
+                budget_gate_reason = budget_gate_reason or status
+                if stage == "handlers":
+                    hydrate_handlers = False
+                elif stage == "vectorise":
+                    run_vectorise = False
 
     if run_vectorise and not force_heavy:
         _record_deferred_background(
