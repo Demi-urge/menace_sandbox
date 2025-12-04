@@ -2666,6 +2666,41 @@ def warmup_vector_service(
         )
         return True
 
+    def _stage_timeout_gate(
+        stage: str,
+        stage_timeout: float | None,
+        *,
+        stage_enabled: bool,
+        chain_vectorise: bool = False,
+        vectorise_timeout: float | None = None,
+    ) -> bool:
+        nonlocal hydrate_handlers, start_scheduler, run_vectorise, budget_gate_reason
+
+        if not stage_enabled:
+            return False
+
+        status: str | None = None
+        if stage_timeout is None:
+            status = "deferred-no-budget"
+        elif stage_timeout <= 0:
+            status = "deferred-timebox"
+
+        if status is None:
+            return False
+
+        budget_gate_reason = budget_gate_reason or status
+        _record_background(stage, status, stage_timeout=stage_timeout)
+        if chain_vectorise and run_vectorise and stage != "vectorise":
+            _record_background("vectorise", status, stage_timeout=vectorise_timeout)
+            run_vectorise = False
+        if stage == "handlers":
+            hydrate_handlers = False
+        elif stage == "scheduler":
+            start_scheduler = False
+        elif stage == "vectorise":
+            run_vectorise = False
+        return True
+
     def _abort_missing_timeout(
         stage: str,
         stage_timeout: float | None,
@@ -3028,6 +3063,17 @@ def warmup_vector_service(
         vectorise_timeout = _effective_timeout("vectorise")
         handler_budget_window = _stage_budget_window(handler_timeout)
         if hydrate_handlers:
+            if _stage_timeout_gate(
+                "handlers",
+                handler_timeout,
+                stage_enabled=hydrate_handlers,
+                chain_vectorise=bool(run_vectorise),
+                vectorise_timeout=vectorise_timeout,
+            ):
+                _record_cancelled(
+                    "handlers", "budget" if handler_timeout is None else "ceiling"
+                )
+                return _finalise()
             if handler_budget_window is not None and handler_budget_window <= 0:
                 status = (
                     "deferred-timebox" if handler_timeout is not None else "deferred-budget"
@@ -3274,6 +3320,11 @@ def warmup_vector_service(
         pass
     else:
         scheduler_timeout = _effective_timeout("scheduler")
+        if _stage_timeout_gate(
+            "scheduler", scheduler_timeout, stage_enabled=start_scheduler
+        ):
+            _record_cancelled("scheduler", "budget" if scheduler_timeout is None else "ceiling")
+            return _finalise()
         admitted, scheduler_timeout = _admit_stage_budget(
             "scheduler", scheduler_timeout, stage_cap=stage_budget_ceiling.get("scheduler")
         )
@@ -3323,6 +3374,13 @@ def warmup_vector_service(
         vectorise_timeout = _effective_timeout("vectorise")
         vectorise_budget_window = _stage_budget_window(vectorise_timeout)
         if should_vectorise:
+            if _stage_timeout_gate(
+                "vectorise", vectorise_timeout, stage_enabled=should_vectorise
+            ):
+                _record_cancelled(
+                    "vectorise", "budget" if vectorise_timeout is None else "ceiling"
+                )
+                return _finalise()
             if vectorise_budget_window is not None and vectorise_budget_window <= 0:
                 status = (
                     "deferred-timebox" if vectorise_timeout is not None else "deferred-budget"
