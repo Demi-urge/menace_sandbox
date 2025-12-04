@@ -173,6 +173,61 @@ def test_timer_stub_promotes_after_readiness(monkeypatch):
     assert calls and calls[0][0] == "init"
 
 
+def test_readiness_timeout_promotes_stub(monkeypatch, tmp_path):
+    class _HangingSignal:
+        def await_ready(self, timeout=None):  # pragma: no cover - gate only
+            threading.Event().wait((timeout or 0.1) + 0.05)
+            return False
+
+    calls: list[str] = []
+    reasons: list[str] = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            calls.append("init")
+            self._boot_stub_active = False
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            calls.append("activate_on_first_write")
+
+        def end_warmup(self, *args, **kwargs):  # pragma: no cover - passthrough
+            calls.append("end_warmup")
+
+        def activate_persistence(self, *args, **kwargs):  # pragma: no cover
+            calls.append("activate_persistence")
+            return self
+
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+    monkeypatch.setenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS", "0.05")
+    monkeypatch.setenv("VECTOR_METRICS_FIRST_WRITE_BUDGET_SECS", "0.05")
+    monkeypatch.setitem(
+        sys.modules, "bootstrap_readiness", types.SimpleNamespace(readiness_signal=lambda: _HangingSignal())
+    )
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", DummyVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_BOOTSTRAP_VECTOR_DB_STUB", None)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+    monkeypatch.setattr(vector_metrics_db, "_READINESS_HOOK_ARMED", False)
+    monkeypatch.setattr(
+        vector_metrics_db, "_increment_deferral_metric", lambda reason: reasons.append(reason)
+    )
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db(
+        ensure_exists=True, read_only=False
+    )
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+
+    for _ in range(60):
+        if isinstance(vector_metrics_db._VECTOR_DB_INSTANCE, DummyVectorDB):
+            break
+        threading.Event().wait(0.05)
+
+    activated = vector_metrics_db._VECTOR_DB_INSTANCE
+    assert isinstance(activated, DummyVectorDB)
+    assert "readiness_timeout" in reasons
+
+
 def test_get_shared_stub_when_readiness_hook_active(monkeypatch):
     calls = []
 
