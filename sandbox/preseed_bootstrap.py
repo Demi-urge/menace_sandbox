@@ -4100,6 +4100,7 @@ def initialize_bootstrap_context(
             },
         )
         warmup_lite_context = True
+    full_preload_requested = bool(full_embedder_preload or force_embedder_preload)
     embedder_preload_enabled = True
     embedder_stage_timebox_hint: float | None = None
     embedder_preload_stage_blocked = bool(
@@ -4110,10 +4111,18 @@ def initialize_bootstrap_context(
     warmup_summary: dict[str, Any] | None = None
     embedder_stage_inline_cap: float | None = None
 
-    def _record_embedder_skip(reason: str) -> None:
+    def _record_embedder_skip(
+        reason: str,
+        *,
+        background_timebox: float | None = None,
+        enqueue_background: bool = False,
+        disable_step: bool = True,
+        budget_flag: bool = False,
+    ) -> None:
         nonlocal embedder_preload_enabled, embedder_preload_skip_reason, embedder_preload_deferred
         global _BOOTSTRAP_EMBEDDER_JOB
-        embedder_preload_enabled = False
+        if disable_step:
+            embedder_preload_enabled = False
         embedder_preload_skip_reason = reason
         embedder_preload_deferred = True
         stage_controller.defer_step("embedder_preload", reason=reason)
@@ -4122,21 +4131,32 @@ def initialize_bootstrap_context(
             "background_loops", reason=f"embedder_placeholder:{reason}"
         )
         _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(reason=reason)
-        warmup_summary = {
-            "deferred": True,
-            "deferred_reason": reason,
-            "deferral_reason": reason,
-            "stage": "skipped-preload",
-        }
-        _BOOTSTRAP_EMBEDDER_JOB = {
-            "placeholder": _BOOTSTRAP_PLACEHOLDER,
-            "placeholder_reason": reason,
-            "warmup_placeholder_reason": reason,
-            "deferral_reason": reason,
-            "background_enqueue_reason": reason,
-            "result": _BOOTSTRAP_PLACEHOLDER,
-            "warmup_summary": warmup_summary,
-        }
+        background_timebox = (
+            background_timebox if background_timebox is not None else embedder_stage_timebox_hint
+        )
+        if enqueue_background:
+            _BOOTSTRAP_EMBEDDER_JOB = _schedule_background_preload_safe(
+                reason,
+                strict_timebox=background_timebox,
+                budget_flag=budget_flag,
+            )
+        else:
+            warmup_summary = {
+                "deferred": True,
+                "deferred_reason": reason,
+                "deferral_reason": reason,
+                "stage": "skipped-preload",
+            }
+            _BOOTSTRAP_EMBEDDER_JOB = {
+                "placeholder": _BOOTSTRAP_PLACEHOLDER,
+                "placeholder_reason": reason,
+                "warmup_placeholder_reason": reason,
+                "deferral_reason": reason,
+                "background_enqueue_reason": reason,
+                "result": _BOOTSTRAP_PLACEHOLDER,
+                "warmup_summary": warmup_summary,
+            }
+        stage_controller.complete_step("embedder_preload", 0.0)
 
     positive_stage_timebox = any(
         candidate is not None and candidate > 0
@@ -4174,7 +4194,26 @@ def initialize_bootstrap_context(
                 )
     except Exception:  # pragma: no cover - advisory only
         LOGGER.debug("failed to compute embedder stage timebox hint", exc_info=True)
-    full_preload_requested = full_embedder_preload or force_embedder_preload
+    background_timebox_hint = embedder_stage_timebox_hint or embedder_stage_budget_hint
+    budget_hint_insufficient = (
+        embedder_stage_budget_hint is None
+        or embedder_stage_budget_hint < estimated_preload_cost
+    ) and not full_preload_requested
+    if budget_hint_insufficient:
+        _record_embedder_skip(
+            "embedder_preload_background_budget_hint",
+            background_timebox=background_timebox_hint,
+            enqueue_background=True,
+            disable_step=False,
+            budget_flag=True,
+        )
+    elif not full_preload_requested and embedder_preload_skip_reason is None:
+        _record_embedder_skip(
+            "embedder_preload_background_default",
+            background_timebox=background_timebox_hint,
+            enqueue_background=True,
+            disable_step=False,
+        )
     if full_preload_requested and not positive_stage_timebox:
         _record_embedder_skip("embedder_full_preload_budget_required")
     elif not positive_stage_timebox:
@@ -4189,6 +4228,14 @@ def initialize_bootstrap_context(
         existing_job_snapshot = _BOOTSTRAP_EMBEDDER_JOB or {}
         existing_background = existing_job_snapshot.get("background_future") or getattr(
             _BOOTSTRAP_SCHEDULER, "_embedder_background_future", None
+        )
+        pending_background_resume = bool(
+            existing_job_snapshot.get("background_enqueue_reason")
+        )
+        pending_background_timebox = (
+            existing_job_snapshot.get("background_join_timeout")
+            or existing_job_snapshot.get("strict_timebox")
+            or embedder_stage_timebox_hint
         )
         if existing_background is not None:
             resume_reason = (
@@ -5614,6 +5661,24 @@ def initialize_bootstrap_context(
                 warmup_summary.setdefault("stage_budget", embedder_stage_budget_hint)
                 warmup_summary.setdefault("strict_timebox", strict_timebox)
                 job_snapshot["warmup_summary"] = warmup_summary
+
+                return job_snapshot
+
+            if pending_background_resume and existing_background is None:
+                resume_reason = existing_job_snapshot.get(
+                    "background_enqueue_reason", "embedder_preload_background_resume"
+                )
+                job_snapshot = _schedule_background_preload(
+                    resume_reason, strict_timebox=pending_background_timebox
+                )
+                existing_job_snapshot.update(job_snapshot)
+                _BOOTSTRAP_EMBEDDER_JOB = existing_job_snapshot
+                placeholder_obj = existing_job_snapshot.get(
+                    "placeholder", _BOOTSTRAP_PLACEHOLDER
+                )
+                stage_controller.defer_step("embedder_preload", reason=resume_reason)
+                stage_controller.complete_step("embedder_preload", 0.0)
+                return existing_job_snapshot.get("result", placeholder_obj)
 
             def _background_preload() -> None:
                 try:
