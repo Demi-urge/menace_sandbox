@@ -1993,49 +1993,19 @@ class EnvironmentBootstrapper:
 
         if names:
             try:
-                from .bootstrap_readiness import readiness_signal
-                from .vector_metrics_db import (
-                    ensure_vector_db_weights,
-                    resolve_vector_bootstrap_flags,
-                )
+                from .vector_metrics_db import ensure_vector_db_weights
 
-                bootstrap_fast, warmup, _, _ = resolve_vector_bootstrap_flags()
-
-                # Prime the warmup/stub path so weight seeding is queued without
-                # touching the filesystem during bootstrap. The pending weights will
-                # be applied once the database activates on first write.
                 ensure_vector_db_weights(
                     names,
-                    bootstrap_fast=bootstrap_fast,
+                    bootstrap_fast=True,
                     warmup=True,
                     ensure_exists=False,
                     read_only=True,
                 )
-
-                def _seed_when_ready() -> None:
-                    try:
-                        readiness_signal().await_ready(timeout=None)
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.debug(
-                            "VectorMetricsDB readiness wait failed; falling back to deferred activation",
-                            exc_info=True,
-                        )
-                    try:
-                        ensure_vector_db_weights(
-                            names,
-                            bootstrap_fast=bootstrap_fast,
-                            warmup=warmup,
-                            ensure_exists=False,
-                            read_only=True,
-                        )
-                    except Exception as exc:  # pragma: no cover - log only
-                        self.logger.warning("VectorMetricsDB bootstrap failed: %s", exc)
-
-                threading.Thread(
-                    target=_seed_when_ready,
-                    name="vector-weight-seed-readiness",
-                    daemon=True,
-                ).start()
+                self.logger.info(
+                    "Queued vector metrics weight seeding for post-bootstrap promotion",
+                    extra=log_record(event="vector-metrics-weight-seed", count=len(names)),
+                )
             except Exception as exc:  # pragma: no cover - log only
                 self.logger.warning("VectorMetricsDB bootstrap failed: %s", exc)
 

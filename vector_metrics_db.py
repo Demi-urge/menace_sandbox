@@ -297,6 +297,11 @@ class _BootstrapVectorMetricsStub:
                 )
                 return
             try:
+                pending = _pending_weight_mapping()
+                logger.info(
+                    "vector_metrics_db.bootstrap.stub_promotion_pending",
+                    extra={"pending_weights": len(pending)},
+                )
                 self._release_activation_block(
                     reason="bootstrap_ready", configure_ready=True
                 )
@@ -885,6 +890,10 @@ def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
             )
             return
         _clear_pending_weights(pending.keys())
+        logger.info(
+            "vector_metrics_db.bootstrap.pending_weights_promoted",
+            extra={"count": len(pending), "mode": "bootstrap_ready"},
+        )
         return
 
     missing = {name: weight for name, weight in pending.items() if name not in existing}
@@ -904,6 +913,10 @@ def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
         )
         return
     _clear_pending_weights(merged.keys())
+    logger.info(
+        "vector_metrics_db.bootstrap.pending_weights_promoted",
+        extra={"count": len(merged), "mode": "merge"},
+    )
 
 
 def _arm_shared_readiness_hook() -> None:
@@ -932,9 +945,15 @@ def _arm_shared_readiness_hook() -> None:
             return
         try:
             logger.info(
-                "vector_metrics_db.bootstrap.readiness_promotion_wait", 
+                "vector_metrics_db.bootstrap.readiness_promotion_wait",
                 extra={"stub_active": isinstance(_VECTOR_DB_INSTANCE, _BootstrapVectorMetricsStub)},
             )
+            pending = _pending_weight_mapping()
+            if pending:
+                logger.info(
+                    "vector_metrics_db.bootstrap.readiness_pending_weights",
+                    extra={"pending_weights": len(pending)},
+                )
             promoted = activate_shared_vector_metrics_db(
                 reason="bootstrap_ready", post_warmup=True
             )
@@ -1875,6 +1894,30 @@ def ensure_vector_db_weights(
         return
 
     _record_pending_weights(names)
+
+    warmup_requested = bool(warmup)
+    ensure_disabled = ensure_exists is False
+
+    if warmup_requested and ensure_disabled:
+        stub = get_bootstrap_shared_vector_metrics_db(
+            bootstrap_fast=True if bootstrap_fast is None else bool(bootstrap_fast),
+            warmup=True,
+            ensure_exists=False,
+            read_only=True,
+            warmup_stub=True,
+        )
+        if isinstance(stub, _BootstrapVectorMetricsStub):
+            stub.set_db_weights({name: 1.0 for name in names})
+            logger.info(
+                "vector_metrics_db.bootstrap.weight_seed_stubbed",
+                extra={
+                    "count": len(names),
+                    "warmup": True,
+                    "ensure_exists": False,
+                },
+            )
+            _increment_deferral_metric("weights_stubbed")
+            return
 
     if bootstrap_fast is None or warmup is None:
         bootstrap_fast, resolved_warmup, env_requested, bootstrap_env = (
