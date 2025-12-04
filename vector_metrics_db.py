@@ -649,6 +649,26 @@ def _increment_deferral_metric(reason: str) -> None:
             logger.debug("vector metrics deferral metric increment failed", exc_info=True)
 
 
+def _emit_warmup_summary_metric(
+    *, reasons: Mapping[str, bool], promotion_requested: bool
+) -> None:
+    """Emit a concise warmup summary to avoid repeated bootstrap activations."""
+
+    try:
+        active_reasons = [reason for reason, active in reasons.items() if active]
+        logger.info(
+            "vector_metrics_db.bootstrap.warmup_summary",
+            extra={
+                "active_reasons": sorted(active_reasons),
+                "promotion_deferred": promotion_requested,
+            },
+        )
+        if promotion_requested:
+            _increment_deferral_metric("warmup_promotion_deferred")
+    except Exception:  # pragma: no cover - defensive logging only
+        logger.debug("vector metrics warmup summary emission failed", exc_info=True)
+
+
 def _record_pending_weight_values(weights: Mapping[str, float]) -> None:
     if not weights:
         return
@@ -1032,6 +1052,9 @@ def get_shared_vector_metrics_db(
     if warmup_stub_requested:
         resolved_warmup = True
     state_flags = _bootstrap_state_flags()
+    timer_context = _bootstrap_timers_active()
+    readiness_signal_active = bool(_READINESS_HOOK_ARMED)
+    readiness_inactive = not readiness_signal_active
     menace_bootstrap = bool(_menace_bootstrap_active() or bootstrap_env)
     bootstrap_requested = bool(
         warmup_stub_requested
@@ -1039,15 +1062,13 @@ def get_shared_vector_metrics_db(
         or resolved_warmup
         or env_requested
         or menace_bootstrap
-        or _bootstrap_timers_active()
+        or timer_context
         or state_flags["bootstrap_state"]
         or state_flags["warmup_lite"]
     )
-    timer_context = _bootstrap_timers_active()
     stub_short_circuit = bool(
-        resolved_warmup or resolved_bootstrap_fast or timer_context
+        resolved_warmup or resolved_bootstrap_fast or timer_context or readiness_inactive
     )
-    readiness_signal_active = bool(_READINESS_HOOK_ARMED)
     warmup_context_reasons = {
         "bootstrap_requested": bootstrap_requested,
         "bootstrap_timer": timer_context,
@@ -1057,14 +1078,22 @@ def get_shared_vector_metrics_db(
         "warmup_lite": state_flags["warmup_lite"],
         "bootstrap_state": state_flags["bootstrap_state"],
         "warmup_stub_requested": warmup_stub_requested,
+        "readiness_hook_inactive": readiness_inactive,
     }
-    warmup_context = bool(warmup_stub_requested or any(warmup_context_reasons.values()))
+    warmup_context = bool(
+        warmup_stub_requested
+        or timer_context
+        or readiness_inactive
+        or any(warmup_context_reasons.values())
+    )
     promotion_requested = bool((ensure_exists is True) or (read_only is False))
     requested_ensure_exists = ensure_exists
     requested_read_only = read_only
     queued_promotion_kwargs: dict[str, Any] = {}
+    promotion_deferred = False
     if warmup_context:
         if promotion_requested:
+            promotion_deferred = True
             logger.info(
                 "vector_metrics_db.bootstrap.promotion_ignored",
                 extra={
@@ -1219,6 +1248,11 @@ def get_shared_vector_metrics_db(
                     "warmup": resolved_warmup,
                 },
             )
+
+    if warmup_context and promotion_deferred:
+        _emit_warmup_summary_metric(
+            reasons=warmup_context_reasons, promotion_requested=promotion_requested
+        )
 
     if warmup_context:
         try:
