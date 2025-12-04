@@ -1066,9 +1066,6 @@ def get_shared_vector_metrics_db(
         or state_flags["bootstrap_state"]
         or state_flags["warmup_lite"]
     )
-    stub_short_circuit = bool(
-        resolved_warmup or resolved_bootstrap_fast or timer_context or readiness_inactive
-    )
     warmup_context_reasons = {
         "bootstrap_requested": bootstrap_requested,
         "bootstrap_timer": timer_context,
@@ -1079,12 +1076,15 @@ def get_shared_vector_metrics_db(
         "bootstrap_state": state_flags["bootstrap_state"],
         "warmup_stub_requested": warmup_stub_requested,
         "readiness_hook_inactive": readiness_inactive,
+        "default_bootstrap_guard": True,
     }
-    warmup_context = bool(
-        warmup_stub_requested
+    warmup_context = bool(any(warmup_context_reasons.values()))
+    stub_short_circuit = bool(
+        warmup_context
+        or resolved_warmup
+        or resolved_bootstrap_fast
         or timer_context
         or readiness_inactive
-        or any(warmup_context_reasons.values())
     )
     promotion_requested = bool((ensure_exists is True) or (read_only is False))
     requested_ensure_exists = ensure_exists
