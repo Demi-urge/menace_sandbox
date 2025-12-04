@@ -912,15 +912,20 @@ def warmup_vector_service(
             if stage == "model" and model_probe is not None:
                 summary["model_probe"] = model_probe
             summary[stage] = status
-            if _WARMUP_STAGE_MEMO.get(stage) != status:
-                _update_warmup_stage_cache(
-                    stage,
-                    status,
-                    log,
-                    meta={"source": "missing-budget-hooks"},
-                    emit_metric=False,
-                )
-            if status.startswith("deferred") and cached_status != status:
+            summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+            prior_background_state = _WARMUP_STAGE_META.get(stage, {}).get("background_state")
+            changed_status = _WARMUP_STAGE_MEMO.get(stage) != status
+            deferral_meta = {"source": "missing-budget-hooks", "background_state": _BACKGROUND_QUEUE_FLAG}
+            _update_warmup_stage_cache(
+                stage,
+                status,
+                log,
+                meta=deferral_meta,
+                emit_metric=changed_status,
+            )
+            if status.startswith("deferred") and (
+                changed_status or prior_background_state != _BACKGROUND_QUEUE_FLAG
+            ):
                 new_deferred.add(stage)
 
         background_stages = {
@@ -930,6 +935,10 @@ def warmup_vector_service(
             and summary.get(stage, "").startswith("deferred")
             and stage in new_deferred
         }
+        if new_deferred:
+            summary["deferred"] = ",".join(sorted(new_deferred))
+            summary["deferred_stages"] = summary["deferred"]
+
         if background_hook is not None and background_stages:
             hints: Mapping[str, float | None] | None = None
             if isinstance(stage_timeouts, Mapping):
