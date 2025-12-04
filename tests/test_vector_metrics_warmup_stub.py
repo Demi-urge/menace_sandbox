@@ -115,3 +115,36 @@ def test_readiness_hook_warmup_skips_io(monkeypatch, tmp_path):
     assert vm.ready_probe() == str(path)
     assert not path.exists()
 
+
+def test_shared_db_uses_stub_during_menace_bootstrap(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+    vector_metrics_db._MENACE_BOOTSTRAP_ENV_ACTIVE = None
+    vector_metrics_db._VECTOR_DB_INSTANCE = None
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db()
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert getattr(vm, "_activation_blocked", False) is True
+    assert getattr(vm, "_warmup_guarded_activation", False) is True
+    assert getattr(vm, "_delegate", None) is None
+
+
+def test_lazy_activation_promotes_after_warmup(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_BOOTSTRAP", "1")
+    vector_metrics_db._MENACE_BOOTSTRAP_ENV_ACTIVE = None
+    vector_metrics_db._VECTOR_DB_INSTANCE = None
+
+    vm = vector_metrics_db.get_shared_vector_metrics_db()
+    vector_metrics_db.activate_shared_vector_metrics_db(reason="post_warmup")
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert getattr(vm, "_delegate", None) is None
+
+    vm._release_activation_block(reason="warmup_complete", configure_ready=True)
+
+    delegate = getattr(vm, "_delegate", None)
+    assert isinstance(delegate, vector_metrics_db.VectorMetricsDB)
+    assert delegate._warmup_mode is False
+
