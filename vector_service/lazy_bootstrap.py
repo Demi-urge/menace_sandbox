@@ -813,6 +813,78 @@ def warmup_vector_service(
 
     budget_hooks_missing = not (budget_remaining_supplied and check_budget_supplied)
 
+    if bootstrap_context and not force_heavy:
+        summary: dict[str, str] = {
+            "bootstrap": "presence-only",
+            "warmup_lite": "True",
+            "bootstrap_guard": "presence-probe",
+        }
+        heavy_stages = ("model", "handlers", "scheduler", "vectorise")
+        memoised_results = dict(_WARMUP_STAGE_MEMO)
+        new_deferred: set[str] = set()
+        model_probe: str | None = None
+
+        if download_model or probe_model or warmup_lite:
+            try:
+                if _model_bundle_path().exists():
+                    model_probe = "ready"
+            except Exception:  # pragma: no cover - best effort presence probe
+                pass
+
+        for stage in heavy_stages:
+            cached_status = memoised_results.get(stage)
+            status = cached_status if isinstance(cached_status, str) else None
+            if not status or not status.startswith("deferred"):
+                status = "deferred-bootstrap-presence"
+            if stage == "model" and model_probe is not None:
+                summary["model_probe"] = model_probe
+            summary[stage] = status
+            if _WARMUP_STAGE_MEMO.get(stage) != status:
+                _update_warmup_stage_cache(
+                    stage,
+                    status,
+                    log,
+                    meta={"source": "bootstrap-presence"},
+                    emit_metric=False,
+                )
+            if status.startswith("deferred") and cached_status != status:
+                new_deferred.add(stage)
+
+        if new_deferred:
+            summary["deferred"] = ",".join(sorted(new_deferred))
+            summary["deferred_stages"] = summary["deferred"]
+
+        background_stages = {
+            stage
+            for stage in heavy_stages
+            if summary.get(stage, "").startswith("deferred") and stage in new_deferred
+        }
+
+        if background_hook is not None and background_stages:
+            hints: Mapping[str, float | None] | None = None
+            if isinstance(stage_timeouts, Mapping):
+                hints = {stage: stage_timeouts.get(stage) for stage in background_stages}
+            elif isinstance(stage_timeouts, (int, float)):
+                budget_hint = _coerce_timeout(stage_timeouts)
+                hints = {stage: budget_hint for stage in background_stages}
+                if budget_hint is not None:
+                    hints["budget"] = budget_hint
+            try:
+                hook_code = getattr(background_hook, "__code__", None)
+                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                    background_hook(set(background_stages), budget_hints=hints)
+                else:
+                    background_hook(set(background_stages))
+            except Exception:  # pragma: no cover - advisory hook
+                log.debug("background hook failed", exc_info=True)
+
+        log.info(
+            "Bootstrap presence-only guard deferring vector warmup stages",
+            extra={"event": "vector-warmup", "warmup": summary},
+        )
+
+        return summary
+
     if budget_hooks_missing and (bootstrap_context or warmup_requested):
         summary: dict[str, str] = {
             "bootstrap": "short-circuit",
