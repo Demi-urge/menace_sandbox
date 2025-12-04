@@ -1081,48 +1081,6 @@ class ContextBuilder:
                     stub.activate_async(reason="vector_metrics.warmup.readiness_ready")
                 return stub
 
-            def _wrap_helper_for_warmup(vm: "VectorMetricsDB | _VectorMetricsWarmupStub"):
-                cached_weights = dict(self.db_weights)
-
-                if isinstance(vm, _VectorMetricsWarmupStub):
-                    vm._cached_weights.update(cached_weights)
-                    return vm
-
-                def _promote_helper() -> "VectorMetricsDB | None":
-                    delegate: "VectorMetricsDB | None" = None
-                    try:
-                        if hasattr(vm, "activate_persistence"):
-                            try:
-                                delegate = vm.activate_persistence(  # type: ignore[arg-type]
-                                    reason="context_builder.helper_warmup"
-                                )
-                            except TypeError:
-                                delegate = vm.activate_persistence()  # type: ignore[call-arg]
-                        if delegate is None:
-                            delegate = vm  # type: ignore[assignment]
-                        if hasattr(delegate, "request_post_warmup_activation"):
-                            try:
-                                delegate.request_post_warmup_activation(  # type: ignore[call-arg]
-                                    reason="context_builder.helper_warmup"
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "vector metrics helper promotion hook failed",
-                                    exc_info=True,
-                                )
-                    except Exception:
-                        logger.debug(
-                            "vector metrics helper warmup activation failed", exc_info=True
-                        )
-                    return delegate
-
-                stub = _VectorMetricsWarmupStub(
-                    _promote_helper,
-                    on_activate=lambda vm: _install_global(vm),
-                    cached_weights=cached_weights,
-                )
-                return stub
-
             def _activate_real_db(reason: str = "vector_metrics.activate") -> "VectorMetricsDB | None":
                 prior = ContextBuilder._shared_vector_metrics
                 if warmup_flag and isinstance(prior, (_VectorMetricsWarmupStub, VectorMetricsDB)):
@@ -1156,6 +1114,48 @@ class ContextBuilder:
                 )
                 return vm
 
+            if warmup_flag or bootstrap_flag:
+                cached_weights = dict(self.db_weights)
+
+                if isinstance(existing, _VectorMetricsWarmupStub):
+                    existing._cached_weights.update(cached_weights)
+                    stub = existing
+                elif isinstance(existing, VectorMetricsDB):
+                    self._vector_metrics = existing
+                    return existing
+                else:
+                    def _create_after_readiness() -> "VectorMetricsDB | None":
+                        vm: "VectorMetricsDB | None" = None
+                        if activator is not None:
+                            try:
+                                vm = activator(
+                                    reason="context_builder.vector_metrics.warmup_async",
+                                    post_warmup=True,
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "vector metrics warmup activator failed",
+                                    exc_info=True,
+                                )
+                        if not isinstance(vm, VectorMetricsDB):
+                            try:
+                                vm = VectorMetricsDB(
+                                    bootstrap_fast=False,
+                                    warmup=False,
+                                )
+                            except Exception:
+                                return None
+                        return vm
+
+                    stub = _VectorMetricsWarmupStub(
+                        _create_after_readiness,
+                        on_activate=lambda vm: _install_global(vm),
+                        cached_weights=cached_weights,
+                    )
+
+                _install_global(stub)
+                return _arm_readiness_hook(stub)
+
             if helper is not None:
                 vm = helper(
                     bootstrap_fast=bootstrap_flag,
@@ -1164,13 +1164,6 @@ class ContextBuilder:
                     read_only=True if warmup_flag else None,
                     warmup_stub=bool(warmup_flag or bootstrap_flag),
                 )
-                if warmup_flag or bootstrap_flag:
-                    vm = _wrap_helper_for_warmup(vm)
-                    _install_global(vm)
-                    if isinstance(vm, _VectorMetricsWarmupStub):
-                        return _arm_readiness_hook(vm)
-                    return vm
-
                 vm = _install_global(vm)
                 if not warmup_flag and activator is not None:
                     try:
@@ -1182,29 +1175,6 @@ class ContextBuilder:
                             "vector metrics activation failed", exc_info=True
                         )
                 return vm
-
-            if warmup_flag or bootstrap_flag:
-                if isinstance(existing, _VectorMetricsWarmupStub):
-                    stub = existing
-                    stub._cached_weights.update(self.db_weights)
-                elif isinstance(existing, VectorMetricsDB):
-                    self._vector_metrics = existing
-                    return existing
-                else:
-                    cached_weights = dict(self.db_weights)
-                    stub = _VectorMetricsWarmupStub(
-                        lambda: VectorMetricsDB(
-                            bootstrap_fast=False,
-                            warmup=False,
-                            read_only=False,
-                        ),
-                        on_activate=lambda vm: _activate_real_db(
-                            reason="context_builder.warmup_activate"
-                        ),
-                        cached_weights=cached_weights,
-                    )
-                _install_global(stub)
-                return _arm_readiness_hook(stub)
 
             existing = ContextBuilder._shared_vector_metrics
             if isinstance(existing, _VectorMetricsWarmupStub):
