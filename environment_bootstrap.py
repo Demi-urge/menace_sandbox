@@ -2907,7 +2907,7 @@ class EnvironmentBootstrapper:
                             start_scheduler=True,
                             run_vectorise=heavy_vectorise_requested,
                             force_heavy=heavy_requested,
-                            bootstrap_fast=False,
+                            bootstrap_fast=bool(effective_stage_timeouts) or not heavy_requested,
                             warmup_lite=not heavy_requested,
                             warmup_model=heavy_model_requested,
                             warmup_handlers=heavy_handlers_requested,
