@@ -402,6 +402,14 @@ def ensure_embedding_model(
     )
 
     insufficient_budget = False
+    inline_stage_cap: float | None = None
+    if stage_budget_remaining is not None:
+        inline_stage_cap = max(0.0, stage_budget_remaining)
+    if stage_ceiling is not None:
+        inline_stage_cap = (
+            stage_ceiling if inline_stage_cap is None else min(inline_stage_cap, stage_ceiling)
+        )
+
     if stage_ceiling is not None:
         if effective_timeout is None:
             effective_timeout = stage_ceiling
@@ -411,6 +419,12 @@ def ensure_embedding_model(
             insufficient_budget = True
     if effective_timeout is not None and effective_timeout <= 0:
         insufficient_budget = True
+
+    if inline_stage_cap is not None:
+        if effective_timeout is None:
+            effective_timeout = inline_stage_cap
+        else:
+            effective_timeout = min(effective_timeout, inline_stage_cap)
 
     def _mandatory_timeout(current_timeout: float | None) -> float | None:
         deadline_remaining = _stage_budget_deadline()
