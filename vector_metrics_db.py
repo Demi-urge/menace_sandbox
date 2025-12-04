@@ -2255,6 +2255,7 @@ def ensure_vector_db_weights(
     warmup: bool | None = None,
     ensure_exists: bool | None = None,
     read_only: bool | None = None,
+    warmup_stub: bool | None = None,
 ) -> None:
     """Seed vector DB ranking weights without forcing SQLite initialisation."""
 
@@ -2265,18 +2266,24 @@ def ensure_vector_db_weights(
     _record_pending_weights(names)
 
     warmup_requested = bool(warmup)
-    ensure_disabled = ensure_exists is False
+    stub_guard = (
+        warmup_stub if warmup_stub is not None else (warmup_requested or bool(bootstrap_fast))
+    )
 
-    if warmup_requested and ensure_disabled:
-        stub = get_bootstrap_shared_vector_metrics_db(
+    if stub_guard:
+        stub = _bootstrap_vector_metrics_stub(
             bootstrap_fast=True if bootstrap_fast is None else bool(bootstrap_fast),
             warmup=True,
             ensure_exists=False,
             read_only=True,
-            warmup_stub=True,
         )
         if isinstance(stub, _BootstrapVectorMetricsStub):
             stub.set_db_weights({name: 1.0 for name in names})
+            _queue_promotion_for_stub(
+                stub,
+                ensure_exists=False if ensure_exists is None else ensure_exists,
+                read_only=True if read_only is None else read_only,
+            )
             logger.info(
                 "vector_metrics_db.bootstrap.weight_seed_stubbed",
                 extra={
