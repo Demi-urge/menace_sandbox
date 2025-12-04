@@ -1004,6 +1004,95 @@ def warmup_vector_service(
 
         return summary
 
+    missing_budget_controls = (
+        budget_hooks_missing
+        and not stage_timeouts_supplied
+        and env_budget is None
+        and stage_cap_env is None
+    )
+
+    if (
+        missing_budget_controls
+        and not stage_budget_signals
+        and not force_heavy
+        and (bootstrap_context or warmup_requested)
+    ):
+        summary: dict[str, str] = {
+            "bootstrap": "presence-only" if bootstrap_context else "deferred",
+            "warmup_lite": "True",
+            "budget_hooks": "missing",
+            "stage_timeouts": "missing",
+            "warmup_guard": "presence-only",
+        }
+
+        conservative_hints = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
+        heavy_stages = ("model", "handlers", "scheduler", "vectorise")
+        memoised_results = dict(_WARMUP_STAGE_MEMO)
+        new_deferred: set[str] = set()
+        model_probe: str | None = None
+
+        if download_model or probe_model or warmup_lite:
+            try:
+                if _model_bundle_path().exists():
+                    model_probe = "ready"
+            except Exception:  # pragma: no cover - best effort presence probe
+                pass
+
+        for stage in heavy_stages:
+            cached_status = memoised_results.get(stage)
+            status = cached_status if isinstance(cached_status, str) else None
+            if not status or (not status.startswith("deferred")) and status not in {"complete", "ready"}:
+                status = "deferred-presence-guard"
+            if stage == "model" and model_probe is not None:
+                summary["model_probe"] = model_probe
+            summary[stage] = status
+            summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+
+            deferral_meta: dict[str, object] = {
+                "source": "missing-budget-guard",
+                "background_state": _BACKGROUND_QUEUE_FLAG,
+            }
+            stage_timeout_hint = conservative_hints.get(stage)
+            if stage_timeout_hint is not None:
+                deferral_meta["background_timeout"] = stage_timeout_hint
+            _update_warmup_stage_cache(
+                stage,
+                status,
+                log,
+                meta=deferral_meta,
+                emit_metric=(_WARMUP_STAGE_MEMO.get(stage) != status),
+            )
+            if status.startswith("deferred"):
+                new_deferred.add(stage)
+
+        if new_deferred:
+            summary["deferred"] = ",".join(sorted(new_deferred))
+            summary["deferred_stages"] = summary["deferred"]
+
+        background_stage_timeouts = {
+            stage: conservative_hints.get(stage) for stage in heavy_stages
+        }
+        if background_hook is not None and new_deferred:
+            try:
+                hook_code = getattr(background_hook, "__code__", None)
+                if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                    background_hook(set(new_deferred), budget_hints=background_stage_timeouts)
+                else:
+                    background_hook(set(new_deferred))
+            except Exception:  # pragma: no cover - advisory hook
+                log.debug("background hook failed", exc_info=True)
+
+        log.info(
+            "Vector warmup deferring heavy stages until budget controls provided",
+            extra={
+                "event": "vector-warmup",
+                "warmup": summary,
+                "budget_hints": background_stage_timeouts,
+            },
+        )
+
+        return summary
+
     if stage_timeouts is None and stage_budget_signals:
         if bootstrap_context or warmup_requested:
             stage_timeouts = dict(_CONSERVATIVE_STAGE_TIMEOUTS)
