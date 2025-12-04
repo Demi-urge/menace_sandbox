@@ -250,6 +250,9 @@ class _VectorMetricsWarmupStub:
             return getattr(self._real, item)
 
         def _noop(*_args, **_kwargs):  # pragma: no cover - warmup stub
+            # Use a background activation so warmup callers never block on
+            # SQLite setup when they trigger the first write path.
+            self.activate_async(reason="vector_metrics.warmup.first_write")
             return None
 
         return _noop
@@ -1078,6 +1081,48 @@ class ContextBuilder:
                     stub.activate_async(reason="vector_metrics.warmup.readiness_ready")
                 return stub
 
+            def _wrap_helper_for_warmup(vm: "VectorMetricsDB | _VectorMetricsWarmupStub"):
+                cached_weights = dict(self.db_weights)
+
+                if isinstance(vm, _VectorMetricsWarmupStub):
+                    vm._cached_weights.update(cached_weights)
+                    return vm
+
+                def _promote_helper() -> "VectorMetricsDB | None":
+                    delegate: "VectorMetricsDB | None" = None
+                    try:
+                        if hasattr(vm, "activate_persistence"):
+                            try:
+                                delegate = vm.activate_persistence(  # type: ignore[arg-type]
+                                    reason="context_builder.helper_warmup"
+                                )
+                            except TypeError:
+                                delegate = vm.activate_persistence()  # type: ignore[call-arg]
+                        if delegate is None:
+                            delegate = vm  # type: ignore[assignment]
+                        if hasattr(delegate, "request_post_warmup_activation"):
+                            try:
+                                delegate.request_post_warmup_activation(  # type: ignore[call-arg]
+                                    reason="context_builder.helper_warmup"
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "vector metrics helper promotion hook failed",
+                                    exc_info=True,
+                                )
+                    except Exception:
+                        logger.debug(
+                            "vector metrics helper warmup activation failed", exc_info=True
+                        )
+                    return delegate
+
+                stub = _VectorMetricsWarmupStub(
+                    _promote_helper,
+                    on_activate=lambda vm: _install_global(vm),
+                    cached_weights=cached_weights,
+                )
+                return stub
+
             def _activate_real_db(reason: str = "vector_metrics.activate") -> "VectorMetricsDB | None":
                 prior = ContextBuilder._shared_vector_metrics
                 if warmup_flag and isinstance(prior, (_VectorMetricsWarmupStub, VectorMetricsDB)):
@@ -1119,6 +1164,13 @@ class ContextBuilder:
                     read_only=True if warmup_flag else None,
                     warmup_stub=bool(warmup_flag or bootstrap_flag),
                 )
+                if warmup_flag or bootstrap_flag:
+                    vm = _wrap_helper_for_warmup(vm)
+                    _install_global(vm)
+                    if isinstance(vm, _VectorMetricsWarmupStub):
+                        return _arm_readiness_hook(vm)
+                    return vm
+
                 vm = _install_global(vm)
                 if not warmup_flag and activator is not None:
                     try:
