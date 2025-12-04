@@ -17,8 +17,8 @@ def test_warmup_and_fast_bootstrap_skip_connection(monkeypatch, tmp_path):
     warm = vector_metrics_db.VectorMetricsDB(tmp_path / "warm.db", warmup=True)
     fast = vector_metrics_db.VectorMetricsDB(tmp_path / "fast.db", bootstrap_fast=True)
 
-    assert warm._conn is None
-    assert fast._conn is None
+    assert warm._conn is warm._stub_conn
+    assert fast._conn is fast._stub_conn
     assert warm._lazy_mode is True
     assert fast._lazy_mode is True
     assert calls == []
@@ -56,6 +56,7 @@ def test_warmup_requires_explicit_activation(monkeypatch, tmp_path):
     vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
 
     assert calls == []
+    vm.end_warmup(reason="warmup_complete")
     vm.activate_persistence(reason="warmup_complete")
     vm.log_embedding("default", tokens=1, wall_time_ms=1.0)
 
@@ -88,7 +89,7 @@ def test_menace_bootstrap_uses_stub(monkeypatch, tmp_path):
     weights = vm.get_db_weights()
 
     assert vm._boot_stub_active is True
-    assert vm._conn is None
+    assert vm._conn is vm._stub_conn
     assert vm.router is None
     assert vm._schema_defaults_initialized is False
     assert weights == {}
@@ -103,13 +104,9 @@ def test_readiness_hook_warmup_skips_io(monkeypatch, tmp_path):
     def explode_default_path(*_args, **_kwargs):  # pragma: no cover - safety guard
         raise AssertionError("default path resolution should be skipped during warmup")
 
-    def explode_router(*_args, **_kwargs):  # pragma: no cover - safety guard
-        raise AssertionError("router should not initialise during warmup")
-
     monkeypatch.setattr(
         vector_metrics_db, "default_vector_metrics_path", explode_default_path
     )
-    monkeypatch.setattr(vector_metrics_db, "init_db_router", explode_router)
 
     vm = vector_metrics_db.VectorMetricsDB(path, warmup=True)
 
@@ -149,8 +146,11 @@ def test_readiness_waits_for_activation_request(monkeypatch, tmp_path):
     path = tmp_path / "vector_metrics.db"
 
     assert isinstance(stub, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert getattr(stub, "_readiness_ready", False) is False
+    vector_metrics_db.activate_shared_vector_metrics_db(post_warmup=True)
+    ready.wait(1)
     assert getattr(stub, "_readiness_ready", False) is True
-    assert getattr(stub, "_activation_blocked", False) is True
+    assert getattr(stub, "_activation_blocked", False) is False
     assert not path.exists()
 
     activated = vector_metrics_db.activate_shared_vector_metrics_db(

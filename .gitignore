@@ -187,6 +187,11 @@ qemu_images/
 evolution_history.db
 roi_events.db
 
+# SQLite journaling files
+*.db-shm
+*.db-wal
+
+
 # Placeholder for local embedding model archive
 vector_service/minilm/*
 !vector_service/minilm/.gitkeep

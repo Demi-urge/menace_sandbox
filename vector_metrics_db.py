@@ -1345,11 +1345,12 @@ def _bootstrap_vector_metrics_stub(
         _VECTOR_DB_INSTANCE = stub
 
     stub.request_post_warmup_activation(reason="bootstrap_ready")
-    try:  # pragma: no cover - advisory warmup wiring
-        stub.activate_on_first_write()
-    except Exception:
-        logger.debug("vector metrics stub first write arm failed", exc_info=True)
-    stub.register_readiness_hook()
+    if not warmup:
+        try:  # pragma: no cover - advisory warmup wiring
+            stub.activate_on_first_write()
+        except Exception:
+            logger.debug("vector metrics stub first write arm failed", exc_info=True)
+        stub.register_readiness_hook()
     return stub
 
 
@@ -1469,7 +1470,11 @@ def get_shared_vector_metrics_db(
     global _WARMUP_DEFERRAL_EMITTED
     if bootstrap_protection_active and not _WARMUP_DEFERRAL_EMITTED:
         _emit_warmup_summary_metric(
-            reasons={**warmup_context_reasons, "activation_deferred": True},
+            reasons={
+                **warmup_context_reasons,
+                "activation_deferred": True,
+                "stub_selected": True,
+            },
             promotion_requested=promotion_requested,
         )
         _increment_deferral_metric("warmup_activation")
@@ -1501,11 +1506,6 @@ def get_shared_vector_metrics_db(
                     ensure_exists=queued_promotion_kwargs.get("ensure_exists"),
                     read_only=queued_promotion_kwargs.get("read_only"),
                 )
-                try:
-                    stub.activate_on_first_write()
-                except Exception:
-                    logger.debug("vector metrics stub first write arm failed", exc_info=True)
-                stub.register_readiness_hook()
                 stub._delegate = _VECTOR_DB_INSTANCE
                 _VECTOR_DB_INSTANCE = stub
                 _increment_deferral_metric("stub_short_circuit")
@@ -1544,13 +1544,6 @@ def get_shared_vector_metrics_db(
                     ensure_exists=requested_ensure_exists,
                     read_only=requested_read_only,
                 )
-                try:
-                    _VECTOR_DB_INSTANCE.activate_on_first_write()
-                except Exception:
-                    logger.debug(
-                        "vector metrics stub first write arm failed", exc_info=True
-                    )
-                _VECTOR_DB_INSTANCE.register_readiness_hook()
                 logger.info(
                     "vector_metrics_db.bootstrap.stub_selected",
                     extra={
@@ -1577,13 +1570,6 @@ def get_shared_vector_metrics_db(
                     ensure_exists=requested_ensure_exists,
                     read_only=requested_read_only,
                 )
-                try:
-                    _VECTOR_DB_INSTANCE.activate_on_first_write()
-                except Exception:
-                    logger.debug(
-                        "vector metrics stub first write arm failed", exc_info=True
-                    )
-                _VECTOR_DB_INSTANCE.register_readiness_hook()
                 logger.info(
                     "vector_metrics_db.bootstrap.stub_reused",
                     extra={
@@ -1610,35 +1596,26 @@ def get_shared_vector_metrics_db(
     if bootstrap_protection_active and isinstance(
         _VECTOR_DB_INSTANCE, (VectorMetricsDB, _BootstrapVectorMetricsStub)
     ):
-        if getattr(_VECTOR_DB_INSTANCE, "_boot_stub_active", False):
-            try:
-                _VECTOR_DB_INSTANCE.activate_on_first_write()
-            except Exception:
-                logger.debug(
-                    "vector metrics stub first write arm failed", exc_info=True
-                )
-            if promotion_pending_for_warmup:
-                logger.info(
-                    "vector_metrics_db.bootstrap.first_write_activation_deferred",
-                    extra={
-                        "warmup_reasons": [
-                            reason
-                            for reason, active in warmup_context_reasons.items()
-                            if active
-                        ],
-                        "promotion_requested": promotion_requested,
-                    },
-                )
+        if getattr(_VECTOR_DB_INSTANCE, "_boot_stub_active", False) and promotion_pending_for_warmup:
             logger.info(
-                "vector_metrics_db.bootstrap.persistence_deferred",
+                "vector_metrics_db.bootstrap.first_write_activation_deferred",
                 extra={
                     "warmup_reasons": [
                         reason for reason, active in warmup_context_reasons.items() if active
                     ],
-                    "bootstrap_fast": resolved_bootstrap_fast,
-                    "warmup": resolved_warmup,
+                    "promotion_requested": promotion_requested,
                 },
             )
+        logger.info(
+            "vector_metrics_db.bootstrap.persistence_deferred",
+            extra={
+                "warmup_reasons": [
+                    reason for reason, active in warmup_context_reasons.items() if active
+                ],
+                "bootstrap_fast": resolved_bootstrap_fast,
+                "warmup": resolved_warmup,
+            },
+        )
 
     if bootstrap_protection_active and promotion_deferred:
         _emit_warmup_summary_metric(
@@ -1716,11 +1693,16 @@ def get_vector_metrics_db(
         allow_bootstrap_activation=allow_bootstrap_activation,
     )
 
+    bootstrap_context = _vector_metrics_bootstrap_requested(
+        bootstrap_fast=bootstrap_fast, warmup=warmup
+    )
+
     if isinstance(vm, _BootstrapVectorMetricsStub):
-        if not getattr(vm, "_activation_blocked", False):
+        if not bootstrap_context and not getattr(vm, "_activation_blocked", False):
             vm.activate_on_first_write()
-        vm.register_readiness_hook()
-        return vm
+        if not bootstrap_context:
+            vm.register_readiness_hook()
+    return vm
 
     return vm
 
@@ -1752,7 +1734,11 @@ def get_bootstrap_shared_vector_metrics_db(
         warmup_stub=warmup_stub,
     )
 
-    if isinstance(vm, _BootstrapVectorMetricsStub):
+    bootstrap_context = _vector_metrics_bootstrap_requested(
+        bootstrap_fast=bootstrap_fast, warmup=warmup
+    ) or bool(warmup_stub)
+
+    if isinstance(vm, _BootstrapVectorMetricsStub) and not bootstrap_context:
         try:
             if not getattr(vm, "_activation_blocked", False):
                 vm.activate_on_first_write()
