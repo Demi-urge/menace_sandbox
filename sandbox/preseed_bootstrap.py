@@ -6078,6 +6078,16 @@ def initialize_bootstrap_context(
         elif warmup_timebox_cap is not None:
             warmup_stage_timeouts = {"budget": warmup_timebox_cap, "model": warmup_timebox_cap}
 
+        warmup_stage_ceiling = _stage_budget_remaining()
+        if warmup_stage_ceiling is None:
+            warmup_stage_ceiling = embedder_stage_inline_cap or warmup_timebox_cap
+        if warmup_stage_ceiling is None:
+            warmup_stage_ceiling = _EMBEDDER_STAGE_BUDGET_FALLBACK
+        try:
+            warmup_stage_ceiling = max(0.0, float(warmup_stage_ceiling))
+        except (TypeError, ValueError):
+            warmup_stage_ceiling = None
+
         controller_timeouts: dict[str, float] = {}
         controller_budget_remaining = stage_controller.stage_budget(step_name="embedder_preload")
         controller_deadline_remaining = stage_controller.stage_deadline(step_name="embedder_preload")
@@ -6169,6 +6179,8 @@ def initialize_bootstrap_context(
             stage_budget_remaining = _stage_budget_remaining()
             if stage_budget_remaining is not None and stage_budget_remaining > 0:
                 hard_timebox_candidates.append(stage_budget_remaining)
+            if warmup_stage_ceiling is not None and warmup_stage_ceiling > 0:
+                hard_timebox_candidates.append(warmup_stage_ceiling)
             if isinstance(warmup_stage_timeouts, Mapping):
                 hard_timebox_candidates.extend(
                     candidate
@@ -6201,6 +6213,35 @@ def initialize_bootstrap_context(
                         bootstrap_lite=True,
                     )
                 )
+
+            if warmup_stage_ceiling is not None and warmup_stage_ceiling <= 0:
+                warmup_deferral_reason = "embedder_warmup_stage_budget_exhausted"
+                warmup_summary = warmup_summary or {}
+                warmup_summary.update(
+                    {
+                        "deferred": True,
+                        "deferral_reason": warmup_deferral_reason,
+                        "deferred_reason": warmup_deferral_reason,
+                        "strict_timebox": warmup_timebox_cap,
+                        "stage_budget": embedder_stage_budget_hint,
+                        "stage_budget_defaulted": embedder_stage_budget_defaulted,
+                        "stage_ceiling": warmup_stage_ceiling,
+                    }
+                )
+                deferral_snapshot = _schedule_background_preload_safe(
+                    warmup_deferral_reason,
+                    strict_timebox=warmup_timebox_cap,
+                    stage_ceiling=warmup_stage_ceiling,
+                    budget_flag=True,
+                )
+                deferral_snapshot["warmup_summary"] = warmup_summary
+                deferral_snapshot.setdefault("warmup_deferral_reason", warmup_deferral_reason)
+                deferral_snapshot.setdefault("deferral_reason", warmup_deferral_reason)
+                _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
+                warmup_stop_reason = warmup_deferral_reason
+                return deferral_snapshot.get(
+                    "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                ), warmup_stop_reason
 
             warmup_future = _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(_run_warmup)
             try:
