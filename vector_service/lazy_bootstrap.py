@@ -2182,6 +2182,47 @@ def warmup_vector_service(
         timeout = resolved_timeouts.get(stage, base_timeouts.get(stage))
         return timeout is not None and timeout > 0
 
+    def _force_probe_only(
+        status: str, *, stage_hints: Mapping[str, float | None] | None = None
+    ) -> None:
+        nonlocal download_model, probe_model, model_probe_only
+        nonlocal hydrate_handlers, start_scheduler, run_vectorise
+        nonlocal warmup_lite, budget_gate_reason, background_stage_timeouts
+
+        budget_gate_reason = budget_gate_reason or status
+        warmup_lite = True
+        download_model = False
+        hydrate_handlers = False
+        start_scheduler = False
+        run_vectorise = False
+        probe_model = True
+        model_probe_only = True
+
+        if background_stage_timeouts is None:
+            background_stage_timeouts = {
+                stage: (
+                    stage_hints.get(stage)
+                    if stage_hints is not None
+                    else stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+                )
+                for stage in base_timeouts
+            }
+
+        for stage in ("model", "handlers", "scheduler", "vectorise"):
+            background_candidates.add(stage)
+            background_warmup.add(stage)
+            _record_background(stage, status)
+            _hint_background_budget(
+                stage,
+                (
+                    stage_hints.get(stage)
+                    if stage_hints is not None
+                    else stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+                ),
+            )
+
+        summary["warmup_guard"] = status
+
     fast_heavy_allowed = force_heavy and all(
         not flag or _has_stage_budget("handlers")
         for flag in (hydrate_handlers, start_scheduler)
@@ -2378,38 +2419,37 @@ def warmup_vector_service(
         or not warmup_lite
     )
 
-    if heavy_without_budget:
-        status = "deferred-no-budget"
-        budget_gate_reason = status
-        background_stage_timeouts = background_stage_timeouts or {
-            stage: stage_budget_ceiling.get(stage, resolved_timeouts.get(stage))
+    guard_hints: dict[str, float | None] | None = None
+    remaining_budget_hint = _remaining_budget()
+    budget_hooks_missing = check_budget is None and budget_remaining is None
+    below_stage_thresholds = False
+    if remaining_budget_hint is not None:
+        guard_hints = {
+            stage: min(
+                remaining_budget_hint,
+                stage_budget_ceiling.get(stage, resolved_timeouts.get(stage)),
+            )
+            if stage in stage_budget_ceiling
+            else remaining_budget_hint
             for stage in base_timeouts
         }
-        for stage in ("handlers", "scheduler", "vectorise"):
-            memoised_results[stage] = status
-            if stage == "handlers":
-                handler_timeout = _effective_timeout("handlers")
-                _record_background("handlers", status)
-                _hint_background_budget("handlers", handler_timeout)
-                hydrate_handlers = False
-                if run_vectorise:
-                    _record_background("vectorise", status)
-                    _hint_background_budget("vectorise", _effective_timeout("vectorise"))
-                    run_vectorise = False
-            elif stage == "scheduler":
-                _record_background("scheduler", status)
-                _hint_background_budget("scheduler", _effective_timeout("scheduler"))
-                start_scheduler = False
-            else:
-                _record_background("vectorise", status)
-                _hint_background_budget("vectorise", _effective_timeout("vectorise"))
-                run_vectorise = False
-        if download_model or model_probe_only or probe_model:
-            _record_background("model", status)
-            download_model = False
-            probe_model = False
-            warmup_lite = True
-            model_probe_only = False
+        below_stage_thresholds = any(
+            _CONSERVATIVE_STAGE_TIMEOUTS.get(stage, 0.0) > guard_hints.get(stage, 0.0)
+            for stage, requested in (
+                ("model", download_model or probe_model or model_probe_only),
+                ("handlers", hydrate_handlers),
+                ("scheduler", start_scheduler),
+                ("vectorise", bool(run_vectorise)),
+            )
+            if requested
+        )
+
+    if heavy_without_budget:
+        _force_probe_only("deferred-no-budget")
+    elif heavy_requested and not force_heavy and (
+        budget_hooks_missing or below_stage_thresholds
+    ):
+        _force_probe_only("deferred-no-budget" if budget_hooks_missing else "deferred-timebox", stage_hints=guard_hints)
 
     proactive_background_block = (
         not force_heavy
