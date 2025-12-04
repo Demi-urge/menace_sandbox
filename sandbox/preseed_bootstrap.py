@@ -4338,6 +4338,7 @@ def initialize_bootstrap_context(
         if candidate is not None and candidate >= 0
     ]
     vector_budget_window = min(vector_stage_budget_window) if vector_stage_budget_window else None
+    inline_heavy_budget_window = vector_budget_window
     vector_inline_cap = (
         min(vector_budget_window, heavy_stage_ceiling)
         if vector_budget_window is not None and heavy_stage_ceiling is not None
@@ -4414,6 +4415,8 @@ def initialize_bootstrap_context(
     embedder_preload_deferred = False
     warmup_summary: dict[str, Any] | None = None
     embedder_stage_inline_cap: float | None = None
+    inline_heavy_budget_ready = False
+    inline_budget_stage_ceiling: float | None = None
 
     def _schedule_background_preload_safe(
         reason: str,
@@ -4661,6 +4664,49 @@ def initialize_bootstrap_context(
                 )
     except Exception:  # pragma: no cover - advisory only
         LOGGER.debug("failed to compute embedder stage timebox hint", exc_info=True)
+    inline_budget_stage_ceiling = embedder_stage_inline_cap or heavy_stage_ceiling
+    inline_heavy_budget_ready = bool(
+        full_preload_requested
+        and inline_heavy_budget_window is not None
+        and inline_budget_stage_ceiling is not None
+        and inline_heavy_budget_window >= inline_budget_stage_ceiling
+    )
+    if (
+        full_preload_requested
+        and not inline_heavy_budget_ready
+        and embedder_preload_skip_reason is None
+        and not force_embedder_preload
+    ):
+        embedder_preload_skip_reason = "embedder_preload_budget_guard"
+        warmup_lite_context = True
+        vector_warmup_requested = False
+        vector_bootstrap_hint = False
+        vector_heavy = False
+        embedder_preload_deferred = True
+        stage_controller.defer_step(
+            "embedder_preload", reason=embedder_preload_skip_reason
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "vectorizer_preload", reason=embedder_preload_skip_reason
+        )
+        _BOOTSTRAP_SCHEDULER.mark_partial(
+            "background_loops",
+            reason=f"embedder_placeholder:{embedder_preload_skip_reason}",
+        )
+        _BOOTSTRAP_SCHEDULER.mark_embedder_deferred(
+            reason=embedder_preload_skip_reason
+        )
+        job_snapshot = _prime_background_placeholder(
+            embedder_preload_skip_reason,
+            strict_timebox=inline_heavy_budget_window,
+            budget_flag=has_valid_embedder_budget,
+        )
+        warmup_summary = job_snapshot.get("warmup_summary") or {}
+        warmup_summary.setdefault("inline_budget_window", inline_heavy_budget_window)
+        warmup_summary.setdefault("stage_ceiling", inline_budget_stage_ceiling)
+        warmup_summary.setdefault("bootstrap_remaining", deadline_remaining)
+        job_snapshot["warmup_summary"] = warmup_summary
+        _BOOTSTRAP_EMBEDDER_JOB = job_snapshot
     finite_stage_budget_available = bool(
         embedder_stage_budget_hint is not None
         and math.isfinite(embedder_stage_budget_hint)
@@ -7468,7 +7514,11 @@ def initialize_bootstrap_context(
             )
         except Exception:  # pragma: no cover - advisory only
             LOGGER.debug("failed to inspect context builder for vector-heavy hint", exc_info=True)
-        if vector_bootstrap_hint_holder["vector"] and vector_warmup_requested:
+        if (
+            vector_bootstrap_hint_holder["vector"]
+            and vector_warmup_requested
+            and inline_heavy_budget_ready
+        ):
             vector_env_snapshot.update(_apply_vector_env("context_builder_hint"))
             try:
                 _coding_bot_interface._BOOTSTRAP_STATE.vector_heavy = True
@@ -7485,6 +7535,16 @@ def initialize_bootstrap_context(
                     "event": "vector-warmup-lite-default",
                     "force_vector_warmup": force_vector_warmup,
                     "bootstrap_fast": bootstrap_fast_context,
+                },
+            )
+        elif vector_bootstrap_hint_holder["vector"] and not inline_heavy_budget_ready:
+            LOGGER.info(
+                "vector-heavy hint detected but budget guard active; deferring heavy env",
+                extra={
+                    "event": "vector-warmup-budget-guard",
+                    "inline_budget_window": inline_heavy_budget_window,
+                    "budget_stage_ceiling": inline_budget_stage_ceiling,
+                    "bootstrap_deadline_remaining": deadline_remaining,
                 },
             )
         return builder
