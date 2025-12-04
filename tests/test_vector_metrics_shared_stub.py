@@ -118,6 +118,36 @@ def test_shared_stub_promotes_on_first_write(monkeypatch):
     assert any(entry[0] == "log_embedding" for entry in calls if isinstance(entry, tuple))
 
 
+def test_bootstrap_helper_memoizes_warmup_stub(monkeypatch):
+    hook_calls: list[vector_metrics_db._BootstrapVectorMetricsStub] = []
+
+    def _fake_register(self):
+        self._readiness_hook_registered = True
+        hook_calls.append(self)
+
+    class BoomVectorDB:
+        def __init__(self, *args, **kwargs):  # pragma: no cover - guard
+            raise AssertionError("should not initialise sqlite during warmup")
+
+    monkeypatch.setattr(
+        vector_metrics_db._BootstrapVectorMetricsStub,
+        "register_readiness_hook",
+        _fake_register,
+    )
+    monkeypatch.setattr(vector_metrics_db, "VectorMetricsDB", BoomVectorDB)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_BOOTSTRAP_VECTOR_DB_STUB", None)
+
+    vm = vector_metrics_db.get_bootstrap_vector_metrics_db()
+    vm_again = vector_metrics_db.get_bootstrap_vector_metrics_db()
+
+    assert vm is vm_again
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert vector_metrics_db._VECTOR_DB_INSTANCE is vm
+    assert vm._post_warmup_activation_requested is True
+    assert hook_calls == [vm]
+
+
 def test_bootstrap_helper_returns_stub_without_sql(monkeypatch):
     class BoomVectorDB:
         def __init__(self, *args, **kwargs):  # pragma: no cover - guard
