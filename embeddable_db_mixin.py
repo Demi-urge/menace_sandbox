@@ -315,6 +315,64 @@ _METRICS_DB_CLS: type[Any] | None = None
 MetricsDB: type[Any] | None = None
 
 
+class _VectorMetricsWarmupPlaceholder:
+    """Minimal in-memory placeholder for warmup stubs.
+
+    The placeholder captures pending configuration so callers can later
+    promote it to a real ``VectorMetricsDB`` without touching disk during
+    warmup or bootstrap flows.
+    """
+
+    def __init__(self, *, warmup_kwargs: dict[str, Any], stub_trigger: str) -> None:
+        self._pending_weights: dict[str, float] = {}
+        self._readiness_hook_requested = False
+        self._first_write_requested = False
+        self._warmup_kwargs = dict(warmup_kwargs)
+        self._stub_trigger = stub_trigger
+
+    def log_embedding(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - noop
+        return None
+
+    def activate_on_first_write(self) -> None:
+        self._first_write_requested = True
+
+    def register_readiness_hook(self, hook: Any | None = None) -> None:
+        # The concrete DB registers its own readiness hook; we only need to
+        # remember that the request happened.
+        self._readiness_hook_requested = True
+        if callable(hook):  # pragma: no cover - optional passthrough
+            try:
+                hook()
+            except Exception:
+                logger.debug("vector metrics warmup readiness hook failed", exc_info=True)
+
+    def set_db_weights(self, weights: Mapping[str, float]) -> None:
+        self._pending_weights.update({str(k): float(v) for k, v in weights.items()})
+
+    def promote(self, factory: type[Any], activation_kwargs: dict[str, Any]) -> Any:
+        combined_kwargs = dict(self._warmup_kwargs)
+        combined_kwargs.update(activation_kwargs)
+        delegate = factory(**combined_kwargs)
+        if self._pending_weights:
+            setter = getattr(delegate, "set_db_weights", None)
+            if callable(setter):
+                try:
+                    setter(dict(self._pending_weights))
+                except Exception:  # pragma: no cover - defensive logging
+                    logger.debug("vector metrics warmup weight replay failed", exc_info=True)
+        if self._first_write_requested and hasattr(delegate, "activate_on_first_write"):
+            delegate.activate_on_first_write()
+        if self._readiness_hook_requested:
+            hook = getattr(delegate, "register_readiness_hook", None)
+            if callable(hook):
+                hook()
+        logger.info(
+            "embeddable_db_mixin.vector_metrics.warmup_promoted",
+            extra={"stub_trigger": self._stub_trigger},
+        )
+        return delegate
+
+
 def _resolve_metrics_db() -> type[Any]:
     """Return :class:`data_bot.MetricsDB` without triggering circular imports."""
 
@@ -358,11 +416,6 @@ def _vector_metrics_db(
     vector_warmup: bool | None = None,
 ) -> VectorMetricsDB | None:
     global _VEC_METRICS
-    if _VEC_METRICS is not None:
-        return _VEC_METRICS
-    if VectorMetricsDB is None:
-        return None
-
     warmup_kwargs = {}
     callsite_requested = bool(
         (bootstrap_fast is True)
@@ -381,6 +434,23 @@ def _vector_metrics_db(
     bootstrap_fast_flag = bool(bootstrap_fast)
     bootstrap_state_active = False
     warmup_state_flag = False
+
+    if _VEC_METRICS is not None:
+        if isinstance(_VEC_METRICS, _VectorMetricsWarmupPlaceholder):
+            if not any((bootstrap_fast, warmup, warmup_lite, vector_warmup)):
+                _VEC_METRICS = _VEC_METRICS.promote(
+                    VectorMetricsDB,
+                    {
+                        "bootstrap_fast": False,
+                        "warmup": False,
+                        "ensure_exists": True,
+                        "read_only": False,
+                    },
+                )
+            return _VEC_METRICS
+        return _VEC_METRICS
+    if VectorMetricsDB is None:
+        return None
     if resolve_vector_bootstrap_flags is not None:
         (
             bootstrap_fast_flag,
@@ -463,6 +533,13 @@ def _vector_metrics_db(
         )
         return _VEC_METRICS
     elif warmup_stub:
+        warmup_kwargs.update({"ensure_exists": False, "read_only": True})
+        placeholder = _VectorMetricsWarmupPlaceholder(
+            warmup_kwargs=warmup_kwargs, stub_trigger=stub_trigger
+        )
+        placeholder.activate_on_first_write()
+        placeholder.register_readiness_hook()
+        _VEC_METRICS = placeholder
         logger.info(
             "embeddable_db_mixin.vector_metrics.stubbed",
             extra={
@@ -472,12 +549,12 @@ def _vector_metrics_db(
                 "vector_warmup": vector_warmup_flag,
                 "env_bootstrap_requested": env_requested,
                 "menace_bootstrap": bootstrap_env,
-                "lazy_activation": False,
+                "lazy_activation": True,
                 "stub_trigger": stub_trigger,
             },
         )
 
-    _VEC_METRICS = VectorMetricsDB(**warmup_kwargs)
+    _VEC_METRICS = _VEC_METRICS or VectorMetricsDB(**warmup_kwargs)
     return _VEC_METRICS
 
 
