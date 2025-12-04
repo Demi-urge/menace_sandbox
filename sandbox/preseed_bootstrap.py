@@ -702,8 +702,8 @@ def _derive_warmup_join_timeout(
             )
             if candidate is not None and candidate > 0
         ]
-        join_cap = min(fallback_candidates) if fallback_candidates else 1.0
-        join_timeout = max(0.0, join_cap)
+        join_cap = min(fallback_candidates) if fallback_candidates else _EMBEDDER_HEAVY_STAGE_CEILING
+        join_timeout = max(0.0, join_cap or _EMBEDDER_HEAVY_STAGE_CEILING)
     else:
         join_cap = join_cap if join_cap is not None else join_timeout
 
@@ -716,6 +716,11 @@ def _derive_warmup_join_timeout(
         )
     elif join_timeout is None and join_cap is not None:
         join_timeout = join_cap
+
+    if join_timeout is None:
+        join_timeout = join_cap or _EMBEDDER_HEAVY_STAGE_CEILING
+    if join_cap is None:
+        join_cap = join_timeout
 
     return join_timeout, join_cap
 
@@ -7248,6 +7253,32 @@ def initialize_bootstrap_context(
                 return deferral_snapshot.get(
                     "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
                 ), warmup_stop_reason
+            if warmup_join_timeout is not None and warmup_join_timeout <= 0:
+                warmup_stop_reason = warmup_stop_reason or (
+                    warmup_join_cap_reason
+                    if (
+                        warmup_join_ceiling is not None
+                        and join_cap is not None
+                        and join_cap <= (warmup_join_ceiling or join_cap)
+                    )
+                    else inline_guard_reason
+                    or "embedder_preload_warmup_cap_exceeded"
+                )
+                deferral_snapshot = _schedule_background_preload(
+                    warmup_stop_reason, strict_timebox=join_cap or warmup_join_timeout
+                )
+                warmup_snapshot = deferral_snapshot.get("warmup_summary") or {}
+                warmup_snapshot.setdefault("deferred", True)
+                warmup_snapshot.setdefault("deferred_reason", warmup_stop_reason)
+                warmup_snapshot.setdefault("deferral_reason", warmup_stop_reason)
+                warmup_snapshot.setdefault("stage", "deferred-inline-timebox")
+                warmup_snapshot.setdefault("strict_timebox", join_cap or warmup_join_timeout)
+                deferral_snapshot["warmup_summary"] = warmup_snapshot
+                _BOOTSTRAP_EMBEDDER_JOB = deferral_snapshot
+                return deferral_snapshot.get(
+                    "result", deferral_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
+                ), warmup_stop_reason
+
             warmup_thread.join(join_timeout)
 
             if warmup_thread.is_alive():
