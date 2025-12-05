@@ -107,6 +107,14 @@ _BOOTSTRAP_DEPENDENCY_BROKER: contextvars.ContextVar[
 ] = contextvars.ContextVar("bootstrap_dependency_broker", default=None)
 
 
+# Provide a stub for the bootstrap context accessor early in module import so
+# other modules can safely import it even while this module is still being
+# initialized.  The real implementation is defined further below once the
+# bootstrap thread state helpers are available.
+def _current_bootstrap_context():  # pragma: no cover - early stub
+    return None
+
+
 @contextlib.contextmanager
 def structural_bootstrap_owner_guard(owner: object) -> Iterator[None]:
     """Mark an in-flight StructuralEvolutionBot bootstrap owner.
