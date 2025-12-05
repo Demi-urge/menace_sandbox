@@ -174,8 +174,15 @@ def resolve_path(
     root: Optional[Path | str] = None,
     *,
     trace: bool = False,
+    allow_missing_parents: bool = False,
 ) -> Path:
-    """Resolve *name* to an absolute :class:`Path` within configured roots."""
+    """Resolve *name* to an absolute :class:`Path` within configured roots.
+
+    When ``allow_missing_parents`` is ``True`` the function will still return a
+    normalised :class:`Path` for locations whose parent directories do not yet
+    exist. This is useful for creation codepaths that want to avoid
+    ``FileNotFoundError`` during initial resolution.
+    """
 
     start = time.perf_counter()
     name_str = str(name)
@@ -245,6 +252,13 @@ def resolve_path(
             break
 
         resolved = None
+
+    if resolved is None and allow_missing_parents:
+        base = roots[0]
+        candidate = (base / path).resolve(strict=False)
+        with _CACHE_LOCK:
+            _PATH_CACHE[_cache_key(base, norm_name)] = candidate
+        resolved = candidate
 
     if resolved is None and not bootstrap_fast:
         target = Path(norm_name)
