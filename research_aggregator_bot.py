@@ -187,20 +187,34 @@ _runtime_initializing = False
 _self_coding_configured = False
 
 
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
+def _ensure_bootstrap_ready(
+    component: str, *, timeout: float = 15.0, allow_degraded: bool = False
+) -> bool:
+    """Block until bootstrap readiness clears unless degraded mode is allowed."""
+
     try:
         _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+        return True
     except TimeoutError as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(
+        message = (
             f"{component} unavailable until bootstrap readiness clears: "
             f"{_BOOTSTRAP_READINESS.describe()}"
-        ) from exc
+        )
+        if allow_degraded:
+            logger.warning(
+                message,
+                extra={"event": "research-aggregator-bootstrap-degraded"},
+            )
+            return False
+        raise RuntimeError(message) from exc
 
 
 # Eagerly advertise the bootstrap placeholder as soon as the module loads so
 # downstream imports reuse the shared sentinel before instantiating helpers.
 _ensure_bootstrap_ready(
-    "ResearchAggregatorBot bootstrap placeholder", timeout=_BOOTSTRAP_GATE_TIMEOUT
+    "ResearchAggregatorBot bootstrap placeholder",
+    timeout=_BOOTSTRAP_GATE_TIMEOUT,
+    allow_degraded=True,
 )
 _bootstrap_placeholders()
 
