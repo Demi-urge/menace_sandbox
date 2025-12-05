@@ -8,18 +8,25 @@ without requiring any manual post-launch edits.
 
 from __future__ import annotations
 
+import os
+import sys
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+
+# Ensure the repository and package roots are available before importing any
+# project modules that rely on ``menace_sandbox`` as an installed package.
+_HERE = Path(__file__).resolve().parent
+for _path in (_HERE, _HERE.parent):
+    _str_path = str(_path)
+    if _str_path not in sys.path:
+        sys.path.insert(0, _str_path)
+
 from sandbox.preseed_bootstrap import initialize_bootstrap_context
 from sandbox_runner.bootstrap import bootstrap_environment
 
 # Force bootstrap readiness before any downstream imports touch GPTMemoryManager
 initialize_bootstrap_context()
 bootstrap_environment()
-
-import os
-import sys
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import faulthandler
@@ -32,8 +39,6 @@ import threading
 import time
 import traceback
 import uuid
-from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
 
 from coding_bot_interface import (
     _bootstrap_dependency_broker,
