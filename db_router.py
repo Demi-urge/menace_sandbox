@@ -33,6 +33,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+import sys
 from typing import Set, Iterable, Mapping, Any, Callable, Iterator
 from dynamic_path_router import get_project_root, resolve_path
 
@@ -494,9 +495,18 @@ def _bootstrap_context_active() -> bool:
     global _bootstrap_context_detector
 
     if _bootstrap_context_detector is None:
-        from coding_bot_interface import _current_bootstrap_context as _detector
+        def _detect() -> bool:
+            module = sys.modules.get("menace_sandbox.coding_bot_interface") or sys.modules.get(
+                "coding_bot_interface"
+            )
+            if module is None:
+                return False
+            detector = getattr(module, "_current_bootstrap_context", None)
+            if detector is None:
+                return False
+            return bool(detector())
 
-        _bootstrap_context_detector = lambda: _detector() is not None
+        _bootstrap_context_detector = _detect
 
     try:
         return bool(_bootstrap_context_detector())
