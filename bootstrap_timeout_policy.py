@@ -2857,6 +2857,37 @@ def _summarize_component_overruns(telemetry: Mapping[str, object]) -> dict[str, 
     return component_overruns
 
 
+def _summarize_component_telemetry(telemetry: Mapping[str, object]) -> Mapping[str, object]:
+    """Return a concise summary of component-level telemetry."""
+
+    stage_summary = _summarize_stage_telemetry(telemetry)
+    component_overruns = _summarize_component_overruns(telemetry)
+
+    def _sanitize_window_map(values: Mapping[str, object] | None) -> Mapping[str, float | object]:
+        if not values:
+            return {}
+        return {
+            key: (_parse_float(str(value)) if value is not None else None)
+            for key, value in values.items()
+        }
+
+    return {
+        "timeouts": int(telemetry.get("timeouts", 0) or 0),
+        "stage_summary": stage_summary,
+        "component_overruns": component_overruns,
+        "component_windows": _sanitize_window_map(
+            telemetry.get("component_windows") or {}
+        ),
+        "global_window": _parse_float(str(telemetry.get("global_window"))),
+        "global_window_extension": _parse_float(
+            str(telemetry.get("global_window_extension"))
+        ),
+        "shared_timeout": telemetry.get("shared_timeout"),
+        "component_complexity": telemetry.get("component_complexity"),
+        "budget_violations": telemetry.get("budget_violations"),
+    }
+
+
 def _maybe_escalate_timeout_floors(
     minimums: MutableMapping[str, float],
     component_floors: MutableMapping[str, float],
