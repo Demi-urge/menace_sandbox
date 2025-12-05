@@ -17,6 +17,7 @@ import argparse
 import importlib.util
 import json
 import logging
+import os
 import sys
 import warnings
 from dataclasses import dataclass
@@ -133,8 +134,15 @@ logger = logging.getLogger(__name__)
 
 
 def _ensure_bootstrap_ready(component: str, *, timeout: float = 8.0) -> None:
+    env_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+        parsed_timeout = float(env_timeout) if env_timeout else None
+    except (TypeError, ValueError):  # pragma: no cover - defensive path
+        parsed_timeout = None
+
+    effective_timeout = max(timeout, parsed_timeout) if parsed_timeout else timeout
+    try:
+        _BOOTSTRAP_READINESS.await_ready(timeout=effective_timeout)
     except TimeoutError as exc:  # pragma: no cover - defensive path
         raise RuntimeError(
             f"{component} cannot start until bootstrap readiness clears: "
