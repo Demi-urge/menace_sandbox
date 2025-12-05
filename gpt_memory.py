@@ -133,7 +133,7 @@ STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}
 logger = logging.getLogger(__name__)
 
 
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 8.0) -> None:
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 12.0) -> None:
     env_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     try:
         parsed_timeout = float(env_timeout) if env_timeout else None
@@ -144,6 +144,17 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 8.0) -> None:
     try:
         _BOOTSTRAP_READINESS.await_ready(timeout=effective_timeout)
     except TimeoutError as exc:  # pragma: no cover - defensive path
+        probe = _BOOTSTRAP_READINESS.probe()
+        if probe.heartbeat is None:
+            logger.warning(
+                "%s proceeding without bootstrap heartbeat; readiness stalled after %.1fs: %s",
+                component,
+                effective_timeout,
+                probe.summary(),
+                extra={"event": "bootstrap-readiness-missing-heartbeat"},
+            )
+            return
+
         raise RuntimeError(
             f"{component} cannot start until bootstrap readiness clears: "
             f"{_BOOTSTRAP_READINESS.describe()}"
