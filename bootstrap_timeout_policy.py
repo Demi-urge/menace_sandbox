@@ -3206,7 +3206,10 @@ def enforce_bootstrap_timeout_policy(
 
     active_logger = logger or LOGGER
 
-    def _run() -> Dict[str, Dict[str, float | bool | None]]:
+    def _run(
+        _derive_timeout_setting_fn=_derive_timeout_setting,
+        _component_timeout_setting_fn=_component_timeout_setting,
+    ) -> Dict[str, Dict[str, float | bool | None]]:
         local_telemetry = telemetry or _collect_timeout_telemetry()
         minimums: dict[str, float] = load_escalated_timeout_floors()
         component_floors: dict[str, float] = load_component_timeout_floors()
@@ -3263,7 +3266,7 @@ def enforce_bootstrap_timeout_policy(
         for env_name, minimum in minimums.items():
             value = local_telemetry.get("env", {}).get(env_name)
             state_value = host_state.get(env_name)
-            results[env_name] = _derive_timeout_setting(
+            results[env_name] = _derive_timeout_setting_fn(
                 env_name,
                 effective_minimum=minimum,
                 value=value,
@@ -3274,7 +3277,7 @@ def enforce_bootstrap_timeout_policy(
             )
         for component, floor in component_floors.items():
             telemetry_value = component_budgets.get(component)
-            results.setdefault("components", {})[component] = _component_timeout_setting(
+            results.setdefault("components", {})[component] = _component_timeout_setting_fn(
                 component, telemetry_value, floor, allow_unsafe=allow_unsafe, logger=active_logger
             )
         results.setdefault("components", {}).setdefault(
