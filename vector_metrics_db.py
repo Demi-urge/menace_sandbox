@@ -125,6 +125,8 @@ class _BootstrapVectorMetricsStub:
         self._path_resolution_allowed = False
         self._first_write_deferral_reason: str | None = None
         self._first_write_deferral_metric_emitted = False
+        self._bootstrap_attempt_timestamps: list[float] = []
+        self._bootstrap_cooldown_seconds = 5.0
         if self._activation_blocked and self._first_write_budget is None:
             self._first_write_budget = 0.0
             self._log_deferred_activation(reason="warmup_first_write_budget")
@@ -351,6 +353,53 @@ class _BootstrapVectorMetricsStub:
             _increment_deferral_metric(reason)
             self._first_write_deferral_metric_emitted = True
         self._log_deferred_activation(reason=reason)
+
+    def _prune_bootstrap_attempts(self) -> None:
+        now = time.perf_counter()
+        window = self._bootstrap_cooldown_seconds
+        self._bootstrap_attempt_timestamps = [
+            ts for ts in self._bootstrap_attempt_timestamps if now - ts <= window
+        ]
+
+    def _record_bootstrap_attempt(self) -> None:
+        self._bootstrap_attempt_timestamps.append(time.perf_counter())
+        self._prune_bootstrap_attempts()
+
+    def _should_defer_bootstrap_activation(self) -> bool:
+        if _bootstrap_thread_context():
+            metric_emitted = self._first_write_deferral_metric_emitted
+            self._record_bootstrap_attempt()
+            self._record_first_write_deferral(reason="bootstrap_thread")
+            if metric_emitted:
+                _increment_deferral_metric("bootstrap_thread")
+            logger.info(
+                "vector_metrics_db.bootstrap.activation_deferred_for_bootstrap",
+                extra={
+                    "reason": "bootstrap_thread",
+                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                },
+            )
+            self.register_readiness_hook()
+            return True
+        self._prune_bootstrap_attempts()
+        if self._bootstrap_attempt_timestamps:
+            metric_emitted = self._first_write_deferral_metric_emitted
+            self._record_bootstrap_attempt()
+            self._record_first_write_deferral(reason="bootstrap_cooldown")
+            if metric_emitted:
+                _increment_deferral_metric("bootstrap_cooldown")
+            logger.info(
+                "vector_metrics_db.bootstrap.activation_deferred_for_bootstrap",
+                extra={
+                    "reason": "bootstrap_cooldown",
+                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
+                    "warmup": bool(self._activation_kwargs.get("warmup")),
+                },
+            )
+            self.register_readiness_hook()
+            return True
+        return False
 
     def _activate_after_readiness(self, *, reason: str) -> None:
         self._allow_path_resolution(reason=reason)
@@ -753,6 +802,8 @@ class _BootstrapVectorMetricsStub:
                 self._log_deferred_activation(reason=f"blocked:{method}")
                 _increment_deferral_metric("blocked_first_write")
                 return None
+        if self._should_defer_bootstrap_activation():
+            return None
         if self._first_write_deferred():
             return None
         if not self._activate_on_first_write:
@@ -764,20 +815,10 @@ class _BootstrapVectorMetricsStub:
         return delegate
 
     def _activate_with_timeout(self, *, reason: str) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
-        if _bootstrap_thread_context():
-            self._queued_first_write = True
-            self._log_deferred_activation(reason="bootstrap_thread")
-            _increment_deferral_metric("bootstrap_thread")
-            self.register_readiness_hook()
-            logger.info(
-                "vector_metrics_db.bootstrap.activation_queued_from_warmup",
-                extra={
-                    "reason": reason,
-                    "bootstrap_fast": bool(self._activation_kwargs.get("bootstrap_fast")),
-                    "warmup": bool(self._activation_kwargs.get("warmup")),
-                },
-            )
+        if self._should_defer_bootstrap_activation():
             return self
+
+        self._record_bootstrap_attempt()
 
         budget = self._first_write_budget
         if budget is None:

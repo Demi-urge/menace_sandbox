@@ -404,3 +404,45 @@ def test_bootstrap_callers_keep_stub_until_activation_signal(monkeypatch):
     assert calls and calls[0][0] == "init"
     assert any(entry == "end_warmup" for entry in calls)
     assert any(entry == "activate_persistence" for entry in calls)
+
+
+def test_bootstrap_thread_first_write_defers_activation(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    vector_metrics_db._MENACE_BOOTSTRAP_ENV_ACTIVE = None
+
+    class DummyReadiness:
+        def await_ready(self, timeout=None):  # pragma: no cover - background thread
+            return False
+
+    dummy_module = types.SimpleNamespace(readiness_signal=lambda: DummyReadiness())
+    monkeypatch.setitem(sys.modules, "bootstrap_readiness", dummy_module)
+
+    bootstrap_flags = [True, False]
+
+    def fake_bootstrap_thread_context():
+        if bootstrap_flags:
+            return bootstrap_flags.pop(0)
+        return False
+
+    monkeypatch.setattr(
+        vector_metrics_db, "_bootstrap_thread_context", fake_bootstrap_thread_context
+    )
+
+    stub = vector_metrics_db._BootstrapVectorMetricsStub(
+        path=None,
+        bootstrap_fast=False,
+        warmup=False,
+        ensure_exists=True,
+        read_only=False,
+    )
+    stub.activate_on_first_write()
+
+    stub.log_embedding("default", tokens=1, wall_time_ms=1.0)
+    stub.log_embedding("default", tokens=2, wall_time_ms=2.0)
+
+    assert stub._delegate is None
+    assert stub._activation_kwargs.get("path") is None
+    assert not stub._path_resolution_allowed
+    assert not (tmp_path / "vector_metrics.db").exists()
+    assert stub._readiness_hook_registered
