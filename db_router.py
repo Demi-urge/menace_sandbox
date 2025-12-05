@@ -372,7 +372,6 @@ _load_table_overrides()
 
 _LogDBAccess = Callable[..., None]
 _log_db_access_fn: _LogDBAccess | None = None
-_bootstrap_context_detector: Callable[[], bool] | None = None
 
 
 class _BootstrapAuditController:
@@ -492,24 +491,18 @@ def _ensure_log_db_access() -> _LogDBAccess:
 def _bootstrap_context_active() -> bool:
     """Return ``True`` when a coding bootstrap context is active on this thread."""
 
-    global _bootstrap_context_detector
+    module = sys.modules.get("menace_sandbox.coding_bot_interface") or sys.modules.get(
+        "coding_bot_interface"
+    )
+    if module is None:
+        return False
 
-    if _bootstrap_context_detector is None:
-        def _detect() -> bool:
-            module = sys.modules.get("menace_sandbox.coding_bot_interface") or sys.modules.get(
-                "coding_bot_interface"
-            )
-            if module is None:
-                return False
-            detector = getattr(module, "_current_bootstrap_context", None)
-            if detector is None:
-                return False
-            return bool(detector())
-
-        _bootstrap_context_detector = _detect
+    detector = getattr(module, "_current_bootstrap_context", None)
+    if detector is None:
+        return False
 
     try:
-        return bool(_bootstrap_context_detector())
+        return bool(detector())
     except Exception:  # pragma: no cover - defensive guard
         return False
 
