@@ -16,7 +16,7 @@ import subprocess
 import shutil
 import importlib.util
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, TYPE_CHECKING
+from typing import Callable, Iterable, Mapping, TYPE_CHECKING, ClassVar
 import threading
 import json
 import sys
@@ -652,6 +652,10 @@ class EnvironmentBootstrapper:
     """Bootstrap dependencies and infrastructure on startup."""
 
     PHASES: tuple[str, ...] = ("critical", "provisioning", "optional")
+    _watchers_lock: ClassVar[threading.Lock] = threading.Lock()
+    _watchers_started: ClassVar[bool] = False
+    _shared_background_threads: ClassVar[list[threading.Thread]] = []
+    _shared_stop_events: ClassVar[list[threading.Event]] = []
 
     def __init__(
         self,
@@ -732,25 +736,6 @@ class EnvironmentBootstrapper:
         self._component_timeouts: dict[str, float] | None = None
         self._budget_snapshot: dict[str, object] = {}
         self._persisted_phase_durations: set[str] = set()
-        interval = os.getenv("CONFIG_DISCOVERY_INTERVAL")
-        if interval:
-            try:
-                sec = float(interval)
-            except ValueError:
-                sec = 0.0
-            if sec > 0:
-                self._queue_background_task(
-                    "config-discovery",
-                    lambda: self._start_config_discovery_watcher(sec),
-                )
-                if self._watchers_limited:
-                    self.logger.info(
-                        "config discovery watcher queued with semaphore throttling",
-                    )
-        elif self._watchers_limited:
-            self.logger.info(
-                "config discovery watcher disabled via MENACE_MINIMISE_BOOTSTRAP_WATCHERS",
-            )
         self.tf_dir = tf_dir or os.getenv("TERRAFORM_DIR")
         self.bootstrapper = InfrastructureBootstrapper(self.tf_dir)
         self.policy = policy or PolicyLoader().resolve()
@@ -763,13 +748,51 @@ class EnvironmentBootstrapper:
         self.min_driver_version = os.getenv("MIN_NVIDIA_DRIVER_VERSION")
         self.strict_driver_check = os.getenv("STRICT_NVIDIA_DRIVER_CHECK") == "1"
         self.cluster_sup = cluster_supervisor
-        if self.cluster_sup:
-            hosts = [h.strip() for h in os.getenv("CLUSTER_HOSTS", "").split(",") if h.strip()]
-            if hosts:
-                self._queue_background_task(
-                    "cluster-supervisor-hosts",
-                    lambda: self._start_cluster_hosts(hosts),
+
+    def initialise_background_watchers(self) -> None:
+        """Start background watchers once after confirming bootstrap is needed."""
+
+        with self._watchers_lock:
+            if self.__class__._watchers_started:
+                return
+            if _already_bootstrapped():
+                self.logger.debug(
+                    "bootstrap marker present; skipping background watcher initialisation",
                 )
+                self.__class__._watchers_started = True
+                return
+
+            interval = os.getenv("CONFIG_DISCOVERY_INTERVAL")
+            if interval:
+                try:
+                    sec = float(interval)
+                except ValueError:
+                    sec = 0.0
+                if sec > 0:
+                    self._queue_background_task(
+                        "config-discovery",
+                        lambda: self._start_config_discovery_watcher(sec),
+                    )
+                    if self._watchers_limited:
+                        self.logger.info(
+                            "config discovery watcher queued with semaphore throttling",
+                        )
+            elif self._watchers_limited:
+                self.logger.info(
+                    "config discovery watcher disabled via MENACE_MINIMISE_BOOTSTRAP_WATCHERS",
+                )
+
+            if self.cluster_sup:
+                hosts = [
+                    h.strip() for h in os.getenv("CLUSTER_HOSTS", "").split(",") if h.strip()
+                ]
+                if hosts:
+                    self._queue_background_task(
+                        "cluster-supervisor-hosts",
+                        lambda: self._start_cluster_hosts(hosts),
+                    )
+
+            self.__class__._watchers_started = True
 
     def _run(self, cmd: list[str], **kwargs) -> None:
         """Run a subprocess command with retries and duration logging."""
@@ -1276,7 +1299,7 @@ class EnvironmentBootstrapper:
         ready_gate: str | None = "critical",
         stage: str | None = None,
         budget_hint: float | None = None,
-    ) -> threading.Thread:
+        ) -> threading.Thread:
         if stage and self._stage_scheduler:
             t = self._stage_scheduler.schedule_stage(
                 stage,
@@ -1298,13 +1321,21 @@ class EnvironmentBootstrapper:
         self._background_threads.append(t)
         return t
 
+    def _register_background_handles(
+        self, thread: threading.Thread, stop_event: threading.Event | None = None
+    ) -> None:
+        self._background_threads.append(thread)
+        self.__class__._shared_background_threads.append(thread)
+        if stop_event:
+            self._stop_events.append(stop_event)
+            self.__class__._shared_stop_events.append(stop_event)
+
     def _start_config_discovery_watcher(self, interval: float) -> threading.Thread:
         stop_event = threading.Event()
         thread = self.config_discovery.run_continuous(
             interval=interval, stop_event=stop_event
         )
-        self._stop_events.append(stop_event)
-        self._background_threads.append(thread)
+        self._register_background_handles(thread, stop_event)
         return thread
 
     def _start_cluster_hosts(self, hosts: list[str]) -> None:
@@ -1747,9 +1778,12 @@ class EnvironmentBootstrapper:
     def shutdown(self, *, timeout: float | None = 5.0) -> None:
         """Stop background bootstrap threads started by the instance."""
 
-        for event in self._stop_events:
+        events = list({*self._stop_events, *self.__class__._shared_stop_events})
+        threads = list({*self._background_threads, *self.__class__._shared_background_threads})
+
+        for event in events:
             event.set()
-        for thread in self._background_threads:
+        for thread in threads:
             if thread.is_alive():
                 thread.join(timeout)
 
@@ -3267,6 +3301,7 @@ class EnvironmentBootstrapper:
         skip_db_init: bool | None = None,
     ) -> None:
         with bootstrap_metrics.bootstrap_attempt(logger=self.logger):
+            self.initialise_background_watchers()
             timeout = (
                 timeout
                 if timeout is not None
@@ -3332,8 +3367,7 @@ class EnvironmentBootstrapper:
     def _start_auto_provisioner(self, interval: float) -> threading.Thread:
         stop_event = threading.Event()
         t = self.bootstrapper.run_continuous(interval=interval, stop_event=stop_event)
-        self._stop_events.append(stop_event)
-        self._background_threads.append(t)
+        self._register_background_handles(t, stop_event)
         return t
 
 
