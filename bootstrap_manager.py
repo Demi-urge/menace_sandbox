@@ -120,19 +120,19 @@ class BootstrapManager:
         if attempt_count > 1:
             window = round(now - attempts[0], 2)
             level = logging.WARNING if attempt_count < self._attempt_threshold else logging.ERROR
-                logger.log(
-                    level,
-                    "multiple bootstrap attempts detected in short window",
-                    extra={
-                        "event": "bootstrap-density",
-                        "bootstrap_step": key[0],
-                        "fingerprint": key[1],
-                        "bootstrap_module": module,
-                        "attempts_in_window": attempt_count,
-                        "window_seconds": window,
-                        "threshold": self._attempt_threshold,
-                        **caller,
-                    },
+            logger.log(
+                level,
+                "multiple bootstrap attempts detected in short window",
+                extra={
+                    "event": "bootstrap-density",
+                    "bootstrap_step": key[0],
+                    "fingerprint": key[1],
+                    "bootstrap_module": module,
+                    "attempts_in_window": attempt_count,
+                    "window_seconds": window,
+                    "threshold": self._attempt_threshold,
+                    **caller,
+                },
             )
         bootstrap_metrics.record_attempt_density(
             module=module,
