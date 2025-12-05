@@ -490,6 +490,34 @@ def ensure_embedding_model(
     global _MODEL_READY
     log = logger or logging.getLogger(__name__)
 
+    bootstrap_context = any(
+        os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}
+        for flag in ("MENACE_BOOTSTRAP", "MENACE_BOOTSTRAP_FAST", "MENACE_BOOTSTRAP_MODE")
+    )
+
+    if bootstrap_context and not warmup_heavy:
+        cached_status = _WARMUP_STAGE_MEMO.get("model")
+        if cached_status == "deferred-bootstrap-probe":
+            return (None, cached_status)
+
+        status = "deferred-bootstrap-probe"
+        timeout_hint = 0.1
+        _update_warmup_stage_cache(
+            "model",
+            status,
+            log,
+            meta={
+                "source": "bootstrap-probe",
+                "probe_only": True,
+                "background_state": _BACKGROUND_QUEUE_FLAG,
+                "background_timeout": timeout_hint,
+            },
+        )
+        _queue_background_model_download(
+            log, download_timeout=timeout_hint, force_heavy=warmup_heavy
+        )
+        return (None, status)
+
     def _stage_budget_deadline() -> float | None:
         deadline = getattr(stop_event, "_stage_deadline", None)
         if deadline is None:
@@ -2623,6 +2651,8 @@ def warmup_vector_service(
         remaining = _remaining_budget()
         if remaining is not None:
             summary["remaining_budget"] = f"{remaining:.3f}"
+        if summary.get("model") == "deferred-bootstrap-probe" and bootstrap_context:
+            summary.setdefault("bootstrap_model_probe", "ready")
         if timebox_deadline is not None:
             summary["warmup_timebox"] = f"{stage_budget_cap:.3f}"
         if timebox_skipped:
