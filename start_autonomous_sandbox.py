@@ -8,6 +8,13 @@ without requiring any manual post-launch edits.
 
 from __future__ import annotations
 
+from sandbox.preseed_bootstrap import initialize_bootstrap_context
+from sandbox_runner.bootstrap import bootstrap_environment
+
+# Force bootstrap readiness before any downstream imports touch GPTMemoryManager
+initialize_bootstrap_context()
+bootstrap_environment()
+
 import os
 import sys
 
