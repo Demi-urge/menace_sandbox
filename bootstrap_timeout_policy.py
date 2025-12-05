@@ -3111,6 +3111,90 @@ def derive_phase_soft_budgets(
     return soft_budgets
 
 
+def _derive_timeout_setting(
+    env_name: str,
+    *,
+    effective_minimum: float,
+    value: object | None,
+    allow_unsafe: bool,
+    state_value: object | None = None,
+    prompt_override: Callable[[str, float, float], bool] | None = None,
+    logger: logging.Logger | None = None,
+) -> Dict[str, float | bool | None | str]:
+    """Select an enforced timeout value with metadata and safety guards."""
+
+    logger = logger or LOGGER
+    parsed_value = _parse_float(str(value)) if value is not None else None
+    parsed_state = _parse_float(str(state_value)) if state_value is not None else None
+
+    resolved = effective_minimum
+    source = "minimum"
+
+    if parsed_state is not None:
+        resolved = max(resolved, parsed_state)
+        if parsed_state > effective_minimum:
+            source = "state"
+
+    if parsed_value is not None:
+        if parsed_value < resolved and not allow_unsafe:
+            if prompt_override and prompt_override(env_name, resolved, parsed_value):
+                resolved = parsed_value
+                source = "prompt_override"
+        else:
+            resolved = parsed_value
+            source = "telemetry"
+
+    try:
+        os.environ[env_name] = str(resolved)
+    except Exception:
+        logger.debug("failed to set timeout env", exc_info=True, extra={"env": env_name})
+
+    return {
+        "value": resolved,
+        "minimum": effective_minimum,
+        "telemetry": parsed_value,
+        "state": parsed_state,
+        "allow_unsafe": allow_unsafe,
+        "source": source,
+    }
+
+
+def _component_timeout_setting(
+    component: str,
+    telemetry_value: object | None,
+    floor: float,
+    *,
+    allow_unsafe: bool,
+    logger: logging.Logger | None = None,
+) -> Dict[str, float | bool | None | str]:
+    """Return the enforced timeout budget for a component with metadata."""
+
+    logger = logger or LOGGER
+    parsed_value = _parse_float(str(telemetry_value)) if telemetry_value is not None else None
+
+    resolved = floor
+    source = "floor"
+    if parsed_value is not None:
+        if parsed_value < floor and not allow_unsafe:
+            source = "floor"
+        else:
+            resolved = parsed_value
+            source = "telemetry"
+
+    if parsed_value is None and telemetry_value not in (None, "", 0):
+        logger.debug(
+            "unable to parse component timeout telemetry", extra={"component": component}
+        )
+
+    return {
+        "value": resolved,
+        "floor": floor,
+        "telemetry": parsed_value,
+        "allow_unsafe": allow_unsafe,
+        "source": source,
+    }
+
+
 def enforce_bootstrap_timeout_policy(
     *,
     logger: logging.Logger | None = None,
