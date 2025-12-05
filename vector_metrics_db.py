@@ -1226,7 +1226,7 @@ def _apply_pending_weights(vdb: "VectorMetricsDB") -> None:
 def _arm_shared_readiness_hook() -> None:
     """Register a readiness callback to promote the shared DB post-warmup."""
 
-    global _READINESS_HOOK_ARMED
+    global _READINESS_HOOK_ARMED, _VECTOR_DB_INSTANCE
     if _READINESS_HOOK_ARMED:
         return
     try:  # pragma: no cover - optional dependency
@@ -1239,17 +1239,18 @@ def _arm_shared_readiness_hook() -> None:
     instance = _VECTOR_DB_INSTANCE
     if instance is None:
         try:
-            instance = get_shared_vector_metrics_db(
+            instance = _bootstrap_vector_metrics_stub(
+                bootstrap_fast=True,
                 warmup=True,
                 ensure_exists=False,
                 read_only=True,
-                warmup_stub=True,
             )
         except Exception:  # pragma: no cover - bootstrap-time guardrail
             logger.debug("vector_metrics_db.bootstrap.readiness_stub_failed", exc_info=True)
             return
 
     if isinstance(instance, _BootstrapVectorMetricsStub):
+        _VECTOR_DB_INSTANCE = instance
         instance.register_readiness_hook()
         return
 
@@ -1271,9 +1272,23 @@ def _arm_shared_readiness_hook() -> None:
                     extra={"pending_weights": len(pending)},
                 )
             promoted = activate_shared_vector_metrics_db(
-                reason="bootstrap_ready", post_warmup=True
+                reason="bootstrap_ready", post_warmup=True, warmup=False
             )
-            instance = promoted or _VECTOR_DB_INSTANCE
+            delegate = promoted
+            if isinstance(promoted, _BootstrapVectorMetricsStub):
+                delegate = promoted._promote_from_stub(
+                    reason="bootstrap_ready", allow_override=True
+                )
+            if isinstance(delegate, _BootstrapVectorMetricsStub):
+                delegate = delegate._activate(
+                    reason="bootstrap_ready", allow_override=True
+                )
+            if isinstance(delegate, VectorMetricsDB):
+                _apply_pending_weights(delegate)
+                logger.info(
+                    "vector_metrics_db.bootstrap.readiness_promotion_complete",
+                    extra={"path": str(delegate.path)},
+                )
             if isinstance(instance, VectorMetricsDB):
                 _apply_pending_weights(instance)
                 logger.info(
@@ -1968,6 +1983,42 @@ def get_shared_vector_metrics_db(
     return _VECTOR_DB_INSTANCE
 
 
+def bootstrap_aware_vector_metrics_db(
+    *,
+    bootstrap_fast: bool | None = None,
+    warmup: bool | None = None,
+    ensure_exists: bool | None = None,
+    read_only: bool | None = None,
+    warmup_stub: bool | None = None,
+) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+    """Return a stub during bootstrap, promoting only after readiness or first write."""
+
+    bootstrap_context = _vector_metrics_bootstrap_requested(
+        bootstrap_fast=bootstrap_fast, warmup=warmup
+    )
+
+    if bootstrap_context or warmup_stub:
+        stub = _bootstrap_vector_metrics_stub(
+            bootstrap_fast=True,
+            warmup=True,
+            ensure_exists=False,
+            read_only=True,
+        )
+        if isinstance(stub, _BootstrapVectorMetricsStub):
+            stub.register_readiness_hook()
+            stub.activate_on_first_write()
+            stub.request_post_warmup_activation(reason="bootstrap_ready")
+        return stub
+
+    return get_shared_vector_metrics_db(
+        bootstrap_fast=bootstrap_fast,
+        warmup=warmup,
+        ensure_exists=True if ensure_exists is None else ensure_exists,
+        read_only=False if read_only is None else read_only,
+        warmup_stub=warmup_stub,
+    )
+
+
 def get_vector_metrics_db(
     *,
     bootstrap_fast: bool | None = None,
@@ -1976,7 +2027,7 @@ def get_vector_metrics_db(
     read_only: bool | None = None,
     warmup_stub: bool | None = None,
     allow_bootstrap_activation: bool = False,
-    ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
+) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Return the shared DB while preserving warmup/bootstrap stubs."""
 
     bootstrap_context = _vector_metrics_bootstrap_requested(
@@ -1984,10 +2035,13 @@ def get_vector_metrics_db(
     )
 
     if bootstrap_context:
-        bootstrap_fast = True if bootstrap_fast is None else bootstrap_fast
-        warmup = True if warmup is None else warmup
-        if warmup_stub is None:
-            warmup_stub = True
+        return bootstrap_aware_vector_metrics_db(
+            bootstrap_fast=bootstrap_fast,
+            warmup=warmup,
+            ensure_exists=ensure_exists,
+            read_only=read_only,
+            warmup_stub=True,
+        )
 
     vm = get_shared_vector_metrics_db(
         bootstrap_fast=bootstrap_fast,
@@ -1999,27 +2053,9 @@ def get_vector_metrics_db(
     )
 
     if isinstance(vm, _BootstrapVectorMetricsStub):
-        if bootstrap_context:
-            vm.configure_activation(
-                bootstrap_fast=True,
-                warmup=True,
-                ensure_exists=False if ensure_exists is None else ensure_exists,
-                read_only=True if read_only is None else read_only,
-            )
-            logger.info(
-                "vector_metrics_db.bootstrap.stub_warmup_selected",
-                extra={
-                    "bootstrap_fast": True,
-                    "warmup": True,
-                    "warmup_stub": True,
-                },
-            )
-        if not bootstrap_context and not getattr(vm, "_activation_blocked", False):
+        if not getattr(vm, "_activation_blocked", False):
             vm.activate_on_first_write()
-        if not bootstrap_context:
-            vm.register_readiness_hook()
-    return vm
-
+        vm.register_readiness_hook()
     return vm
 
 
