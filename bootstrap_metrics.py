@@ -266,7 +266,7 @@ def record_bootstrap_entry(
         extra = {
             "event": "bootstrap-entry",
             "status": status,
-            "module": module,
+            "bootstrap_module": module,
             "step": step,
         }
         if context:
@@ -303,7 +303,7 @@ def record_bootstrap_skip(
         extra = {
             "event": "bootstrap-skip",
             "reason": reason,
-            "module": module,
+            "bootstrap_module": module,
             "step": step,
         }
         if context:
@@ -329,7 +329,7 @@ def record_bootstrap_guard(
         extra = {
             "event": "bootstrap-guard",
             "reason": reason,
-            "module": module,
+            "bootstrap_module": module,
             "step": step,
         }
         if context:
@@ -355,7 +355,7 @@ def record_bootstrap_lifecycle(
         extra = {
             "event": "bootstrap-lifecycle",
             "lifecycle": event,
-            "module": module,
+            "bootstrap_module": module,
             "step": step,
         }
         if context:
@@ -378,7 +378,7 @@ def record_bootstrap_recursion(
     if logger:
         extra = {
             "event": "bootstrap-recursion",
-            "module": module,
+            "bootstrap_module": module,
             "step": step,
         }
         if context:
@@ -403,7 +403,7 @@ def record_attempt_density(
     if logger:
         extra = {
             "event": "bootstrap-density",
-            "module": module,
+            "bootstrap_module": module,
             "step": step,
             "attempts_in_window": attempts_in_window,
             "window_seconds": window_seconds,
