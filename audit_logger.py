@@ -13,7 +13,7 @@ import sqlite3
 import threading
 import time
 import weakref
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -549,7 +549,9 @@ _AUDIT_QUEUE: List[_QueuedAuditEvent] = []
 
 
 _BOOTSTRAP_QUEUEING_LOCK = threading.Lock()
-_BOOTSTRAP_QUEUEING_ENABLED = True
+# Bootstrap queueing is disabled by default; entry points that need to defer SQLite
+# writes should enable it explicitly via :func:`bootstrap_audit_mode`.
+_BOOTSTRAP_QUEUEING_ENABLED = False
 
 
 def _set_bootstrap_queueing_enabled(enabled: bool) -> None:
@@ -561,6 +563,29 @@ def _set_bootstrap_queueing_enabled(enabled: bool) -> None:
 def _is_bootstrap_queueing_enabled() -> bool:
     with _BOOTSTRAP_QUEUEING_LOCK:
         return _BOOTSTRAP_QUEUEING_ENABLED
+
+
+@contextmanager
+def bootstrap_audit_mode(reason: str | None = None):
+    """Temporarily defer SQLite audit writes during bootstrap sequences.
+
+    Events continue to be written to the append-only JSONL log immediately while
+    SQLite mirrors are queued.  On exit the queued events are flushed and
+    bootstrap queueing is disabled to allow normal direct writes.
+    """
+
+    _set_bootstrap_queueing_enabled(True)
+    if reason:
+        logger.debug("Enabling bootstrap audit queueing (%s)", reason)
+    try:
+        yield
+    finally:
+        try:
+            flush_queued_events()
+        finally:
+            _set_bootstrap_queueing_enabled(False)
+            if reason:
+                logger.debug("Disabling bootstrap audit queueing (%s)", reason)
 
 
 def _mirror_payload_to_sqlite(
@@ -805,6 +830,7 @@ __all__ = [
     "log_event",
     "export_to_csv",
     "log_to_sqlite",
+    "bootstrap_audit_mode",
     "queue_event",
     "queue_event_for_later",
     "flush_queued_events",

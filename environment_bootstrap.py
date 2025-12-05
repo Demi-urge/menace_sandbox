@@ -317,25 +317,30 @@ def ensure_bootstrapped(
         return _wait_for_inflight_bootstrap(timeout=timeout, description="bootstrap")
 
     try:
+        from . import audit_logger
+
         with SandboxLock(_BOOTSTRAP_LOCK_PATH):
             if _already_bootstrapped():
                 _log_skip("marker")
                 return _readiness_snapshot()
 
-            boot = BootstrapOrchestrator(bootstrapper)
-            _BOOTSTRAP_LOGGER.info(
-                "bootstrap orchestrator starting",
-                extra=log_record(event="bootstrap-start"),
-            )
-            _BOOTSTRAP_STATE = boot.run(
-                timeout=timeout, halt_background=halt_background, skip_db_init=skip_db_init
-            )
-            _mark_bootstrapped()
-            _BOOTSTRAP_LOGGER.info(
-                "bootstrap orchestrator finished",
-                extra=log_record(event="bootstrap-complete"),
-            )
-            return _BOOTSTRAP_STATE
+            with audit_logger.bootstrap_audit_mode("environment_bootstrap"):
+                boot = BootstrapOrchestrator(bootstrapper)
+                _BOOTSTRAP_LOGGER.info(
+                    "bootstrap orchestrator starting",
+                    extra=log_record(event="bootstrap-start"),
+                )
+                _BOOTSTRAP_STATE = boot.run(
+                    timeout=timeout,
+                    halt_background=halt_background,
+                    skip_db_init=skip_db_init,
+                )
+                _mark_bootstrapped()
+                _BOOTSTRAP_LOGGER.info(
+                    "bootstrap orchestrator finished",
+                    extra=log_record(event="bootstrap-complete"),
+                )
+                return _BOOTSTRAP_STATE
     except Exception as exc:
         with _BOOTSTRAP_MUTEX:
             _set_bootstrap_status("failed", error=str(exc))

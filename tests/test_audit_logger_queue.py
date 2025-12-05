@@ -123,3 +123,50 @@ def test_log_to_sqlite_defers_until_flush(monkeypatch, tmp_path: Path) -> None:
             "SELECT event_id, event_type FROM events ORDER BY rowid",
         ).fetchall()
     assert [row[0] for row in rows][-1] == second_id
+
+
+def test_bootstrap_mode_flushes_after_locked_bootstrap(monkeypatch, tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "bootstrap.jsonl"
+    db_path = tmp_path / "bootstrap.db"
+
+    monkeypatch.setattr(audit_logger, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(audit_logger, "JSONL_PATH", jsonl_path)
+    monkeypatch.setattr(audit_logger, "SQLITE_PATH", db_path)
+
+    with audit_logger._AUDIT_QUEUE_LOCK:
+        audit_logger._AUDIT_QUEUE.clear()
+    audit_logger._set_bootstrap_queueing_enabled(False)
+
+    # Seed the database so it exists before we take a lock.
+    audit_logger.log_to_sqlite(
+        "steady-state",
+        {"phase": "initial"},
+        db_path=db_path,
+        jsonl_path=jsonl_path,
+    )
+
+    lock_conn = sqlite3.connect(db_path, timeout=0.1)
+    lock_conn.execute("BEGIN IMMEDIATE")
+
+    with audit_logger.bootstrap_audit_mode("test-bootstrap-lock"):
+        event_id = audit_logger.log_to_sqlite(
+            "bootstrap-phase",
+            {"locked": True},
+            db_path=db_path,
+            jsonl_path=jsonl_path,
+        )
+        with audit_logger._AUDIT_QUEUE_LOCK:
+            assert any(
+                queued.payload.event_id == event_id for queued in audit_logger._AUDIT_QUEUE
+            )
+        lock_conn.commit()
+    lock_conn.close()
+
+    with audit_logger._AUDIT_QUEUE_LOCK:
+        assert not audit_logger._AUDIT_QUEUE
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT event_id, event_type FROM events ORDER BY rowid",
+        ).fetchall()
+    assert rows[-1] == (event_id, "bootstrap-phase")

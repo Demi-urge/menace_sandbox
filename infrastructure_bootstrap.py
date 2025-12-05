@@ -23,12 +23,15 @@ class InfrastructureBootstrapper:
         if not self.tf_dir or not os.path.isdir(self.tf_dir):
             return False
         try:
+            from . import audit_logger
+
             @retry(Exception, attempts=3)
             def _run(cmd: list[str]) -> subprocess.CompletedProcess:
                 return subprocess.run(cmd, cwd=self.tf_dir, check=True)
 
-            _run(["terraform", "init"])
-            _run(["terraform", "apply", "-auto-approve"])
+            with audit_logger.bootstrap_audit_mode("infrastructure_bootstrap"):
+                _run(["terraform", "init"])
+                _run(["terraform", "apply", "-auto-approve"])
             return True
         except Exception as exc:
             self.logger.error("terraform failed: %s", exc)
