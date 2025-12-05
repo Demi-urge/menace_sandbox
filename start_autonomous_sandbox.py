@@ -44,6 +44,7 @@ from coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
 )
+from bootstrap_manager import bootstrap_manager
 
 _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
     dependency_broker=_bootstrap_dependency_broker()
@@ -2854,6 +2855,13 @@ def main(argv: list[str] | None = None) -> None:
                                     exc_info=True,
                                 )
                             if attempt >= max_attempts:
+                                bootstrap_manager.mark_ready(
+                                    ready=False,
+                                    error=(
+                                        "initialize_bootstrap_context exceeded timeout; "
+                                        f"last_step={last_bootstrap_step} elapsed={elapsed:.1f}s"
+                                    ),
+                                )
                                 raise TimeoutError(
                                     "initialize_bootstrap_context exceeded timeout; "
                                     f"last_step={last_bootstrap_step} elapsed={elapsed:.1f}s"
@@ -2873,6 +2881,9 @@ def main(argv: list[str] | None = None) -> None:
                         bootstrap_thread.join(2)
                         if bootstrap_error:
                             if attempt >= max_attempts:
+                                bootstrap_manager.mark_ready(
+                                    ready=False, error=str(bootstrap_error)
+                                )
                                 raise bootstrap_error
                             delay = min(
                                 BOOTSTRAP_BACKOFF_BASE * attempt, BOOTSTRAP_BACKOFF_MAX
@@ -2896,9 +2907,13 @@ def main(argv: list[str] | None = None) -> None:
                             completed_steps=bootstrap_seen_steps or observed_steps,
                         )
                         _reset_bootstrap_sentinel()
+                        bootstrap_manager.mark_ready()
                         break
 
                     if bootstrap_context is None and bootstrap_error:
+                        bootstrap_manager.mark_ready(
+                            ready=False, error=str(bootstrap_error)
+                        )
                         raise bootstrap_error
 
                     bootstrap_elapsed = time.monotonic() - bootstrap_start
