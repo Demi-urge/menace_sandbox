@@ -44,6 +44,8 @@ _SCHEDULER: Any | None | bool = None  # False means attempted and unavailable
 _WARMUP_STAGE_MEMO: dict[str, str] = {}
 _WARMUP_STAGE_META: dict[str, dict[str, object]] = {}
 _WARMUP_CACHE_LOADED = False
+_LAZY_BOOTSTRAP_SATISFIED = False
+_LAZY_BOOTSTRAP_SUMMARY: Mapping[str, str] | None = None
 _BOOTSTRAP_TIMEOUT_GUARD = threading.Event()
 _PROCESS_START = int(time.time())
 
@@ -309,10 +311,12 @@ def _persist_warmup_cache(logger: logging.Logger) -> None:
 
 
 def _clear_warmup_cache() -> None:
-    global _WARMUP_CACHE_LOADED
+    global _WARMUP_CACHE_LOADED, _LAZY_BOOTSTRAP_SATISFIED, _LAZY_BOOTSTRAP_SUMMARY
     _WARMUP_CACHE_LOADED = False
     _WARMUP_STAGE_MEMO.clear()
     _WARMUP_STAGE_META.clear()
+    _LAZY_BOOTSTRAP_SATISFIED = False
+    _LAZY_BOOTSTRAP_SUMMARY = None
     cache_path = _warmup_cache_path()
     try:
         cache_path.unlink()
@@ -938,6 +942,8 @@ def warmup_vector_service(
     warmups.
     """
 
+    global _LAZY_BOOTSTRAP_SATISFIED, _LAZY_BOOTSTRAP_SUMMARY
+
     log = logger or logging.getLogger(__name__)
     _load_warmup_cache(log)
     budget_remaining_supplied = budget_remaining is not None
@@ -1042,6 +1048,10 @@ def warmup_vector_service(
     )
     background_queue_allowed = force_heavy or not warmup_lite or stage_budget_signals or post_readiness_signal
 
+    if post_readiness_signal and _LAZY_BOOTSTRAP_SATISFIED:
+        _LAZY_BOOTSTRAP_SATISFIED = False
+        _LAZY_BOOTSTRAP_SUMMARY = None
+
     if (
         stage_timeouts is None
         and not stage_budget_signals
@@ -1072,6 +1082,84 @@ def warmup_vector_service(
             return {stage: max(0.0, budget_hint * (weights[stage] / weight_total)) for stage in stages}
 
         return {stage: _CONSERVATIVE_STAGE_TIMEOUTS.get(stage) for stage in stages}
+
+    if bootstrap_context and not force_heavy:
+        heavy_stages = {"model", "handlers", "scheduler", "vectorise"}
+        if _LAZY_BOOTSTRAP_SATISFIED and _LAZY_BOOTSTRAP_SUMMARY is not None:
+            log.debug(
+                "Returning cached bootstrap deferral summary", extra={"event": "vector-warmup"}
+            )
+            return dict(_LAZY_BOOTSTRAP_SUMMARY)
+
+        summary: dict[str, str] = {
+            "bootstrap": "deferred",
+            "warmup_lite": "True",
+            "bootstrap_guard": "lazy-hard-gate",
+        }
+        background_hints = _conservative_background_hints(heavy_stages)
+        staged_for_background: set[str] = set()
+
+        for stage in heavy_stages:
+            cached_status = _WARMUP_STAGE_MEMO.get(stage)
+            status = cached_status if isinstance(cached_status, str) else None
+            if not status or not status.startswith("deferred"):
+                status = "deferred-bootstrap-hard-gate"
+            summary[stage] = status
+            staged_for_background.add(stage)
+            _update_warmup_stage_cache(
+                stage,
+                status,
+                log,
+                meta={"source": "bootstrap-hard-gate"},
+                emit_metric=True,
+            )
+
+        if staged_for_background:
+            try:
+                if background_hook is not None:
+                    hook_code = getattr(background_hook, "__code__", None)
+                    if hook_code is not None and "budget_hints" in hook_code.co_varnames:
+                        background_hook(set(staged_for_background), budget_hints=background_hints)
+                    else:
+                        background_hook(set(staged_for_background))
+            except Exception:  # pragma: no cover - advisory hook
+                log.debug("background hook failed", exc_info=True)
+
+            for stage in staged_for_background:
+                summary[f"{stage}_queued"] = _BACKGROUND_QUEUE_FLAG
+            _schedule_background_warmup(
+                set(staged_for_background),
+                logger=log,
+                timeouts=background_hints or None,
+                warmup_kwargs={
+                    "download_model": download_model or probe_model or warmup_model,
+                    "probe_model": probe_model or model_probe_allowed,
+                    "hydrate_handlers": True,
+                    "start_scheduler": True,
+                    "run_vectorise": True,
+                    "check_budget": check_budget,
+                    "budget_remaining": budget_remaining,
+                    "logger": log,
+                    "force_heavy": True,
+                    "bootstrap_fast": bootstrap_fast,
+                    "warmup_lite": False,
+                    "warmup_model": True,
+                    "warmup_handlers": True,
+                    "warmup_probe": True,
+                    "deferred_stages": set(staged_for_background),
+                    "bootstrap_lite": bootstrap_lite,
+                },
+            )
+
+        summary["deferred"] = ",".join(sorted(staged_for_background))
+        summary["deferred_stages"] = summary["deferred"]
+        log.info(
+            "Bootstrap hard gate deferring vector warmup stages",
+            extra={"event": "vector-warmup", "warmup": summary},
+        )
+        _LAZY_BOOTSTRAP_SATISFIED = True
+        _LAZY_BOOTSTRAP_SUMMARY = dict(summary)
+        return summary
 
     if bootstrap_context and _BOOTSTRAP_TIMEOUT_GUARD.is_set() and not force_heavy:
         return {

@@ -30,6 +30,8 @@ def _reset_state():
     lazy_bootstrap._clear_warmup_cache()
     lazy_bootstrap._SCHEDULER = None
     lazy_bootstrap._MODEL_READY = False
+    lazy_bootstrap._LAZY_BOOTSTRAP_SATISFIED = False
+    lazy_bootstrap._LAZY_BOOTSTRAP_SUMMARY = None
 
 
 def _clear_cache_only():
@@ -37,6 +39,8 @@ def _clear_cache_only():
     lazy_bootstrap._WARMUP_CACHE_LOADED = False
     lazy_bootstrap._SCHEDULER = None
     lazy_bootstrap._MODEL_READY = False
+    lazy_bootstrap._LAZY_BOOTSTRAP_SATISFIED = False
+    lazy_bootstrap._LAZY_BOOTSTRAP_SUMMARY = None
 
 
 def test_handler_deferrals_exposed_in_summary(monkeypatch, caplog):
@@ -129,9 +133,9 @@ def test_bootstrap_deferral_memoised(monkeypatch, caplog):
     )
 
     warmup_summary = _get_warmup_summary(caplog)
-    assert warmup_summary["handlers"] == "deferred-bootstrap"
-    assert warmup_summary["scheduler"] == "deferred-bootstrap"
-    assert warmup_summary["vectorise"] == "deferred-bootstrap"
+    assert warmup_summary["handlers"] == "deferred-bootstrap-hard-gate"
+    assert warmup_summary["scheduler"] == "deferred-bootstrap-hard-gate"
+    assert warmup_summary["vectorise"] == "deferred-bootstrap-hard-gate"
     assert {"handlers", "scheduler", "vectorise"}.issubset(set(warmup_summary["deferred"].split(",")))
     assert not scheduler_calls
 
@@ -146,9 +150,9 @@ def test_bootstrap_deferral_memoised(monkeypatch, caplog):
     )
 
     retry_summary = _get_warmup_summary(caplog)
-    assert retry_summary["handlers"] == "deferred-bootstrap"
-    assert retry_summary["scheduler"] == "deferred-bootstrap"
-    assert retry_summary["vectorise"] == "deferred-bootstrap"
+    assert retry_summary["handlers"] == "deferred-bootstrap-hard-gate"
+    assert retry_summary["scheduler"] == "deferred-bootstrap-hard-gate"
+    assert retry_summary["vectorise"] == "deferred-bootstrap-hard-gate"
     assert {"handlers", "scheduler", "vectorise"}.issubset(set(retry_summary["deferred"].split(",")))
     assert not scheduler_calls
 
@@ -237,10 +241,10 @@ def test_bootstrap_presence_only_defers_heavy_work(monkeypatch, caplog):
         stage_timeouts=stage_timeouts,
     )
 
-    assert warmup_summary["model"] == "deferred-bootstrap-presence"
-    assert warmup_summary["handlers"] == "deferred-bootstrap-presence"
-    assert warmup_summary["scheduler"] == "deferred-bootstrap-presence"
-    assert warmup_summary["vectorise"] == "deferred-bootstrap-presence"
+    assert warmup_summary["model"] == "deferred-bootstrap-hard-gate"
+    assert warmup_summary["handlers"] == "deferred-bootstrap-hard-gate"
+    assert warmup_summary["scheduler"] == "deferred-bootstrap-hard-gate"
+    assert warmup_summary["vectorise"] == "deferred-bootstrap-hard-gate"
     assert set(warmup_summary.get("deferred", "").split(",")) == {
         "model",
         "handlers",
@@ -251,7 +255,7 @@ def test_bootstrap_presence_only_defers_heavy_work(monkeypatch, caplog):
     assert not scheduler_calls
     assert deferred_calls and deferred_calls[-1] == {"model", "handlers", "scheduler", "vectorise"}
     assert recorded_hints[-1] == {stage: stage_timeouts[stage] for stage in deferred_calls[-1]}
-    assert lazy_bootstrap._WARMUP_STAGE_MEMO["model"] == "deferred-bootstrap-presence"
+    assert lazy_bootstrap._WARMUP_STAGE_MEMO["model"] == "deferred-bootstrap-hard-gate"
 
     caplog.clear()
     lazy_bootstrap.warmup_vector_service(
@@ -266,7 +270,7 @@ def test_bootstrap_presence_only_defers_heavy_work(monkeypatch, caplog):
     )
 
     retry_summary = _get_warmup_summary(caplog)
-    assert retry_summary["model"] == "deferred-bootstrap-presence"
+    assert retry_summary["model"] == "deferred-bootstrap-hard-gate"
     assert not download_calls
     assert not scheduler_calls
 
@@ -352,9 +356,9 @@ def test_warmup_cache_reused(monkeypatch, caplog, tmp_path):
     )
 
     retry_summary = _get_warmup_summary(caplog)
-    assert retry_summary["handlers"] == "deferred-bootstrap"
-    assert retry_summary["scheduler"] == "deferred-bootstrap"
-    assert retry_summary["vectorise"] == "deferred-bootstrap"
+    assert retry_summary["handlers"] == "deferred-bootstrap-hard-gate"
+    assert retry_summary["scheduler"] == "deferred-bootstrap-hard-gate"
+    assert retry_summary["vectorise"] == "deferred-bootstrap-hard-gate"
     assert {"handlers", "scheduler", "vectorise"}.issubset(set(retry_summary["deferred"].split(",")))
     assert not scheduler_calls
     assert deferred.issuperset({"handlers", "scheduler", "vectorise"})
