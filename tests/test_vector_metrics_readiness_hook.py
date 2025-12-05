@@ -20,6 +20,22 @@ def test_get_shared_defaults_to_stub_in_bootstrap(monkeypatch):
     assert vm._activation_kwargs["read_only"] is True
 
 
+def test_bootstrap_factory_always_returns_stub(monkeypatch):
+    monkeypatch.setenv("MENACE_BOOTSTRAP_MODE", "1")
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_BOOTSTRAP_VECTOR_DB_STUB", None)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+
+    vm = vector_metrics_db.bootstrap_aware_vector_metrics_db(
+        ensure_exists=True, read_only=False
+    )
+
+    assert isinstance(vm, vector_metrics_db._BootstrapVectorMetricsStub)
+    assert vm._activation_kwargs["warmup"] is True
+    assert vm._activation_kwargs["ensure_exists"] is False
+    assert vm._activation_kwargs["read_only"] is True
+
+
 def test_get_shared_stub_when_bootstrap_timer_active(monkeypatch):
     calls = []
 
@@ -616,4 +632,61 @@ def test_readiness_hook_replays_deferred_weights(monkeypatch, tmp_path):
     assert isinstance(activated, DummyVectorDB)
     assert weight_sets and weight_sets[-1].get("alpha") == 1.0
     assert weight_sets[-1].get("beta") == 1.0
+
+
+def test_readiness_hook_avoids_path_resolution(monkeypatch):
+    class _FakeSignal:
+        def await_ready(self, timeout=None):  # pragma: no cover - immediate
+            return True
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bootstrap_readiness",
+        types.SimpleNamespace(readiness_signal=lambda: _FakeSignal()),
+    )
+    monkeypatch.setattr(vector_metrics_db, "_VECTOR_DB_INSTANCE", None)
+    monkeypatch.setattr(vector_metrics_db, "_BOOTSTRAP_VECTOR_DB_STUB", None)
+    monkeypatch.setattr(vector_metrics_db, "_READINESS_HOOK_ARMED", False)
+    monkeypatch.setattr(vector_metrics_db, "_MENACE_BOOTSTRAP_ENV_ACTIVE", None)
+    monkeypatch.setattr(vector_metrics_db, "_PENDING_WEIGHTS", {"foo": 0.5})
+
+    promotions: list[object] = []
+
+    class DummyVectorDB:
+        def __init__(self, *args, **kwargs):
+            promotions.append("init")
+            self._boot_stub_active = False
+            self.path = ":memory:"
+
+        def get_db_weights(self, default=None):  # pragma: no cover - simple map
+            return {}
+
+        def set_db_weights(self, weights):
+            promotions.append(("weights", dict(weights)))
+
+        def activate_on_first_write(self):  # pragma: no cover - passthrough
+            promotions.append("activate_on_first_write")
+
+    def _fake_activate(self, *, reason: str, allow_override: bool = False):
+        db = DummyVectorDB()
+        vector_metrics_db._VECTOR_DB_INSTANCE = db
+        self._delegate = db
+        return db
+
+    monkeypatch.setattr(
+        vector_metrics_db._BootstrapVectorMetricsStub, "_activate", _fake_activate
+    )
+
+    vector_metrics_db._arm_shared_readiness_hook()
+
+    assert isinstance(
+        vector_metrics_db._VECTOR_DB_INSTANCE, vector_metrics_db._BootstrapVectorMetricsStub
+    )
+
+    for _ in range(40):
+        if any(isinstance(call, tuple) for call in promotions):
+            break
+        threading.Event().wait(0.05)
+
+    assert ("weights", {"foo": 0.5}) in promotions
 
