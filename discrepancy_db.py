@@ -27,8 +27,11 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency path
 
 try:  # pragma: no cover - prefer vector_service when fully available
     from vector_service import EmbeddableDBMixin as _VectorEmbeddableDBMixin
-except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
-    _VectorEmbeddableDBMixin = None
+except ImportError:  # pragma: no cover - degrade gracefully and support renamed mixins
+    try:
+        from vector_service import EmbeddableDbMixin as _VectorEmbeddableDBMixin  # type: ignore
+    except Exception:
+        _VectorEmbeddableDBMixin = None
 
 if _DirectEmbeddableDBMixin is not None and (
     _VectorEmbeddableDBMixin is None
