@@ -188,6 +188,13 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
 
+# --- BOOTSTRAP INITIALISATION FIX ---
+LOGGER.info("Starting Menace bootstrap sequence...")
+initialize_bootstrap_context()
+bootstrap_environment()
+LOGGER.info("Bootstrap heartbeat activated.")
+# ------------------------------------
+
 BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
 BOOTSTRAP_SENTINEL_PATH = Path("maintenance-logs/bootstrap_status.json")
 BOOTSTRAP_LOCK_PATH = Path(
