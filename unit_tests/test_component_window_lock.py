@@ -39,3 +39,39 @@ def test_component_window_lock_diagnostics(monkeypatch, caplog):
     assert holder_info.get("thread_name") == "holder-thread"
     assert "caller" in holder_info
 
+
+def test_component_window_lock_times_out_without_env(monkeypatch):
+    monkeypatch.delenv(btp._COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV, raising=False)
+    monkeypatch.setattr(btp, "_DEFAULT_COMPONENT_LOCK_MAX_WAIT", 0.1)
+    monkeypatch.setattr(btp, "_COMPONENT_WINDOW_LOCK_WARN_AFTER", 0.05)
+    coordinator = btp.SharedTimeoutCoordinator(total_budget=5)
+
+    release_event = threading.Event()
+
+    def _holder():
+        with coordinator._component_window_lock(label="holder", requested=1):
+            release_event.wait(timeout=0.3)
+
+    holder_thread = threading.Thread(target=_holder, name="holder-thread")
+    holder_thread.start()
+    time.sleep(0.01)
+
+    with pytest.raises(TimeoutError):
+        with coordinator._component_window_lock(label="waiter", requested=2):
+            pass
+
+    release_event.set()
+    holder_thread.join(timeout=1)
+
+
+def test_component_window_lock_same_thread_reentry(monkeypatch, caplog):
+    coordinator = btp.SharedTimeoutCoordinator(total_budget=5)
+
+    caplog.set_level(logging.WARNING)
+    with coordinator._component_window_lock(label="outer", requested=1):
+        with coordinator._component_window_lock(label="inner", requested=1):
+            pass
+
+    reentry_logs = [r for r in caplog.records if "lock reentry" in r.message]
+    assert reentry_logs, "expected reentry warning to aid debugging"
+
