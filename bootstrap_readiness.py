@@ -5,12 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, MutableMapping
 
+import atexit
 import logging
 import os
+import threading
 import time
 
 from bootstrap_manager import bootstrap_manager
-from bootstrap_timeout_policy import read_bootstrap_heartbeat
+from bootstrap_timeout_policy import (
+    _BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV,
+    _DEFAULT_HEARTBEAT_MAX_AGE,
+    emit_bootstrap_heartbeat,
+    read_bootstrap_heartbeat,
+)
 
 from bootstrap_timeout_policy import (
     _COMPONENT_TIMEOUT_MINIMUMS,
@@ -18,6 +25,10 @@ from bootstrap_timeout_policy import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+_HEARTBEAT_SHUTDOWN = threading.Event()
+_HEARTBEAT_LOCK = threading.Lock()
+_HEARTBEAT_THREAD: threading.Thread | None = None
 
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
@@ -250,6 +261,104 @@ def shared_online_state(max_age: float | None = None) -> Mapping[str, object] | 
     }
 
 
+def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
+    try:
+        parsed = float(raw_value) if raw_value is not None else None
+    except (TypeError, ValueError):
+        parsed = None
+    return parsed if parsed and parsed > 0 else default
+
+
+def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mapping[str, object]:
+    online_state = shared_online_state(max_age=heartbeat_max_age) or {}
+    ready, lagging, degraded, degraded_online = minimal_online(online_state)
+    return {
+        "readiness": {
+            "core_ready": ready,
+            "lagging_core": sorted(lagging),
+            "degraded_core": sorted(degraded),
+            "degraded_online": degraded_online,
+        }
+    }
+
+
+def _bootstrap_keepalive_loop(
+    *,
+    logger: logging.Logger,
+    heartbeat_max_age: float,
+) -> None:
+    """Emit a periodic heartbeat while the process is live."""
+
+    heartbeat_interval = max(1.0, min(heartbeat_max_age / 2.0, heartbeat_max_age))
+
+    logger.info(
+        "bootstrap heartbeat keepalive activated",
+        extra={
+            "event": "bootstrap-keepalive-start",
+            "interval": heartbeat_interval,
+            "max_age": heartbeat_max_age,
+        },
+    )
+
+    try:
+        while not _HEARTBEAT_SHUTDOWN.wait(timeout=heartbeat_interval):
+            try:
+                emit_bootstrap_heartbeat(_minimal_readiness_payload(heartbeat_max_age))
+            except Exception:  # pragma: no cover - best effort keepalive
+                logger.debug("failed to emit bootstrap heartbeat", exc_info=True)
+    finally:
+        logger.info(
+            "bootstrap heartbeat keepalive stopped",
+            extra={"event": "bootstrap-keepalive-stop"},
+        )
+
+
+def start_bootstrap_heartbeat_keepalive(
+    *, logger: logging.Logger | None = None, max_age: float | None = None
+) -> None:
+    """Launch the bootstrap heartbeat keepalive thread once."""
+
+    global _HEARTBEAT_THREAD
+
+    with _HEARTBEAT_LOCK:
+        if _HEARTBEAT_THREAD is not None and _HEARTBEAT_THREAD.is_alive():
+            return
+
+        _HEARTBEAT_SHUTDOWN.clear()
+        heartbeat_max_age = _coerce_heartbeat_max_age(
+            str(max_age) if max_age is not None else os.getenv(_BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV),
+            _DEFAULT_HEARTBEAT_MAX_AGE,
+        )
+        thread_logger = logger or LOGGER
+
+        _HEARTBEAT_THREAD = threading.Thread(
+            target=_bootstrap_keepalive_loop,
+            name="bootstrap-keepalive",
+            kwargs={
+                "logger": thread_logger,
+                "heartbeat_max_age": heartbeat_max_age,
+            },
+            daemon=True,
+        )
+        _HEARTBEAT_THREAD.start()
+
+
+def stop_bootstrap_heartbeat_keepalive(timeout: float = 5.0) -> None:
+    """Signal the keepalive thread to exit and wait briefly for shutdown."""
+
+    _HEARTBEAT_SHUTDOWN.set()
+    thread = _HEARTBEAT_THREAD
+    if thread and thread.is_alive():
+        thread.join(timeout=timeout)
+
+
+def _ensure_bootstrap_keepalive() -> None:
+    try:
+        start_bootstrap_heartbeat_keepalive()
+    except Exception:  # pragma: no cover - best effort bootstrap
+        LOGGER.debug("failed to start bootstrap heartbeat keepalive", exc_info=True)
+
+
 def _degraded_quorum(online_state: Mapping[str, object] | None = None) -> int:
     """Return the minimum number of degraded components required for quorum."""
 
@@ -418,11 +527,14 @@ class ReadinessSignal:
 
 
 _READINESS_SIGNAL = ReadinessSignal()
+_ensure_bootstrap_keepalive()
+atexit.register(stop_bootstrap_heartbeat_keepalive)
 
 
 def readiness_signal() -> ReadinessSignal:
     """Return the shared readiness signal instance."""
 
+    _ensure_bootstrap_keepalive()
     return _READINESS_SIGNAL
 
 
@@ -436,6 +548,8 @@ __all__ = [
     "ReadinessProbe",
     "ReadinessSignal",
     "readiness_signal",
+    "start_bootstrap_heartbeat_keepalive",
+    "stop_bootstrap_heartbeat_keepalive",
     "stage_for_step",
     "shared_online_state",
 ]
