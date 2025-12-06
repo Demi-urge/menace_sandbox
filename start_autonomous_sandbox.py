@@ -59,7 +59,6 @@ from bootstrap_timeout_policy import (
     guard_bootstrap_wait_env,
     get_bootstrap_guard_context,
     read_bootstrap_heartbeat,
-    emit_bootstrap_heartbeat,
     build_progress_signal_hook,
     derive_bootstrap_timeout_env,
     load_adaptive_stage_windows,
@@ -75,6 +74,8 @@ from bootstrap_readiness import (
     build_stage_deadlines,
     lagging_optional_components,
     minimal_online,
+    start_bootstrap_heartbeat_keepalive,
+    stop_bootstrap_heartbeat_keepalive,
     stage_for_step,
 )
 from coding_bot_interface import get_prepare_pipeline_coordinator
@@ -201,94 +202,13 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
 
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
-_DEFAULT_HEARTBEAT_MAX_AGE = 120.0
-
-
-def _bootstrap_keepalive_loop(logger: logging.Logger) -> None:
-    """Emit a periodic heartbeat while the bootstrap process is active."""
-
-    def _minimal_readiness_payload() -> Mapping[str, Any]:
-        ready, lagging, degraded, degraded_online = minimal_online(
-            BOOTSTRAP_ONLINE_STATE
-        )
-        return {
-            "readiness": {
-                "core_ready": ready,
-                "lagging_core": sorted(lagging),
-                "degraded_core": sorted(degraded),
-                "degraded_online": degraded_online,
-            }
-        }
-
-    def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
-        try:
-            parsed = float(raw_value) if raw_value is not None else None
-        except (TypeError, ValueError):
-            parsed = None
-        return parsed if parsed and parsed > 0 else default
-
-    heartbeat_max_age = _coerce_heartbeat_max_age(
-        os.getenv("MENACE_BOOTSTRAP_HEARTBEAT_MAX_AGE"), _DEFAULT_HEARTBEAT_MAX_AGE
-    )
-    heartbeat_interval = max(1.0, min(heartbeat_max_age / 2.0, heartbeat_max_age))
-
-    logger.info(
-        "bootstrap keepalive loop activated",
-        extra=log_record(
-            event="bootstrap-keepalive-start",
-            interval=heartbeat_interval,
-            max_age=heartbeat_max_age,
-        ),
-    )
-
-    try:
-        while not SHUTDOWN_EVENT.wait(timeout=heartbeat_interval):
-            try:
-                emit_bootstrap_heartbeat(_minimal_readiness_payload())
-            except Exception:
-                logger.debug(
-                    "failed to emit bootstrap heartbeat", exc_info=True
-                )
-    finally:
-        logger.info(
-            "bootstrap keepalive loop stopped",
-            extra=log_record(event="bootstrap-keepalive-stop"),
-        )
-
-
-def _stop_bootstrap_keepalive_thread() -> None:
-    SHUTDOWN_EVENT.set()
-    thread = globals().get("_BOOTSTRAP_KEEPALIVE_THREAD")
-    if isinstance(thread, threading.Thread) and thread.is_alive():
-        thread.join(timeout=5.0)
-
-
-def _start_bootstrap_keepalive_thread(logger: logging.Logger) -> None:
-    """Launch the bootstrap heartbeat keepalive thread once."""
-
-    global _BOOTSTRAP_KEEPALIVE_THREAD
-
-    SHUTDOWN_EVENT.clear()
-
-    if isinstance(globals().get("_BOOTSTRAP_KEEPALIVE_THREAD"), threading.Thread):
-        thread = globals()["_BOOTSTRAP_KEEPALIVE_THREAD"]
-        if thread.is_alive():
-            return
-
-    _BOOTSTRAP_KEEPALIVE_THREAD = threading.Thread(
-        target=_bootstrap_keepalive_loop,
-        name="bootstrap-keepalive",
-        args=(logger,),
-        daemon=True,
-    )
-    _BOOTSTRAP_KEEPALIVE_THREAD.start()
 
 
 # --- BOOTSTRAP INITIALISATION FIX ---
 LOGGER.info("Starting Menace bootstrap sequence...")
 initialize_bootstrap_context()
 bootstrap_environment()
-_start_bootstrap_keepalive_thread(LOGGER)
+start_bootstrap_heartbeat_keepalive(logger=LOGGER)
 # ------------------------------------
 
 BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
@@ -418,7 +338,7 @@ def handle_sigint(sig: int, frame: Any) -> None:
 
 
 def cleanup_and_exit(exit_code: int = 0) -> None:
-    _stop_bootstrap_keepalive_thread()
+    stop_bootstrap_heartbeat_keepalive()
     try:
         shutdown_autonomous_sandbox()
     except Exception:
