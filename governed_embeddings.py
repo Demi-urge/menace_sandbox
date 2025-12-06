@@ -1956,9 +1956,11 @@ def _load_embedder(
     )
     if budget_placeholder is not None:
         return cast("SentenceTransformer", budget_placeholder)
+    cache_present = False
     if cache_dir is not None:
         model_cache = _cached_model_path(cache_dir, _MODEL_NAME)
-        focus_dir = model_cache if model_cache.exists() else model_cache.parent
+        cache_present = model_cache.exists()
+        focus_dir = model_cache if cache_present else model_cache.parent
         try:
             _cleanup_hf_locks(cache_dir, focus=focus_dir)
         except TypeError:
@@ -1966,7 +1968,7 @@ def _load_embedder(
             # Fallback to the legacy calling convention to keep compatibility.
             _cleanup_hf_locks(cache_dir)
         local_kwargs["cache_folder"] = str(cache_dir)
-        snapshot_path = _resolve_local_snapshot(model_cache) if model_cache.exists() else None
+        snapshot_path = _resolve_local_snapshot(model_cache) if cache_present else None
         if snapshot_path is not None:
             logger.info(
                 "loading sentence transformer snapshot from cache",
@@ -2032,6 +2034,8 @@ def _load_embedder(
             .lower()
             in {"", "0", "false", "off"}
         )
+    if bootstrap_mode or cache_present:
+        local_kwargs.setdefault("local_files_only", True)
     if bootstrap_force_local:
         local_kwargs.setdefault("local_files_only", True)
         _trace("load.bootstrap.local_only")
@@ -2112,6 +2116,19 @@ def _load_embedder(
                     )
                     _purge_corrupted_snapshot(snapshot_path)
                     local_kwargs.pop("local_files_only", None)
+
+    if local_kwargs.get("local_files_only") and snapshot_path is None:
+        _trace(
+            "load.local_only.fallback",
+            cache_present=cache_present,
+            snapshot_available=bool(snapshot_path),
+        )
+        logger.warning(
+            "local-only embedder requested but no cached snapshot is available; using bundled fallback with degraded embeddings",
+            extra={"model": _MODEL_NAME},
+        )
+        fallback = _load_bundled_embedder()
+        return cast("SentenceTransformer | None", fallback)
 
     token = os.getenv("HUGGINGFACE_API_TOKEN")
     if token:

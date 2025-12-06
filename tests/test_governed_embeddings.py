@@ -211,7 +211,7 @@ def test_resolve_local_snapshot_accepts_sentence_bert_config(tmp_path):
     assert resolved == modern_snapshot
 
 
-def test_get_embedder_prefers_hub_when_snapshot_incomplete(monkeypatch, tmp_path):
+def test_get_embedder_defaults_local_when_snapshot_incomplete(monkeypatch, tmp_path):
     monkeypatch.setenv("TRANSFORMERS_CACHE", str(tmp_path))
     monkeypatch.delenv("HF_HOME", raising=False)
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
@@ -237,19 +237,16 @@ def test_get_embedder_prefers_hub_when_snapshot_incomplete(monkeypatch, tmp_path
     refs_dir.mkdir(parents=True)
     (refs_dir / "main").write_text("deadbeef")
 
-    captured = {}
+    fallback = object()
 
-    class DummySentenceTransformer:
-        def __init__(self, name: str, **kwargs):
-            captured["name"] = name
-            captured["kwargs"] = kwargs
+    def fail_sentence_transformer(*_, **__):  # pragma: no cover - defensive
+        raise AssertionError("SentenceTransformer should not be invoked when local-only fallback is used")
 
-    monkeypatch.setattr(governed_embeddings, "SentenceTransformer", DummySentenceTransformer)
+    monkeypatch.setattr(governed_embeddings, "SentenceTransformer", fail_sentence_transformer)
+    monkeypatch.setattr(governed_embeddings, "_load_bundled_embedder", lambda: fallback)
 
     embedder = governed_embeddings.get_embedder()
-    assert isinstance(embedder, DummySentenceTransformer)
-    assert captured["name"] == governed_embeddings._MODEL_ID
-    assert not captured["kwargs"].get("local_files_only")
+    assert embedder is fallback
 
 
 def test_initialise_embedder_wait_capped(monkeypatch, caplog):
@@ -650,14 +647,12 @@ def test_bootstrap_prefers_local_and_falls_back_quickly(monkeypatch, caplog, tmp
 
     calls: list[tuple[str, dict[str, object]]] = []
 
-    class DummySentenceTransformer:
-        def __init__(self, identifier: str, **kwargs: object) -> None:
-            calls.append((identifier, dict(kwargs)))
-            raise RuntimeError("offline")
+    def fail_sentence_transformer(*_, **__):  # pragma: no cover - defensive
+        raise AssertionError("hub loading should not occur in offline bootstrap mode")
 
     fallback = object()
 
-    monkeypatch.setattr(governed_embeddings, "SentenceTransformer", DummySentenceTransformer)
+    monkeypatch.setattr(governed_embeddings, "SentenceTransformer", fail_sentence_transformer)
     monkeypatch.setattr(governed_embeddings, "_load_bundled_embedder", lambda: fallback)
 
     start = time.perf_counter()
@@ -670,7 +665,7 @@ def test_bootstrap_prefers_local_and_falls_back_quickly(monkeypatch, caplog, tmp
         )
     duration = time.perf_counter() - start
 
-    assert calls[0][1].get("local_files_only") is True
+    assert not calls
     assert embedder is fallback
     assert duration < 0.5
     assert any("degraded" in record.msg for record in caplog.records)
