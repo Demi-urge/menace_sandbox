@@ -7938,27 +7938,45 @@ def initialize_bootstrap_context(
                 vector_heavy=True,
                 heavy=True,
             )
+            embedder_ready = _BOOTSTRAP_EMBEDDER_READY.is_set()
+            skip_unless_embedder_ready = os.getenv(
+                "MENACE_BOOTSTRAP_SKIP_AGGREGATOR_UNTIL_EMBEDDER_READY", ""
+            ).lower() in {"1", "true", "yes", "on"}
+
             placeholder_seed_timeout = _resolve_step_timeout(
                 step_name="_seed_research_aggregator_context",
                 vector_heavy=True,
                 contention_scale=placeholder_seed_gate["timeout_scale"],
             )
+            timeout_floor_env = os.getenv(
+                "MENACE_BOOTSTRAP_AGGREGATOR_TIMEOUT_FLOOR", ""
+            )
+            try:
+                timeout_floor_override = float(timeout_floor_env) if timeout_floor_env else None
+            except ValueError:
+                timeout_floor_override = None
+            placeholder_seed_timeout_floor = timeout_floor_override
+            if placeholder_seed_timeout_floor is None:
+                placeholder_seed_timeout_floor = (
+                    _PREPARE_VECTOR_TIMEOUT_FLOOR * 2
+                    if not embedder_ready
+                    else _PREPARE_VECTOR_TIMEOUT_FLOOR
+                )
             if (
-                placeholder_seed_timeout is not None
-                and placeholder_seed_timeout < _PREPARE_VECTOR_TIMEOUT_FLOOR
+                placeholder_seed_timeout is None
+                or placeholder_seed_timeout < placeholder_seed_timeout_floor
             ):
-                placeholder_seed_timeout = _PREPARE_VECTOR_TIMEOUT_FLOOR
+                placeholder_seed_timeout = placeholder_seed_timeout_floor
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "vector_seeding", reason="placeholder_seed"
             )
-            skip_unless_embedder_ready = os.getenv(
-                "MENACE_BOOTSTRAP_SKIP_AGGREGATOR_UNTIL_EMBEDDER_READY", ""
-            ).lower() in {"1", "true", "yes", "on"}
-            embedder_ready = _BOOTSTRAP_EMBEDDER_READY.is_set()
 
             if skip_unless_embedder_ready and not embedder_ready:
                 LOGGER.warning(
-                    "skipping research aggregator seeding because embedder is not ready",
+                    (
+                        "skipping research aggregator seeding because embedder is not ready; "
+                        "aggregator context not seeded"
+                    ),
                     extra={"event": "research-aggregator-skip", "reason": "embedder-unready"},
                 )
                 _BOOTSTRAP_SCHEDULER.mark_partial(
