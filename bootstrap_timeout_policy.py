@@ -3624,6 +3624,7 @@ class SharedTimeoutCoordinator:
             "requested_budget": requested,
             "expanded_window": self._expanded_global_window,
             "namespace": self.namespace,
+            "lock_wait_budget": self._component_lock_max_wait,
         }
 
         def _set_holder_metadata() -> dict[str, object]:
@@ -3670,7 +3671,10 @@ class SharedTimeoutCoordinator:
                     waited = time.monotonic() - start
                     _log_waiting("lock-timeout")
                     raise TimeoutError(
-                        f"component window lock acquisition exceeded {_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV}"
+                        "component window lock acquisition exceeded "
+                        f"{_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV} "
+                        f"after {waited:.3f}s (budget={self._component_lock_max_wait}s; "
+                        f"holder={self._component_lock_holder})"
                     )
                 timeout = min(timeout, remaining)
             acquired = self._lock.acquire(timeout=timeout)
