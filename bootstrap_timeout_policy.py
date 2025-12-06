@@ -95,6 +95,7 @@ _COMPONENT_WINDOW_MIN_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MIN"
 _COMPONENT_WINDOW_MAX_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MAX"
 _COMPONENT_WINDOW_LOCK_WARN_AFTER = 2.0
 _COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV = "MENACE_BOOTSTRAP_COMPONENT_LOCK_MAX_WAIT"
+_DEFAULT_COMPONENT_LOCK_MAX_WAIT = 30.0
 _DEFAULT_COMPONENT_FLOOR_MAX_SCALE = 3.5
 _DEFAULT_STALENESS_PAD = 0.35
 _BOOTSTRAP_HEARTBEAT_ENV = "MENACE_BOOTSTRAP_WATCHDOG_PATH"
@@ -3599,8 +3600,11 @@ class SharedTimeoutCoordinator:
         self.component_states: dict[str, str] = {}
         self._last_readiness: dict[str, object] | None = None
         self._component_lock_holder: dict[str, object] | None = None
-        self._component_lock_max_wait = _parse_float(
-            os.getenv(_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV)
+        env_lock_wait = _parse_float(os.getenv(_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV))
+        self._component_lock_max_wait = (
+            env_lock_wait
+            if env_lock_wait is not None and env_lock_wait > 0
+            else _DEFAULT_COMPONENT_LOCK_MAX_WAIT
         )
 
     @contextlib.contextmanager
@@ -3648,11 +3652,22 @@ class SharedTimeoutCoordinator:
                 "component window lock acquisition lagging", extra={"shared_timeout": dict(payload)}
             )
 
+        if self._component_lock_holder and self._component_lock_holder.get("thread_id") == threading.get_ident():
+            payload["event"] = "lock-reentry"
+            payload["lock_holder"] = dict(self._component_lock_holder)
+            self.logger.warning(
+                "component window lock reentry detected; skipping acquire",
+                extra={"shared_timeout": dict(payload)},
+            )
+            yield
+            return
+
         while not acquired:
             timeout = _COMPONENT_WINDOW_LOCK_WARN_AFTER
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    waited = time.monotonic() - start
                     _log_waiting("lock-timeout")
                     raise TimeoutError(
                         f"component window lock acquisition exceeded {_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV}"
