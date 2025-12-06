@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 import types
 
@@ -637,6 +638,42 @@ def test_bundled_fallback_uses_stub_when_archive_missing(monkeypatch):
     assert isinstance(vectors, list)
     assert vectors[0] == [0.0] * governed_embeddings._STUB_EMBEDDER_DIMENSION
     assert governed_embeddings._EMBEDDER_INIT_EVENT.is_set()
+
+
+def test_bootstrap_prefers_local_and_falls_back_quickly(monkeypatch, caplog, tmp_path):
+    monkeypatch.setattr(governed_embeddings, "model", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_THREAD_LOCK", threading.RLock())
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+    monkeypatch.setattr(governed_embeddings, "_cache_base", lambda: tmp_path)
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class DummySentenceTransformer:
+        def __init__(self, identifier: str, **kwargs: object) -> None:
+            calls.append((identifier, dict(kwargs)))
+            raise RuntimeError("offline")
+
+    fallback = object()
+
+    monkeypatch.setattr(governed_embeddings, "SentenceTransformer", DummySentenceTransformer)
+    monkeypatch.setattr(governed_embeddings, "_load_bundled_embedder", lambda: fallback)
+
+    start = time.perf_counter()
+    with caplog.at_level(logging.WARNING):
+        embedder = governed_embeddings._load_embedder(
+            stop_event=threading.Event(),
+            budget_deadline=time.perf_counter() + 0.2,
+            bootstrap_mode=True,
+            requester="bootstrap-test",
+        )
+    duration = time.perf_counter() - start
+
+    assert calls[0][1].get("local_files_only") is True
+    assert embedder is fallback
+    assert duration < 0.5
+    assert any("degraded" in record.msg for record in caplog.records)
 
 
 def test_bootstrap_placeholder_memoizes_until_rearmed(monkeypatch, caplog):
