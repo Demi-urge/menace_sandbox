@@ -1802,6 +1802,14 @@ def _seed_research_aggregator_context(
     aggregator.evolution_orchestrator = orchestrator
     aggregator._PipelineCls = type(pipeline)
 
+    dependency_broker = None
+    pipeline_promoter = None
+    try:
+        dependency_broker = aggregator._bootstrap_dependency_broker()
+        pipeline_promoter = aggregator._active_bootstrap_promoter()
+    except Exception:  # pragma: no cover - best effort hints
+        LOGGER.debug("unable to resolve research aggregator bootstrap helpers", exc_info=True)
+
     try:
         runtime_state = aggregator._RuntimeDependencies(
             registry=registry,
@@ -1811,6 +1819,8 @@ def _seed_research_aggregator_context(
             pipeline=pipeline,
             evolution_orchestrator=orchestrator,
             manager=manager,
+            dependency_broker=dependency_broker,
+            pipeline_promoter=pipeline_promoter,
         )
         aggregator._runtime_state = runtime_state
         aggregator._ensure_self_coding_decorated(runtime_state)
