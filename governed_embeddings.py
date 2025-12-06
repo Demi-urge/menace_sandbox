@@ -1022,6 +1022,10 @@ def initialise_sentence_transformer(
         raise RuntimeError("sentence-transformers is not available")
 
     init_kwargs = dict(kwargs)
+    if "local_files_only" not in init_kwargs:
+        env_local_only = os.getenv("SANDBOX_EMBEDDER_LOCAL_ONLY", "").strip().lower()
+        if env_local_only:
+            init_kwargs["local_files_only"] = env_local_only not in {"0", "false", "off"}
     if device and "device" not in init_kwargs:
         init_kwargs["device"] = device
 
@@ -1930,6 +1934,7 @@ def _load_embedder(
 
     cache_dir = _cache_base()
     local_kwargs: dict[str, object] = {}
+    bootstrap_force_local = False
     start = time.perf_counter()
     _trace(
         "load.start",
@@ -2014,34 +2019,44 @@ def _load_embedder(
                     exc,
                 )
 
-        offline_env = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
-        force_local = os.environ.get("SANDBOX_FORCE_LOCAL_EMBEDDER", "").lower() not in {
-            "",
-            "0",
-            "false",
-        }
-        prefer_cached = snapshot_path is not None
-        partial_cache = cache_has_refs or cache_has_blobs
-        if offline_env or force_local or prefer_cached:
-            local_kwargs["local_files_only"] = True
-            _trace(
-                "load.local_mode",
-                offline=bool(offline_env),
-                force_local=bool(force_local),
-                snapshot=bool(snapshot_path),
-                prefer_cached=prefer_cached,
-                partial_cache=partial_cache,
+    offline_env = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
+    force_local = os.environ.get("SANDBOX_FORCE_LOCAL_EMBEDDER", "").lower() not in {
+        "",
+        "0",
+        "false",
+    }
+    if bootstrap_mode:
+        bootstrap_force_local = (
+            os.environ.get("SANDBOX_BOOTSTRAP_EMBEDDER_REMOTE", "")
+            .strip()
+            .lower()
+            in {"", "0", "false", "off"}
+        )
+    if bootstrap_force_local:
+        local_kwargs.setdefault("local_files_only", True)
+        _trace("load.bootstrap.local_only")
+    prefer_cached = snapshot_path is not None
+    partial_cache = cache_has_refs or cache_has_blobs
+    if offline_env or force_local or prefer_cached:
+        local_kwargs["local_files_only"] = True
+        _trace(
+            "load.local_mode",
+            offline=bool(offline_env),
+            force_local=bool(force_local),
+            snapshot=bool(snapshot_path),
+            prefer_cached=prefer_cached,
+            partial_cache=partial_cache,
+        )
+        if prefer_cached and not offline_env and not force_local:
+            logger.info(
+                "using cached sentence transformer artefacts without hub access",
+                extra={
+                    "model": _MODEL_NAME,
+                    "has_snapshot": bool(snapshot_path),
+                    "has_refs": cache_has_refs,
+                    "has_blobs": cache_has_blobs,
+                },
             )
-            if prefer_cached and not offline_env and not force_local:
-                logger.info(
-                    "using cached sentence transformer artefacts without hub access",
-                    extra={
-                        "model": _MODEL_NAME,
-                        "has_snapshot": bool(snapshot_path),
-                        "has_refs": cache_has_refs,
-                        "has_blobs": cache_has_blobs,
-                    },
-                )
         elif partial_cache:
             _trace(
                 "load.partial_cache.detected",
@@ -2151,9 +2166,9 @@ def _load_embedder(
         return model
     except Exception as exc:
         if local_kwargs.pop("local_files_only", None):
-            if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
+            if offline_env or bootstrap_force_local or force_local:
                 logger.warning(
-                    "sentence transformer initialisation failed in offline mode: %s",
+                    "sentence transformer initialisation failed in local-only mode: %s; using degraded fallback",
                     exc,
                 )
                 _trace(
@@ -2164,6 +2179,10 @@ def _load_embedder(
                 )
                 fallback = _load_bundled_embedder()
                 if fallback is not None:
+                    logger.warning(
+                        "falling back to bundled embedder after local-only failure; embeddings may be degraded",
+                        extra={"model": _MODEL_NAME},
+                    )
                     return cast("SentenceTransformer", fallback)
                 return None
             try:
@@ -2193,6 +2212,10 @@ def _load_embedder(
                 )
                 fallback = _load_bundled_embedder()
                 if fallback is not None:
+                    logger.warning(
+                        "falling back to bundled embedder after retry; embeddings may be degraded",
+                        extra={"model": _MODEL_NAME},
+                    )
                     return cast("SentenceTransformer", fallback)
                 return None
         logger.warning("failed to initialise sentence transformer: %s", exc)
@@ -2204,8 +2227,8 @@ def _load_embedder(
         )
         fallback = _load_bundled_embedder()
         if fallback is not None:
-            logger.info(
-                "using bundled sentence transformer fallback after hub failure",
+            logger.warning(
+                "using bundled sentence transformer fallback after hub failure; embeddings may be degraded",
                 extra={"model": _MODEL_NAME, "duration": round(time.perf_counter() - start, 3)},
             )
             _trace("load.fallback", duration=round(time.perf_counter() - start, 3))
