@@ -2351,12 +2351,14 @@ def compute_prepare_pipeline_component_budgets(
     stage_budgets = _component_budgets_to_stage_windows(budgets)
 
     component_work_units = {
-        "vectorizers": max(int(complexity.get("vectorizers", 0) or 1), 1),
-        "retrievers": max(int(complexity.get("retrievers", 0) or 1), 1),
-        "db_indexes": max(int(complexity.get("db_indexes", 0) or 1), 1),
-        "orchestrator_state": max(int(complexity.get("db_index_bytes", 0) or 1), 1),
-        "pipeline_config": max(int(complexity.get("pipeline_config_sections", 0) or 1), 1),
-        "background_loops": max(int(complexity.get("background_loops", 0) or 1), 1),
+        "vectorizers": max(_count(complexity.get("vectorizers", 0)) or 1, 1),
+        "retrievers": max(_count(complexity.get("retrievers", 0)) or 1, 1),
+        "db_indexes": max(_count(complexity.get("db_indexes", 0)) or 1, 1),
+        "orchestrator_state": max(_count(complexity.get("db_index_bytes", 0)) or 1, 1),
+        "pipeline_config": max(
+            _count(complexity.get("pipeline_config_sections", 0)) or 1, 1
+        ),
+        "background_loops": max(_count(complexity.get("background_loops", 0)) or 1, 1),
     }
 
     global_window, extension_meta = _derive_rolling_global_window(
