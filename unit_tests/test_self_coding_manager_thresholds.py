@@ -1,4 +1,5 @@
 # flake8: noqa
+import logging
 import types
 import sys
 from pathlib import Path
@@ -26,6 +27,19 @@ class PatchLogger:
         pass
 vec_mod.PatchLogger = PatchLogger
 sys.modules.setdefault("vector_service", vec_mod)
+
+cb_mod = types.ModuleType("vector_service.context_builder")
+cb_mod.record_failed_tags = lambda *a, **k: None
+cb_mod.load_failed_tags = lambda *a, **k: {}
+
+
+class ContextBuilder:
+    def __init__(self, *a, **k):
+        pass
+
+
+cb_mod.ContextBuilder = ContextBuilder
+sys.modules.setdefault("vector_service.context_builder", cb_mod)
 
 tp_mod = types.ModuleType("vector_service.text_preprocessor")
 class PreprocessingConfig:
@@ -107,6 +121,7 @@ class DataBot:
 
 
 db_mod.DataBot = DataBot
+db_mod.persist_sc_thresholds = lambda *a, **k: None
 sys.modules.setdefault("menace.data_bot", db_mod)
 
 err_mod = types.ModuleType("menace.error_bot")
@@ -121,7 +136,19 @@ class QuickFixEngine:
     def __init__(self, *a, **k):
         self.context_builder = None
 qfe_mod.QuickFixEngine = QuickFixEngine
+qfe_mod.QuickFixEngineError = type("QuickFixEngineError", (Exception,), {})
+qfe_mod.generate_patch = lambda *a, **k: None
 sys.modules.setdefault("menace.quick_fix_engine", qfe_mod)
+
+psdb_mod = types.ModuleType("menace.patch_suggestion_db")
+class PatchSuggestionDB:
+    def __init__(self, *a, **k):
+        pass
+
+
+psdb_mod.PatchSuggestionDB = PatchSuggestionDB
+sys.modules.setdefault("menace.patch_suggestion_db", psdb_mod)
+sys.modules.setdefault("patch_suggestion_db", psdb_mod)
 
 ueb_mod = types.ModuleType("menace.unified_event_bus")
 class UnifiedEventBus:
@@ -200,6 +227,44 @@ def test_threshold_overrides():
     )
     assert mgr.roi_drop_threshold == -0.2
     assert mgr.error_rate_threshold == 3.3
+
+
+def test_bootstrap_fast_without_validation_flag_disables_fast_path(
+    monkeypatch, caplog
+):
+    dummy_module = types.ModuleType("dummy_settings_mod")
+    sys.modules["dummy_settings_mod"] = dummy_module
+
+    class DummySettings:
+        __module__ = "dummy_settings_mod"
+
+    caplog.set_level(logging.WARNING, logger="SelfCodingManager")
+
+    monkeypatch.setattr(
+        scm.SelfCodingManager, "_get_settings", lambda self: DummySettings()
+    )
+    monkeypatch.setattr(
+        scm,
+        "BotRegistry",
+        type("BotRegistry", (), {"register_bot": lambda *a, **k: None}),
+    )
+
+    class DummyPipeline:
+        pass
+
+    manager = scm.SelfCodingManager(
+        scm.SelfCodingEngine(),
+        DummyPipeline(),
+        bot_name="gamma",
+        data_bot=scm.DataBot(),
+        bot_registry=scm.BotRegistry(),
+        bootstrap_fast=True,
+    )
+
+    assert manager.bootstrap_fast is False
+    assert any(
+        "falling back to full validation" in record.message for record in caplog.records
+    )
 
 
 def test_should_refactor_on_failed_tests(monkeypatch):
