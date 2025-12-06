@@ -3531,12 +3531,22 @@ def internalize_coding_bot(
             f"[debug] Bootstrap failed at module_path resolution due to missing path for: {bot_name}"
         )
         _emit_failure("module_path_missing")
-        if not hasattr(manager, "run_post_patch_cycle"):
-            print(
-                f"[debug] internalize_coding_bot returning early without post patch cycle for bot: {bot_name}"
-            )
-            return manager
-        raise RuntimeError("module path unavailable for internalization")
+        if hasattr(manager, "logger"):
+            try:
+                manager.logger.warning(
+                    "skipping post patch cycle because module path is unavailable",
+                    extra={"bot": bot_name},
+                )
+            except Exception:
+                # Fall back to stdout if structured logging fails during bootstrap
+                print(
+                    f"[debug] failed to log missing module path for {bot_name}",
+                    file=sys.stderr,
+                )
+        print(
+            f"[debug] internalize_coding_bot returning early without post patch cycle for bot: {bot_name}"
+        )
+        return manager
     if provenance_token is None:
         _emit_failure("missing_provenance")
         raise PermissionError("missing provenance token for post patch validation")
