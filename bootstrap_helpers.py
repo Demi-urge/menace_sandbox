@@ -23,10 +23,11 @@ def bootstrap_state_snapshot() -> dict[str, bool]:
         from .environment_bootstrap import bootstrap_in_progress, is_bootstrapped
     except Exception:  # pragma: no cover - fallback for direct execution
         try:
-            from environment_bootstrap import (  # type: ignore
-                bootstrap_in_progress,
-                is_bootstrapped,
-            )
+            from importlib import import_module
+
+            env_bootstrap = import_module("menace_sandbox.environment_bootstrap")
+            bootstrap_in_progress = getattr(env_bootstrap, "bootstrap_in_progress")
+            is_bootstrapped = getattr(env_bootstrap, "is_bootstrapped")
         except Exception:  # pragma: no cover - best effort snapshot
             return {"ready": False, "in_progress": False}
 
@@ -56,7 +57,10 @@ def ensure_bootstrapped(**kwargs: Any) -> dict[str, object]:
     try:
         from .environment_bootstrap import ensure_bootstrapped as _ensure_bootstrapped
     except Exception:  # pragma: no cover - fallback for direct execution
-        from environment_bootstrap import ensure_bootstrapped as _ensure_bootstrapped  # type: ignore
+        from importlib import import_module
+
+        env_bootstrap = import_module("menace_sandbox.environment_bootstrap")
+        _ensure_bootstrapped = getattr(env_bootstrap, "ensure_bootstrapped")
     return _ensure_bootstrapped(**kwargs)
 
 
