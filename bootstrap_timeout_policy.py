@@ -13,6 +13,7 @@ import os
 import socket
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Any, Iterable
 
@@ -93,6 +94,7 @@ _COMPONENT_WINDOW_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_SCALE"
 _COMPONENT_WINDOW_MIN_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MIN"
 _COMPONENT_WINDOW_MAX_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MAX"
 _COMPONENT_WINDOW_LOCK_WARN_AFTER = 2.0
+_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV = "MENACE_BOOTSTRAP_COMPONENT_LOCK_MAX_WAIT"
 _DEFAULT_COMPONENT_FLOOR_MAX_SCALE = 3.5
 _DEFAULT_STALENESS_PAD = 0.35
 _BOOTSTRAP_HEARTBEAT_ENV = "MENACE_BOOTSTRAP_WATCHDOG_PATH"
@@ -3596,37 +3598,84 @@ class SharedTimeoutCoordinator:
         self._historical_budgets = load_last_component_budgets()
         self.component_states: dict[str, str] = {}
         self._last_readiness: dict[str, object] | None = None
+        self._component_lock_holder: dict[str, object] | None = None
+        self._component_lock_max_wait = _parse_float(
+            os.getenv(_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV)
+        )
 
     @contextlib.contextmanager
     def _component_window_lock(self, *, label: str, requested: float | None) -> Iterator[None]:
         """Acquire the component-window lock with slow-acquisition telemetry."""
 
         start = time.monotonic()
-        acquired = self._lock.acquire(timeout=_COMPONENT_WINDOW_LOCK_WARN_AFTER)
-        waited = time.monotonic() - start
+        deadline = (
+            start + float(self._component_lock_max_wait)
+            if self._component_lock_max_wait is not None
+            else None
+        )
+        acquired = False
+        waited = 0.0
         payload: dict[str, object] = {
             "component": label,
             "requested_budget": requested,
             "expanded_window": self._expanded_global_window,
             "namespace": self.namespace,
         }
-        if not acquired:
+
+        def _set_holder_metadata() -> dict[str, object]:
+            stack = traceback.extract_stack(limit=6)
+            caller = stack[-3] if len(stack) >= 3 else None
+            caller_str = None
+            if caller:
+                caller_str = f"{Path(caller.filename).name}:{caller.lineno} in {caller.name}"
+            thread = threading.current_thread()
+            holder = {
+                "thread_name": thread.name,
+                "thread_id": thread.ident,
+                "acquired_at": time.monotonic(),
+                "caller": caller_str,
+                "component": label,
+            }
+            self._component_lock_holder = holder
+            return holder
+
+        def _log_waiting(event: str) -> None:
             payload["waited_for_lock"] = waited
+            if self._component_lock_holder:
+                payload["lock_holder"] = dict(self._component_lock_holder)
+            payload["event"] = event
             self.logger.warning(
-                "component window lock acquisition exceeded threshold; still waiting",
-                extra={"shared_timeout": dict(payload)},
+                "component window lock acquisition lagging", extra={"shared_timeout": dict(payload)}
             )
-            self._lock.acquire()
+
+        while not acquired:
+            timeout = _COMPONENT_WINDOW_LOCK_WARN_AFTER
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _log_waiting("lock-timeout")
+                    raise TimeoutError(
+                        f"component window lock acquisition exceeded {_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV}"
+                    )
+                timeout = min(timeout, remaining)
+            acquired = self._lock.acquire(timeout=timeout)
             waited = time.monotonic() - start
-        elif waited >= _COMPONENT_WINDOW_LOCK_WARN_AFTER:
-            payload["waited_for_lock"] = waited
-            self.logger.warning(
-                "component window lock acquisition was slow",
-                extra={"shared_timeout": dict(payload)},
-            )
+            if acquired:
+                break
+            _log_waiting("lock-waiting")
+
+        if waited >= _COMPONENT_WINDOW_LOCK_WARN_AFTER:
+            _log_waiting("lock-slow")
+
+        holder_set = False
         try:
+            self._component_lock_holder = _set_holder_metadata()
+            holder_set = True
             yield
         finally:
+            if holder_set:
+                if self._component_lock_holder and self._component_lock_holder.get("thread_id") == threading.get_ident():
+                    self._component_lock_holder = None
             self._lock.release()
 
     def _component_baseline(self, label: str) -> float:
