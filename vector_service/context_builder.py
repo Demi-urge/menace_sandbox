@@ -107,12 +107,14 @@ try:  # pragma: no cover - optional dependency
         get_bootstrap_shared_vector_metrics_db,
         get_shared_vector_metrics_db,
         activate_shared_vector_metrics_db,
+        resolve_vector_bootstrap_flags,
     )
 except Exception:  # pragma: no cover
     VectorMetricsDB = None  # type: ignore
     get_bootstrap_shared_vector_metrics_db = None  # type: ignore
     get_shared_vector_metrics_db = None  # type: ignore
     activate_shared_vector_metrics_db = None  # type: ignore
+    resolve_vector_bootstrap_flags = None  # type: ignore
 
 _VECTOR_SERVICE_WARMUP = os.getenv("VECTOR_SERVICE_WARMUP", "").lower() in {
     "1",
