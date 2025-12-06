@@ -71,7 +71,18 @@ def test_readiness_signal_ready_from_keepalive_payload(tmp_path, monkeypatch, ca
 
     stop_bootstrap_heartbeat_keepalive()
 
+    import bootstrap_readiness
+
+    bootstrap_readiness._KEEPALIVE_COMPONENT_GRACE_SECONDS = 0.05
+    bootstrap_readiness._KEEPALIVE_GRACE_START = None
+    bootstrap_readiness._LAST_COMPONENT_SNAPSHOT = None
+
     caplog.set_level(logging.INFO)
+
+    payload = _minimal_readiness_payload()
+    emit_bootstrap_heartbeat(payload)
+
+    time.sleep(0.06)
 
     payload = _minimal_readiness_payload()
     emit_bootstrap_heartbeat(payload)
