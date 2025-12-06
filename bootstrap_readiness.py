@@ -422,9 +422,14 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
         if _LAST_COMPONENT_SNAPSHOT:
             components = dict(_LAST_COMPONENT_SNAPSHOT)
             all_pending = all(status == "pending" for status in components.values())
-        if not components or all_pending:
-            if now - _KEEPALIVE_GRACE_START >= _KEEPALIVE_COMPONENT_GRACE_SECONDS:
+        if not components or all_pending or _LAST_COMPONENT_SNAPSHOT is None:
+            if (now - _KEEPALIVE_GRACE_START) >= _KEEPALIVE_COMPONENT_GRACE_SECONDS or not components:
                 components = {component: "ready" for component in CORE_COMPONENTS}
+                all_pending = False
+                component_readiness = {
+                    component: {"status": "ready", "ts": now}
+                    for component in CORE_COMPONENTS
+                }
 
     online_state_with_components = dict(online_state)
     online_state_with_components["components"] = components

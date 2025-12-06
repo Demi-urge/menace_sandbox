@@ -65,6 +65,36 @@ def test_component_readiness_timestamps_from_keepalive(tmp_path, monkeypatch, ca
         stop_bootstrap_heartbeat_keepalive()
 
 
+def test_readiness_signal_ready_from_keepalive_payload(tmp_path, monkeypatch, caplog):
+    heartbeat_path = tmp_path / "heartbeat.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+
+    stop_bootstrap_heartbeat_keepalive()
+
+    caplog.set_level(logging.INFO)
+
+    payload = _minimal_readiness_payload()
+    emit_bootstrap_heartbeat(payload)
+
+    signal = ReadinessSignal(poll_interval=0.01, max_age=1.0)
+    try:
+        probe = signal.probe()
+        readiness_snapshot = log_component_readiness(
+            logger=logging.getLogger("bootstrap-readiness-test"),
+            max_age=1.0,
+        )
+    finally:
+        stop_bootstrap_heartbeat_keepalive()
+
+    assert probe.ready is True
+    assert probe.lagging_core == ()
+    assert readiness_snapshot
+    assert all(entry.get("ts") for entry in readiness_snapshot.values())
+    assert "no bootstrap readiness timestamps available" not in [
+        record.message for record in caplog.records
+    ]
+
+
 def test_keepalive_grace_transitions_components_ready(tmp_path, monkeypatch):
     heartbeat_path = tmp_path / "heartbeat.json"
     monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
