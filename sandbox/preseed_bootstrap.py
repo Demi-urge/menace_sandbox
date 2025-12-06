@@ -7943,28 +7943,47 @@ def initialize_bootstrap_context(
                 vector_heavy=True,
                 contention_scale=placeholder_seed_gate["timeout_scale"],
             )
+            if (
+                placeholder_seed_timeout is not None
+                and placeholder_seed_timeout < _PREPARE_VECTOR_TIMEOUT_FLOOR
+            ):
+                placeholder_seed_timeout = _PREPARE_VECTOR_TIMEOUT_FLOOR
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "vector_seeding", reason="placeholder_seed"
             )
-            _run_with_timeout(
-                _timed_callable,
-                timeout=placeholder_seed_timeout,
-                bootstrap_deadline=bootstrap_deadline,
-                description="_seed_research_aggregator_context placeholder",
-                abort_on_timeout=False,
-                heavy_bootstrap=heavy_bootstrap,
-                contention_scale=placeholder_seed_gate["timeout_scale"],
-                budget=shared_timeout_coordinator,
-                budget_label="orchestrator_state",
-                func=_seed_research_aggregator_context,
-                label="_seed_research_aggregator_context placeholder",
-                registry=registry,
-                data_bot=data_bot,
-                context_builder=context_builder,
-                engine=engine,
-                pipeline=bootstrap_manager,
-                manager=bootstrap_manager,
-            )
+            skip_unless_embedder_ready = os.getenv(
+                "MENACE_BOOTSTRAP_SKIP_AGGREGATOR_UNTIL_EMBEDDER_READY", ""
+            ).lower() in {"1", "true", "yes", "on"}
+            embedder_ready = _BOOTSTRAP_EMBEDDER_READY.is_set()
+
+            if skip_unless_embedder_ready and not embedder_ready:
+                LOGGER.warning(
+                    "skipping research aggregator seeding because embedder is not ready",
+                    extra={"event": "research-aggregator-skip", "reason": "embedder-unready"},
+                )
+                _BOOTSTRAP_SCHEDULER.mark_partial(
+                    "vector_seeding", reason="embedder_unready"
+                )
+            else:
+                _run_with_timeout(
+                    _timed_callable,
+                    timeout=placeholder_seed_timeout,
+                    bootstrap_deadline=bootstrap_deadline,
+                    description="_seed_research_aggregator_context placeholder",
+                    abort_on_timeout=False,
+                    heavy_bootstrap=heavy_bootstrap,
+                    contention_scale=placeholder_seed_gate["timeout_scale"],
+                    budget=shared_timeout_coordinator,
+                    budget_label="orchestrator_state",
+                    func=_seed_research_aggregator_context,
+                    label="_seed_research_aggregator_context placeholder",
+                    registry=registry,
+                    data_bot=data_bot,
+                    context_builder=context_builder,
+                    engine=engine,
+                    pipeline=bootstrap_manager,
+                    manager=bootstrap_manager,
+                )
             LOGGER.info(
                 "after _seed_research_aggregator_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
