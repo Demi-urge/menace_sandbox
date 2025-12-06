@@ -92,6 +92,7 @@ _COMPONENT_STALENESS_PAD_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_STALENESS_PAD"
 _COMPONENT_WINDOW_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_SCALE"
 _COMPONENT_WINDOW_MIN_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MIN"
 _COMPONENT_WINDOW_MAX_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_MAX"
+_COMPONENT_WINDOW_LOCK_WARN_AFTER = 2.0
 _DEFAULT_COMPONENT_FLOOR_MAX_SCALE = 3.5
 _DEFAULT_STALENESS_PAD = 0.35
 _BOOTSTRAP_HEARTBEAT_ENV = "MENACE_BOOTSTRAP_WATCHDOG_PATH"
@@ -3596,6 +3597,38 @@ class SharedTimeoutCoordinator:
         self.component_states: dict[str, str] = {}
         self._last_readiness: dict[str, object] | None = None
 
+    @contextlib.contextmanager
+    def _component_window_lock(self, *, label: str, requested: float | None) -> Iterator[None]:
+        """Acquire the component-window lock with slow-acquisition telemetry."""
+
+        start = time.monotonic()
+        acquired = self._lock.acquire(timeout=_COMPONENT_WINDOW_LOCK_WARN_AFTER)
+        waited = time.monotonic() - start
+        payload: dict[str, object] = {
+            "component": label,
+            "requested_budget": requested,
+            "expanded_window": self._expanded_global_window,
+            "namespace": self.namespace,
+        }
+        if not acquired:
+            payload["waited_for_lock"] = waited
+            self.logger.warning(
+                "component window lock acquisition exceeded threshold; still waiting",
+                extra={"shared_timeout": dict(payload)},
+            )
+            self._lock.acquire()
+            waited = time.monotonic() - start
+        elif waited >= _COMPONENT_WINDOW_LOCK_WARN_AFTER:
+            payload["waited_for_lock"] = waited
+            self.logger.warning(
+                "component window lock acquisition was slow",
+                extra={"shared_timeout": dict(payload)},
+            )
+        try:
+            yield
+        finally:
+            self._lock.release()
+
     def _component_baseline(self, label: str) -> float:
         candidates = [
             self.component_budgets.get(label, 0.0),
@@ -3613,7 +3646,7 @@ class SharedTimeoutCoordinator:
         """Track component windows and expand the aggregate deadline when needed."""
 
         budget = budget if budget is not None else 0.0
-        with self._lock:
+        with self._component_window_lock(label=label, requested=budget):
             self._component_windows.setdefault(label, {"budget": budget, "remaining": budget})
             self._component_windows[label].update({"budget": budget, "remaining": budget})
 
@@ -3659,7 +3692,12 @@ class SharedTimeoutCoordinator:
         *,
         component_timer: bool = False,
         ) -> tuple[float | None, MutableMapping[str, object]]:
-        with self._lock:
+        lock_context: contextlib.AbstractContextManager[object]
+        if component_timer:
+            lock_context = self._component_window_lock(label=label, requested=requested)
+        else:
+            lock_context = self._lock
+        with lock_context:
             component_floor = max(self.component_floors.get(label, 0.0), self._component_baseline(label))
             effective_floor = max(minimum, component_floor)
             effective = requested if requested is not None else effective_floor
@@ -3723,7 +3761,7 @@ class SharedTimeoutCoordinator:
                 "remaining": effective,
             }
             windows[label] = window
-            with self._lock:
+            with self._component_window_lock(label=label, requested=requested):
                 self._component_windows[label] = dict(window)
                 self._timeline.append({**record, **window, "namespace": self.namespace})
         return windows
