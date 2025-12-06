@@ -380,12 +380,29 @@ def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
 def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mapping[str, object]:
     online_state = shared_online_state(max_age=heartbeat_max_age) or {}
     ready, lagging, degraded, degraded_online = minimal_online(online_state)
+    components: dict[str, str] = {}
+    if isinstance(online_state, Mapping):
+        candidate_components = online_state.get("components")
+        if isinstance(candidate_components, Mapping):
+            components = dict(candidate_components)
+
+    if not components:
+        derived_components: dict[str, str] = {component: "ready" for component in CORE_COMPONENTS}
+        for component in lagging:
+            derived_components[component] = "pending"
+        for component in degraded:
+            derived_components[component] = "degraded"
+        components = derived_components
+
     return {
         "readiness": {
             "core_ready": ready,
             "lagging_core": sorted(lagging),
             "degraded_core": sorted(degraded),
             "degraded_online": degraded_online,
+            "components": dict(components),
+            "ready": ready,
+            "online": bool(ready or degraded_online),
         }
     }
 
