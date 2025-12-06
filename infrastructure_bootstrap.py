@@ -5,9 +5,14 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from .retry_utils import retry
 import threading
 from typing import Optional
+
+# Prefer package-relative imports but remain runnable as a top-level script.
+try:  # pragma: no cover - favor package execution
+    from .retry_utils import retry
+except ImportError:  # pragma: no cover - allow execution without package context
+    from retry_utils import retry
 
 
 class InfrastructureBootstrapper:
@@ -23,7 +28,10 @@ class InfrastructureBootstrapper:
         if not self.tf_dir or not os.path.isdir(self.tf_dir):
             return False
         try:
-            from . import audit_logger
+            try:  # pragma: no cover - prefer package import
+                from . import audit_logger
+            except ImportError:  # pragma: no cover - allow execution as script
+                import audit_logger
 
             @retry(Exception, attempts=3)
             def _run(cmd: list[str]) -> subprocess.CompletedProcess:
