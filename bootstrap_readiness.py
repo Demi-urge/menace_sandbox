@@ -30,6 +30,7 @@ LOGGER = logging.getLogger(__name__)
 _HEARTBEAT_SHUTDOWN = threading.Event()
 _HEARTBEAT_LOCK = threading.Lock()
 _HEARTBEAT_THREAD: threading.Thread | None = None
+_READINESS_LOG_THROTTLE_SECONDS = 5.0
 
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
@@ -260,6 +261,112 @@ def shared_online_state(max_age: float | None = None) -> Mapping[str, object] | 
         "components": dict(components),
         "heartbeat": heartbeat,
     }
+
+
+def _extract_timestamp(candidate: Mapping[str, object] | None) -> float | None:
+    if not isinstance(candidate, Mapping):
+        return None
+    for key in (
+        "ts",
+        "timestamp",
+        "finished",
+        "updated",
+        "last_update",
+        "last_updated",
+        "completed",
+        "ended",
+        "checked_at",
+        "start",
+        "started",
+    ):
+        try:
+            value = candidate.get(key)
+        except Exception:
+            continue
+        try:
+            if value is not None:
+                parsed = float(value)
+                if parsed > 0:
+                    return parsed
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def component_readiness_timestamps(
+    *, max_age: float | None = None
+) -> dict[str, dict[str, object]]:
+    """Return readiness metadata keyed by component name.
+
+    The readiness heartbeat may store component states as either simple strings
+    or dictionaries containing timestamps. This helper extracts the most
+    relevant fields so operators can identify stalled stages.
+    """
+
+    online_state = shared_online_state(max_age=max_age) or {}
+    heartbeat = online_state.get("heartbeat") if isinstance(online_state, Mapping) else None
+    readiness = (
+        dict(online_state.get("components", {})) if isinstance(online_state, Mapping) else {}
+    )
+    readiness_meta: dict[str, dict[str, object]] = {}
+    fallback_ts = _extract_timestamp(heartbeat)
+
+    if isinstance(heartbeat, Mapping):
+        readiness_field = heartbeat.get("readiness")
+        gates = readiness_field.get("gates") if isinstance(readiness_field, Mapping) else {}
+        for gate, details in gates.items() if isinstance(gates, Mapping) else {}:
+            if gate not in readiness:
+                readiness[gate] = details
+
+    for component, raw in readiness.items() if isinstance(readiness, Mapping) else {}:
+        status = raw.get("status") if isinstance(raw, Mapping) else raw
+        status = str(status) if status is not None else "unknown"
+        ts = _extract_timestamp(raw) or fallback_ts
+        readiness_meta[component] = {"status": status, "ts": ts}
+
+    return readiness_meta
+
+
+def log_component_readiness(
+    *,
+    logger: logging.Logger | None = None,
+    max_age: float | None = None,
+    components: Iterable[str] | None = None,
+    level: int = logging.INFO,
+) -> dict[str, dict[str, object]]:
+    """Log the latest component readiness snapshot for observability."""
+
+    logger = logger or LOGGER
+    readiness_meta = component_readiness_timestamps(max_age=max_age)
+    if components:
+        component_filter = set(components)
+        filtered = {k: v for k, v in readiness_meta.items() if k in component_filter}
+        readiness_meta = filtered or readiness_meta
+
+    if not readiness_meta:
+        logger.log(
+            level,
+            "no bootstrap readiness timestamps available",
+            extra={
+                "event": "bootstrap-readiness-missing",
+                "heartbeat_path": str(_heartbeat_path()),
+                "max_age": max_age,
+            },
+        )
+        return {}
+
+    logger.log(
+        level,
+        "bootstrap component readiness snapshot",
+        extra={
+            "event": "bootstrap-readiness-snapshot",
+            "components": readiness_meta,
+            "heartbeat_path": str(_heartbeat_path()),
+            "max_age": max_age,
+        },
+    )
+
+    return readiness_meta
 
 
 def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
@@ -512,6 +619,7 @@ class ReadinessSignal:
         self.poll_interval = poll_interval
         self.max_age = max_age
         self._last_probe: ReadinessProbe | None = None
+        self._last_pending_log: float | None = None
 
     @property
     def context(self) -> ReadinessProbe | None:
@@ -558,17 +666,73 @@ class ReadinessSignal:
         """Block until readiness is achieved or ``timeout`` expires."""
 
         start = time.perf_counter()
+        warning_emitted = False
         while True:
             probe = self.probe()
             if probe.ready:
                 return True
 
+            elapsed = time.perf_counter() - start
+            if timeout is not None and not warning_emitted and elapsed >= timeout / 2.0:
+                warning_emitted = True
+                self._log_pending_components(
+                    probe,
+                    elapsed=elapsed,
+                    timeout=timeout,
+                    level=logging.WARNING,
+                )
+
             if timeout is not None and (time.perf_counter() - start) >= timeout:
+                self._log_pending_components(
+                    probe,
+                    elapsed=timeout,
+                    timeout=timeout,
+                    level=logging.WARNING,
+                    force=True,
+                )
                 raise TimeoutError(
                     f"bootstrap readiness not satisfied after {timeout:.1f}s: {probe.summary()}"
                 )
 
             time.sleep(self.poll_interval)
+
+    def _log_pending_components(
+        self,
+        probe: ReadinessProbe,
+        *,
+        elapsed: float,
+        timeout: float,
+        level: int,
+        force: bool = False,
+    ) -> None:
+        now = time.perf_counter()
+        throttle = max(self.poll_interval * 4.0, _READINESS_LOG_THROTTLE_SECONDS)
+        if not force and self._last_pending_log and (now - self._last_pending_log) < throttle:
+            return
+        self._last_pending_log = now
+
+        pending_components = set(probe.lagging_core) | set(probe.optional_pending)
+        readiness_meta = log_component_readiness(
+            logger=LOGGER,
+            max_age=self.max_age,
+            components=pending_components or None,
+            level=level,
+        )
+
+        LOGGER.log(
+            level,
+            "bootstrap readiness pending after %.1fs (timeout %.1fs)",
+            elapsed,
+            timeout,
+            extra={
+                "event": "bootstrap-readiness-pending",
+                "lagging_core": probe.lagging_core,
+                "degraded_core": probe.degraded_core,
+                "optional_pending": probe.optional_pending,
+                "heartbeat_path": str(_heartbeat_path()),
+                "component_readiness": readiness_meta,
+            },
+        )
 
 
 _READINESS_SIGNAL = ReadinessSignal()
@@ -593,6 +757,8 @@ __all__ = [
     "ReadinessProbe",
     "ReadinessSignal",
     "readiness_signal",
+    "component_readiness_timestamps",
+    "log_component_readiness",
     "start_bootstrap_heartbeat_keepalive",
     "stop_bootstrap_heartbeat_keepalive",
     "stage_for_step",
