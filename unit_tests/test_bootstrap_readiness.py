@@ -95,6 +95,25 @@ def test_readiness_signal_ready_from_keepalive_payload(tmp_path, monkeypatch, ca
     ]
 
 
+def test_minimal_payload_stamps_component_readiness(tmp_path, monkeypatch):
+    heartbeat_path = tmp_path / "heartbeat.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+
+    stop_bootstrap_heartbeat_keepalive()
+
+    # Reset grace state to exercise the empty shared state path.
+    import bootstrap_readiness
+
+    bootstrap_readiness._KEEPALIVE_GRACE_START = None
+    bootstrap_readiness._LAST_COMPONENT_SNAPSHOT = None
+
+    payload = _minimal_readiness_payload()
+    readiness = payload["readiness"].get("component_readiness", {})
+
+    assert set(readiness) == set(CORE_COMPONENTS)
+    assert all(readiness[name].get("ts") for name in CORE_COMPONENTS)
+
+
 def test_keepalive_grace_transitions_components_ready(tmp_path, monkeypatch):
     heartbeat_path = tmp_path / "heartbeat.json"
     monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
