@@ -101,6 +101,34 @@ def test_component_window_lock_timeout_reports_wait_and_holder(monkeypatch, capl
     assert holder_info.get("thread_name") == "holder-thread"
 
 
+def test_component_window_lock_warning_surfaces_wait_and_holder(monkeypatch, caplog):
+    monkeypatch.setenv(btp._COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV, "0.06")
+    monkeypatch.setattr(btp, "_COMPONENT_WINDOW_LOCK_WARN_AFTER", 0.005)
+    coordinator = btp.SharedTimeoutCoordinator(total_budget=1)
+
+    release_event = threading.Event()
+
+    def _holder():
+        with coordinator._component_window_lock(label="holder", requested=0.5):
+            release_event.wait(timeout=0.2)
+
+    holder_thread = threading.Thread(target=_holder, name="holder-thread")
+    holder_thread.start()
+    time.sleep(0.003)
+
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(TimeoutError):
+        with coordinator._component_window_lock(label="waiter", requested=0.5):
+            pass
+
+    release_event.set()
+    holder_thread.join(timeout=1)
+
+    warning_messages = [r.message for r in caplog.records if "lock acquisition" in r.message]
+    assert warning_messages, "expected warning that surfaces waited duration"
+    assert any("after" in msg and "holder-thread" in msg for msg in warning_messages)
+
+
 def test_component_window_lock_same_thread_reentry(monkeypatch, caplog):
     coordinator = btp.SharedTimeoutCoordinator(total_budget=5)
 
