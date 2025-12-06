@@ -402,6 +402,18 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
     component_readiness: dict[str, dict[str, object]] = {}
     now = time.time()
 
+    heartbeat = online_state.get("heartbeat") if isinstance(online_state, Mapping) else None
+    readiness = heartbeat.get("readiness") if isinstance(heartbeat, Mapping) else None
+    readiness_meta = readiness.get("component_readiness") if isinstance(readiness, Mapping) else None
+
+    if isinstance(readiness_meta, Mapping):
+        for component, raw in readiness_meta.items():
+            status = raw.get("status") if isinstance(raw, Mapping) else raw
+            status = str(status) if status is not None else "unknown"
+            ts = _extract_timestamp(raw) if isinstance(raw, Mapping) else None
+            component_readiness[component] = {"status": status, "ts": ts or now}
+            components.setdefault(component, status)
+
     if isinstance(online_state, Mapping):
         candidate_components = online_state.get("components")
         if isinstance(candidate_components, Mapping):
@@ -410,7 +422,10 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
                 status = str(status) if status is not None else "unknown"
                 ts = _extract_timestamp(raw) if isinstance(raw, Mapping) else None
                 components[component] = status
-                component_readiness[component] = {"status": status, "ts": ts or now}
+                component_readiness[component] = {
+                    "status": status,
+                    "ts": component_readiness.get(component, {}).get("ts") or ts or now,
+                }
 
     all_pending = components and all(status == "pending" for status in components.values())
 
