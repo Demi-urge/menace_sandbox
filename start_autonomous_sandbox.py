@@ -250,17 +250,31 @@ def _stop_bootstrap_keepalive_thread() -> None:
     if isinstance(thread, threading.Thread) and thread.is_alive():
         thread.join(timeout=5.0)
 
+
+def _start_bootstrap_keepalive_thread(logger: logging.Logger) -> None:
+    """Launch the bootstrap heartbeat keepalive thread once."""
+
+    global _BOOTSTRAP_KEEPALIVE_THREAD
+
+    if isinstance(globals().get("_BOOTSTRAP_KEEPALIVE_THREAD"), threading.Thread):
+        thread = globals()["_BOOTSTRAP_KEEPALIVE_THREAD"]
+        if thread.is_alive():
+            return
+
+    _BOOTSTRAP_KEEPALIVE_THREAD = threading.Thread(
+        target=_bootstrap_keepalive_loop,
+        name="bootstrap-keepalive",
+        args=(logger,),
+        daemon=True,
+    )
+    _BOOTSTRAP_KEEPALIVE_THREAD.start()
+
+
 # --- BOOTSTRAP INITIALISATION FIX ---
 LOGGER.info("Starting Menace bootstrap sequence...")
 initialize_bootstrap_context()
 bootstrap_environment()
-_BOOTSTRAP_KEEPALIVE_THREAD = threading.Thread(
-    target=_bootstrap_keepalive_loop,
-    name="bootstrap-keepalive",
-    args=(LOGGER,),
-    daemon=True,
-)
-_BOOTSTRAP_KEEPALIVE_THREAD.start()
+_start_bootstrap_keepalive_thread(LOGGER)
 # ------------------------------------
 
 BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
