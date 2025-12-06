@@ -27,23 +27,41 @@ import urllib.request
 import bootstrap_timeout_policy
 import bootstrap_metrics
 
-from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines, shared_online_state
-
-from .config_discovery import ensure_config, ConfigDiscovery
-from .bootstrap_policy import DependencyPolicy, PolicyLoader
-from .logging_utils import log_record
-from .lock_utils import SandboxLock, is_lock_stale
+# Fallback-friendly imports to support both package and script execution
+try:  # pragma: no cover - prefer package relative imports
+    from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines, shared_online_state
+    from .config_discovery import ensure_config, ConfigDiscovery
+    from .bootstrap_policy import DependencyPolicy, PolicyLoader
+    from .logging_utils import log_record
+    from .lock_utils import SandboxLock, is_lock_stale
+except ImportError:  # pragma: no cover - allow running as a top-level script
+    from bootstrap_readiness import READINESS_STAGES, build_stage_deadlines, shared_online_state
+    from config_discovery import ensure_config, ConfigDiscovery
+    from bootstrap_policy import DependencyPolicy, PolicyLoader
+    from logging_utils import log_record
+    from lock_utils import SandboxLock, is_lock_stale
 
 if TYPE_CHECKING:  # pragma: no cover - for type hints only
     from .cluster_supervisor import ClusterServiceSupervisor
-from .infrastructure_bootstrap import InfrastructureBootstrapper
-from .retry_utils import retry
-from .system_provisioner import SystemProvisioner
-from .secrets_manager import SecretsManager
-from .vault_secret_provider import VaultSecretProvider
-from .external_dependency_provisioner import ExternalDependencyProvisioner
-from . import startup_checks
-from .vector_service.embedding_scheduler import start_scheduler_from_env
+
+try:  # pragma: no cover - prefer package relative imports
+    from .infrastructure_bootstrap import InfrastructureBootstrapper
+    from .retry_utils import retry
+    from .system_provisioner import SystemProvisioner
+    from .secrets_manager import SecretsManager
+    from .vault_secret_provider import VaultSecretProvider
+    from .external_dependency_provisioner import ExternalDependencyProvisioner
+    from . import startup_checks
+    from .vector_service.embedding_scheduler import start_scheduler_from_env
+except ImportError:  # pragma: no cover - allow running as a top-level script
+    from infrastructure_bootstrap import InfrastructureBootstrapper
+    from retry_utils import retry
+    from system_provisioner import SystemProvisioner
+    from secrets_manager import SecretsManager
+    from vault_secret_provider import VaultSecretProvider
+    from external_dependency_provisioner import ExternalDependencyProvisioner
+    import startup_checks
+    from vector_service.embedding_scheduler import start_scheduler_from_env
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
