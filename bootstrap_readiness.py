@@ -305,24 +305,38 @@ def component_readiness_timestamps(
 
     online_state = shared_online_state(max_age=max_age) or {}
     heartbeat = online_state.get("heartbeat") if isinstance(online_state, Mapping) else None
-    readiness = (
-        dict(online_state.get("components", {})) if isinstance(online_state, Mapping) else {}
-    )
     readiness_meta: dict[str, dict[str, object]] = {}
-    fallback_ts = _extract_timestamp(heartbeat)
+    fallback_ts = _extract_timestamp(heartbeat) or time.time()
+    readiness_field = heartbeat.get("readiness") if isinstance(heartbeat, Mapping) else None
 
-    if isinstance(heartbeat, Mapping):
-        readiness_field = heartbeat.get("readiness")
-        gates = readiness_field.get("gates") if isinstance(readiness_field, Mapping) else {}
-        for gate, details in gates.items() if isinstance(gates, Mapping) else {}:
-            if gate not in readiness:
-                readiness[gate] = details
-
-    for component, raw in readiness.items() if isinstance(readiness, Mapping) else {}:
+    def _ingest(component: str, raw: object) -> None:
+        if component in readiness_meta:
+            return
         status = raw.get("status") if isinstance(raw, Mapping) else raw
         status = str(status) if status is not None else "unknown"
-        ts = _extract_timestamp(raw) or fallback_ts
-        readiness_meta[component] = {"status": status, "ts": ts}
+        ts = _extract_timestamp(raw) if isinstance(raw, Mapping) else None
+        readiness_meta[component] = {"status": status, "ts": ts or fallback_ts}
+
+    if isinstance(readiness_field, Mapping):
+        component_details = readiness_field.get("component_readiness")
+        if isinstance(component_details, Mapping):
+            for component, raw in component_details.items():
+                _ingest(component, raw)
+
+        gates = readiness_field.get("gates") or {}
+        for gate, details in gates.items() if isinstance(gates, Mapping) else {}:
+            _ingest(gate, details)
+
+        readiness_components = readiness_field.get("components")
+        if isinstance(readiness_components, Mapping):
+            for component, raw in readiness_components.items():
+                _ingest(component, raw)
+
+    if isinstance(online_state, Mapping):
+        candidate_components = online_state.get("components")
+        if isinstance(candidate_components, Mapping):
+            for component, raw in candidate_components.items():
+                _ingest(component, raw)
 
     return readiness_meta
 
@@ -381,10 +395,17 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
     online_state = shared_online_state(max_age=heartbeat_max_age) or {}
     ready, lagging, degraded, degraded_online = minimal_online(online_state)
     components: dict[str, str] = {}
+    component_readiness: dict[str, dict[str, object]] = {}
+    now = time.time()
     if isinstance(online_state, Mapping):
         candidate_components = online_state.get("components")
         if isinstance(candidate_components, Mapping):
-            components = dict(candidate_components)
+            for component, raw in candidate_components.items():
+                status = raw.get("status") if isinstance(raw, Mapping) else raw
+                status = str(status) if status is not None else "unknown"
+                ts = _extract_timestamp(raw) if isinstance(raw, Mapping) else None
+                components[component] = status
+                component_readiness[component] = {"status": status, "ts": ts or now}
 
     if not components:
         derived_components: dict[str, str] = {component: "ready" for component in CORE_COMPONENTS}
@@ -393,6 +414,8 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
         for component in degraded:
             derived_components[component] = "degraded"
         components = derived_components
+        for component, status in derived_components.items():
+            component_readiness.setdefault(component, {"status": status, "ts": now})
 
     return {
         "readiness": {
@@ -401,6 +424,7 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
             "degraded_core": sorted(degraded),
             "degraded_online": degraded_online,
             "components": dict(components),
+            "component_readiness": dict(component_readiness),
             "ready": ready,
             "online": bool(ready or degraded_online),
         }
