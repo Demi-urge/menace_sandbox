@@ -17,6 +17,7 @@ from bootstrap_timeout_policy import (
     _DEFAULT_HEARTBEAT_MAX_AGE,
     emit_bootstrap_heartbeat,
     read_bootstrap_heartbeat,
+    _heartbeat_path,
 )
 
 from bootstrap_timeout_policy import (
@@ -291,6 +292,9 @@ def _bootstrap_keepalive_loop(
 
     heartbeat_interval = max(1.0, min(heartbeat_max_age / 2.0, heartbeat_max_age))
 
+    consecutive_failures = 0
+    stale_warning_emitted = False
+
     logger.info(
         "bootstrap heartbeat keepalive activated",
         extra={
@@ -304,8 +308,40 @@ def _bootstrap_keepalive_loop(
         while not _HEARTBEAT_SHUTDOWN.wait(timeout=heartbeat_interval):
             try:
                 emit_bootstrap_heartbeat(_minimal_readiness_payload(heartbeat_max_age))
+                consecutive_failures = 0
             except Exception:  # pragma: no cover - best effort keepalive
-                logger.debug("failed to emit bootstrap heartbeat", exc_info=True)
+                consecutive_failures += 1
+                heartbeat_path = str(_heartbeat_path())
+                log_extra = {
+                    "event": "bootstrap-keepalive-failure",
+                    "heartbeat_path": heartbeat_path,
+                    "consecutive_failures": consecutive_failures,
+                }
+
+                if consecutive_failures == 1:
+                    logger.warning(
+                        "failed to emit bootstrap heartbeat; retrying",
+                        extra=log_extra,
+                        exc_info=True,
+                    )
+                elif consecutive_failures == 3 and not stale_warning_emitted:
+                    stale_warning_emitted = True
+                    log_extra["event"] = "bootstrap-keepalive-stale-heartbeat"
+                    logger.error(
+                        (
+                            "bootstrap heartbeat emission has failed %s times; "
+                            "heartbeat file may be stale or unwritable"
+                        ),
+                        consecutive_failures,
+                        extra=log_extra,
+                        exc_info=True,
+                    )
+                elif consecutive_failures % 10 == 0:
+                    logger.warning(
+                        "bootstrap heartbeat emission still failing",
+                        extra=log_extra,
+                        exc_info=True,
+                    )
     finally:
         logger.info(
             "bootstrap heartbeat keepalive stopped",
