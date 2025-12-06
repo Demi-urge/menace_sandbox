@@ -1590,6 +1590,19 @@ def _run_with_timeout(
             timeout_context["shared_budget"] = budget_meta
         effective_timeout = shared_timeout
 
+        timeout_max = getattr(threading, "TIMEOUT_MAX", float("inf"))
+        if effective_timeout is not None and effective_timeout > timeout_max:
+            timeout_context["timeout_clamped_to_max"] = timeout_max
+            LOGGER.warning(
+                "effective timeout exceeds threading maximum; clamping join timeout",
+                extra={
+                    "requested_timeout": effective_timeout,
+                    "timeout_max": timeout_max,
+                    "description": description,
+                },
+            )
+            effective_timeout = timeout_max
+
         LOGGER.info(
             "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
             description,
