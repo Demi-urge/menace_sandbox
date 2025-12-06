@@ -3607,6 +3607,36 @@ class SharedTimeoutCoordinator:
             else _DEFAULT_COMPONENT_LOCK_MAX_WAIT
         )
 
+    def _capture_lock_holder(self, *, label: str) -> dict[str, object]:
+        stack = traceback.extract_stack(limit=6)
+        caller = stack[-3] if len(stack) >= 3 else None
+        caller_str = None
+        if caller:
+            caller_str = f"{Path(caller.filename).name}:{caller.lineno} in {caller.name}"
+        thread = threading.current_thread()
+        holder = {
+            "thread_name": thread.name,
+            "thread_id": thread.ident,
+            "acquired_at": time.monotonic(),
+            "caller": caller_str,
+            "component": label,
+        }
+        self._component_lock_holder = holder
+        return holder
+
+    def _format_lock_holder(self) -> str:
+        holder = self._component_lock_holder or {}
+        thread_name = holder.get("thread_name")
+        thread_id = holder.get("thread_id")
+        caller = holder.get("caller")
+        bits = [
+            str(thread_name) if thread_name else None,
+            f"#{thread_id}" if thread_id is not None else None,
+            f"@{caller}" if caller else None,
+        ]
+        summary = " ".join(filter(None, bits))
+        return summary or (str(holder) if holder else "unknown")
+
     @contextlib.contextmanager
     def _component_window_lock(self, *, label: str, requested: float | None) -> Iterator[None]:
         """Acquire the component-window lock with slow-acquisition telemetry."""
@@ -3627,45 +3657,17 @@ class SharedTimeoutCoordinator:
             "lock_wait_budget": self._component_lock_max_wait,
         }
 
-        def _set_holder_metadata() -> dict[str, object]:
-            stack = traceback.extract_stack(limit=6)
-            caller = stack[-3] if len(stack) >= 3 else None
-            caller_str = None
-            if caller:
-                caller_str = f"{Path(caller.filename).name}:{caller.lineno} in {caller.name}"
-            thread = threading.current_thread()
-            holder = {
-                "thread_name": thread.name,
-                "thread_id": thread.ident,
-                "acquired_at": time.monotonic(),
-                "caller": caller_str,
-                "component": label,
-            }
-            self._component_lock_holder = holder
-            return holder
-
-        def _holder_summary() -> str:
-            holder = self._component_lock_holder or {}
-            thread_name = holder.get("thread_name")
-            thread_id = holder.get("thread_id")
-            caller = holder.get("caller")
-            bits = [
-                str(thread_name) if thread_name else None,
-                f"#{thread_id}" if thread_id is not None else None,
-                f"@{caller}" if caller else None,
-            ]
-            summary = " ".join(filter(None, bits))
-            return summary or (str(holder) if holder else "unknown")
-
         def _log_waiting(event: str) -> None:
             payload["waited_for_lock"] = waited
             if self._component_lock_holder:
                 payload["lock_holder"] = dict(self._component_lock_holder)
             payload["event"] = event
+            waited_str = f"{waited:.3f}s"
+            holder_summary = self._format_lock_holder()
             self.logger.warning(
-                "component window lock acquisition lagging after %.3fs (holder=%s)",
-                waited,
-                _holder_summary(),
+                "component window lock acquisition lagging (waited=%s; holder=%s)",
+                waited_str,
+                holder_summary,
                 extra={"shared_timeout": dict(payload)},
             )
 
@@ -3690,7 +3692,7 @@ class SharedTimeoutCoordinator:
                         "component window lock acquisition exceeded "
                         f"{_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV} "
                         f"after {waited:.3f}s (budget={self._component_lock_max_wait}s; "
-                        f"holder={_holder_summary()})"
+                        f"holder={self._format_lock_holder()})"
                     )
                 timeout = min(timeout, remaining)
             acquired = self._lock.acquire(timeout=timeout)
@@ -3704,7 +3706,7 @@ class SharedTimeoutCoordinator:
 
         holder_set = False
         try:
-            self._component_lock_holder = _set_holder_metadata()
+            self._component_lock_holder = self._capture_lock_holder(label=label)
             holder_set = True
             yield
         finally:
@@ -3830,24 +3832,46 @@ class SharedTimeoutCoordinator:
         windows: dict[str, dict[str, float | None]] = {}
         for label, requested in budgets.items():
             floor = max(minimum, self.component_floors.get(label, minimum))
-            effective, record = self._reserve(
-                label,
-                requested,
-                floor,
-                {"component_timer": True},
-                component_timer=True,
-            )
-            started = time.monotonic()
-            window = {
-                "budget": effective,
-                "deadline": (started + effective) if effective is not None else None,
-                "started": started,
-                "remaining": effective,
-            }
-            windows[label] = window
-            with self._component_window_lock(label=label, requested=requested):
-                self._component_windows[label] = dict(window)
-                self._timeline.append({**record, **window, "namespace": self.namespace})
+            try:
+                effective, record = self._reserve(
+                    label,
+                    requested,
+                    floor,
+                    {"component_timer": True},
+                    component_timer=True,
+                )
+                started = time.monotonic()
+                window = {
+                    "budget": effective,
+                    "deadline": (started + effective) if effective is not None else None,
+                    "started": started,
+                    "remaining": effective,
+                }
+                windows[label] = window
+                with self._component_window_lock(label=label, requested=requested):
+                    self._component_windows[label] = dict(window)
+                    self._timeline.append({**record, **window, "namespace": self.namespace})
+            except TimeoutError as exc:
+                holder_summary = self._format_lock_holder()
+                payload = {
+                    "event": "start-component-timer-lock-timeout",
+                    "component": label,
+                    "requested_budget": requested,
+                    "namespace": self.namespace,
+                    "lock_holder": dict(self._component_lock_holder) if self._component_lock_holder else None,
+                    "lock_wait_budget": self._component_lock_max_wait,
+                }
+                self.logger.error(
+                    "failed to start component timer for %s (holder=%s): %s",
+                    label,
+                    holder_summary,
+                    exc,
+                    extra={"shared_timeout": payload},
+                )
+                raise TimeoutError(
+                    f"start_component_timers failed for {label} while waiting on lock "
+                    f"(holder={holder_summary}): {exc}"
+                ) from exc
         return windows
 
     @contextlib.contextmanager

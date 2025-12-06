@@ -126,7 +126,7 @@ def test_component_window_lock_warning_surfaces_wait_and_holder(monkeypatch, cap
 
     warning_messages = [r.message for r in caplog.records if "lock acquisition" in r.message]
     assert warning_messages, "expected warning that surfaces waited duration"
-    assert any("after" in msg and "holder-thread" in msg for msg in warning_messages)
+    assert any("waited=" in msg and "holder-thread" in msg for msg in warning_messages)
 
 
 def test_component_window_lock_same_thread_reentry(monkeypatch, caplog):
@@ -139,4 +139,35 @@ def test_component_window_lock_same_thread_reentry(monkeypatch, caplog):
 
     reentry_logs = [r for r in caplog.records if "lock reentry" in r.message]
     assert reentry_logs, "expected reentry warning to aid debugging"
+
+
+def test_start_component_timers_surfaces_holder_and_wait(monkeypatch, caplog):
+    monkeypatch.setenv(btp._COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV, "0.04")
+    monkeypatch.setattr(btp, "_COMPONENT_WINDOW_LOCK_WARN_AFTER", 0.005)
+    coordinator = btp.SharedTimeoutCoordinator(total_budget=1)
+
+    release_event = threading.Event()
+
+    def _holder():
+        with coordinator._component_window_lock(label="holder", requested=0.5):
+            release_event.wait(timeout=0.2)
+
+    holder_thread = threading.Thread(target=_holder, name="holder-thread")
+    holder_thread.start()
+    time.sleep(0.003)
+
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(TimeoutError) as excinfo:
+        coordinator.start_component_timers({"waiter": 0.5})
+
+    release_event.set()
+    holder_thread.join(timeout=1)
+
+    message = str(excinfo.value)
+    assert "after" in message
+    assert "holder-thread" in message
+
+    warning_messages = [r.message for r in caplog.records if "lock acquisition" in r.message]
+    assert warning_messages, "expected warning capturing waited duration"
+    assert any("waited=" in msg and "holder-thread" in msg for msg in warning_messages)
 
