@@ -8351,7 +8351,7 @@ def initialize_bootstrap_context(
                 budget_label="db_indexes",
                 func=promote_pipeline,
                 label="promote_pipeline",
-                manager=manager,
+                real_manager=manager,
             )
         except Exception:
             LOGGER.exception("promote_pipeline failed (step=promote_pipeline)")
