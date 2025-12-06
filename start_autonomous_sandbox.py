@@ -217,11 +217,8 @@ def _bootstrap_keepalive_loop(logger: logging.Logger) -> None:
     heartbeat_max_age = _coerce_heartbeat_max_age(
         os.getenv("MENACE_BOOTSTRAP_HEARTBEAT_MAX_AGE"), _DEFAULT_HEARTBEAT_MAX_AGE
     )
-    heartbeat_interval = max(1.0, heartbeat_max_age / 4.0)
-    heartbeat_payload = {
-        "readiness": {"core": True},
-        "component": "bootstrap_keepalive",
-    }
+    heartbeat_interval = max(1.0, min(heartbeat_max_age / 2.0, heartbeat_max_age))
+    heartbeat_payload = {"readiness": {"core": True}}
 
     logger.info(
         "bootstrap keepalive loop activated",
@@ -245,6 +242,13 @@ def _bootstrap_keepalive_loop(logger: logging.Logger) -> None:
             "bootstrap keepalive loop stopped",
             extra=log_record(event="bootstrap-keepalive-stop"),
         )
+
+
+def _stop_bootstrap_keepalive_thread() -> None:
+    SHUTDOWN_EVENT.set()
+    thread = globals().get("_BOOTSTRAP_KEEPALIVE_THREAD")
+    if isinstance(thread, threading.Thread) and thread.is_alive():
+        thread.join(timeout=5.0)
 
 # --- BOOTSTRAP INITIALISATION FIX ---
 LOGGER.info("Starting Menace bootstrap sequence...")
@@ -386,6 +390,7 @@ def handle_sigint(sig: int, frame: Any) -> None:
 
 
 def cleanup_and_exit(exit_code: int = 0) -> None:
+    _stop_bootstrap_keepalive_thread()
     try:
         shutdown_autonomous_sandbox()
     except Exception:
