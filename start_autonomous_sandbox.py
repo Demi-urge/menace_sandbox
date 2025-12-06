@@ -207,6 +207,19 @@ _DEFAULT_HEARTBEAT_MAX_AGE = 120.0
 def _bootstrap_keepalive_loop(logger: logging.Logger) -> None:
     """Emit a periodic heartbeat while the bootstrap process is active."""
 
+    def _minimal_readiness_payload() -> Mapping[str, Any]:
+        ready, lagging, degraded, degraded_online = minimal_online(
+            BOOTSTRAP_ONLINE_STATE
+        )
+        return {
+            "readiness": {
+                "core_ready": ready,
+                "lagging_core": sorted(lagging),
+                "degraded_core": sorted(degraded),
+                "degraded_online": degraded_online,
+            }
+        }
+
     def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
         try:
             parsed = float(raw_value) if raw_value is not None else None
@@ -218,7 +231,6 @@ def _bootstrap_keepalive_loop(logger: logging.Logger) -> None:
         os.getenv("MENACE_BOOTSTRAP_HEARTBEAT_MAX_AGE"), _DEFAULT_HEARTBEAT_MAX_AGE
     )
     heartbeat_interval = max(1.0, min(heartbeat_max_age / 2.0, heartbeat_max_age))
-    heartbeat_payload = {"readiness": {"core": True}}
 
     logger.info(
         "bootstrap keepalive loop activated",
@@ -232,7 +244,7 @@ def _bootstrap_keepalive_loop(logger: logging.Logger) -> None:
     try:
         while not SHUTDOWN_EVENT.wait(timeout=heartbeat_interval):
             try:
-                emit_bootstrap_heartbeat(heartbeat_payload)
+                emit_bootstrap_heartbeat(_minimal_readiness_payload())
             except Exception:
                 logger.debug(
                     "failed to emit bootstrap heartbeat", exc_info=True
