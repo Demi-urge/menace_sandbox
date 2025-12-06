@@ -432,19 +432,29 @@ class SelfCodingManager:
                 settings_mod = importlib.import_module(
                     settings.__class__.__module__ if settings else "sandbox_settings"
                 )
-                validation_check = bool(
-                    getattr(settings_mod, "_bootstrap_validation_enabled", lambda: False)()
+                validation_check = False
+                validation_fn = getattr(
+                    settings_mod, "_bootstrap_validation_enabled", None
                 )
-                assert validation_check, (
-                    "bootstrap_fast expected sandbox validation fast-path to be enabled"
-                )
-                self.logger.info(
-                    "bootstrap_fast validation active; parent directory creation is skipped",
-                )
+                if callable(validation_fn):
+                    validation_check = bool(validation_fn())
+                if validation_check:
+                    self.logger.info(
+                        "bootstrap_fast validation active; parent directory creation is skipped",
+                    )
+                else:
+                    self.logger.warning(
+                        "bootstrap_fast requested but sandbox validation flag is missing or disabled; falling back to full validation",
+                    )
+                    self.bootstrap_fast = False
             except Exception:  # pragma: no cover - defensive verification
                 self.logger.exception(
-                    "unable to verify bootstrap_fast validation state during init",
+                    "unable to verify bootstrap_fast validation state during init; falling back to full validation",
                 )
+                self.bootstrap_fast = False
+            if not self.bootstrap_fast:
+                self._settings = None
+                settings = self._get_settings()
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
