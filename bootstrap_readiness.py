@@ -340,6 +340,10 @@ def start_bootstrap_heartbeat_keepalive(
             },
             daemon=True,
         )
+        thread_logger.info(
+            "starting bootstrap heartbeat keepalive thread",
+            extra={"event": "bootstrap-keepalive-init"},
+        )
         _HEARTBEAT_THREAD.start()
 
 
@@ -350,6 +354,10 @@ def stop_bootstrap_heartbeat_keepalive(timeout: float = 5.0) -> None:
     thread = _HEARTBEAT_THREAD
     if thread and thread.is_alive():
         thread.join(timeout=timeout)
+        LOGGER.info(
+            "bootstrap heartbeat keepalive shutdown signaled",
+            extra={"event": "bootstrap-keepalive-shutdown", "timeout": timeout},
+        )
 
 
 def _ensure_bootstrap_keepalive() -> None:
@@ -464,6 +472,7 @@ class ReadinessSignal:
     """Lightweight readiness probe shared across bootstrap-sensitive modules."""
 
     def __init__(self, *, poll_interval: float = 0.5, max_age: float | None = 30.0) -> None:
+        _ensure_bootstrap_keepalive()
         self.poll_interval = poll_interval
         self.max_age = max_age
         self._last_probe: ReadinessProbe | None = None
