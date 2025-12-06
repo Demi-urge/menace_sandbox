@@ -154,3 +154,41 @@ def test_keepalive_grace_transitions_components_ready(tmp_path, monkeypatch):
         assert readiness["ready"] is True
     finally:
         stop_bootstrap_heartbeat_keepalive()
+
+
+def test_readiness_probe_promotes_pending_keepalive_snapshot(tmp_path, monkeypatch, caplog):
+    heartbeat_path = tmp_path / "heartbeat.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+
+    stop_bootstrap_heartbeat_keepalive()
+
+    import bootstrap_readiness
+
+    bootstrap_readiness._KEEPALIVE_COMPONENT_GRACE_SECONDS = 0.05
+    bootstrap_readiness._KEEPALIVE_GRACE_START = None
+    bootstrap_readiness._LAST_COMPONENT_SNAPSHOT = {"vector_seeding": "pending"}
+
+    caplog.set_level(logging.WARNING)
+
+    emit_bootstrap_heartbeat(_minimal_readiness_payload())
+
+    time.sleep(0.06)
+
+    emit_bootstrap_heartbeat(_minimal_readiness_payload())
+
+    signal = ReadinessSignal(poll_interval=0.01, max_age=1.0)
+    try:
+        probe = signal.probe()
+        readiness_snapshot = log_component_readiness(
+            logger=logging.getLogger("bootstrap-readiness-test"),
+            max_age=1.0,
+            level=logging.WARNING,
+        )
+    finally:
+        stop_bootstrap_heartbeat_keepalive()
+
+    assert probe.ready is True
+    assert probe.lagging_core == ()
+    assert readiness_snapshot
+    assert all(entry.get("ts") for entry in readiness_snapshot.values())
+    assert "bootstrap-readiness-missing" not in {getattr(record, "event", None) for record in caplog.records}
