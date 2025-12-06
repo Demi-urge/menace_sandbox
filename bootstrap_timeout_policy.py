@@ -3644,13 +3644,29 @@ class SharedTimeoutCoordinator:
             self._component_lock_holder = holder
             return holder
 
+        def _holder_summary() -> str:
+            holder = self._component_lock_holder or {}
+            thread_name = holder.get("thread_name")
+            thread_id = holder.get("thread_id")
+            caller = holder.get("caller")
+            bits = [
+                str(thread_name) if thread_name else None,
+                f"#{thread_id}" if thread_id is not None else None,
+                f"@{caller}" if caller else None,
+            ]
+            summary = " ".join(filter(None, bits))
+            return summary or (str(holder) if holder else "unknown")
+
         def _log_waiting(event: str) -> None:
             payload["waited_for_lock"] = waited
             if self._component_lock_holder:
                 payload["lock_holder"] = dict(self._component_lock_holder)
             payload["event"] = event
             self.logger.warning(
-                "component window lock acquisition lagging", extra={"shared_timeout": dict(payload)}
+                "component window lock acquisition lagging after %.3fs (holder=%s)",
+                waited,
+                _holder_summary(),
+                extra={"shared_timeout": dict(payload)},
             )
 
         if self._component_lock_holder and self._component_lock_holder.get("thread_id") == threading.get_ident():
@@ -3674,7 +3690,7 @@ class SharedTimeoutCoordinator:
                         "component window lock acquisition exceeded "
                         f"{_COMPONENT_WINDOW_LOCK_MAX_WAIT_ENV} "
                         f"after {waited:.3f}s (budget={self._component_lock_max_wait}s; "
-                        f"holder={self._component_lock_holder})"
+                        f"holder={_holder_summary()})"
                     )
                 timeout = min(timeout, remaining)
             acquired = self._lock.acquire(timeout=timeout)
