@@ -430,6 +430,8 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
 
     all_pending = components and all(status == "pending" for status in components.values())
 
+    promote_components = False
+
     if components and not all_pending:
         _LAST_COMPONENT_SNAPSHOT = dict(components)
         _KEEPALIVE_GRACE_START = None
@@ -438,14 +440,20 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
         if _LAST_COMPONENT_SNAPSHOT:
             components = dict(_LAST_COMPONENT_SNAPSHOT)
             all_pending = all(status == "pending" for status in components.values())
-        if (not components or all_pending or _LAST_COMPONENT_SNAPSHOT is None) and (
-            now - _KEEPALIVE_GRACE_START
-        ) >= _KEEPALIVE_COMPONENT_GRACE_SECONDS and not has_component_readiness:
-            components = {component: "ready" for component in CORE_COMPONENTS}
-            all_pending = False
-            component_readiness = {
-                component: {"status": "ready", "ts": now} for component in CORE_COMPONENTS
-            }
+
+        grace_elapsed = (now - _KEEPALIVE_GRACE_START) >= _KEEPALIVE_COMPONENT_GRACE_SECONDS
+        if grace_elapsed and (not components or all_pending or _LAST_COMPONENT_SNAPSHOT is None):
+            promote_components = True
+
+    if promote_components:
+        promoted_components = dict(components) if isinstance(components, Mapping) else {}
+        for component in CORE_COMPONENTS:
+            promoted_components[component] = "ready"
+            component_readiness[component] = {"status": "ready", "ts": now}
+        components = promoted_components
+        all_pending = False
+        _LAST_COMPONENT_SNAPSHOT = dict(components)
+        _KEEPALIVE_GRACE_START = None
 
     online_state_with_components = dict(online_state)
     online_state_with_components["components"] = components
