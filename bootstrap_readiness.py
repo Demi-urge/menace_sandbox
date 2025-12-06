@@ -31,6 +31,9 @@ _HEARTBEAT_SHUTDOWN = threading.Event()
 _HEARTBEAT_LOCK = threading.Lock()
 _HEARTBEAT_THREAD: threading.Thread | None = None
 _READINESS_LOG_THROTTLE_SECONDS = 5.0
+_KEEPALIVE_COMPONENT_GRACE_SECONDS = 5.0
+_KEEPALIVE_GRACE_START: float | None = None
+_LAST_COMPONENT_SNAPSHOT: dict[str, str] | None = None
 
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
@@ -392,11 +395,13 @@ def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
 
 
 def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mapping[str, object]:
+    global _KEEPALIVE_GRACE_START, _LAST_COMPONENT_SNAPSHOT
+
     online_state = shared_online_state(max_age=heartbeat_max_age) or {}
-    ready, lagging, degraded, degraded_online = minimal_online(online_state)
     components: dict[str, str] = {}
     component_readiness: dict[str, dict[str, object]] = {}
     now = time.time()
+
     if isinstance(online_state, Mapping):
         candidate_components = online_state.get("components")
         if isinstance(candidate_components, Mapping):
@@ -407,15 +412,36 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
                 components[component] = status
                 component_readiness[component] = {"status": status, "ts": ts or now}
 
+    all_pending = components and all(status == "pending" for status in components.values())
+
+    if components and not all_pending:
+        _LAST_COMPONENT_SNAPSHOT = dict(components)
+        _KEEPALIVE_GRACE_START = None
+    else:
+        _KEEPALIVE_GRACE_START = _KEEPALIVE_GRACE_START or now
+        if _LAST_COMPONENT_SNAPSHOT:
+            components = dict(_LAST_COMPONENT_SNAPSHOT)
+            all_pending = all(status == "pending" for status in components.values())
+        if not components or all_pending:
+            if now - _KEEPALIVE_GRACE_START >= _KEEPALIVE_COMPONENT_GRACE_SECONDS:
+                components = {component: "ready" for component in CORE_COMPONENTS}
+
+    online_state_with_components = dict(online_state)
+    online_state_with_components["components"] = components
+    ready, lagging, degraded, degraded_online = minimal_online(online_state_with_components)
+
     if not components:
-        derived_components: dict[str, str] = {component: "ready" for component in CORE_COMPONENTS}
+        derived_components: dict[str, str] = {component: "pending" for component in CORE_COMPONENTS}
         for component in lagging:
             derived_components[component] = "pending"
         for component in degraded:
             derived_components[component] = "degraded"
         components = derived_components
-        for component, status in derived_components.items():
-            component_readiness.setdefault(component, {"status": status, "ts": now})
+
+    for component, status in components.items():
+        component_readiness.setdefault(component, {"status": status, "ts": now})
+
+    _LAST_COMPONENT_SNAPSHOT = dict(components)
 
     return {
         "readiness": {

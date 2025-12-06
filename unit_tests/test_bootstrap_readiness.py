@@ -1,4 +1,5 @@
 import logging
+import time
 
 from bootstrap_readiness import (
     CORE_COMPONENTS,
@@ -60,5 +61,36 @@ def test_component_readiness_timestamps_from_keepalive(tmp_path, monkeypatch, ca
         assert "no bootstrap readiness timestamps available" not in [
             record.message for record in caplog.records
         ]
+    finally:
+        stop_bootstrap_heartbeat_keepalive()
+
+
+def test_keepalive_grace_transitions_components_ready(tmp_path, monkeypatch):
+    heartbeat_path = tmp_path / "heartbeat.json"
+    monkeypatch.setenv("MENACE_BOOTSTRAP_WATCHDOG_PATH", str(heartbeat_path))
+
+    stop_bootstrap_heartbeat_keepalive()
+
+    # Accelerate grace period for test determinism.
+    import bootstrap_readiness
+
+    bootstrap_readiness._KEEPALIVE_COMPONENT_GRACE_SECONDS = 0.05
+    bootstrap_readiness._KEEPALIVE_GRACE_START = None
+    bootstrap_readiness._LAST_COMPONENT_SNAPSHOT = None
+
+    payload = _minimal_readiness_payload()
+    emit_bootstrap_heartbeat(payload)
+
+    time.sleep(0.06)
+
+    payload = _minimal_readiness_payload()
+    emit_bootstrap_heartbeat(payload)
+
+    signal = ReadinessSignal(poll_interval=0.01, max_age=1.0)
+    try:
+        assert signal.await_ready(timeout=1.0) is True
+        readiness = payload["readiness"]
+        assert all(status == "ready" for status in readiness["components"].values())
+        assert readiness["ready"] is True
     finally:
         stop_bootstrap_heartbeat_keepalive()
