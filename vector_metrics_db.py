@@ -2667,6 +2667,8 @@ class VectorMetricsDB:
         read_only: bool = False,
         allow_bootstrap_path_resolution: bool = False,
     ) -> None:
+        if path is None:
+            path = "vector_metrics.db"
         bootstrap_safe = bootstrap_safe or _env_flag(
             "VECTOR_METRICS_BOOTSTRAP_SAFE", False
         )
