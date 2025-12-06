@@ -2144,7 +2144,10 @@ def get_bootstrap_shared_vector_metrics_db(
 
 
 def activate_shared_vector_metrics_db(
-    *, reason: str = "warmup_complete", post_warmup: bool = False
+    *,
+    reason: str = "warmup_complete",
+    post_warmup: bool = False,
+    warmup: bool | None = None,
 ) -> "VectorMetricsDB | _BootstrapVectorMetricsStub":
     """Activate the shared vector metrics database after warmup."""
 
@@ -2153,7 +2156,7 @@ def activate_shared_vector_metrics_db(
         resolved_warmup,
         env_requested,
         bootstrap_env,
-    ) = resolve_vector_bootstrap_flags()
+    ) = resolve_vector_bootstrap_flags(warmup=warmup)
 
     bootstrap_context = bool(
         resolved_fast or resolved_warmup or env_requested or bootstrap_env
