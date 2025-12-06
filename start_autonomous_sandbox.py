@@ -268,6 +268,8 @@ def _start_bootstrap_keepalive_thread(logger: logging.Logger) -> None:
 
     global _BOOTSTRAP_KEEPALIVE_THREAD
 
+    SHUTDOWN_EVENT.clear()
+
     if isinstance(globals().get("_BOOTSTRAP_KEEPALIVE_THREAD"), threading.Thread):
         thread = globals()["_BOOTSTRAP_KEEPALIVE_THREAD"]
         if thread.is_alive():
