@@ -142,6 +142,20 @@ def qfe(monkeypatch):
     return qfe_mod
 
 
+def test_ensure_fresh_weights_accepts_bootstrap_kwargs(qfe, monkeypatch):
+    calls = []
+
+    def helper(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(qfe, "_CONTEXT_HELPERS", (helper, lambda *a, **k: None))
+
+    builder = object()
+    qfe.ensure_fresh_weights(builder, bootstrap=True, bootstrap_fast=False)
+
+    assert calls == [((builder,), {"bootstrap": True, "bootstrap_fast": False})]
+
+
 def test_context_block_compressed(qfe):
     class DummyPatchLogger:
         def track_contributors(self, *a, **k):

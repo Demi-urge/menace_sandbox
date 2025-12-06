@@ -151,9 +151,9 @@ def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., An
     return _CONTEXT_HELPERS
 
 
-def ensure_fresh_weights(builder: Any) -> Any:
+def ensure_fresh_weights(*args: Any, **kwargs: Any) -> Any:
     helper, _ = _get_context_builder_helpers()
-    return helper(builder)
+    return helper(*args, **kwargs)
 
 
 def create_context_builder(*args: Any, **kwargs: Any) -> Any:
