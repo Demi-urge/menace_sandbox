@@ -59,6 +59,7 @@ from bootstrap_timeout_policy import (
     guard_bootstrap_wait_env,
     get_bootstrap_guard_context,
     read_bootstrap_heartbeat,
+    emit_bootstrap_heartbeat,
     build_progress_signal_hook,
     derive_bootstrap_timeout_env,
     load_adaptive_stage_windows,
@@ -200,12 +201,62 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
 
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
+_DEFAULT_HEARTBEAT_MAX_AGE = 120.0
+
+
+def _bootstrap_keepalive_loop(logger: logging.Logger) -> None:
+    """Emit a periodic heartbeat while the bootstrap process is active."""
+
+    def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
+        try:
+            parsed = float(raw_value) if raw_value is not None else None
+        except (TypeError, ValueError):
+            parsed = None
+        return parsed if parsed and parsed > 0 else default
+
+    heartbeat_max_age = _coerce_heartbeat_max_age(
+        os.getenv("MENACE_BOOTSTRAP_HEARTBEAT_MAX_AGE"), _DEFAULT_HEARTBEAT_MAX_AGE
+    )
+    heartbeat_interval = max(1.0, heartbeat_max_age / 4.0)
+    heartbeat_payload = {
+        "readiness": {"core": True},
+        "component": "bootstrap_keepalive",
+    }
+
+    logger.info(
+        "bootstrap keepalive loop activated",
+        extra=log_record(
+            event="bootstrap-keepalive-start",
+            interval=heartbeat_interval,
+            max_age=heartbeat_max_age,
+        ),
+    )
+
+    try:
+        while not SHUTDOWN_EVENT.wait(timeout=heartbeat_interval):
+            try:
+                emit_bootstrap_heartbeat(heartbeat_payload)
+            except Exception:
+                logger.debug(
+                    "failed to emit bootstrap heartbeat", exc_info=True
+                )
+    finally:
+        logger.info(
+            "bootstrap keepalive loop stopped",
+            extra=log_record(event="bootstrap-keepalive-stop"),
+        )
 
 # --- BOOTSTRAP INITIALISATION FIX ---
 LOGGER.info("Starting Menace bootstrap sequence...")
 initialize_bootstrap_context()
 bootstrap_environment()
-LOGGER.info("Bootstrap heartbeat activated.")
+_BOOTSTRAP_KEEPALIVE_THREAD = threading.Thread(
+    target=_bootstrap_keepalive_loop,
+    name="bootstrap-keepalive",
+    args=(LOGGER,),
+    daemon=True,
+)
+_BOOTSTRAP_KEEPALIVE_THREAD.start()
 # ------------------------------------
 
 BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
@@ -346,6 +397,7 @@ def cleanup_and_exit(exit_code: int = 0) -> None:
 
 
 signal.signal(signal.SIGINT, handle_sigint)
+signal.signal(signal.SIGTERM, handle_sigint)
 
 
 def _read_json_file(path: Path) -> Mapping[str, Any]:
