@@ -3235,6 +3235,12 @@ class VectorMetricsDB:
         return self._resolved_path
 
     @property
+    def path(self) -> Path:
+        """Compatibility alias for :meth:`planned_path`."""
+
+        return self.planned_path()
+
+    @property
     def conn(self):
         return self._connection(
             reason=self._commit_reason,
