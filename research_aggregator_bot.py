@@ -97,6 +97,7 @@ _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
 _BOOTSTRAP_BROKER: object | None = None
 _BOOTSTRAP_GATE_TIMEOUT = 12.0
+_DEPENDENCY_RESOLUTION_WAIT_FLOOR = 0.05
 
 
 def _bootstrap_placeholders() -> tuple[object, object, object]:
@@ -185,6 +186,37 @@ _runtime_state: _RuntimeDependencies | None = None
 _runtime_placeholder: _RuntimeDependencies | None = None
 _runtime_initializing = False
 _self_coding_configured = False
+
+
+def _resolve_dependency_resolution_timeout(
+    requested: float | None = None,
+) -> float:
+    """Return the maximum wait time for dependency resolution loops."""
+
+    raw_timeout = os.getenv("MENACE_RUNTIME_DEPENDENCY_WAIT_SECS")
+    if raw_timeout:
+        try:
+            resolved = float(raw_timeout)
+        except ValueError:
+            logger.warning(
+                "Invalid MENACE_RUNTIME_DEPENDENCY_WAIT_SECS=%r; falling back to default", raw_timeout
+            )
+        else:
+            if resolved < _DEPENDENCY_RESOLUTION_WAIT_FLOOR:
+                logger.warning(
+                    "MENACE_RUNTIME_DEPENDENCY_WAIT_SECS below floor; clamping to %ss",
+                    _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
+                    extra={
+                        "requested_timeout": resolved,
+                        "timeout_floor": _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
+                    },
+                )
+            return max(resolved, _DEPENDENCY_RESOLUTION_WAIT_FLOOR)
+
+    fallback_timeout = requested if requested is not None else _resolve_bootstrap_wait_timeout()
+    if fallback_timeout is None:
+        fallback_timeout = 15.0
+    return max(float(fallback_timeout), _DEPENDENCY_RESOLUTION_WAIT_FLOOR)
 
 
 def _ensure_bootstrap_ready(
@@ -627,11 +659,13 @@ def _ensure_runtime_dependencies(
         elif _looks_like_pipeline_candidate(pipeline_hint):
             pipe = pipeline_hint
         wait_timeout = _resolve_bootstrap_wait_timeout()
-        if wait_timeout is None:
-            wait_timeout = 5.0
+        resolution_timeout = _resolve_dependency_resolution_timeout(wait_timeout)
+        resolution_deadline = time.perf_counter() + resolution_timeout
         wait_start = time.perf_counter()
         backoff = 0.01
         while pipe is None and _is_bootstrap_active():
+            if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
+                break
             broker_pipeline, broker_manager = dependency_broker.resolve()
             if manager_override is None and manager is None and broker_manager is not None:
                 manager_override = broker_manager
@@ -681,9 +715,19 @@ def _ensure_runtime_dependencies(
                     break
                 event = getattr(active_promise, "_event", None)
                 if event is not None:
-                    event.wait(timeout=backoff)
+                    remaining = resolution_deadline - time.perf_counter()
+                    if remaining <= 0:
+                        break
+                    event.wait(
+                        timeout=max(
+                            _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
+                            min(backoff, remaining),
+                        )
+                    )
+                    if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
+                        break
 
-            if wait_timeout is not None and (time.perf_counter() - wait_start) >= wait_timeout:
+            if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
                 break
             time.sleep(backoff)
             backoff = min(backoff * 2, 0.25)
@@ -709,10 +753,14 @@ def _ensure_runtime_dependencies(
                     if manager_override is None and manager is None:
                         manager_override = broker_manager
                 elif broker_expectation:
-                    wait_deadline = (
-                        None
-                        if wait_timeout is None
-                        else time.perf_counter() + max(wait_timeout, 0.05)
+                    wait_deadline = min(
+                        resolution_deadline,
+                        time.perf_counter()
+                        + (
+                            resolution_timeout
+                            if wait_timeout is None
+                            else max(wait_timeout, _DEPENDENCY_RESOLUTION_WAIT_FLOOR)
+                        ),
                     )
                     backoff = 0.01
                     while pipe is None and (
@@ -763,7 +811,16 @@ def _ensure_runtime_dependencies(
                     if active_promise is not None:
                         event = getattr(active_promise, "_event", None)
                         if event is not None:
-                            event.wait(timeout=wait_timeout)
+                            remaining = resolution_deadline - time.perf_counter()
+                            if remaining > 0:
+                                event.wait(
+                                    timeout=max(
+                                        _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
+                                        min(resolution_timeout, remaining),
+                                    )
+                                )
+                                if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
+                                    pipe = None
                         if getattr(active_promise, "done", False):
                             pipe_promised, promote_promised = active_promise.wait()
                             pipe = pipe_promised
@@ -776,13 +833,26 @@ def _ensure_runtime_dependencies(
 
                 if pipe is None:
                     waited = time.perf_counter() - wait_start
+                    broker_snapshot = {
+                        "active_owner": broker_active_owner,
+                        "active_pipeline": bool(broker_active_pipeline),
+                        "active_sentinel": bool(broker_active_sentinel),
+                        "broker_placeholder_seeded": broker_placeholder_seeded,
+                    }
                     message = (
                         "Active bootstrap requires an injected ModelAutomationPipeline "
                         "or manager; none available to reuse after waiting "
-                        f"{wait_timeout if wait_timeout is not None else round(waited, 3)}s "
+                        f"{round(resolution_timeout, 3)}s "
                         f"(waited {round(waited, 3)}s). Recursive bootstrap is blocked."
                     )
-                    logger.error(message)
+                    logger.error(
+                        message,
+                        extra={
+                            "event": "research-aggregator-runtime-dependency-timeout",
+                            "bot": "ResearchAggregatorBot",
+                            "broker_state": broker_snapshot,
+                        },
+                    )
                     raise RuntimeError(message)
             if pipe is None:
                 broker_pipeline, broker_manager = dependency_broker.resolve()
