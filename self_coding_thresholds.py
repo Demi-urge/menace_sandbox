@@ -272,6 +272,11 @@ def _safe_stat_mtime(cfg_path: Path, timeout: float) -> float | None:
     result: list[float] = []
     error: list[BaseException] = []
 
+    # Fast-path missing files to avoid emitting thread exception traces when the
+    # configuration has not been created yet.
+    if not cfg_path.exists():
+        return None
+
     def _do_stat() -> None:
         try:
             result.append(cfg_path.stat().st_mtime)
