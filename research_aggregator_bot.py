@@ -664,7 +664,8 @@ def _ensure_runtime_dependencies(
         wait_start = time.perf_counter()
         backoff = 0.01
         while pipe is None and _is_bootstrap_active():
-            if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
+            remaining_resolution = resolution_deadline - time.perf_counter()
+            if remaining_resolution <= 0:
                 break
             broker_pipeline, broker_manager = dependency_broker.resolve()
             if manager_override is None and manager is None and broker_manager is not None:
@@ -715,21 +716,21 @@ def _ensure_runtime_dependencies(
                     break
                 event = getattr(active_promise, "_event", None)
                 if event is not None:
-                    remaining = resolution_deadline - time.perf_counter()
-                    if remaining <= 0:
+                    if remaining_resolution <= 0:
                         break
                     event.wait(
                         timeout=max(
                             _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
-                            min(backoff, remaining),
+                            min(backoff, remaining_resolution),
                         )
                     )
                     if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
                         break
 
-            if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
+            remaining_resolution = resolution_deadline - time.perf_counter()
+            if remaining_resolution <= 0:
                 break
-            time.sleep(backoff)
+            time.sleep(min(backoff, max(remaining_resolution, _DEPENDENCY_RESOLUTION_WAIT_FLOOR)))
             backoff = min(backoff * 2, 0.25)
 
         if pipe is None:
@@ -839,11 +840,16 @@ def _ensure_runtime_dependencies(
                         "active_sentinel": bool(broker_active_sentinel),
                         "broker_placeholder_seeded": broker_placeholder_seeded,
                     }
+                    try:
+                        broker_snapshot["bootstrap_heartbeat"] = bool(read_bootstrap_heartbeat())
+                    except Exception:  # pragma: no cover - heartbeat best effort
+                        broker_snapshot["bootstrap_heartbeat"] = None
                     message = (
                         "Active bootstrap requires an injected ModelAutomationPipeline "
                         "or manager; none available to reuse after waiting "
                         f"{round(resolution_timeout, 3)}s "
-                        f"(waited {round(waited, 3)}s). Recursive bootstrap is blocked."
+                        f"(waited {round(waited, 3)}s). Recursive bootstrap is blocked. "
+                        f"Broker snapshot: {broker_snapshot}"
                     )
                     logger.error(
                         message,
@@ -909,7 +915,11 @@ def _ensure_runtime_dependencies(
                     message = (
                         "Recursive bootstrap detected while waiting for broker state; "
                         "refusing to start a new pipeline after "
-                        f"{round(waited, 3)}s"
+                        f"{round(waited, 3)}s. "
+                        f"Broker state: {{'active_owner': {broker_active_owner}, "
+                        f"'active_pipeline': {bool(broker_active_pipeline)}, "
+                        f"'active_sentinel': {bool(broker_active_sentinel)}, "
+                        f"'bootstrap_heartbeat': {bootstrap_heartbeat}}}"
                     )
                     logger.error(message)
                     raise RuntimeError(message)
