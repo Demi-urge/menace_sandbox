@@ -98,6 +98,7 @@ _BOOTSTRAP_SENTINEL: object | None = None
 _BOOTSTRAP_BROKER: object | None = None
 _BOOTSTRAP_GATE_TIMEOUT = 12.0
 _DEPENDENCY_RESOLUTION_WAIT_FLOOR = 0.05
+_DEPENDENCY_RESOLUTION_MAX_WAIT_DEFAULT = 3.0
 
 
 def _bootstrap_placeholders() -> tuple[object, object, object]:
@@ -219,8 +220,10 @@ def _resolve_dependency_resolution_timeout(
     return max(float(fallback_timeout), _DEPENDENCY_RESOLUTION_WAIT_FLOOR)
 
 
-def _resolve_dependency_max_wait(default: float) -> float:
+def _resolve_dependency_max_wait(default: float, *, cap: float | None = None) -> float:
     """Resolve the hard cap for dependency wait/backoff loops."""
+
+    cap_timeout = _DEPENDENCY_RESOLUTION_MAX_WAIT_DEFAULT if cap is None else cap
 
     raw_timeout = os.getenv("MENACE_RUNTIME_DEPENDENCY_MAX_WAIT_SECS")
     if raw_timeout:
@@ -243,7 +246,7 @@ def _resolve_dependency_max_wait(default: float) -> float:
                 )
             return min(default, max(parsed, _DEPENDENCY_RESOLUTION_WAIT_FLOOR))
 
-    return default
+    return min(default, max(cap_timeout, _DEPENDENCY_RESOLUTION_WAIT_FLOOR))
 
 
 def _ensure_bootstrap_ready(
@@ -687,7 +690,9 @@ def _ensure_runtime_dependencies(
             pipe = pipeline_hint
         wait_timeout = _resolve_bootstrap_wait_timeout()
         resolution_timeout = _resolve_dependency_resolution_timeout(wait_timeout)
-        max_resolution_wait = _resolve_dependency_max_wait(resolution_timeout)
+        max_resolution_wait = _resolve_dependency_max_wait(
+            resolution_timeout, cap=_DEPENDENCY_RESOLUTION_MAX_WAIT_DEFAULT
+        )
         resolution_deadline = time.perf_counter() + max_resolution_wait
         wait_start = time.perf_counter()
         backoff = 0.01
@@ -698,12 +703,19 @@ def _ensure_runtime_dependencies(
                 "active_pipeline": bool(broker_active_pipeline),
                 "active_sentinel": bool(broker_active_sentinel),
                 "broker_placeholder_seeded": broker_placeholder_seeded,
+                "pipeline_hint": _looks_like_pipeline_candidate(pipeline_hint),
+                "placeholder_pipeline": _looks_like_pipeline_candidate(placeholder_pipeline),
+                "manager_override": manager_override is not None,
             }
             try:
                 snapshot["bootstrap_heartbeat"] = bool(read_bootstrap_heartbeat())
             except Exception:  # pragma: no cover - heartbeat best effort
                 snapshot["bootstrap_heartbeat"] = None
             return snapshot
+
+        def _enforce_resolution_deadline(reason: str) -> None:
+            if time.perf_counter() >= resolution_deadline:
+                _raise_resolution_deadline(reason)
 
         def _raise_resolution_deadline(reason: str) -> None:
             waited = time.perf_counter() - wait_start
@@ -726,7 +738,7 @@ def _ensure_runtime_dependencies(
         while pipe is None and _is_bootstrap_active():
             remaining_resolution = resolution_deadline - time.perf_counter()
             if remaining_resolution <= 0:
-                break
+                _raise_resolution_deadline("waiting for broker advertisement")
             broker_pipeline, broker_manager = dependency_broker.resolve()
             if manager_override is None and manager is None and broker_manager is not None:
                 manager_override = broker_manager
@@ -776,20 +788,18 @@ def _ensure_runtime_dependencies(
                     break
                 event = getattr(active_promise, "_event", None)
                 if event is not None:
-                    if remaining_resolution <= 0:
-                        break
+                    _enforce_resolution_deadline("waiting for broker advertisement")
                     event.wait(
                         timeout=max(
                             _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
                             min(backoff, remaining_resolution),
                         )
                     )
-                    if resolution_deadline is not None and time.perf_counter() >= resolution_deadline:
-                        break
+                    _enforce_resolution_deadline("waiting for broker advertisement")
 
             remaining_resolution = resolution_deadline - time.perf_counter()
             if remaining_resolution <= 0:
-                break
+                _raise_resolution_deadline("waiting for broker advertisement")
             time.sleep(min(backoff, max(remaining_resolution, _DEPENDENCY_RESOLUTION_WAIT_FLOOR)))
             backoff = min(backoff * 2, 0.25)
 
@@ -854,6 +864,9 @@ def _ensure_runtime_dependencies(
                             break
                         if not broker_active_owner and not broker_active_pipeline:
                             break
+                        _enforce_resolution_deadline(
+                            "waiting for broker placeholder reuse"
+                        )
                         time.sleep(backoff)
                         backoff = min(backoff * 2, 0.25)
                 if pipe is None and broker_active_pipeline is not None:

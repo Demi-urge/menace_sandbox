@@ -969,6 +969,107 @@ def test_dependency_resolution_deadline(monkeypatch):
     module.prepare_pipeline_for_bootstrap.assert_not_called()
 
 
+def test_dependency_resolution_caps_with_snapshot(monkeypatch):
+    """Missing broker dependencies should raise quickly with snapshot context."""
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        mock_registry.return_value = mock.Mock(name="registry")
+        mock_data_bot.return_value = mock.Mock(name="data_bot")
+        import menace_sandbox.coding_bot_interface as cbi
+        import bootstrap_readiness
+
+        broker_stub = SimpleNamespace(
+            resolve=lambda: (None, None),
+            active_pipeline=None,
+            active_sentinel=None,
+            active_owner=True,
+            advertise=lambda **_k: None,
+        )
+
+        try:
+            cbi._BOOTSTRAP_DEPENDENCY_BROKER.set(broker_stub)
+        except Exception:
+            pass
+
+        monkeypatch.setattr(cbi, "_bootstrap_dependency_broker", lambda: broker_stub)
+        monkeypatch.setattr(cbi, "get_active_bootstrap_pipeline", lambda: (None, None))
+        monkeypatch.setattr(
+            cbi,
+            "advertise_bootstrap_placeholder",
+            lambda dependency_broker=None, pipeline=None, manager=None, owner=True: (None, None),
+        )
+        monkeypatch.setattr(cbi, "read_bootstrap_heartbeat", lambda: None)
+
+        readiness_stub = SimpleNamespace(
+            await_ready=lambda timeout=None: None,
+            describe=lambda: "ready",
+        )
+        monkeypatch.setattr(bootstrap_readiness, "readiness_signal", lambda: readiness_stub)
+        module = _import_fresh()
+
+    broker = SimpleNamespace(
+        resolve=lambda: (None, None),
+        active_pipeline=None,
+        active_sentinel=None,
+        active_owner=True,
+        advertise=lambda **_k: None,
+    )
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(depth=1, helper_promotion_callbacks=[])
+    module._bootstrap_dependency_broker = lambda: broker
+    module._current_bootstrap_context = lambda: None
+    module._peek_owner_promise = lambda *_a, **_k: None
+    module._GLOBAL_BOOTSTRAP_COORDINATOR = SimpleNamespace(peek_active=lambda: None)
+    module._using_bootstrap_sentinel = lambda *_a, **_k: False
+    module.read_bootstrap_heartbeat = lambda: None
+    module._resolve_bootstrap_wait_timeout = lambda *_a, **_k: None
+    module._resolve_dependency_resolution_timeout = lambda *_a, **_k: 1.0
+    module._resolve_dependency_max_wait = lambda default, cap=None: min(default, 0.02)
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+    module.advertise_bootstrap_placeholder = mock.Mock(return_value=(None, None))
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+
+    counter = {"now": 0.0}
+
+    def fake_perf_counter() -> float:
+        counter["now"] += 0.006
+        return counter["now"]
+
+    def fake_sleep(duration: float) -> None:
+        counter["now"] += duration
+
+    monkeypatch.setattr(module.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(module.time, "sleep", fake_sleep)
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(module, "internalize_coding_bot", mock.Mock(return_value=None))
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        module._ensure_runtime_dependencies()
+
+    assert "Broker snapshot" in str(excinfo.value)
+    assert counter["now"] < 0.5
+    module.prepare_pipeline_for_bootstrap.assert_not_called()
+
+
 def test_active_heartbeat_uses_broker_pipeline(monkeypatch):
     """A heartbeat with advertised dependencies should reuse the broker pipeline."""
 
