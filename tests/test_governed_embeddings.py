@@ -249,6 +249,39 @@ def test_get_embedder_defaults_local_when_snapshot_incomplete(monkeypatch, tmp_p
     assert embedder is fallback
 
 
+def test_bootstrap_offline_falls_back_without_wait(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_CACHE", str(tmp_path))
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
+    monkeypatch.setattr(governed_embeddings, "model", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_STOP_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_EVENT", threading.Event())
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_INIT_THREAD", None)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
+    monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_REACHED", False)
+    monkeypatch.setattr(governed_embeddings, "_HF_TIMEOUT_CONFIGURED", False)
+    monkeypatch.setattr(governed_embeddings, "_HF_TIMEOUT_SETTINGS", {})
+    monkeypatch.setattr(governed_embeddings, "_cleanup_hf_locks", lambda *a, **k: None)
+
+    fallback = object()
+    monkeypatch.setattr(governed_embeddings, "_load_bundled_embedder", lambda: fallback)
+    monkeypatch.setattr(governed_embeddings, "SentenceTransformer", None)
+
+    deadline = time.perf_counter() + 0.25
+    with caplog.at_level(logging.WARNING):
+        result = governed_embeddings._load_embedder(
+            stop_event=threading.Event(),
+            bootstrap_mode=True,
+            budget_deadline=deadline,
+            requester="offline-test",
+        )
+
+    assert result is fallback
+    assert time.perf_counter() < deadline
+    assert any("local-only embedder requested" in r.msg for r in caplog.records)
+
+
 def test_initialise_embedder_wait_capped(monkeypatch, caplog):
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER", None)
     monkeypatch.setattr(governed_embeddings, "_EMBEDDER_TIMEOUT_LOGGED", False)
