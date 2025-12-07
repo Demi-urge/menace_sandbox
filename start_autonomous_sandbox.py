@@ -45,6 +45,7 @@ from coding_bot_interface import (
     advertise_bootstrap_placeholder,
 )
 from bootstrap_manager import bootstrap_manager
+from system_binary_check import assert_required_system_binaries
 
 _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
     dependency_broker=_bootstrap_dependency_broker()
@@ -2417,6 +2418,8 @@ def main(argv: list[str] | None = None) -> None:
     """
 
     print("[start_autonomous_sandbox] main() entry", flush=True)
+
+    assert_required_system_binaries()
 
     argv_list = list(sys.argv[1:] if argv is None else argv)
     if "--health-check" in argv_list and not os.getenv("SANDBOX_DEPENDENCY_MODE"):

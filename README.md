@@ -1242,6 +1242,22 @@ Launch the autonomous sandbox with the default environment presets:
 scripts/start_autonomous.sh
 ```
 
+Before invoking ``start_autonomous_sandbox.py`` or the helper scripts above,
+ensure the system binaries ``ffmpeg``, ``tesseract`` (``tesseract-ocr`` on
+Debian/Ubuntu) and ``qemu-system-x86_64`` are installed. Run the automated
+installer when supported:
+
+```bash
+python setup_dependencies.py
+```
+
+On systems where installation must be manual, use the preflight checker to
+confirm the tools are available and follow the printed instructions if not:
+
+```bash
+python scripts/check_system_binaries.py
+```
+
 The helper creates a `.env` file with safe defaults via `auto_env_setup.ensure_env` and then
 starts `run_autonomous.py`.
 
