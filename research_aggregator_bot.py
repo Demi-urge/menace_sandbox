@@ -219,6 +219,33 @@ def _resolve_dependency_resolution_timeout(
     return max(float(fallback_timeout), _DEPENDENCY_RESOLUTION_WAIT_FLOOR)
 
 
+def _resolve_dependency_max_wait(default: float) -> float:
+    """Resolve the hard cap for dependency wait/backoff loops."""
+
+    raw_timeout = os.getenv("MENACE_RUNTIME_DEPENDENCY_MAX_WAIT_SECS")
+    if raw_timeout:
+        try:
+            parsed = float(raw_timeout)
+        except ValueError:
+            logger.warning(
+                "Invalid MENACE_RUNTIME_DEPENDENCY_MAX_WAIT_SECS=%r; using dependency timeout default",
+                raw_timeout,
+            )
+        else:
+            if parsed < _DEPENDENCY_RESOLUTION_WAIT_FLOOR:
+                logger.warning(
+                    "MENACE_RUNTIME_DEPENDENCY_MAX_WAIT_SECS below floor; clamping to %ss",
+                    _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
+                    extra={
+                        "requested_timeout": parsed,
+                        "timeout_floor": _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
+                    },
+                )
+            return min(default, max(parsed, _DEPENDENCY_RESOLUTION_WAIT_FLOOR))
+
+    return default
+
+
 def _ensure_bootstrap_ready(
     component: str, *, timeout: float = 15.0, allow_degraded: bool = False
 ) -> bool:
@@ -660,9 +687,42 @@ def _ensure_runtime_dependencies(
             pipe = pipeline_hint
         wait_timeout = _resolve_bootstrap_wait_timeout()
         resolution_timeout = _resolve_dependency_resolution_timeout(wait_timeout)
-        resolution_deadline = time.perf_counter() + resolution_timeout
+        max_resolution_wait = _resolve_dependency_max_wait(resolution_timeout)
+        resolution_deadline = time.perf_counter() + max_resolution_wait
         wait_start = time.perf_counter()
         backoff = 0.01
+
+        def _broker_snapshot() -> dict[str, object]:
+            snapshot = {
+                "active_owner": broker_active_owner,
+                "active_pipeline": bool(broker_active_pipeline),
+                "active_sentinel": bool(broker_active_sentinel),
+                "broker_placeholder_seeded": broker_placeholder_seeded,
+            }
+            try:
+                snapshot["bootstrap_heartbeat"] = bool(read_bootstrap_heartbeat())
+            except Exception:  # pragma: no cover - heartbeat best effort
+                snapshot["bootstrap_heartbeat"] = None
+            return snapshot
+
+        def _raise_resolution_deadline(reason: str) -> None:
+            waited = time.perf_counter() - wait_start
+            snapshot = _broker_snapshot()
+            message = (
+                "Active bootstrap requires an injected ModelAutomationPipeline "
+                f"or manager; deadline reached after waiting {round(waited, 3)}s "
+                f"(cap {round(max_resolution_wait, 3)}s) while {reason}. "
+                f"Broker snapshot: {snapshot}"
+            )
+            logger.error(
+                message,
+                extra={
+                    "event": "research-aggregator-runtime-dependency-deadline",
+                    "bot": "ResearchAggregatorBot",
+                    "broker_state": snapshot,
+                },
+            )
+            raise RuntimeError(message)
         while pipe is None and _is_bootstrap_active():
             remaining_resolution = resolution_deadline - time.perf_counter()
             if remaining_resolution <= 0:
@@ -732,6 +792,9 @@ def _ensure_runtime_dependencies(
                 break
             time.sleep(min(backoff, max(remaining_resolution, _DEPENDENCY_RESOLUTION_WAIT_FLOOR)))
             backoff = min(backoff * 2, 0.25)
+
+        if pipe is None and time.perf_counter() >= resolution_deadline:
+            _raise_resolution_deadline("waiting for broker advertisement")
 
         if pipe is None:
             bootstrap_active = _is_bootstrap_active()
@@ -833,33 +896,7 @@ def _ensure_runtime_dependencies(
                                 )
 
                 if pipe is None:
-                    waited = time.perf_counter() - wait_start
-                    broker_snapshot = {
-                        "active_owner": broker_active_owner,
-                        "active_pipeline": bool(broker_active_pipeline),
-                        "active_sentinel": bool(broker_active_sentinel),
-                        "broker_placeholder_seeded": broker_placeholder_seeded,
-                    }
-                    try:
-                        broker_snapshot["bootstrap_heartbeat"] = bool(read_bootstrap_heartbeat())
-                    except Exception:  # pragma: no cover - heartbeat best effort
-                        broker_snapshot["bootstrap_heartbeat"] = None
-                    message = (
-                        "Active bootstrap requires an injected ModelAutomationPipeline "
-                        "or manager; none available to reuse after waiting "
-                        f"{round(resolution_timeout, 3)}s "
-                        f"(waited {round(waited, 3)}s). Recursive bootstrap is blocked. "
-                        f"Broker snapshot: {broker_snapshot}"
-                    )
-                    logger.error(
-                        message,
-                        extra={
-                            "event": "research-aggregator-runtime-dependency-timeout",
-                            "bot": "ResearchAggregatorBot",
-                            "broker_state": broker_snapshot,
-                        },
-                    )
-                    raise RuntimeError(message)
+                    _raise_resolution_deadline("waiting for broker placeholder reuse")
             if pipe is None:
                 broker_pipeline, broker_manager = dependency_broker.resolve()
 

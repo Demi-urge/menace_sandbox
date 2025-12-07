@@ -15,7 +15,7 @@ class _DummyBroker:
         return None
 
 
-def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
+def _setup_runtime_dependencies(monkeypatch, *, heartbeat: bool = False, max_wait: float | None = None):
     import importlib
     import sys
     from pathlib import Path
@@ -58,18 +58,18 @@ def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
             persist_sc_thresholds=lambda *_a, **_k: None,
         ),
     )
-    dummy_broker = _DummyBroker()
+    broker = _DummyBroker()
     register(
         "coding_bot_interface",
         types.SimpleNamespace(
             _BOOTSTRAP_STATE=types.SimpleNamespace(depth=0, helper_promotion_callbacks=[]),
             _looks_like_pipeline_candidate=lambda obj: obj is not None,
-            _bootstrap_dependency_broker=lambda: dummy_broker,
+            _bootstrap_dependency_broker=lambda: broker,
             advertise_bootstrap_placeholder=lambda dependency_broker=None, pipeline=None, manager=None, owner=True: (
                 pipeline,
                 manager,
             ),
-            read_bootstrap_heartbeat=lambda: False,
+            read_bootstrap_heartbeat=lambda: heartbeat,
             get_active_bootstrap_pipeline=lambda: (None, None),
             _current_bootstrap_context=lambda: None,
             _using_bootstrap_sentinel=lambda *_a, **_k: False,
@@ -94,7 +94,7 @@ def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
     )
     register(
         "bootstrap_gate",
-        types.SimpleNamespace(resolve_bootstrap_placeholders=lambda **_k: (None, None, dummy_broker)),
+        types.SimpleNamespace(resolve_bootstrap_placeholders=lambda **_k: (None, None, broker)),
     )
     readiness = types.SimpleNamespace(
         await_ready=lambda timeout=0: True,
@@ -121,7 +121,7 @@ def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
             get_thresholds=lambda *_a, **_k: types.SimpleNamespace(
                 roi_drop=0, error_increase=0, test_failure_increase=0
             )
-        ),
+        )
     )
     register(
         "shared_evolution_orchestrator",
@@ -171,15 +171,12 @@ def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
         ),
     )
 
-    import menace_sandbox.research_aggregator_bot as rab
-
-    broker = _DummyBroker()
+    rab = importlib.import_module("menace_sandbox.research_aggregator_bot")
 
     monkeypatch.setattr(rab, "_bootstrap_placeholders", lambda: (None, None, broker))
     monkeypatch.setattr(rab, "bootstrap_state_snapshot", lambda: {"ready": True})
     monkeypatch.setattr(rab, "get_active_bootstrap_pipeline", lambda: (None, None))
     monkeypatch.setattr(rab, "_current_bootstrap_context", lambda: None)
-    monkeypatch.setattr(rab, "read_bootstrap_heartbeat", lambda: False)
     monkeypatch.setattr(rab, "_using_bootstrap_sentinel", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(rab, "_bootstrap_dependency_broker", lambda: broker)
     monkeypatch.setattr(rab, "_resolve_pipeline_cls", lambda: object)
@@ -188,6 +185,18 @@ def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
     )
     monkeypatch.setattr(rab, "_resolve_bootstrap_wait_timeout", lambda: 0.05)
     monkeypatch.setenv("MENACE_RUNTIME_DEPENDENCY_WAIT_SECS", "0.05")
+    if max_wait is not None:
+        monkeypatch.setenv("MENACE_RUNTIME_DEPENDENCY_MAX_WAIT_SECS", str(max_wait))
+    else:
+        monkeypatch.delenv("MENACE_RUNTIME_DEPENDENCY_MAX_WAIT_SECS", raising=False)
+
+    monkeypatch.setattr(rab, "read_bootstrap_heartbeat", lambda: heartbeat)
+
+    return rab, broker
+
+
+def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
+    rab, _broker = _setup_runtime_dependencies(monkeypatch)
 
     with pytest.raises(RuntimeError) as excinfo:
         rab._ensure_runtime_dependencies()
@@ -196,3 +205,16 @@ def test_runtime_dependencies_fail_fast_when_broker_absent(monkeypatch):
     assert "bootstrap" in message.lower()
     assert "broker" in message.lower()
     assert "heartbeat" in message.lower()
+
+
+def test_runtime_dependencies_timeout_includes_snapshot(monkeypatch):
+    rab, broker = _setup_runtime_dependencies(monkeypatch, heartbeat=True, max_wait=0.02)
+    broker.active_owner = True
+
+    with pytest.raises(RuntimeError) as excinfo:
+        rab._ensure_runtime_dependencies()
+
+    message = str(excinfo.value).lower()
+    assert "deadline" in message
+    assert "broker snapshot" in message
+    assert "heartbeat" in message
