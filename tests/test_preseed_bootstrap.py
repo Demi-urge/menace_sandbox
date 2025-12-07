@@ -840,131 +840,213 @@ def test_research_aggregator_placeholder_skip_avoids_timeout(monkeypatch, caplog
     monkeypatch.setenv("MENACE_BOOTSTRAP_SKIP_AGGREGATOR_UNTIL_EMBEDDER_READY", "1")
 
     bootstrap._BOOTSTRAP_EMBEDDER_READY.clear()
-    monkeypatch.addfinalizer(bootstrap._BOOTSTRAP_EMBEDDER_READY.set)
+    try:
+        descriptions: list[str] = []
 
-    descriptions: list[str] = []
+        class DummyManager:
+            engine = "engine"
+            bootstrap_runtime_active = True
 
-    class DummyManager:
-        engine = "engine"
-        bootstrap_runtime_active = True
+            def __call__(self, *_args, **_kwargs):  # pragma: no cover - compatibility hook
+                return self
 
-        def __call__(self, *_args, **_kwargs):  # pragma: no cover - compatibility hook
-            return self
+        dummy_manager = DummyManager()
 
-    dummy_manager = DummyManager()
+        @contextlib.contextmanager
+        def fake_fallback_helper_manager(**_kwargs):
+            yield dummy_manager
 
-    @contextlib.contextmanager
-    def fake_fallback_helper_manager(**_kwargs):
-        yield dummy_manager
+        def fake_context_builder(**_kwargs):
+            return object()
 
-    def fake_context_builder(**_kwargs):
-        return object()
+        monkeypatch.setattr(bootstrap, "_is_vector_bootstrap_heavy", lambda *_a, **_k: False)
+        monkeypatch.setattr(bootstrap, "fallback_helper_manager", fake_fallback_helper_manager)
+        monkeypatch.setattr(bootstrap, "create_context_builder", fake_context_builder)
+        monkeypatch.setattr(bootstrap, "BotRegistry", lambda: object())
+        monkeypatch.setattr(bootstrap, "DataBot", lambda start_server=False: object())
+        monkeypatch.setattr(bootstrap, "SelfCodingEngine", lambda *_a, **_k: object())
+        monkeypatch.setattr(bootstrap, "MenaceMemoryManager", lambda: object())
+        monkeypatch.setattr(
+            bootstrap, "prepare_pipeline_for_bootstrap", lambda **_k: (object(), lambda *_a, **_k: None)
+        )
+        monkeypatch.setattr(bootstrap, "_push_bootstrap_context", lambda **_k: {"placeholder": True})
+        monkeypatch.setattr(bootstrap, "_pop_bootstrap_context", lambda *_a, **_k: None)
+        monkeypatch.setattr(bootstrap, "_seed_research_aggregator_context", lambda **_k: None)
+        monkeypatch.setattr(bootstrap, "get_thresholds", lambda *_a, **_k: type("Thresholds", (), {
+            "roi_drop": 1,
+            "error_increase": 2,
+            "test_failure_increase": 3,
+        })())
+        monkeypatch.setattr(bootstrap, "persist_sc_thresholds", lambda **_k: None)
+        monkeypatch.setattr(bootstrap, "ThresholdService", lambda: object())
+        monkeypatch.setattr(bootstrap, "internalize_coding_bot", lambda *_a, **_k: dummy_manager)
 
-    monkeypatch.setattr(bootstrap, "_is_vector_bootstrap_heavy", lambda *_a, **_k: False)
-    monkeypatch.setattr(bootstrap, "fallback_helper_manager", fake_fallback_helper_manager)
-    monkeypatch.setattr(bootstrap, "create_context_builder", fake_context_builder)
-    monkeypatch.setattr(bootstrap, "BotRegistry", lambda: object())
-    monkeypatch.setattr(bootstrap, "DataBot", lambda start_server=False: object())
-    monkeypatch.setattr(bootstrap, "SelfCodingEngine", lambda *_a, **_k: object())
-    monkeypatch.setattr(bootstrap, "MenaceMemoryManager", lambda: object())
-    monkeypatch.setattr(
-        bootstrap, "prepare_pipeline_for_bootstrap", lambda **_k: (object(), lambda *_a, **_k: None)
-    )
-    monkeypatch.setattr(bootstrap, "_push_bootstrap_context", lambda **_k: {"placeholder": True})
-    monkeypatch.setattr(bootstrap, "_pop_bootstrap_context", lambda *_a, **_k: None)
-    monkeypatch.setattr(bootstrap, "_seed_research_aggregator_context", lambda **_k: None)
-    monkeypatch.setattr(bootstrap, "get_thresholds", lambda *_a, **_k: type("Thresholds", (), {
-        "roi_drop": 1,
-        "error_increase": 2,
-        "test_failure_increase": 3,
-    })())
-    monkeypatch.setattr(bootstrap, "persist_sc_thresholds", lambda **_k: None)
-    monkeypatch.setattr(bootstrap, "ThresholdService", lambda: object())
-    monkeypatch.setattr(bootstrap, "internalize_coding_bot", lambda *_a, **_k: dummy_manager)
+        def fake_run_with_timeout(fn, *, description: str, **kwargs):
+            descriptions.append(description)
+            if description == "prepare_pipeline_for_bootstrap":
+                return (object(), lambda *_a, **_k: None)
+            if description == "_seed_research_aggregator_context placeholder":
+                raise TimeoutError("research aggregator placeholder should be skipped")
+            return None if fn is None else fn(**kwargs)
 
-    def fake_run_with_timeout(fn, *, description: str, **kwargs):
-        descriptions.append(description)
-        if description == "prepare_pipeline_for_bootstrap":
-            return (object(), lambda *_a, **_k: None)
-        if description == "_seed_research_aggregator_context placeholder":
-            raise TimeoutError("research aggregator placeholder should be skipped")
-        return None if fn is None else fn(**kwargs)
+        monkeypatch.setattr(bootstrap, "_run_with_timeout", fake_run_with_timeout)
 
-    monkeypatch.setattr(bootstrap, "_run_with_timeout", fake_run_with_timeout)
+        context = bootstrap.initialize_bootstrap_context(use_cache=False)
 
-    context = bootstrap.initialize_bootstrap_context(use_cache=False)
+        assert context["manager"] is dummy_manager
+        assert "_seed_research_aggregator_context placeholder" not in descriptions
+        assert any(
+            "aggregator context not seeded" in rec.message for rec in caplog.records
+        )
+    finally:
+        bootstrap._BOOTSTRAP_EMBEDDER_READY.set()
 
-    assert context["manager"] is dummy_manager
-    assert "_seed_research_aggregator_context placeholder" not in descriptions
-    assert any(
-        "aggregator context not seeded" in rec.message for rec in caplog.records
-    )
+
+def test_research_aggregator_final_skip_when_embedder_unready(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING)
+    monkeypatch.setenv("MENACE_BOOTSTRAP_SKIP_AGGREGATOR_UNTIL_EMBEDDER_READY", "1")
+
+    bootstrap._BOOTSTRAP_EMBEDDER_READY.clear()
+    try:
+        descriptions: list[str] = []
+
+        class DummyManager:
+            engine = "engine"
+            bootstrap_runtime_active = True
+
+            def __call__(self, *_args, **_kwargs):  # pragma: no cover - compatibility hook
+                return self
+
+        dummy_manager = DummyManager()
+
+        @contextlib.contextmanager
+        def fake_fallback_helper_manager(**_kwargs):
+            yield dummy_manager
+
+        def fake_context_builder(**_kwargs):
+            return object()
+
+        monkeypatch.setattr(bootstrap, "_is_vector_bootstrap_heavy", lambda *_a, **_k: False)
+        monkeypatch.setattr(bootstrap, "fallback_helper_manager", fake_fallback_helper_manager)
+        monkeypatch.setattr(bootstrap, "create_context_builder", fake_context_builder)
+        monkeypatch.setattr(bootstrap, "BotRegistry", lambda: object())
+        monkeypatch.setattr(bootstrap, "DataBot", lambda start_server=False: object())
+        monkeypatch.setattr(bootstrap, "SelfCodingEngine", lambda *_a, **_k: object())
+        monkeypatch.setattr(bootstrap, "MenaceMemoryManager", lambda: object())
+        monkeypatch.setattr(
+            bootstrap,
+            "prepare_pipeline_for_bootstrap",
+            lambda **_k: (object(), lambda *_a, **_k: None),
+        )
+        monkeypatch.setattr(bootstrap, "_push_bootstrap_context", lambda **_k: {"placeholder": True})
+        monkeypatch.setattr(bootstrap, "_pop_bootstrap_context", lambda *_a, **_k: None)
+        monkeypatch.setattr(bootstrap, "_seed_research_aggregator_context", lambda **_k: None)
+        monkeypatch.setattr(
+            bootstrap,
+            "get_thresholds",
+            lambda *_a, **_k: type(
+                "Thresholds",
+                (),
+                {
+                    "roi_drop": 1,
+                    "error_increase": 2,
+                    "test_failure_increase": 3,
+                },
+            )(),
+        )
+        monkeypatch.setattr(bootstrap, "persist_sc_thresholds", lambda **_k: None)
+        monkeypatch.setattr(bootstrap, "ThresholdService", lambda: object())
+        monkeypatch.setattr(bootstrap, "internalize_coding_bot", lambda *_a, **_k: dummy_manager)
+
+        def fake_run_with_timeout(fn, *, description: str, **kwargs):
+            descriptions.append(description)
+            if description in {
+                "_seed_research_aggregator_context placeholder",
+                "_seed_research_aggregator_context final",
+            }:
+                raise AssertionError("research aggregator seeding should be skipped")
+            if description == "prepare_pipeline_for_bootstrap":
+                return (object(), lambda *_a, **_k: None)
+            return None if fn is None else fn(**kwargs)
+
+        monkeypatch.setattr(bootstrap, "_run_with_timeout", fake_run_with_timeout)
+
+        context = bootstrap.initialize_bootstrap_context(use_cache=False)
+
+        assert context["manager"] is dummy_manager
+        assert "_seed_research_aggregator_context final" not in descriptions
+        assert any(
+            "aggregator context not seeded" in rec.message for rec in caplog.records
+        )
+    finally:
+        bootstrap._BOOTSTRAP_EMBEDDER_READY.set()
 
 
 def test_research_aggregator_timeout_extends_when_embedder_unready(monkeypatch):
     bootstrap._BOOTSTRAP_EMBEDDER_READY.clear()
-    monkeypatch.addfinalizer(bootstrap._BOOTSTRAP_EMBEDDER_READY.set)
+    try:
+        timeouts: dict[str, float | None] = {}
 
-    timeouts: dict[str, float | None] = {}
+        class DummyManager:
+            engine = "engine"
+            bootstrap_runtime_active = True
 
-    class DummyManager:
-        engine = "engine"
-        bootstrap_runtime_active = True
+            def __call__(self, *_args, **_kwargs):  # pragma: no cover - compatibility hook
+                return self
 
-        def __call__(self, *_args, **_kwargs):  # pragma: no cover - compatibility hook
-            return self
+        dummy_manager = DummyManager()
 
-    dummy_manager = DummyManager()
+        @contextlib.contextmanager
+        def fake_fallback_helper_manager(**_kwargs):
+            yield dummy_manager
 
-    @contextlib.contextmanager
-    def fake_fallback_helper_manager(**_kwargs):
-        yield dummy_manager
+        def fake_context_builder(**_kwargs):
+            return object()
 
-    def fake_context_builder(**_kwargs):
-        return object()
+        monkeypatch.setattr(bootstrap, "_is_vector_bootstrap_heavy", lambda *_a, **_k: False)
+        monkeypatch.setattr(bootstrap, "fallback_helper_manager", fake_fallback_helper_manager)
+        monkeypatch.setattr(bootstrap, "create_context_builder", fake_context_builder)
+        monkeypatch.setattr(bootstrap, "BotRegistry", lambda: object())
+        monkeypatch.setattr(bootstrap, "DataBot", lambda start_server=False: object())
+        monkeypatch.setattr(bootstrap, "SelfCodingEngine", lambda *_a, **_k: object())
+        monkeypatch.setattr(bootstrap, "MenaceMemoryManager", lambda: object())
+        monkeypatch.setattr(
+            bootstrap, "prepare_pipeline_for_bootstrap", lambda **_k: (object(), lambda *_a, **_k: None)
+        )
+        monkeypatch.setattr(bootstrap, "_push_bootstrap_context", lambda **_k: {"placeholder": True})
+        monkeypatch.setattr(bootstrap, "_pop_bootstrap_context", lambda *_a, **_k: None)
+        monkeypatch.setattr(bootstrap, "_seed_research_aggregator_context", lambda **_k: None)
+        monkeypatch.setattr(bootstrap, "get_thresholds", lambda *_a, **_k: type("Thresholds", (), {
+            "roi_drop": 1,
+            "error_increase": 2,
+            "test_failure_increase": 3,
+        })())
+        monkeypatch.setattr(bootstrap, "persist_sc_thresholds", lambda **_k: None)
+        monkeypatch.setattr(bootstrap, "ThresholdService", lambda: object())
+        monkeypatch.setattr(bootstrap, "internalize_coding_bot", lambda *_a, **_k: dummy_manager)
 
-    monkeypatch.setattr(bootstrap, "_is_vector_bootstrap_heavy", lambda *_a, **_k: False)
-    monkeypatch.setattr(bootstrap, "fallback_helper_manager", fake_fallback_helper_manager)
-    monkeypatch.setattr(bootstrap, "create_context_builder", fake_context_builder)
-    monkeypatch.setattr(bootstrap, "BotRegistry", lambda: object())
-    monkeypatch.setattr(bootstrap, "DataBot", lambda start_server=False: object())
-    monkeypatch.setattr(bootstrap, "SelfCodingEngine", lambda *_a, **_k: object())
-    monkeypatch.setattr(bootstrap, "MenaceMemoryManager", lambda: object())
-    monkeypatch.setattr(
-        bootstrap, "prepare_pipeline_for_bootstrap", lambda **_k: (object(), lambda *_a, **_k: None)
-    )
-    monkeypatch.setattr(bootstrap, "_push_bootstrap_context", lambda **_k: {"placeholder": True})
-    monkeypatch.setattr(bootstrap, "_pop_bootstrap_context", lambda *_a, **_k: None)
-    monkeypatch.setattr(bootstrap, "_seed_research_aggregator_context", lambda **_k: None)
-    monkeypatch.setattr(bootstrap, "get_thresholds", lambda *_a, **_k: type("Thresholds", (), {
-        "roi_drop": 1,
-        "error_increase": 2,
-        "test_failure_increase": 3,
-    })())
-    monkeypatch.setattr(bootstrap, "persist_sc_thresholds", lambda **_k: None)
-    monkeypatch.setattr(bootstrap, "ThresholdService", lambda: object())
-    monkeypatch.setattr(bootstrap, "internalize_coding_bot", lambda *_a, **_k: dummy_manager)
+        def fake_resolve_step_timeout(step_name=None, **_kwargs):
+            if step_name == "_seed_research_aggregator_context":
+                return bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR / 4
+            return bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR
 
-    def fake_resolve_step_timeout(step_name=None, **_kwargs):
-        if step_name == "_seed_research_aggregator_context":
-            return bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR / 4
-        return bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR
+        def fake_run_with_timeout(fn, *, timeout: float | None, description: str, **kwargs):
+            timeouts[description] = timeout
+            if description == "prepare_pipeline_for_bootstrap":
+                return (object(), lambda *_a, **_k: None)
+            return None if fn is None else fn(**kwargs)
 
-    def fake_run_with_timeout(fn, *, timeout: float | None, description: str, **kwargs):
-        timeouts[description] = timeout
-        if description == "prepare_pipeline_for_bootstrap":
-            return (object(), lambda *_a, **_k: None)
-        return None if fn is None else fn(**kwargs)
+        monkeypatch.setattr(bootstrap, "_resolve_step_timeout", fake_resolve_step_timeout)
+        monkeypatch.setattr(bootstrap, "_run_with_timeout", fake_run_with_timeout)
 
-    monkeypatch.setattr(bootstrap, "_resolve_step_timeout", fake_resolve_step_timeout)
-    monkeypatch.setattr(bootstrap, "_run_with_timeout", fake_run_with_timeout)
+        context = bootstrap.initialize_bootstrap_context(use_cache=False)
 
-    context = bootstrap.initialize_bootstrap_context(use_cache=False)
-
-    assert context["manager"] is dummy_manager
-    assert timeouts.get("_seed_research_aggregator_context placeholder") >= (
-        bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR * 2
-    )
+        assert context["manager"] is dummy_manager
+        assert timeouts.get("_seed_research_aggregator_context placeholder") >= (
+            bootstrap._PREPARE_VECTOR_TIMEOUT_FLOOR * 2
+        )
+    finally:
+        bootstrap._BOOTSTRAP_EMBEDDER_READY.set()
 
 
 def test_embedder_warmup_threads_stage_budget(monkeypatch):
