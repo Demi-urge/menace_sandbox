@@ -89,6 +89,60 @@ def test_internalize_resolves_dotted_registry_path(monkeypatch, capsys):
     assert manager.received_module_path.exists()
 
 
+def test_internalize_research_aggregator_defaults(monkeypatch, capsys):
+    import menace_sandbox.self_coding_manager as scm
+
+    monkeypatch.setattr(bot_registry.BotRegistry, "schedule_unmanaged_scan", lambda self: None)
+    registry = bot_registry.BotRegistry(bootstrap=True)
+
+    class StubDataBot:
+        def __init__(self) -> None:
+            self.settings = None
+            self.event_bus = None
+
+        def schedule_monitoring(self, _name: str) -> None:
+            pass
+
+    class StubManager:
+        def __init__(self, *_args, **kwargs):
+            self.logger = logging.getLogger("stub-manager")
+            self.quick_fix = object()
+            self.evolution_orchestrator = None
+            self.data_bot = kwargs.get("data_bot")
+            self.event_bus = None
+            self.post_patch_cycle_called = False
+
+        def run_post_patch_cycle(self, module_path, description, provenance_token=None, context_meta=None):
+            self.post_patch_cycle_called = True
+            self.received_module_path = module_path
+            self.received_description = description
+            self.received_token = provenance_token
+            self.received_context = context_meta
+            return {"ok": True}
+
+    monkeypatch.setattr(scm, "SelfCodingManager", StubManager)
+    monkeypatch.setattr(scm, "persist_sc_thresholds", lambda *a, **k: None)
+    monkeypatch.setattr(scm, "_INTERNALIZE_THROTTLE_SECONDS", 0)
+
+    manager = scm.internalize_coding_bot(
+        "ResearchAggregatorBot",
+        object(),
+        object(),
+        data_bot=StubDataBot(),
+        bot_registry=registry,
+        evolution_orchestrator=types.SimpleNamespace(
+            provenance_token="tok",
+            event_bus=None,
+            register_bot=lambda *_a, **_k: None,
+        ),
+    )
+
+    captured = capsys.readouterr()
+    assert "missing path for: ResearchAggregatorBot" not in captured.out
+    assert manager.post_patch_cycle_called
+    assert manager.received_module_path.exists()
+
+
 class DummyBus:
     def __init__(self):
         self.events = []
