@@ -1014,6 +1014,7 @@ def initialise_sentence_transformer(
     *,
     device: "str | None" = None,
     force_meta_initialisation: bool = False,
+    prefer_local: bool = False,
     **kwargs: object,
 ) -> "SentenceTransformer":
     """Construct a :class:`SentenceTransformer` handling meta tensor snapshots."""
@@ -1022,6 +1023,8 @@ def initialise_sentence_transformer(
         raise RuntimeError("sentence-transformers is not available")
 
     init_kwargs = dict(kwargs)
+    if prefer_local and "local_files_only" not in init_kwargs:
+        init_kwargs["local_files_only"] = True
     if "local_files_only" not in init_kwargs:
         env_local_only = os.getenv("SANDBOX_EMBEDDER_LOCAL_ONLY", "").strip().lower()
         if env_local_only:
@@ -1935,6 +1938,7 @@ def _load_embedder(
     cache_dir = _cache_base()
     local_kwargs: dict[str, object] = {}
     bootstrap_force_local = False
+    prefer_local = bootstrap_mode
     start = time.perf_counter()
     _trace(
         "load.start",
@@ -1970,6 +1974,7 @@ def _load_embedder(
         local_kwargs["cache_folder"] = str(cache_dir)
         snapshot_path = _resolve_local_snapshot(model_cache) if cache_present else None
         if snapshot_path is not None:
+            prefer_local = True
             logger.info(
                 "loading sentence transformer snapshot from cache",
                 extra={
@@ -2081,6 +2086,7 @@ def _load_embedder(
                 model = initialise_sentence_transformer(
                     str(snapshot_path),
                     force_meta_initialisation=True,
+                    prefer_local=True,
                     **snapshot_kwargs,
                 )
                 duration = time.perf_counter() - start
@@ -2116,6 +2122,9 @@ def _load_embedder(
                     )
                     _purge_corrupted_snapshot(snapshot_path)
                     local_kwargs.pop("local_files_only", None)
+
+    if (prefer_local or cache_present) and "local_files_only" not in local_kwargs:
+        local_kwargs["local_files_only"] = True
 
     if local_kwargs.get("local_files_only") and snapshot_path is None:
         _trace(
@@ -2170,7 +2179,9 @@ def _load_embedder(
             return cast("SentenceTransformer", budget_placeholder)
         if SENTENCE_TRANSFORMER_DEVICE and "device" not in local_kwargs:
             local_kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
-        model = initialise_sentence_transformer(_MODEL_ID, **local_kwargs)
+        model = initialise_sentence_transformer(
+            _MODEL_ID, prefer_local=prefer_local, **local_kwargs
+        )
         duration = time.perf_counter() - start
         logger.info(
             "loaded sentence transformer",
@@ -2209,7 +2220,9 @@ def _load_embedder(
                 )
                 _trace("load.hub.retry")
                 _ensure_hf_timeouts()
-                model = initialise_sentence_transformer(_MODEL_ID, **local_kwargs)
+                model = initialise_sentence_transformer(
+                    _MODEL_ID, prefer_local=prefer_local, **local_kwargs
+                )
                 duration = time.perf_counter() - start
                 logger.info(
                     "loaded sentence transformer after retry",
