@@ -1,3 +1,4 @@
+import logging
 import types
 import sys
 
@@ -12,6 +13,21 @@ def _install_stub_threshold_service():
 _install_stub_threshold_service()
 
 from menace_sandbox import bot_registry
+
+
+def test_resource_prediction_bot_uses_registry_defaults(caplog):
+    reg = bot_registry.BotRegistry()
+
+    with caplog.at_level(logging.DEBUG):
+        reg.register_bot("ResourcePredictionBot")
+
+    node = reg.graph.nodes["ResourcePredictionBot"]
+    assert node["module"] == "menace_sandbox.resource_prediction_bot"
+    assert reg.modules["ResourcePredictionBot"] == "menace_sandbox.resource_prediction_bot"
+    assert not any(
+        "module path" in record.message and "ResourcePredictionBot" in record.message
+        for record in caplog.records
+    )
 
 class DummyBus:
     def __init__(self):
