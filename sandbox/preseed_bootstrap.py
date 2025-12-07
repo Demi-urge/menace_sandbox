@@ -1603,6 +1603,24 @@ def _run_with_timeout(
             )
             effective_timeout = timeout_max
 
+        # Guard against pathological timeout collapse that would skip execution entirely.
+        min_effective_timeout = 0.001
+        if effective_timeout is not None and effective_timeout < min_effective_timeout:
+            override_timeout = 30.0
+            timeout_context["timeout_effective_override"] = {
+                "previous_timeout": effective_timeout,
+                "override_timeout": override_timeout,
+                "reason": "effective timeout below minimum threshold",
+            }
+            LOGGER.warning(
+                "effective timeout below minimum threshold; overriding",
+                extra={
+                    "description": description,
+                    "timeout_context": timeout_context,
+                },
+            )
+            effective_timeout = override_timeout
+
         LOGGER.info(
             "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
             description,
