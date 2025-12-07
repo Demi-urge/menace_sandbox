@@ -3469,7 +3469,27 @@ def internalize_coding_bot(
         try:
             module_entry = bot_registry.modules.get(bot_name)
             if module_entry:
-                module_path = Path(module_entry)
+                dotted_module_path: Path | None = None
+                if isinstance(module_entry, (str, os.PathLike)):
+                    dotted_module_path = Path(module_entry)
+                    if "." in str(module_entry) and not dotted_module_path.exists():
+                        module_file = None
+                        try:
+                            spec = importlib.util.find_spec(str(module_entry))
+                        except Exception:
+                            spec = None
+                        if spec and getattr(spec, "origin", None):
+                            module_file = spec.origin
+                        if module_file is None:
+                            try:
+                                imported_module = importlib.import_module(str(module_entry))
+                            except Exception:
+                                imported_module = None
+                            if imported_module is not None:
+                                module_file = getattr(imported_module, "__file__", None)
+                        if module_file:
+                            dotted_module_path = Path(module_file)
+                module_path = dotted_module_path or Path(module_entry)
         except Exception:
             module_path = None
     if module_path is None or not (module_path and module_path.exists()):
