@@ -60,11 +60,20 @@ def check_and_install(settings: SandboxSettings) -> None:
             f"Python >=3.10 required, found {sys.version_info.major}.{sys.version_info.minor}"
         )
 
-    if shutil.which("docker") is None:
-        if _apt_install("docker.io", offline) and shutil.which("docker") is not None:
-            logger.info("installed docker successfully")
-        else:
-            missing.append("docker")
+    system_tools: list[tuple[str, str]] = [
+        ("docker", "docker.io"),
+        ("qemu-system-x86_64", "qemu-system-x86"),
+        ("ffmpeg", "ffmpeg"),
+        ("tesseract", "tesseract-ocr"),
+        ("git", "git"),
+    ]
+
+    for cmd, apt_pkg in system_tools:
+        if shutil.which(cmd) is None:
+            if _apt_install(apt_pkg, offline) and shutil.which(cmd) is not None:
+                logger.info("installed %s successfully", cmd)
+            else:
+                missing.append(cmd)
 
     try:  # pragma: no cover - optional
         import docker  # type: ignore
@@ -77,18 +86,6 @@ def check_and_install(settings: SandboxSettings) -> None:
                 missing.append("docker python package")
         else:
             missing.append("docker python package")
-
-    if shutil.which("qemu-system-x86_64") is None:
-        if _apt_install("qemu-system-x86", offline) and shutil.which("qemu-system-x86_64") is not None:
-            logger.info("installed qemu-system-x86_64 successfully")
-        else:
-            missing.append("qemu-system-x86_64")
-
-    if shutil.which("git") is None:
-        if _apt_install("git", offline) and shutil.which("git") is not None:
-            logger.info("installed git successfully")
-        else:
-            missing.append("git")
 
     if shutil.which("pytest") is None:
         if _pip_install("pytest", offline, wheel_dir) and shutil.which("pytest") is not None:

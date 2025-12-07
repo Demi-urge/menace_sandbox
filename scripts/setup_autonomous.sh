@@ -12,7 +12,7 @@ wheel_dir="${MENACE_WHEEL_DIR:-}"
 
 if [ "$offline" != "1" ] && command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
-    sudo apt-get install -y docker.io qemu-system-x86 git
+    sudo apt-get install -y docker.io qemu-system-x86 git ffmpeg tesseract-ocr
 fi
 
 pip_opts=()
