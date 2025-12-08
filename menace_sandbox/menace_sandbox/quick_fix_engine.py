@@ -185,12 +185,30 @@ def _get_sandbox_settings_cls() -> type:
 def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., Any]]:
     global _CONTEXT_HELPERS, _CONTEXT_HELPERS_PATH
     expected_path = Path(__file__).resolve().parents[1] / "context_builder_util.py"
+    required_params = {"bootstrap", "bootstrap_fast"}
 
     if _CONTEXT_HELPERS is not None:
-        if _CONTEXT_HELPERS_PATH == expected_path:
+        ensure_function, _ = _CONTEXT_HELPERS
+        invalid_reason = None
+        if _CONTEXT_HELPERS_PATH != expected_path:
+            invalid_reason = "unexpected helper path"
+        else:
+            try:
+                ensure_sig = inspect.signature(ensure_function)
+            except (TypeError, ValueError):
+                invalid_reason = "uninspectable ensure_fresh_weights signature"
+            else:
+                if not required_params.issubset(ensure_sig.parameters):
+                    invalid_reason = "missing bootstrap parameters"
+
+        if invalid_reason is None:
             return _CONTEXT_HELPERS
-        # Cached helpers from an unknown location are discarded to avoid shadow modules
+
+        logging.getLogger(__name__).info(
+            "Invalidating cached context_builder_util helpers (%s); reloading", invalid_reason
+        )
         _CONTEXT_HELPERS = None
+        _CONTEXT_HELPERS_PATH = None
 
     try:
         module = load_internal("context_builder_util")
@@ -225,7 +243,6 @@ def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., An
             f" expected {resolved_path!s} but loaded {ensure_source!s}"
         )
 
-    required_params = {"bootstrap", "bootstrap_fast"}
     if not required_params.issubset(ensure_sig.parameters):
         raise RuntimeError(
             "context_builder_util.ensure_fresh_weights does not support bootstrap/fast options"
