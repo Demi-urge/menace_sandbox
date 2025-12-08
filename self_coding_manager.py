@@ -3313,6 +3313,7 @@ def internalize_coding_bot(
     data_bot: DataBot,
     bot_registry: BotRegistry,
     evolution_orchestrator: "EvolutionOrchestrator | None" = None,
+    provenance_token: str | None = None,
     roi_threshold: float | None = None,
     error_threshold: float | None = None,
     test_failure_threshold: float | None = None,
@@ -3370,6 +3371,11 @@ def internalize_coding_bot(
         **manager_kwargs,
     )
     _end_step("manager construction", manager_timer)
+    if provenance_token:
+        try:
+            setattr(manager, "_bootstrap_provenance_token", provenance_token)
+        except Exception:
+            manager.logger.debug("failed to persist bootstrap provenance token", exc_info=True)
     if manager.quick_fix is None:
         raise ImportError("QuickFixEngine failed to initialise")
     manager.evolution_orchestrator = evolution_orchestrator
@@ -3507,9 +3513,12 @@ def internalize_coding_bot(
         module_path = module_path.resolve()
     _end_step("module path resolution", module_resolution_timer)
     provenance_timer = _start_step("provenance token acquisition")
-    provenance_token = None
+    provenance_token = getattr(manager, "_bootstrap_provenance_token", None)
     if getattr(manager, "evolution_orchestrator", None) is not None:
-        provenance_token = getattr(manager.evolution_orchestrator, "provenance_token", None)
+        provenance_token = (
+            getattr(manager.evolution_orchestrator, "provenance_token", None)
+            or provenance_token
+        )
     if provenance_token is None and evolution_orchestrator is not None:
         provenance_token = getattr(evolution_orchestrator, "provenance_token", None)
     _end_step("provenance token acquisition", provenance_timer)
