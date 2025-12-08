@@ -25,32 +25,21 @@ export MENACE_BOOTSTRAP_STAGGER_SECS
 export MENACE_BOOTSTRAP_STAGGER_JITTER_SECS
 
 # Execute run_autonomous after ensuring the environment is configured
-exec python - "$@" <<'PYCODE'
-import importlib
-import importlib.util
+python - <<'PYCODE'
 import logging
-import os
-import pathlib
-import sys
 
-repo_root = pathlib.Path(os.environ["REPO_ROOT"])
-
-# Load the menace package from the repository root
-spec = importlib.util.spec_from_file_location("menace", repo_root / "__init__.py")
-menace_pkg = importlib.util.module_from_spec(spec)
-sys.modules["menace"] = menace_pkg
-spec.loader.exec_module(menace_pkg)
-
-auto_env_setup = importlib.import_module("menace.auto_env_setup")
-run_autonomous = importlib.import_module("run_autonomous")
-conflict_check = importlib.import_module("bootstrap_conflict_check")
+from bootstrap_conflict_check import (
+    enforce_conflict_free_environment,
+    enforce_timeout_floor_envs,
+)
+from menace_sandbox.auto_env_setup import ensure_env
 
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 conflict_logger = logging.getLogger("bootstrap.conflict-check")
-conflict_check.enforce_timeout_floor_envs(logger=conflict_logger)
-conflict_check.enforce_conflict_free_environment(logger=conflict_logger)
-
-auto_env_setup.ensure_env()
-run_autonomous.main(sys.argv[1:])
+enforce_timeout_floor_envs(logger=conflict_logger)
+enforce_conflict_free_environment(logger=conflict_logger)
+ensure_env()
 PYCODE
+
+exec python -m menace_sandbox.run_autonomous "$@"
