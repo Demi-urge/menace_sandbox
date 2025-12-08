@@ -8379,9 +8379,17 @@ def initialize_bootstrap_context(
         _mark_bootstrap_step("internalize_coding_bot")
         internalize_start = perf_counter()
         try:
+            provenance_token = getattr(context_builder, "provenance_token", None)
+            if provenance_token is None:
+                provenance_token = getattr(
+                    getattr(engine, "evolution_orchestrator", None),
+                    "provenance_token",
+                    None,
+                )
             LOGGER.info(
-                "before internalize_coding_bot (last_step=%s)",
+                "before internalize_coding_bot (last_step=%s, provenance_token_present=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
+                bool(provenance_token),
             )
             manager = internalize_coding_bot(
                 bot_name,
@@ -8393,6 +8401,7 @@ def initialize_bootstrap_context(
                 roi_threshold=thresholds.roi_drop,
                 error_threshold=thresholds.error_increase,
                 test_failure_threshold=thresholds.test_failure_increase,
+                provenance_token=provenance_token,
             )
         except Exception:
             LOGGER.exception("internalize_coding_bot failed (step=internalize_coding_bot)")
