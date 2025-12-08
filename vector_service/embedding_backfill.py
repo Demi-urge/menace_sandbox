@@ -47,8 +47,8 @@ def _log_violation(path: str, lic: str, hash_: str) -> None:
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
-except Exception:  # pragma: no cover - fallback when running standalone
-    import metrics_exporter as _me  # type: ignore
+except Exception:  # pragma: no cover - fallback when running as a top-level module
+    from menace_sandbox import metrics_exporter as _me  # type: ignore
 
 try:  # pragma: no cover - optional dependency for event handling
     from unified_event_bus import UnifiedEventBus  # type: ignore
