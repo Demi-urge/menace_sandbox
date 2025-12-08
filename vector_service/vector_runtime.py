@@ -138,7 +138,7 @@ def initialize_vector_service() -> Mapping[str, object] | None:
                     _mark_component_state(component, "failed")
                 finally:
                     pass
-                raise RuntimeError(f"vector bootstrap stage '{component}' failed") from exc
+                raise VectorBootstrapError(component, heartbeat_snapshot, exc) from exc
 
             _mark_component_state(component, "ready")
             heartbeat_snapshot = read_bootstrap_heartbeat()
@@ -160,4 +160,13 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     main()
+
+class VectorBootstrapError(RuntimeError):
+    """Raised when a vector bootstrap stage fails."""
+
+    def __init__(self, stage: str, heartbeat: Mapping[str, object] | None, exc: BaseException):
+        self.stage = stage
+        self.heartbeat = heartbeat
+        super().__init__(f"vector bootstrap stage '{stage}' failed")
+        self.__cause__ = exc
 
