@@ -96,6 +96,55 @@ _PROMPT_STRATEGIES: tuple[type, Callable[..., Any]] | None = None
 _VECTOR_SERVICE_RESULTS: tuple[type, type] | None = None
 
 
+def _format_target_region(target_region: Any) -> str:
+    """Return a stable string representation of a ``TargetRegion``."""
+
+    if target_region is None:
+        return ""
+    filename = getattr(target_region, "filename", None) or getattr(
+        target_region, "file_path", None
+    )
+    start = getattr(target_region, "start_line", None)
+    end = getattr(target_region, "end_line", None)
+    region = []
+    if filename:
+        region.append(str(filename))
+    if start is not None:
+        if end is not None:
+            region.append(f"{start}-{end}")
+        else:
+            region.append(str(start))
+    if region:
+        return ":".join(region)
+    return str(target_region)
+
+
+def _log_validation_flags(
+    logger: logging.Logger,
+    module_path: str,
+    target_region: Any,
+    stage: str,
+    flags: list[str],
+) -> None:
+    """Emit structured logs for validation flags before cleanup."""
+
+    if not flags:
+        return
+    region = _format_target_region(target_region)
+    for flag in flags:
+        logger.info(
+            "validation flag recorded (%s): %s",
+            stage,
+            flag,
+            extra={
+                "module_path": module_path,
+                "target_region": region,
+                "validation_stage": stage,
+                "flag": flag,
+            },
+        )
+
+
 def _load_snippet_compressor() -> Callable[[dict[str, Any]], dict[str, Any]]:
     global _SNIPPET_COMPRESSOR
     if _SNIPPET_COMPRESSOR is None:
@@ -1186,6 +1235,13 @@ def generate_patch(
     if analysis.blockers:
         blocker_flags = [f"static_blocker:{msg}" for msg in analysis.blockers]
         risk_flags.extend(blocker_flags)
+        _log_validation_flags(
+            logger,
+            path.as_posix(),
+            target_region,
+            "static_blockers",
+            blocker_flags,
+        )
         logger.error(
             "static analysis blockers detected for %s: %s",
             prompt_path,
@@ -1270,13 +1326,20 @@ def generate_patch(
                 analysis, applied_fixes if applied_fixes else None
             )
             pending_hints = [hint for hint in analysis.hints if not hint.get("applied")]
-            if pending_hints:
-                static_meta["pending_hints"] = pending_hints
-            hint_flags = _pending_hint_flags(analysis.hints)
-            if hint_flags:
-                risk_flags.extend(hint_flags)
+        if pending_hints:
+            static_meta["pending_hints"] = pending_hints
+        hint_flags = _pending_hint_flags(analysis.hints)
+        if hint_flags:
+            risk_flags.extend(hint_flags)
+            _log_validation_flags(
+                logger,
+                path.as_posix(),
+                target_region,
+                "pending_hints",
+                hint_flags,
+            )
 
-            needs_helper = _requires_helper(analysis.hints)
+        needs_helper = _requires_helper(analysis.hints)
 
             chunks: List[Any] = []
             if needs_helper:
@@ -1458,6 +1521,13 @@ def generate_patch(
             shutil.copy2(path, after_target)
             diff_struct = generate_code_diff(before_dir, after_dir)
             risk_flags = flag_risky_changes(diff_struct)
+            _log_validation_flags(
+                logger,
+                path.as_posix(),
+                target_region,
+                "diff_risk_assessment",
+                risk_flags,
+            )
             risk_score = min(1.0, len(risk_flags) / 10.0) if risk_flags else 0.0
             settings_cls = _get_sandbox_settings_cls()
             settings = settings_cls()
@@ -1512,6 +1582,13 @@ def generate_patch(
                         break
             if high_risk:
                 shutil.copy2(before_target, path)
+                _log_validation_flags(
+                    logger,
+                    path.as_posix(),
+                    target_region,
+                    "high_risk_abort",
+                    risk_flags,
+                )
                 logger.warning(
                     "patch aborted due to high diff risk %.2f > %.2f", risk_score, threshold
                 )
@@ -1648,7 +1725,15 @@ def generate_patch(
             return (patch_id, risk_flags) if return_flags else patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", prompt_path, exc)
-        return (None, [str(exc)]) if return_flags else None
+        failure_flags = [str(exc)]
+        _log_validation_flags(
+            logger,
+            path.as_posix() if "path" in locals() else module,
+            target_region,
+            "generate_patch_exception",
+            failure_flags,
+        )
+        return (None, failure_flags) if return_flags else None
 
 
 def quick_fix(*args: Any, **kwargs: Any) -> int | tuple[int | None, list[str]] | None:
@@ -1851,7 +1936,7 @@ def validate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
-    flags: list[str]
+    flags: list[str] = []
     if manager is None and engine is not None:
         manager = getattr(engine, "manager", None)
     if context_builder is None:
@@ -1859,6 +1944,13 @@ def validate_patch(
         if context_builder is None and manager is not None:
             context_builder = getattr(manager, "context_builder", None)
     if manager is None or context_builder is None:
+        _log_validation_flags(
+            logger,
+            module_name or module_path or "",
+            target_region,
+            "validate_patch.preflight",
+            ["missing_context"],
+        )
         logger.debug(
             "validate_patch missing manager/context_builder; returning missing_context",
             extra={"target_module": module_name or module_path},
@@ -1886,6 +1978,16 @@ def validate_patch(
         logger.exception("quick fix validation failed")
         flags = ["validation_error"]
     finally:
+        try:
+            _log_validation_flags(
+                logger,
+                module_name,
+                target_region,
+                "validate_patch.result",
+                flags,
+            )
+        except Exception:
+            logger.exception("failed to log validation flags")
         try:
             if repo_root is not None:
                 rel = Path(module_name).resolve().relative_to(Path(repo_root).resolve())
@@ -2642,7 +2744,7 @@ class QuickFixEngine:
             raise ValueError("module_name or module_path is required for validation")
 
         print(f"[QFE] validate_patch called for {module_name}", flush=True)
-        flags: List[str]
+        flags: List[str] = []
         try:
             _pid, flags = generate_patch(
                 module_name,
@@ -2661,6 +2763,16 @@ class QuickFixEngine:
             self.logger.exception("quick fix validation failed")
             flags = ["validation_error"]
         finally:
+            try:
+                _log_validation_flags(
+                    self.logger,
+                    module_name,
+                    target_region,
+                    "validate_patch.result",
+                    flags,
+                )
+            except Exception:
+                self.logger.exception("failed to log validation flags")
             try:
                 if repo_root is not None:
                     rel = Path(module_name).resolve().relative_to(Path(repo_root).resolve())
