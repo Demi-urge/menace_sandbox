@@ -443,12 +443,13 @@ def _ensure_vector_service() -> None:
                     stdout_text, stderr_text = _collect_process_output(process)
                     command_str = " ".join(command or [])
                     env_pythonpath = (env or {}).get("PYTHONPATH")
+                    pythonpath_display = env_pythonpath or "<unset>"
                     logger.error(
                         "vector service exited early with code %s (cmd=%s cwd=%s PYTHONPATH=%s)",
                         exit_code,
                         command_str,
                         cwd,
-                        env_pythonpath,
+                        pythonpath_display,
                     )
                     if stderr_text:
                         logger.error("vector service stderr:\n%s", stderr_text)
@@ -460,10 +461,9 @@ def _ensure_vector_service() -> None:
                     ]
                     if cwd:
                         error_parts.append(f"cwd: {cwd}")
-                    if env_pythonpath:
-                        error_parts.append(f"PYTHONPATH={env_pythonpath}")
-                    if stderr_text:
-                        error_parts.append(f"stderr:\n{stderr_text}")
+                    error_parts.append(f"PYTHONPATH={pythonpath_display}")
+                    stderr_display = stderr_text or "<no stderr captured>"
+                    error_parts.append(f"stderr:\n{stderr_display}")
                     if stdout_text:
                         error_parts.append(f"stdout:\n{stdout_text}")
                     raise VectorServiceError("\n".join(error_parts))
@@ -499,11 +499,17 @@ def _ensure_vector_service() -> None:
     script_module = "menace_sandbox.scripts.run_vector_service"
     env = os.environ.copy()
     env_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        f"{repo_root}{os.pathsep}{env_pythonpath}"
+    pythonpath_parts = (
+        env_pythonpath.split(os.pathsep)
         if env_pythonpath
-        else str(repo_root)
+        else list(sys.path)
     )
+    repo_paths = [str(repo_root), str(repo_root.parent)]
+    for path in repo_paths:
+        if path not in pythonpath_parts:
+            pythonpath_parts.insert(0, path)
+    env_pythonpath = os.pathsep.join(pythonpath_parts)
+    env["PYTHONPATH"] = env_pythonpath
     last_error: Exception | None = None
     wait = start_delay
     command = [sys.executable, "-m", script_module]
