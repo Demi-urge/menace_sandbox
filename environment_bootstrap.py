@@ -63,7 +63,10 @@ try:  # pragma: no cover - prefer package relative imports
     from .external_dependency_provisioner import ExternalDependencyProvisioner
     from . import startup_checks
     from .vector_service.embedding_scheduler import start_scheduler_from_env
-    from .vector_service.vector_runtime import initialize_vector_service
+    from .vector_service.vector_runtime import (
+        VectorBootstrapError,
+        initialize_vector_service,
+    )
 except ImportError:  # pragma: no cover - allow running as a top-level script
     from infrastructure_bootstrap import InfrastructureBootstrapper
     from retry_utils import retry
@@ -73,7 +76,7 @@ except ImportError:  # pragma: no cover - allow running as a top-level script
     from external_dependency_provisioner import ExternalDependencyProvisioner
     import startup_checks
     from vector_service.embedding_scheduler import start_scheduler_from_env
-    from vector_service.vector_runtime import initialize_vector_service
+    from vector_service.vector_runtime import VectorBootstrapError, initialize_vector_service
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
@@ -3353,13 +3356,47 @@ class EnvironmentBootstrapper:
                 else os.getenv("MENACE_BOOTSTRAP_SKIP_DB_INIT") == "1"
             )
             budgets = self._resolve_phase_budgets(timeout)
+            heartbeat_snapshot: Mapping[str, object] | None = None
             try:
                 heartbeat_snapshot = initialize_vector_service()
-            except Exception as exc:
-                self.logger.exception("vector runtime initialization failed during bootstrap")
+            except VectorBootstrapError as exc:
+                heartbeat_snapshot = exc.heartbeat or shared_online_state()
+                self.logger.error(
+                    "vector runtime initialization failed during bootstrap",
+                    extra={
+                        "stage": exc.stage,
+                        "heartbeat": heartbeat_snapshot,
+                    },
+                    exc_info=True,
+                )
                 try:
                     self._persist_vector_warmup_state(
-                        summary={"bootstrap": "failed", "error": str(exc)},
+                        summary={
+                            "bootstrap": "failed",
+                            "error": str(exc),
+                            "stage": exc.stage,
+                            "heartbeat": heartbeat_snapshot,
+                        },
+                        mode="failed",
+                    )
+                except Exception:
+                    self.logger.debug(
+                        "failed to emit vector warmup failure state", exc_info=True
+                    )
+                raise
+            except Exception as exc:
+                heartbeat_snapshot = shared_online_state()
+                self.logger.exception(
+                    "vector runtime initialization failed during bootstrap",
+                    extra={"heartbeat": heartbeat_snapshot},
+                )
+                try:
+                    self._persist_vector_warmup_state(
+                        summary={
+                            "bootstrap": "failed",
+                            "error": str(exc),
+                            "heartbeat": heartbeat_snapshot,
+                        },
                         mode="failed",
                     )
                 except Exception:
