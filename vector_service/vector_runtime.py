@@ -104,14 +104,18 @@ def _seed_vectors() -> None:
     seed_vectors.seed_initial_vectors(service, logger=logger)
 
 
-def initialize_vector_service() -> None:
-    """Run all vector bootstrap stages and emit readiness signals."""
+def initialize_vector_service() -> Mapping[str, object] | None:
+    """Run all vector bootstrap stages and emit readiness signals.
+
+    Returns the latest heartbeat snapshot when available so callers can
+    validate readiness gates before continuing with dependent initialisers.
+    """
 
     if _INITIALISED.is_set():
-        return
+        return read_bootstrap_heartbeat()
     with _INIT_LOCK:
         if _INITIALISED.is_set():
-            return
+            return read_bootstrap_heartbeat()
 
         stages = (
             ("db_index_load", _load_vector_indexes),
@@ -119,13 +123,32 @@ def initialize_vector_service() -> None:
             ("vector_seeding", _seed_vectors),
         )
 
+        heartbeat_snapshot: Mapping[str, object] | None = None
         for component, action in stages:
             logger.info("starting vector bootstrap stage", extra={"component": component})
-            action()
+            try:
+                action()
+            except Exception as exc:
+                heartbeat_snapshot = read_bootstrap_heartbeat()
+                logger.exception(
+                    "vector bootstrap stage failed",
+                    extra={"component": component, "heartbeat": heartbeat_snapshot},
+                )
+                try:
+                    _mark_component_state(component, "failed")
+                finally:
+                    pass
+                raise RuntimeError(f"vector bootstrap stage '{component}' failed") from exc
+
             _mark_component_state(component, "ready")
-            logger.info("completed vector bootstrap stage", extra={"component": component})
+            heartbeat_snapshot = read_bootstrap_heartbeat()
+            logger.info(
+                "completed vector bootstrap stage",
+                extra={"component": component, "heartbeat": heartbeat_snapshot},
+            )
 
         _INITIALISED.set()
+        return heartbeat_snapshot
 
 
 def main() -> None:
