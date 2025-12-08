@@ -188,13 +188,17 @@ def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., An
     expected_path = Path(__file__).resolve().parents[1] / "context_builder_util.py"
     required_params = {"bootstrap", "bootstrap_fast"}
 
+    invalidated = False
+
     def _invalidate_cached_helpers(reason: str, *, purge_module: bool = False) -> None:
         global _CONTEXT_HELPERS, _CONTEXT_HELPERS_PATH
+        nonlocal invalidated
         logger.info(
             "Invalidating cached context_builder_util helpers (%s); reloading", reason
         )
         _CONTEXT_HELPERS = None
         _CONTEXT_HELPERS_PATH = None
+        invalidated = True
         if purge_module:
             importlib.invalidate_caches()
             import_compat._MODULE_CACHE.pop("context_builder_util", None)
@@ -216,6 +220,11 @@ def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., An
                     invalid_reason = "missing bootstrap parameters"
 
         if invalid_reason is None:
+            logger.info(
+                "context_builder_util helpers resolved from %s (cache_invalidated=%s)",
+                (_CONTEXT_HELPERS_PATH or expected_path),
+                invalidated,
+            )
             return _CONTEXT_HELPERS
 
         _invalidate_cached_helpers(invalid_reason, purge_module=True)
@@ -272,6 +281,11 @@ def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., An
         module.create_context_builder,
     )
     _CONTEXT_HELPERS_PATH = resolved_path
+    logger.info(
+        "context_builder_util helpers resolved from %s (cache_invalidated=%s)",
+        resolved_path,
+        invalidated,
+    )
     return _CONTEXT_HELPERS
 
 
