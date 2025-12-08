@@ -184,8 +184,33 @@ _evolution_history_module = load_internal("evolution_history_db")
 EvolutionHistoryDB = _evolution_history_module.EvolutionHistoryDB
 EvolutionEvent = _evolution_history_module.EvolutionEvent
 
-_code_database_module = load_internal("code_database")
-PatchHistoryDB = _code_database_module.PatchHistoryDB
+# ``PatchHistoryDB`` is optional and expensive to import during bootstrap.  It
+# also participates in circular imports when ``data_bot`` is loaded via
+# ``trend_predictor``.  Resolve the class lazily so import-time attribute access
+# does not crash if the module is still initialising.
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from menace_sandbox.code_database import PatchHistoryDB as _PatchHistoryDB
+else:
+    _PatchHistoryDB = object
+
+
+def _get_patch_history_db_cls() -> type[_PatchHistoryDB]:
+    module = load_internal("code_database")
+    patch_history_cls = getattr(module, "PatchHistoryDB", None)
+    if patch_history_cls is None:
+        raise ImportError("code_database.PatchHistoryDB is unavailable")
+    return patch_history_cls
+
+
+class _PatchHistoryDBProxy:
+    def __call__(self, *args: object, **kwargs: object) -> _PatchHistoryDB:
+        return _get_patch_history_db_cls()(*args, **kwargs)
+
+    def __getattr__(self, item: str) -> object:
+        return getattr(_get_patch_history_db_cls(), item)
+
+
+PatchHistoryDB = cast("type[_PatchHistoryDB]", _PatchHistoryDBProxy())
 
 _forecasting_module = load_internal("forecasting")
 ForecastModel = _forecasting_module.ForecastModel
