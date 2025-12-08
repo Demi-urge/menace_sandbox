@@ -5,4 +5,8 @@ package now lives at the repository root. This shim preserves those import paths
 by delegating to the top-level package.
 """
 
-# Intentionally empty; imports are handled by submodules.
+from pathlib import Path
+
+_PARENT = Path(__file__).resolve().parents[1]
+if str(_PARENT) not in __path__:
+    __path__.append(str(_PARENT))

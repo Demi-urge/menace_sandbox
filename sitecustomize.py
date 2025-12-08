@@ -20,14 +20,34 @@ import traceback
 import types
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parent
+_PARENT = _REPO_ROOT.parent
+_NESTED = _REPO_ROOT / "menace_sandbox"
+if _PARENT.is_dir() and str(_PARENT) not in sys.path:
+    sys.path.insert(0, str(_PARENT))
+if _NESTED.is_dir() and str(_NESTED) not in sys.path:
+    sys.path.append(str(_NESTED))
+
 base = Path(__file__).resolve().parent
-pkg = types.ModuleType("sandbox_runner")
-pkg.__path__ = [str(base / "sandbox_runner")]
-root = types.ModuleType("menace_sandbox")
-root.__path__ = [str(base)]
-sys.modules.setdefault("sandbox_runner", pkg)
-sys.modules.setdefault("menace_sandbox", root)
-sys.modules.setdefault("menace_sandbox.sandbox_runner", pkg)
+
+# Provide backwards compatibility stubs only when the real modules are missing.
+def _register_stub(package: str, module: types.ModuleType, expected: Path) -> None:
+    if expected.exists():
+        return
+
+    sys.modules.setdefault(package, module)
+
+
+sandbox_runner_pkg = types.ModuleType("sandbox_runner")
+sandbox_runner_pkg.__path__ = [str(base / "sandbox_runner")]
+_register_stub("sandbox_runner", sandbox_runner_pkg, base / "sandbox_runner" / "__init__.py")
+_register_stub(
+    "menace_sandbox.sandbox_runner", sandbox_runner_pkg, base / "sandbox_runner" / "__init__.py"
+)
+
+menace_root_pkg = types.ModuleType("menace_sandbox")
+menace_root_pkg.__path__ = [str(base)]
+_register_stub("menace_sandbox", menace_root_pkg, base / "__init__.py")
 
 
 def _register_optional_stub(module_name: str, stub_module: str) -> None:
