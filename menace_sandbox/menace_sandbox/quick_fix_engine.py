@@ -13,6 +13,7 @@ __version__ = "1.0.0"
 import ast
 import builtins
 from pathlib import Path
+import inspect
 import logging
 import subprocess
 import shutil
@@ -193,6 +194,28 @@ def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., An
             raise RuntimeError(
                 "context_builder_util helpers are required for quick_fix_engine"
             ) from exc
+
+        expected_path = Path(__file__).resolve().parents[1] / "context_builder_util.py"
+        resolved_path = Path(getattr(module, "__file__", "")).resolve()
+        if resolved_path != expected_path:
+            raise RuntimeError(
+                "context_builder_util was imported from an unexpected location;"
+                f" expected {expected_path!s} but loaded {resolved_path!s}"
+            )
+
+        try:
+            ensure_sig = inspect.signature(module.ensure_fresh_weights)
+        except (AttributeError, ValueError) as exc:  # pragma: no cover - defensive
+            raise RuntimeError(
+                "context_builder_util.ensure_fresh_weights is unavailable"
+            ) from exc
+
+        required_params = {"bootstrap", "bootstrap_fast"}
+        if not required_params.issubset(ensure_sig.parameters):
+            raise RuntimeError(
+                "context_builder_util.ensure_fresh_weights does not support bootstrap/fast options"
+            )
+
         _CONTEXT_HELPERS = (
             module.ensure_fresh_weights,
             module.create_context_builder,
