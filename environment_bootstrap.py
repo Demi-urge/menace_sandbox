@@ -3345,8 +3345,18 @@ class EnvironmentBootstrapper:
             budgets = self._resolve_phase_budgets(timeout)
             try:
                 initialize_vector_service()
-            except Exception:
+            except Exception as exc:
                 self.logger.exception("vector runtime initialization failed during bootstrap")
+                try:
+                    self._persist_vector_warmup_state(
+                        summary={"bootstrap": "failed", "error": str(exc)},
+                        mode="failed",
+                    )
+                except Exception:
+                    self.logger.debug(
+                        "failed to emit vector warmup failure state", exc_info=True
+                    )
+                raise
             try:
                 self._run_phase(
                     "critical",
