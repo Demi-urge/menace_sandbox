@@ -409,20 +409,55 @@ def _ensure_vector_service() -> None:
             logger.debug("vector service health check failed: %s", exc)
             return False
 
+    def _collect_process_output(
+        process: "subprocess.Popen[bytes]",
+    ) -> tuple[str | None, str | None]:
+        try:
+            stdout_data, stderr_data = process.communicate()
+        except Exception:  # pragma: no cover - defensive best effort
+            logger.debug("failed to collect vector service output", exc_info=True)
+            return None, None
+        stdout_text = (
+            stdout_data.decode("utf-8", errors="replace") if stdout_data else None
+        )
+        stderr_text = (
+            stderr_data.decode("utf-8", errors="replace") if stderr_data else None
+        )
+        return stdout_text, stderr_text
+
     def _wait_ready(
         tries: int,
         delay: float,
         backoff: float,
         *,
         process: "subprocess.Popen[bytes] | None" = None,
+        command: list[str] | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> bool:
         wait = delay
         for _ in range(tries):
             if process is not None:
                 exit_code = process.poll()
                 if exit_code is not None:
+                    stdout_text, stderr_text = _collect_process_output(process)
+                    command_str = " ".join(command or [])
+                    logger.error(
+                        "vector service exited early with code %s (cmd=%s cwd=%s PYTHONPATH=%s)",
+                        exit_code,
+                        command_str,
+                        cwd,
+                        (env or {}).get("PYTHONPATH"),
+                    )
+                    if stderr_text:
+                        logger.error("vector service stderr:\n%s", stderr_text)
+                    if stdout_text:
+                        logger.debug("vector service stdout:\n%s", stdout_text)
+                    error_suffix = (
+                        f" stderr:\n{stderr_text}" if stderr_text else ""
+                    )
                     raise VectorServiceError(
-                        f"vector service exited early with code {exit_code}"
+                        f"vector service exited early with code {exit_code}.{error_suffix}"
                     )
             if _ready():
                 return True
@@ -463,15 +498,16 @@ def _ensure_vector_service() -> None:
     )
     last_error: Exception | None = None
     wait = start_delay
+    command = [sys.executable, "-m", script_module]
     for attempt in range(1, start_tries + 1):
         logger.info(
             "starting vector service attempt %s/%s", attempt, start_tries
         )
         try:
             process = subprocess.Popen(
-                [sys.executable, "-m", script_module],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 cwd=str(repo_root),
                 env=env,
             )
@@ -480,7 +516,13 @@ def _ensure_vector_service() -> None:
             logger.error("failed to launch vector service: %s", exc)
             process = None
         if _wait_ready(
-            ready_tries, ready_delay, ready_backoff, process=process
+            ready_tries,
+            ready_delay,
+            ready_backoff,
+            process=process,
+            command=command,
+            cwd=str(repo_root),
+            env=env,
         ):
             _verify_embedding_endpoint()
             return
