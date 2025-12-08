@@ -66,3 +66,40 @@ def test_ensure_vector_service_raises_after_attempts(monkeypatch):
         cb._ensure_vector_service()
     assert popen_called["count"] == 1
     assert calls["count"] == 10
+
+
+def test_vector_service_startup_propagates_stderr(monkeypatch):
+    import vector_service.context_builder as cb
+
+    monkeypatch.setenv("VECTOR_SERVICE_URL", "http://example")
+
+    class DummyProc:
+        def __init__(self):
+            self._polled = False
+
+        def poll(self):
+            if not self._polled:
+                self._polled = True
+                return 1
+            return 1
+
+        def communicate(self):
+            return (
+                b"",
+                b"ModuleNotFoundError: No module named 'menace_sandbox'\n",
+            )
+
+    import subprocess
+    import urllib.request
+
+    def fake_urlopen(url, timeout=2):
+        raise OSError("not ready")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: DummyProc())
+    monkeypatch.setattr(cb.time, "sleep", lambda s: None)
+
+    with pytest.raises(cb.VectorServiceError) as excinfo:
+        cb._ensure_vector_service()
+
+    assert "ModuleNotFoundError" in str(excinfo.value)
