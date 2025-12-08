@@ -143,3 +143,46 @@ def test_vector_service_startup_failure_includes_command_and_env(monkeypatch):
     assert "No module named menace_sandbox" in message
     assert "PYTHONPATH" in message
     assert captured["kwargs"]["cwd"] == str(cb.Path(__file__).resolve().parent.parent)
+
+
+def test_vector_service_startup_sets_pythonpath_on_failure(monkeypatch):
+    import subprocess
+    import urllib.request
+    import vector_service.context_builder as cb
+
+    monkeypatch.setenv("VECTOR_SERVICE_URL", "http://example")
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setattr(cb.time, "sleep", lambda s: None)
+
+    captured: dict[str, object] = {}
+
+    class DummyProc:
+        def __init__(self, *args, **kwargs):
+            captured["env"] = kwargs.get("env", {})
+            self._polled = False
+
+        def poll(self):
+            self._polled = True
+            return 1
+
+        def communicate(self):
+            return (b"", b"ModuleNotFoundError: No module named 'menace_sandbox'\n")
+
+    def fake_urlopen(url, timeout=2):
+        raise OSError("not ready")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: DummyProc(*a, **k))
+
+    with pytest.raises(cb.VectorServiceError) as excinfo:
+        cb._ensure_vector_service()
+
+    message = str(excinfo.value)
+    pythonpath = captured["env"]["PYTHONPATH"]
+    repo_root = cb.Path(cb.__file__).resolve().parent.parent
+    repo_parent = repo_root.parent
+
+    assert str(repo_root) in pythonpath
+    assert str(repo_parent) in pythonpath
+    assert f"PYTHONPATH={pythonpath}" in message
+    assert "ModuleNotFoundError" in message
