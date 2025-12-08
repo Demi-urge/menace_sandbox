@@ -82,6 +82,7 @@ _SNIPPET_COMPRESSOR: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 _CODEBASE_DIFF_MODULE: Any | None = None
 _SANDBOX_SETTINGS_CLS: type | None = None
 _CONTEXT_HELPERS: tuple[Callable[..., Any], Callable[..., Any]] | None = None
+_CONTEXT_HELPERS_PATH: Path | None = None
 _DYNAMIC_PATH_ROUTER: Any | None = None
 _SKLEARN_VECTORS: tuple[type, type] | None = None
 _KNOWLEDGE_GRAPH_CLS: type | None = None
@@ -182,44 +183,59 @@ def _get_sandbox_settings_cls() -> type:
 
 
 def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., Any]]:
-    global _CONTEXT_HELPERS
-    if _CONTEXT_HELPERS is None:
-        try:
-            module = load_internal("context_builder_util")
-        except ModuleNotFoundError as exc:  # pragma: no cover - required helper missing
-            raise RuntimeError(
-                "context_builder_util helpers are required for quick_fix_engine"
-            ) from exc
-        except Exception as exc:  # pragma: no cover - required helper failed to import
-            raise RuntimeError(
-                "context_builder_util helpers are required for quick_fix_engine"
-            ) from exc
+    global _CONTEXT_HELPERS, _CONTEXT_HELPERS_PATH
+    expected_path = Path(__file__).resolve().parents[1] / "context_builder_util.py"
 
-        expected_path = Path(__file__).resolve().parents[1] / "context_builder_util.py"
-        resolved_path = Path(getattr(module, "__file__", "")).resolve()
-        if resolved_path != expected_path:
-            raise RuntimeError(
-                "context_builder_util was imported from an unexpected location;"
-                f" expected {expected_path!s} but loaded {resolved_path!s}"
-            )
+    if _CONTEXT_HELPERS is not None:
+        if _CONTEXT_HELPERS_PATH == expected_path:
+            return _CONTEXT_HELPERS
+        # Cached helpers from an unknown location are discarded to avoid shadow modules
+        _CONTEXT_HELPERS = None
 
-        try:
-            ensure_sig = inspect.signature(module.ensure_fresh_weights)
-        except (AttributeError, ValueError) as exc:  # pragma: no cover - defensive
-            raise RuntimeError(
-                "context_builder_util.ensure_fresh_weights is unavailable"
-            ) from exc
+    try:
+        module = load_internal("context_builder_util")
+    except ModuleNotFoundError as exc:  # pragma: no cover - required helper missing
+        raise RuntimeError(
+            "context_builder_util helpers are required for quick_fix_engine"
+        ) from exc
+    except Exception as exc:  # pragma: no cover - required helper failed to import
+        raise RuntimeError(
+            "context_builder_util helpers are required for quick_fix_engine"
+        ) from exc
 
-        required_params = {"bootstrap", "bootstrap_fast"}
-        if not required_params.issubset(ensure_sig.parameters):
-            raise RuntimeError(
-                "context_builder_util.ensure_fresh_weights does not support bootstrap/fast options"
-            )
-
-        _CONTEXT_HELPERS = (
-            module.ensure_fresh_weights,
-            module.create_context_builder,
+    resolved_path = Path(getattr(module, "__file__", "")).resolve()
+    if resolved_path != expected_path:
+        raise RuntimeError(
+            "context_builder_util was imported from an unexpected location;"
+            f" expected {expected_path!s} but loaded {resolved_path!s}"
         )
+
+    try:
+        ensure_function = module.ensure_fresh_weights
+        ensure_sig = inspect.signature(ensure_function)
+        ensure_source = Path(inspect.getsourcefile(ensure_function) or "").resolve()
+    except (AttributeError, ValueError) as exc:  # pragma: no cover - defensive
+        raise RuntimeError(
+            "context_builder_util.ensure_fresh_weights is unavailable"
+        ) from exc
+
+    if ensure_source != resolved_path:
+        raise RuntimeError(
+            "context_builder_util.ensure_fresh_weights was resolved from a shadow module;"
+            f" expected {resolved_path!s} but loaded {ensure_source!s}"
+        )
+
+    required_params = {"bootstrap", "bootstrap_fast"}
+    if not required_params.issubset(ensure_sig.parameters):
+        raise RuntimeError(
+            "context_builder_util.ensure_fresh_weights does not support bootstrap/fast options"
+        )
+
+    _CONTEXT_HELPERS = (
+        ensure_function,
+        module.create_context_builder,
+    )
+    _CONTEXT_HELPERS_PATH = resolved_path
     return _CONTEXT_HELPERS
 
 
