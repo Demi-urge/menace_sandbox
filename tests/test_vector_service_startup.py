@@ -103,3 +103,43 @@ def test_vector_service_startup_propagates_stderr(monkeypatch):
         cb._ensure_vector_service()
 
     assert "ModuleNotFoundError" in str(excinfo.value)
+
+
+def test_vector_service_startup_failure_includes_command_and_env(monkeypatch):
+    import vector_service.context_builder as cb
+
+    monkeypatch.setenv("VECTOR_SERVICE_URL", "http://example")
+    monkeypatch.setattr(cb.time, "sleep", lambda s: None)
+
+    captured: dict[str, object] = {}
+
+    class DummyProc:
+        def __init__(self, *args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            self._polled = False
+
+        def poll(self):
+            self._polled = True
+            return 1
+
+        def communicate(self):
+            return (b"booting\n", b"No module named menace_sandbox\n")
+
+    import urllib.request
+    import subprocess
+
+    def fake_urlopen(url, timeout=2):
+        raise OSError("not ready")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: DummyProc(*a, **k))
+
+    with pytest.raises(cb.VectorServiceError) as excinfo:
+        cb._ensure_vector_service()
+
+    message = str(excinfo.value)
+    assert "menace_sandbox.scripts.run_vector_service" in message
+    assert "No module named menace_sandbox" in message
+    assert "PYTHONPATH" in message
+    assert captured["kwargs"]["cwd"] == str(cb.Path(__file__).resolve().parent.parent)
