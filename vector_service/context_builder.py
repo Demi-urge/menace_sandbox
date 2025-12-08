@@ -6,6 +6,7 @@ import json
 import re
 import contextlib
 from dataclasses import dataclass, fields, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Mapping
 # ``ParsedFailure`` previously provided structured failure info.  The new parser
 # returns dictionaries so we reference the type indirectly to avoid tight
@@ -408,9 +409,21 @@ def _ensure_vector_service() -> None:
             logger.debug("vector service health check failed: %s", exc)
             return False
 
-    def _wait_ready(tries: int, delay: float, backoff: float) -> bool:
+    def _wait_ready(
+        tries: int,
+        delay: float,
+        backoff: float,
+        *,
+        process: "subprocess.Popen[bytes] | None" = None,
+    ) -> bool:
         wait = delay
         for _ in range(tries):
+            if process is not None:
+                exit_code = process.poll()
+                if exit_code is not None:
+                    raise VectorServiceError(
+                        f"vector service exited early with code {exit_code}"
+                    )
             if _ready():
                 return True
             time.sleep(wait)
@@ -439,7 +452,15 @@ def _ensure_vector_service() -> None:
         _verify_embedding_endpoint()
         return
 
-    script = resolve_path("scripts/run_vector_service.py")
+    repo_root = Path(__file__).resolve().parent.parent
+    script_module = "menace_sandbox.scripts.run_vector_service"
+    env = os.environ.copy()
+    env_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{repo_root}{os.pathsep}{env_pythonpath}"
+        if env_pythonpath
+        else str(repo_root)
+    )
     last_error: Exception | None = None
     wait = start_delay
     for attempt in range(1, start_tries + 1):
@@ -447,15 +468,20 @@ def _ensure_vector_service() -> None:
             "starting vector service attempt %s/%s", attempt, start_tries
         )
         try:
-            subprocess.Popen(
-                [sys.executable, str(script)],
+            process = subprocess.Popen(
+                [sys.executable, "-m", script_module],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                cwd=str(repo_root),
+                env=env,
             )
         except Exception as exc:  # pragma: no cover - best effort
             last_error = exc
             logger.error("failed to launch vector service: %s", exc)
-        if _wait_ready(ready_tries, ready_delay, ready_backoff):
+            process = None
+        if _wait_ready(
+            ready_tries, ready_delay, ready_backoff, process=process
+        ):
             _verify_embedding_endpoint()
             return
         logger.error(
