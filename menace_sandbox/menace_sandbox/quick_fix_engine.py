@@ -184,8 +184,22 @@ def _get_sandbox_settings_cls() -> type:
 
 def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., Any]]:
     global _CONTEXT_HELPERS, _CONTEXT_HELPERS_PATH
+    logger = logging.getLogger(__name__)
     expected_path = Path(__file__).resolve().parents[1] / "context_builder_util.py"
     required_params = {"bootstrap", "bootstrap_fast"}
+
+    def _invalidate_cached_helpers(reason: str, *, purge_module: bool = False) -> None:
+        global _CONTEXT_HELPERS, _CONTEXT_HELPERS_PATH
+        logger.info(
+            "Invalidating cached context_builder_util helpers (%s); reloading", reason
+        )
+        _CONTEXT_HELPERS = None
+        _CONTEXT_HELPERS_PATH = None
+        if purge_module:
+            importlib.invalidate_caches()
+            import_compat._MODULE_CACHE.pop("context_builder_util", None)
+            for alias in ("context_builder_util", f"{_PACKAGE_NAME}.context_builder_util"):
+                sys.modules.pop(alias, None)
 
     if _CONTEXT_HELPERS is not None:
         ensure_function, _ = _CONTEXT_HELPERS
@@ -204,49 +218,54 @@ def _get_context_builder_helpers() -> tuple[Callable[..., Any], Callable[..., An
         if invalid_reason is None:
             return _CONTEXT_HELPERS
 
-        logging.getLogger(__name__).info(
-            "Invalidating cached context_builder_util helpers (%s); reloading", invalid_reason
-        )
-        _CONTEXT_HELPERS = None
-        _CONTEXT_HELPERS_PATH = None
+        _invalidate_cached_helpers(invalid_reason, purge_module=True)
 
-    try:
-        module = load_internal("context_builder_util")
-    except ModuleNotFoundError as exc:  # pragma: no cover - required helper missing
-        raise RuntimeError(
-            "context_builder_util helpers are required for quick_fix_engine"
-        ) from exc
-    except Exception as exc:  # pragma: no cover - required helper failed to import
-        raise RuntimeError(
-            "context_builder_util helpers are required for quick_fix_engine"
-        ) from exc
+    reload_attempted = False
+    while True:
+        try:
+            module = load_internal("context_builder_util")
+        except ModuleNotFoundError as exc:  # pragma: no cover - required helper missing
+            raise RuntimeError(
+                "context_builder_util helpers are required for quick_fix_engine"
+            ) from exc
+        except Exception as exc:  # pragma: no cover - required helper failed to import
+            raise RuntimeError(
+                "context_builder_util helpers are required for quick_fix_engine"
+            ) from exc
 
-    resolved_path = Path(getattr(module, "__file__", "")).resolve()
-    if resolved_path != expected_path:
-        raise RuntimeError(
-            "context_builder_util was imported from an unexpected location;"
-            f" expected {expected_path!s} but loaded {resolved_path!s}"
-        )
+        resolved_path = Path(getattr(module, "__file__", "")).resolve()
+        if resolved_path != expected_path:
+            raise RuntimeError(
+                "context_builder_util was imported from an unexpected location;"
+                f" expected {expected_path!s} but loaded {resolved_path!s}"
+            )
 
-    try:
-        ensure_function = module.ensure_fresh_weights
-        ensure_sig = inspect.signature(ensure_function)
-        ensure_source = Path(inspect.getsourcefile(ensure_function) or "").resolve()
-    except (AttributeError, ValueError) as exc:  # pragma: no cover - defensive
-        raise RuntimeError(
-            "context_builder_util.ensure_fresh_weights is unavailable"
-        ) from exc
+        try:
+            ensure_function = module.ensure_fresh_weights
+            ensure_sig = inspect.signature(ensure_function)
+            ensure_source = Path(inspect.getsourcefile(ensure_function) or "").resolve()
+        except (AttributeError, ValueError) as exc:  # pragma: no cover - defensive
+            raise RuntimeError(
+                "context_builder_util.ensure_fresh_weights is unavailable"
+            ) from exc
 
-    if ensure_source != resolved_path:
-        raise RuntimeError(
-            "context_builder_util.ensure_fresh_weights was resolved from a shadow module;"
-            f" expected {resolved_path!s} but loaded {ensure_source!s}"
-        )
+        if ensure_source != resolved_path:
+            raise RuntimeError(
+                "context_builder_util.ensure_fresh_weights was resolved from a shadow module;"
+                f" expected {resolved_path!s} but loaded {ensure_source!s}"
+            )
 
-    if not required_params.issubset(ensure_sig.parameters):
-        raise RuntimeError(
-            "context_builder_util.ensure_fresh_weights does not support bootstrap/fast options"
-        )
+        if not required_params.issubset(ensure_sig.parameters):
+            if reload_attempted:
+                raise RuntimeError(
+                    "context_builder_util.ensure_fresh_weights does not support bootstrap/fast options"
+                )
+            _invalidate_cached_helpers(
+                "missing bootstrap parameters from ensure_fresh_weights", purge_module=True
+            )
+            reload_attempted = True
+            continue
+        break
 
     _CONTEXT_HELPERS = (
         ensure_function,
@@ -1393,131 +1412,119 @@ def generate_patch(
                 target_region,
                 "pending_hints",
                 hint_flags,
-            )
+        )
 
         needs_helper = _requires_helper(analysis.hints)
 
-            chunks: List[Any] = []
-            if needs_helper:
+        chunks: List[Any] = []
+        if needs_helper:
+            try:
+                chunk_getter = _get_chunking_getter()
+            except RuntimeError:
+                chunk_getter = None
+            if chunk_getter is not None:
+                token_limit = getattr(engine, "prompt_chunk_token_threshold", 1000)
                 try:
-                    chunk_getter = _get_chunking_getter()
-                except RuntimeError:
-                    chunk_getter = None
-                if chunk_getter is not None:
-                    token_limit = getattr(engine, "prompt_chunk_token_threshold", 1000)
+                    chunks = chunk_getter(path, token_limit, context_builder=builder)
+                except Exception:
+                    chunks = []
+        patch_ids: List[int | None] = []
+
+        if needs_helper:
+
+            def _gen(desc: str) -> str:
+                """Generate helper code for *desc* using the current context."""
+
+                owner = getattr(manager, "engine", manager)
+                attempts = int(getattr(owner, "helper_retry_attempts", 3))
+                delay = float(getattr(owner, "helper_retry_delay", 1.0))
+                event_bus = getattr(owner, "event_bus", None)
+                data_bot: DataBot | None = getattr(owner, "data_bot", None)
+                bot_name = getattr(owner, "bot_name", "quick_fix_engine")
+                module_name = Path(context_meta.get("module", path.name)).name
+                for i in range(attempts):
                     try:
-                        chunks = chunk_getter(
-                            path, token_limit, context_builder=builder
+                        return helper(
+                            manager,
+                            desc,
+                            context_builder=builder,
+                            path=path,
+                            metadata=context_meta,
+                            target_region=target_region,
                         )
-                    except Exception:
-                        chunks = []
-            patch_ids: List[int | None] = []
-
-            if needs_helper:
-
-                def _gen(desc: str) -> str:
-                    """Generate helper code for *desc* using the current context."""
-
-                    owner = getattr(manager, "engine", manager)
-                    attempts = int(getattr(owner, "helper_retry_attempts", 3))
-                    delay = float(getattr(owner, "helper_retry_delay", 1.0))
-                    event_bus = getattr(owner, "event_bus", None)
-                    data_bot: DataBot | None = getattr(owner, "data_bot", None)
-                    bot_name = getattr(owner, "bot_name", "quick_fix_engine")
-                    module_name = Path(context_meta.get("module", path.name)).name
-                    for i in range(attempts):
+                    except TypeError:
                         try:
                             return helper(
                                 manager,
                                 desc,
                                 context_builder=builder,
-                                path=path,
-                                metadata=context_meta,
-                                target_region=target_region,
                             )
-                        except TypeError:
-                            try:
-                                return helper(
-                                    manager,
-                                    desc,
-                                    context_builder=builder,
-                                )
-                            except Exception as exc2:  # fall through to logging
-                                err: Exception = exc2
-                        except Exception as exc:
-                            err = exc
-                        logger.exception("helper generation failed", exc_info=err)
-                        if event_bus:
-                            payload = {
-                                "module": module_name,
-                                "description": desc,
-                                "error": str(err),
-                                "attempt": i + 1,
-                            }
-                            try:
-                                event_bus.publish("bot:helper_failed", payload)
-                            except Exception:
-                                logger.exception("event bus publish failed")
-                        if i < attempts - 1:
-                            time.sleep(delay)
-                            delay *= 2
-                    if data_bot:
+                        except Exception as exc2:  # fall through to logging
+                            err: Exception = exc2
+                    except Exception as exc:
+                        err = exc
+                    logger.exception("helper generation failed", exc_info=err)
+                    if event_bus:
+                        payload = {
+                            "module": module_name,
+                            "description": desc,
+                            "error": str(err),
+                            "attempt": i + 1,
+                        }
                         try:
-                            data_bot.record_validation(
-                                bot_name,
-                                module_name,
-                                False,
-                                ["helper_generation_failed"],
-                            )
+                            event_bus.publish("bot:helper_failed", payload)
                         except Exception:
-                            logger.exception(
-                                "failed to record validation in DataBot"
-                            )
-                    return ""
-
-                if chunks and target_region is None:
-                    for chunk in chunks:
-                        summary = (
-                            chunk.get("summary", "")
-                            if isinstance(chunk, dict)
-                            else str(chunk)
+                            logger.exception("event bus publish failed")
+                    if i < attempts - 1:
+                        time.sleep(delay)
+                        delay *= 2
+                if data_bot:
+                    try:
+                        data_bot.record_validation(
+                            bot_name,
+                            module_name,
+                            False,
+                            ["helper_generation_failed"],
                         )
-                        chunk_desc = base_description
-                        if summary:
-                            chunk_desc = f"{base_description}\n\n{summary}"
-                        try:
-                            apply = getattr(engine, "apply_patch_with_retry")
-                        except AttributeError:
-                            apply = getattr(engine, "apply_patch")
-                        helper = _gen(chunk_desc)
+                    except Exception:
+                        logger.exception("failed to record validation in DataBot")
+                return ""
+
+            if chunks and target_region is None:
+                for chunk in chunks:
+                    summary = (
+                        chunk.get("summary", "")
+                        if isinstance(chunk, dict)
+                        else str(chunk)
+                    )
+                    chunk_desc = base_description
+                    if summary:
+                        chunk_desc = f"{base_description}\n\n{summary}"
+                    try:
+                        apply = getattr(engine, "apply_patch_with_retry")
+                    except AttributeError:
+                        apply = getattr(engine, "apply_patch")
+                    helper = _gen(chunk_desc)
+                    try:
+                        pid, _, _ = apply(
+                            path,
+                            helper,
+                            description=chunk_desc,
+                            reason="preemptive_fix",
+                            trigger="quick_fix_engine",
+                            context_meta=context_meta,
+                            target_region=target_region,
+                        )
+                    except TypeError:
                         try:
                             pid, _, _ = apply(
                                 path,
-                                helper,
-                                description=chunk_desc,
+                                chunk_desc,
                                 reason="preemptive_fix",
                                 trigger="quick_fix_engine",
                                 context_meta=context_meta,
                                 target_region=target_region,
                             )
-                        except TypeError:
-                            try:
-                                pid, _, _ = apply(
-                                    path,
-                                    chunk_desc,
-                                    reason="preemptive_fix",
-                                    trigger="quick_fix_engine",
-                                    context_meta=context_meta,
-                                    target_region=target_region,
-                                )
-                            except AttributeError:
-                                engine.patch_file(
-                                    path,
-                                    "preemptive_fix",
-                                    context_meta=context_meta,
-                                    target_region=target_region,
-                                )
-                                pid = None
                         except AttributeError:
                             engine.patch_file(
                                 path,
@@ -1526,42 +1533,42 @@ def generate_patch(
                                 target_region=target_region,
                             )
                             pid = None
-                        patch_ids.append(pid)
-                    patch_id = patch_ids[-1] if patch_ids else None
-                else:
-                    try:
-                        apply = getattr(engine, "apply_patch_with_retry")
                     except AttributeError:
-                        apply = getattr(engine, "apply_patch")
-                    helper = _gen(base_description)
+                        engine.patch_file(
+                            path,
+                            "preemptive_fix",
+                            context_meta=context_meta,
+                            target_region=target_region,
+                        )
+                        pid = None
+                    patch_ids.append(pid)
+                patch_id = patch_ids[-1] if patch_ids else None
+            else:
+                try:
+                    apply = getattr(engine, "apply_patch_with_retry")
+                except AttributeError:
+                    apply = getattr(engine, "apply_patch")
+                helper = _gen(base_description)
+                try:
+                    patch_id, _, _ = apply(
+                        path,
+                        helper,
+                        description=base_description,
+                        reason="preemptive_fix",
+                        trigger="quick_fix_engine",
+                        context_meta=context_meta,
+                        target_region=target_region,
+                    )
+                except TypeError:
                     try:
                         patch_id, _, _ = apply(
                             path,
-                            helper,
-                            description=base_description,
+                            base_description,
                             reason="preemptive_fix",
                             trigger="quick_fix_engine",
                             context_meta=context_meta,
                             target_region=target_region,
                         )
-                    except TypeError:
-                        try:
-                            patch_id, _, _ = apply(
-                                path,
-                                base_description,
-                                reason="preemptive_fix",
-                                trigger="quick_fix_engine",
-                                context_meta=context_meta,
-                                target_region=target_region,
-                            )
-                        except AttributeError:
-                            engine.patch_file(
-                                path,
-                                "preemptive_fix",
-                                context_meta=context_meta,
-                                target_region=target_region,
-                            )
-                            patch_id = None
                     except AttributeError:
                         engine.patch_file(
                             path,
@@ -1570,8 +1577,16 @@ def generate_patch(
                             target_region=target_region,
                         )
                         patch_id = None
-            else:
-                patch_id = None
+                except AttributeError:
+                    engine.patch_file(
+                        path,
+                        "preemptive_fix",
+                        context_meta=context_meta,
+                        target_region=target_region,
+                    )
+                    patch_id = None
+        else:
+            patch_id = None
             after_target = Path(after_dir) / rel
             after_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, after_target)
