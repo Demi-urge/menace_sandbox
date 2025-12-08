@@ -442,23 +442,31 @@ def _ensure_vector_service() -> None:
                 if exit_code is not None:
                     stdout_text, stderr_text = _collect_process_output(process)
                     command_str = " ".join(command or [])
+                    env_pythonpath = (env or {}).get("PYTHONPATH")
                     logger.error(
                         "vector service exited early with code %s (cmd=%s cwd=%s PYTHONPATH=%s)",
                         exit_code,
                         command_str,
                         cwd,
-                        (env or {}).get("PYTHONPATH"),
+                        env_pythonpath,
                     )
                     if stderr_text:
                         logger.error("vector service stderr:\n%s", stderr_text)
                     if stdout_text:
                         logger.debug("vector service stdout:\n%s", stdout_text)
-                    error_suffix = (
-                        f" stderr:\n{stderr_text}" if stderr_text else ""
-                    )
-                    raise VectorServiceError(
-                        f"vector service exited early with code {exit_code}.{error_suffix}"
-                    )
+                    error_parts = [
+                        f"vector service exited early with code {exit_code}",
+                        f"command: {command_str or '<unspecified>'}",
+                    ]
+                    if cwd:
+                        error_parts.append(f"cwd: {cwd}")
+                    if env_pythonpath:
+                        error_parts.append(f"PYTHONPATH={env_pythonpath}")
+                    if stderr_text:
+                        error_parts.append(f"stderr:\n{stderr_text}")
+                    if stdout_text:
+                        error_parts.append(f"stdout:\n{stdout_text}")
+                    raise VectorServiceError("\n".join(error_parts))
             if _ready():
                 return True
             time.sleep(wait)
