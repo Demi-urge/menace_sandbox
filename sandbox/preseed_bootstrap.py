@@ -67,6 +67,7 @@ from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
 from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
 from menace_sandbox.self_coding_thresholds import get_thresholds
+from menace_sandbox.shared_evolution_orchestrator import get_orchestrator
 from menace_sandbox.threshold_service import ThresholdService
 from bootstrap_readiness import (
     _COMPONENT_BASELINES,
@@ -8379,16 +8380,35 @@ def initialize_bootstrap_context(
         _mark_bootstrap_step("internalize_coding_bot")
         internalize_start = perf_counter()
         try:
+            orchestrator = getattr(engine, "evolution_orchestrator", None)
+            if orchestrator is None:
+                orchestrator = getattr(pipeline, "evolution_orchestrator", None)
+            if orchestrator is None:
+                try:
+                    orchestrator = get_orchestrator(bot_name, data_bot, engine)
+                except Exception:  # pragma: no cover - best effort orchestrator
+                    LOGGER.debug(
+                        "failed to resolve evolution orchestrator before internalization",
+                        exc_info=True,
+                    )
+                    orchestrator = None
+
+            if orchestrator is not None and getattr(engine, "evolution_orchestrator", None) is None:
+                try:
+                    engine.evolution_orchestrator = orchestrator
+                except Exception:  # pragma: no cover - advisory only
+                    LOGGER.debug("unable to attach orchestrator to engine", exc_info=True)
+
             provenance_token = getattr(context_builder, "provenance_token", None)
             if provenance_token is None:
-                provenance_token = getattr(
-                    getattr(engine, "evolution_orchestrator", None),
-                    "provenance_token",
-                    None,
-                )
+                provenance_token = getattr(orchestrator, "provenance_token", None)
             LOGGER.info(
-                "before internalize_coding_bot (last_step=%s, provenance_token_present=%s)",
+                (
+                    "before internalize_coding_bot (last_step=%s, orchestrator_present=%s, "
+                    "provenance_token_present=%s)"
+                ),
                 BOOTSTRAP_PROGRESS["last_step"],
+                bool(orchestrator),
                 bool(provenance_token),
             )
             manager = internalize_coding_bot(
