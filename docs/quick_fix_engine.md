@@ -3,7 +3,7 @@
 `QuickFixEngine` suggests patches for failing tests or runtime errors.
 
 ```python
-from quick_fix_engine import QuickFixEngine, generate_patch
+from menace_sandbox.quick_fix_engine import QuickFixEngine, generate_patch
 from error_bot import ErrorDB
 from self_coding_engine import SelfCodingEngine
 from model_automation_pipeline import ModelAutomationPipeline

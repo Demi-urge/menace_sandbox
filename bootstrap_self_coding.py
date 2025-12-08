@@ -27,6 +27,13 @@ from textwrap import shorten
 from types import SimpleNamespace
 from typing import Iterable, Iterator, Mapping, Any, Callable
 
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT.parent))
+nested_package = REPO_ROOT / "menace_sandbox"
+if str(nested_package) not in sys.path:
+    sys.path.append(str(nested_package))
+
 from menace_sandbox.coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
@@ -67,9 +74,6 @@ from bootstrap_timeout_policy import (
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-REPO_ROOT = Path(__file__).resolve().parent
 
 
 _ADAPTIVE_TIMEOUT_FLOORS = derive_bootstrap_timeout_env()
@@ -214,18 +218,6 @@ class _BootstrapOnlineTracker:
         )
         LOGGER.info(message, extra={"event": "core-online", **heartbeat_payload})
         print("[BOOTSTRAP] core-online; continuing optional warmup", flush=True)
-
-
-# ``bootstrap_self_coding.py`` is often executed directly via ``python`` or
-# ``py`` from the repository root on Windows.  In that scenario the process
-# working directory is ``menace_sandbox`` itself, so ``sys.path`` only contains
-# the package directory rather than its parent.  Absolute imports such as
-# ``menace_sandbox.self_coding_manager`` therefore fail because Python expects
-# ``sys.path`` entries to point to the *parent* of the package.  Insert the
-# parent directory explicitly so that the package-style import works regardless
-# of how the script is invoked.
-if str(REPO_ROOT.parent) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT.parent))
 
 
 STALE_STATE_FILES: tuple[Path, ...] = (

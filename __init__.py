@@ -20,6 +20,23 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
 
+_NESTED_PACKAGE_ROOT = _PACKAGE_ROOT / "menace_sandbox"
+if _NESTED_PACKAGE_ROOT.is_dir():
+    __path__ = [*__path__, str(_NESTED_PACKAGE_ROOT)]
+
+_MANUAL_MODULES = {
+    "quick_fix_engine": _NESTED_PACKAGE_ROOT / "quick_fix_engine.py",
+    "quick_fix_engine_service": _NESTED_PACKAGE_ROOT / "quick_fix_engine_service.py",
+}
+for _name, _path in _MANUAL_MODULES.items():
+    _qualified = f"{__name__}.{_name}"
+    if _path.is_file() and _qualified not in sys.modules:
+        _spec = importlib.util.spec_from_file_location(_qualified, _path)
+        if _spec is not None and _spec.loader is not None:
+            _module = importlib.util.module_from_spec(_spec)
+            sys.modules[_qualified] = _module
+            _spec.loader.exec_module(_module)
+
 
 class _DynamicPathRouterProxy(types.ModuleType):
     """Lazy loader that defers importing ``dynamic_path_router`` until needed."""

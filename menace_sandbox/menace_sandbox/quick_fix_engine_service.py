@@ -55,9 +55,9 @@ def start() -> None:
         return
 
     try:
-        print("[SHIM] attempting to import quick_fix_engine", flush=True)
+        print("[SHIM] attempting to import menace_sandbox.quick_fix_engine", flush=True)
         sys.stdout.flush()
-        import quick_fix_engine  # noqa: F401  # local import for optional dep
+        import menace_sandbox.quick_fix_engine  # noqa: F401  # local import for optional dep
     except Exception as exc:  # pragma: no cover - import failures depend on env
         print(
             f"[SHIM] exception during quick_fix_engine import: {exc}",

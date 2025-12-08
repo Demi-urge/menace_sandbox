@@ -89,7 +89,7 @@ from vector_service.context_builder import ContextBuilder
 from prompt_engine import PromptEngine
 from bot_development_bot import BotDevelopmentBot, BotSpec
 from automated_reviewer import AutomatedReviewer
-from quick_fix_engine import QuickFixEngine, generate_patch
+from menace_sandbox.quick_fix_engine import QuickFixEngine, generate_patch
 from error_bot import ErrorDB
 from self_coding_engine import SelfCodingEngine
 from model_automation_pipeline import ModelAutomationPipeline
