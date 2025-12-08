@@ -1986,7 +1986,11 @@ def get_shared_vector_metrics_db(
 
     if bootstrap_protection_active:
         try:
-            _VECTOR_DB_INSTANCE._log_deferred_activation(reason="bootstrap_warmup_summary")
+            log_deferred_activation = getattr(
+                _VECTOR_DB_INSTANCE, "_log_deferred_activation", None
+            )
+            if callable(log_deferred_activation):
+                log_deferred_activation(reason="bootstrap_warmup_summary")
         except Exception:
             logger.debug("vector metrics warmup summary logging failed", exc_info=True)
         context_extra = {
