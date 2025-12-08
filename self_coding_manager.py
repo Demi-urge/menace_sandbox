@@ -933,6 +933,43 @@ class SelfCodingManager:
                 raise
         return builder
 
+    def _resolve_repo_root(self, module: Path) -> Path:
+        """Return the git repository root for the current module.
+
+        ``Path.cwd()`` can point outside the repository when the manager is invoked
+        from a different working directory. This helper attempts to anchor the
+        repository root using ``git rev-parse`` first and then falls back to
+        discovering a ``.git`` directory while walking up the filesystem tree.
+        """
+
+        candidate_bases = [
+            module if module.is_absolute() else Path(__file__).resolve().parent,
+            Path(__file__).resolve().parent,
+        ]
+
+        for base in candidate_bases:
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    cwd=base if base.is_dir() else base.parent,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                root = Path(result.stdout.strip()).resolve()
+                if root.exists():
+                    return root
+            except Exception:
+                continue
+
+        for base in candidate_bases:
+            current = base if base.is_dir() else base.parent
+            for parent in [current] + list(current.parents):
+                if (parent / ".git").exists():
+                    return parent.resolve()
+
+        return Path.cwd().resolve()
+
     @contextmanager
     def _temporary_repo_root(self, root: Path) -> Iterator[None]:
         """Temporarily redirect dynamic path resolution to *root*."""
@@ -1451,8 +1488,8 @@ class SelfCodingManager:
         self.validate_provenance(provenance_token)
         if self.quick_fix is None:
             raise RuntimeError("QuickFixEngine validation unavailable")
-        repo_root = Path.cwd().resolve()
         module = Path(module_path)
+        repo_root = self._resolve_repo_root(module)
         if not module.is_absolute():
             module = (repo_root / module).resolve()
         if not module.exists():
