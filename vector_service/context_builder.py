@@ -423,6 +423,8 @@ def _ensure_vector_service() -> None:
         stderr_text = (
             stderr_data.decode("utf-8", errors="replace") if stderr_data else None
         )
+        if stderr_text:
+            print("[HELPER STDERR]", stderr_text)
         return stdout_text, stderr_text
 
     def _wait_ready(
@@ -497,6 +499,13 @@ def _ensure_vector_service() -> None:
 
     repo_root = Path(__file__).resolve().parent.parent
     script_module = "menace_sandbox.scripts.run_vector_service"
+    print("[DEBUG] PYTHONPATH =", os.environ.get("PYTHONPATH"))
+    required_prefix = "/home/tommu:/home/tommu/menace_sandbox"
+    if required_prefix not in (os.environ.get("PYTHONPATH") or ""):
+        os.environ["PYTHONPATH"] = (
+            f"{required_prefix}:{os.environ.get('PYTHONPATH', '')}"
+        )
+
     env = os.environ.copy()
     env_pythonpath = env.get("PYTHONPATH")
     pythonpath_parts = (
