@@ -29,13 +29,23 @@ import bootstrap_metrics
 
 # Fallback-friendly imports to support both package and script execution
 try:  # pragma: no cover - prefer package relative imports
-    from .bootstrap_readiness import READINESS_STAGES, build_stage_deadlines, shared_online_state
+    from .bootstrap_readiness import (
+        CORE_COMPONENTS,
+        READINESS_STAGES,
+        build_stage_deadlines,
+        shared_online_state,
+    )
     from .config_discovery import ensure_config, ConfigDiscovery
     from .bootstrap_policy import DependencyPolicy, PolicyLoader
     from .logging_utils import log_record
     from .lock_utils import SandboxLock, is_lock_stale
 except ImportError:  # pragma: no cover - allow running as a top-level script
-    from bootstrap_readiness import READINESS_STAGES, build_stage_deadlines, shared_online_state
+    from bootstrap_readiness import (
+        CORE_COMPONENTS,
+        READINESS_STAGES,
+        build_stage_deadlines,
+        shared_online_state,
+    )
     from config_discovery import ensure_config, ConfigDiscovery
     from bootstrap_policy import DependencyPolicy, PolicyLoader
     from logging_utils import log_record
@@ -3344,7 +3354,7 @@ class EnvironmentBootstrapper:
             )
             budgets = self._resolve_phase_budgets(timeout)
             try:
-                initialize_vector_service()
+                heartbeat_snapshot = initialize_vector_service()
             except Exception as exc:
                 self.logger.exception("vector runtime initialization failed during bootstrap")
                 try:
@@ -3357,6 +3367,31 @@ class EnvironmentBootstrapper:
                         "failed to emit vector warmup failure state", exc_info=True
                     )
                 raise
+            vector_state = shared_online_state()
+            ready_components = (
+                vector_state.get("components")
+                if isinstance(vector_state, Mapping)
+                else {}
+            )
+            missing_components = [
+                component
+                for component in CORE_COMPONENTS
+                if ready_components.get(component) != "ready"
+            ]
+            if not vector_state or not vector_state.get("ready") or missing_components:
+                heartbeat = vector_state.get("heartbeat") if isinstance(vector_state, Mapping) else None
+                self.logger.error(
+                    "vector readiness gate not satisfied; aborting dependent bootstrap phases",
+                    extra={
+                        "missing_components": ",".join(sorted(missing_components))
+                        if missing_components
+                        else None,
+                        "heartbeat": heartbeat or heartbeat_snapshot,
+                    },
+                )
+                raise RuntimeError(
+                    "Vector service failed to reach readiness; see heartbeat diagnostics"
+                )
             try:
                 self._run_phase(
                     "critical",
