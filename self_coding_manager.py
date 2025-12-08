@@ -1525,7 +1525,8 @@ class SelfCodingManager:
                         }
                         if not valid or flags:
                             raise RuntimeError(
-                                "quick fix validation failed"
+                                "quick fix validation failed: "
+                                f"valid={valid}, flags={list(flags)}"
                             )
                         passed, _pid, apply_flags = self.quick_fix.apply_validated_patch(
                             str(cloned_module),
