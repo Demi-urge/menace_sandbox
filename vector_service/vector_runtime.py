@@ -13,8 +13,8 @@ import threading
 import time
 from typing import Mapping, MutableMapping
 
-from bootstrap_readiness import CORE_COMPONENTS
-from bootstrap_timeout_policy import emit_bootstrap_heartbeat, read_bootstrap_heartbeat
+from ..bootstrap_readiness import CORE_COMPONENTS
+from ..bootstrap_timeout_policy import emit_bootstrap_heartbeat, read_bootstrap_heartbeat
 
 from .lazy_bootstrap import warmup_vector_service
 from .vector_store import get_default_vector_store
