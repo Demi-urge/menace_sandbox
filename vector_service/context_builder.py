@@ -43,7 +43,6 @@ from context_builder import handle_failure, PromptBuildError
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
-from .vector_runtime import initialize_vector_service
 from .retriever import Retriever, PatchRetriever, FallbackResult, StackRetriever
 try:  # pragma: no cover - optional heavy dependency
     from config import ContextBuilderConfig
@@ -800,10 +799,6 @@ class ContextBuilder:
         # Respect the centralized bootstrap readiness snapshot rather than
         # triggering bootstrap from context builder construction.
         self._bootstrap_state = ensure_bootstrapped()
-        try:
-            initialize_vector_service()
-        except Exception:
-            logger.exception("vector runtime bootstrap failed")
         self._bootstrap_fast = bool(
             _VECTOR_SERVICE_WARMUP
             or _env_flag("MENACE_BOOTSTRAP_FAST", False)
