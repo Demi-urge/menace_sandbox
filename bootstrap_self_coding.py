@@ -104,6 +104,45 @@ class _BootstrapOnlineTracker:
         self.online_state: dict[str, object] = {"components": {}}
         self._core_announced = False
 
+    def _emit_readiness(self) -> None:
+        """Persist the latest component readiness snapshot to the heartbeat."""
+
+        components = self.online_state.get("components", {})
+        if not isinstance(components, Mapping):
+            return
+
+        now = time.time()
+        try:
+            ready, lagging, degraded, degraded_online = minimal_online(self.online_state)
+        except Exception:  # pragma: no cover - defensive readiness evaluation
+            ready, lagging, degraded, degraded_online = False, set(), set(), False
+
+        component_readiness = {
+            name: {
+                "status": str(status),
+                "ts": now,
+            }
+            for name, status in components.items()
+        }
+
+        payload = {
+            "readiness": {
+                "components": dict(components),
+                "component_readiness": component_readiness,
+                "core_ready": ready,
+                "lagging_core": sorted(lagging),
+                "degraded_core": sorted(degraded),
+                "degraded_online": degraded_online,
+                "ready": ready,
+                "online": bool(ready or degraded_online),
+            }
+        }
+
+        try:
+            emit_bootstrap_heartbeat(payload)
+        except Exception:  # pragma: no cover - best effort telemetry
+            LOGGER.debug("failed to emit readiness heartbeat", exc_info=True)
+
     def _soft_deadline(self, component: str) -> float | None:
         entry = self.stage_policy.get(component, {})
         if isinstance(entry, Mapping):
@@ -141,6 +180,7 @@ class _BootstrapOnlineTracker:
             components = dict(components)
         components[str(component)] = state
         self.online_state["components"] = components
+        self._emit_readiness()
         self._maybe_emit_core_signal()
 
     def _maybe_emit_core_signal(self) -> None:
