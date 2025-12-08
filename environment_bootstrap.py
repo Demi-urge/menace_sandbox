@@ -53,6 +53,7 @@ try:  # pragma: no cover - prefer package relative imports
     from .external_dependency_provisioner import ExternalDependencyProvisioner
     from . import startup_checks
     from .vector_service.embedding_scheduler import start_scheduler_from_env
+    from .vector_service.vector_runtime import initialize_vector_service
 except ImportError:  # pragma: no cover - allow running as a top-level script
     from infrastructure_bootstrap import InfrastructureBootstrapper
     from retry_utils import retry
@@ -62,6 +63,7 @@ except ImportError:  # pragma: no cover - allow running as a top-level script
     from external_dependency_provisioner import ExternalDependencyProvisioner
     import startup_checks
     from vector_service.embedding_scheduler import start_scheduler_from_env
+    from vector_service.vector_runtime import initialize_vector_service
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
@@ -3341,6 +3343,10 @@ class EnvironmentBootstrapper:
                 else os.getenv("MENACE_BOOTSTRAP_SKIP_DB_INIT") == "1"
             )
             budgets = self._resolve_phase_budgets(timeout)
+            try:
+                initialize_vector_service()
+            except Exception:
+                self.logger.exception("vector runtime initialization failed during bootstrap")
             try:
                 self._run_phase(
                     "critical",
