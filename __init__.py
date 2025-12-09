@@ -25,8 +25,10 @@ if _NESTED_PACKAGE_ROOT.is_dir():
     __path__ = [*__path__, str(_NESTED_PACKAGE_ROOT)]
 
 _MANUAL_MODULES = {
-    "quick_fix_engine": _NESTED_PACKAGE_ROOT / "quick_fix_engine.py",
-    "quick_fix_engine_service": _NESTED_PACKAGE_ROOT / "quick_fix_engine_service.py",
+    "quick_fix_engine": _NESTED_PACKAGE_ROOT / "quick_fix_engine" / "__init__.py",
+    "quick_fix_engine_service": _NESTED_PACKAGE_ROOT
+    / "quick_fix_engine"
+    / "quick_fix_engine_service.py",
 }
 for _name, _path in _MANUAL_MODULES.items():
     _qualified = f"{__name__}.{_name}"
