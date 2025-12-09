@@ -1525,11 +1525,15 @@ class SelfCodingManager:
                         }
                         skip_apply = False
                         if not valid or flags:
-                            if flags == ["index out of range in self"]:
+                            skip_flags = {
+                                "index out of range in self",
+                                "goal must supply a non-empty query",
+                            }
+                            if set(flags).issubset(skip_flags):
                                 skip_apply = True
                                 summary["quick_fix"]["skipped_apply"] = True
                                 self.logger.warning(
-                                    "quick fix validation encountered index error; "
+                                    "quick fix validation encountered non-fatal flags; "
                                     "continuing without apply",
                                     extra={
                                         "module": str(cloned_module),
