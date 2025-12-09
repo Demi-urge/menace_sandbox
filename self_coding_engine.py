@@ -1849,6 +1849,27 @@ class SelfCodingEngine:
             query = str(goal).strip()
             intent = dict(intent or {})
         if not query:
+            fallback_fields = []
+            if isinstance(intent, Mapping):
+                fallback_fields.extend(
+                    intent.get(key)
+                    for key in ("description", "reason", "module", "file", "path")
+                )
+            if isinstance(goal, Mapping):
+                fallback_fields.extend(
+                    goal.get(key) for key in ("description", "reason", "module", "file", "path")
+                )
+            fallback_fields.append(error_log)
+            query = next(
+                (str(value).strip() for value in fallback_fields if value and str(value).strip()),
+                "",
+            )
+            if query:
+                self.logger.warning(
+                    "build_enriched_prompt missing query; using fallback context",
+                    extra={"intent_keys": list(intent.keys()) if isinstance(intent, Mapping) else []},
+                )
+        if not query:
             raise ValueError("goal must supply a non-empty query")
 
         if error_log is None:
