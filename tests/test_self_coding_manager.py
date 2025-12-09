@@ -332,9 +332,11 @@ def test_workflow_args_failure_when_no_tests(tmp_path, monkeypatch):
         "get_bot_workflow_tests",
         lambda *_a, **_k: [],
     )
-    with pytest.raises(RuntimeError) as excinfo:
-        manager._workflow_test_service_args()
-    assert "no workflow tests resolved" in str(excinfo.value)
+    pytest_args, kwargs, tests, sources = manager._workflow_test_service_args()
+    assert pytest_args is None
+    assert kwargs == {}
+    assert tests == []
+    assert sources == {}
 
 
 def test_run_patch_logs_evolution(monkeypatch, tmp_path):
