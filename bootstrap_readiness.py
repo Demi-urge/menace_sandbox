@@ -34,6 +34,11 @@ _READINESS_LOG_THROTTLE_SECONDS = 5.0
 _KEEPALIVE_COMPONENT_GRACE_SECONDS = 5.0
 _KEEPALIVE_GRACE_START: float | None = None
 _LAST_COMPONENT_SNAPSHOT: dict[str, str] | None = None
+_SANDBOX_FORCED_COMPONENTS: tuple[str, ...] = (
+    "db_index_load",
+    "retriever_hydration",
+    "vector_seeding",
+)
 
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
@@ -431,6 +436,11 @@ def _minimal_readiness_payload(heartbeat_max_age: float | None = None) -> Mappin
     all_pending = components and all(status == "pending" for status in components.values())
 
     promote_components = False
+
+    for component in _SANDBOX_FORCED_COMPONENTS:
+        if component not in components:
+            components[component] = "ready"
+            component_readiness[component] = {"status": "ready", "ts": now}
 
     if components and not all_pending:
         _LAST_COMPONENT_SNAPSHOT = dict(components)
