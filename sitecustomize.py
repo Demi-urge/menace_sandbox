@@ -28,6 +28,21 @@ if _PARENT.is_dir() and str(_PARENT) not in sys.path:
 if _NESTED.is_dir() and str(_NESTED) not in sys.path:
     sys.path.append(str(_NESTED))
 
+_CTX_BUILDER_PATH = _NESTED / "context_builder_util.py"
+try:  # pragma: no cover - defensive import wiring
+    _ctx_spec = importlib.util.spec_from_file_location(
+        "menace_sandbox.context_builder_util", _CTX_BUILDER_PATH
+    )
+    if _ctx_spec is not None and _ctx_spec.loader is not None:
+        _ctx_mod = importlib.util.module_from_spec(_ctx_spec)
+        _ctx_spec.loader.exec_module(_ctx_mod)
+        sys.modules.setdefault("menace_sandbox.context_builder_util", _ctx_mod)
+        sys.modules.setdefault("context_builder_util", _ctx_mod)
+except Exception:  # pragma: no cover - avoid bootstrap breakage
+    logging.getLogger(__name__).debug(
+        "Failed to register packaged context_builder_util", exc_info=True
+    )
+
 base = Path(__file__).resolve().parent
 
 # Provide backwards compatibility stubs only when the real modules are missing.
