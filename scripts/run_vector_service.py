@@ -1,27 +1,19 @@
 #!/usr/bin/env python3
-"""Run the vector service API as a standalone server."""
-from __future__ import annotations
+"""
+Standalone vector bootstrap runner invoked during Menace startup.
+This does NOT run the HTTP API — it only triggers:
+- db_index_load
+- retriever_hydration
+- vector_seeding
+and writes readiness timestamps for bootstrap_readiness.
+"""
 
-import os
-import uvicorn
-
-from context_builder_util import create_context_builder
-import vector_service_api
+from menace_sandbox.vector_service.vector_runtime import initialize_vector_service
 
 
 def main() -> None:
-    """Initialise the app and start Uvicorn."""
-    vector_service_api.create_app(create_context_builder())
-    from vector_service.embedding_backfill import watch_databases
-
-    with watch_databases(dbs=["code", "bot", "error", "workflow"], backend="annoy"):
-        uds = os.environ.get("VECTOR_SERVICE_SOCKET")
-        if uds:
-            uvicorn.run(vector_service_api.app, uds=uds, log_level="info")
-        else:
-            host = os.environ.get("VECTOR_SERVICE_HOST", "0.0.0.0")
-            port = int(os.environ.get("VECTOR_SERVICE_PORT", "8000"))
-            uvicorn.run(vector_service_api.app, host=host, port=port, log_level="info")
+    # Perform vector runtime bootstrap synchronously.
+    initialize_vector_service()
 
 
 if __name__ == "__main__":
