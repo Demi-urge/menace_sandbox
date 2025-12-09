@@ -2529,6 +2529,10 @@ class ContextBuilder:
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
 
+        from .vector_runtime import initialize_vector_service
+
+        initialize_vector_service()
+
         restore_stack_config = None
         if stack_preferences:
             restore_stack_config = self._apply_stack_preferences(stack_preferences)

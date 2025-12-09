@@ -35,6 +35,8 @@ def _mark_component_state(component: str, status: str) -> None:
     now = time.time()
     heartbeat = read_bootstrap_heartbeat() or {}
     readiness = heartbeat.get("readiness") if isinstance(heartbeat, Mapping) else {}
+    if readiness is None:
+        readiness = {}
 
     components: MutableMapping[str, str] = {}
     component_readiness: MutableMapping[str, Mapping[str, object]] = {}

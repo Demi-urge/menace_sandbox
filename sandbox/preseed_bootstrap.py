@@ -4348,6 +4348,10 @@ def initialize_bootstrap_context(
             extra={"shared_timeout": shared_timeout_coordinator.snapshot()},
         )
 
+    from menace_sandbox.vector_service.vector_runtime import initialize_vector_service
+
+    initialize_vector_service()
+
     stage_controller = _StagedBootstrapController(
         stage_policy=resolved_stage_deadlines,
         coordinator=shared_timeout_coordinator,
