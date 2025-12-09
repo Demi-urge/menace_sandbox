@@ -183,7 +183,7 @@ def load_internal(name: str) -> ModuleType:
 
     expected_path: Path | None = None
     if name == "context_builder_util":
-        expected_path = Path(__file__).resolve().parent / f"{name}.py"
+        expected_path = Path(__file__).resolve().parent / "menace_sandbox" / f"{name}.py"
 
     def _is_expected(module: ModuleType) -> bool:
         if expected_path is None:
