@@ -26,7 +26,7 @@ import sys
 import threading
 
 _LOGGER = logging.getLogger(__name__)
-_MODULE_NAME = "menace_sandbox.config.create_context_builder"
+_MODULE_NAME = "config.create_context_builder"
 _MODULE_CACHE: ModuleType | None = None
 _MODULE_LOCK = threading.Lock()
 
@@ -62,7 +62,18 @@ def _load_builder_module() -> ModuleType:
         if _MODULE_CACHE is not None:
             return _MODULE_CACHE
 
-        module_path = Path(__file__).resolve().parent / "config" / "create_context_builder.py"
+        candidate_roots = [Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent]
+        module_path: Path | None = None
+        for root in candidate_roots:
+            potential_path = root / "config" / "create_context_builder.py"
+            if potential_path.exists():
+                module_path = potential_path
+                break
+
+        if module_path is None:
+            searched = ", ".join(str(root / "config" / "create_context_builder.py") for root in candidate_roots)
+            raise FileNotFoundError(f"unable to locate create_context_builder helper (searched: {searched})")
+
         spec = spec_from_file_location(_MODULE_NAME, module_path)
         if spec is None or spec.loader is None:  # pragma: no cover - defensive
             raise ImportError(f"unable to load context builder helpers from {module_path!s}")
@@ -72,6 +83,7 @@ def _load_builder_module() -> ModuleType:
         # mirror the behaviour of ``import_compat`` and avoid duplicate imports.
         sys.modules.setdefault(spec.name, module)
         sys.modules.setdefault("config.create_context_builder", module)
+        sys.modules.setdefault("menace_sandbox.config.create_context_builder", module)
         try:
             spec.loader.exec_module(module)
         except Exception:  # pragma: no cover - propagate with context
