@@ -1522,8 +1522,8 @@ def generate_patch(
                     try:
                         pid, _, _ = apply(
                             path,
-                            helper,
                             description=chunk_desc,
+                            helper=helper,
                             reason="preemptive_fix",
                             trigger="quick_fix_engine",
                             context_meta=context_meta,
@@ -1566,8 +1566,8 @@ def generate_patch(
                 try:
                     patch_id, _, _ = apply(
                         path,
-                        helper,
                         description=base_description,
+                        helper=helper,
                         reason="preemptive_fix",
                         trigger="quick_fix_engine",
                         context_meta=context_meta,

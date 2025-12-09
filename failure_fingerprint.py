@@ -3,6 +3,7 @@ from __future__ import annotations
 """Utilities for logging and querying failure fingerprints."""
 
 import hashlib
+import logging
 import json
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -40,6 +41,26 @@ class _FingerprintIndex(EmbeddableDBMixin):
             index_path=index_path,
             metadata_path=metadata_path,
         )
+
+    def try_add_embedding(
+        self,
+        record_id: Any,
+        record: Any,
+        kind: str,
+        *,
+        source_id: str = "",
+    ) -> None:
+        """Best-effort embedding hook compatible with older mixins."""
+
+        try:
+            super().try_add_embedding(  # type: ignore[misc]
+                record_id, record, kind, source_id=source_id
+            )
+        except AttributeError:
+            try:
+                self.add_embedding(record_id, record, kind, source_id=source_id)
+            except Exception:  # pragma: no cover - best effort
+                logging.exception("embedding hook failed for %s", record_id)
 
     def vector(self, record: Dict[str, Any]) -> List[float]:  # pragma: no cover - simple
         return list(record.get("embedding", []))
