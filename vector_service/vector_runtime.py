@@ -9,6 +9,7 @@ update so downstream components can observe readiness progress.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Mapping, MutableMapping
@@ -84,6 +85,8 @@ def _load_vector_indexes() -> None:
 def _hydrate_retriever() -> None:
     """Warm the retriever stack to ensure handlers and caches are live."""
 
+    os.environ.setdefault("MENACE_VECTOR_HEAVY_BOOTSTRAP", "1")
+    os.environ.setdefault("MENACE_BOOTSTRAP_BUDGET", "999999")
     warmup_vector_service(
         hydrate_handlers=True,
         run_vectorise=False,
