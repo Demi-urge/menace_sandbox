@@ -74,47 +74,50 @@ from dynamic_path_router import resolve_path
 from analysis.semantic_diff_filter import find_semantic_risks
 from patch_safety import PatchSafety
 try:  # pragma: no cover - allow flat imports
-    from vector_service import EmbeddableDBMixin  # type: ignore
-    if EmbeddableDBMixin is object or not hasattr(EmbeddableDBMixin, "add_embedding"):
-        raise ImportError
-except Exception:  # pragma: no cover - provide lightweight fallback
-    class EmbeddableDBMixin:  # type: ignore
-        """Minimal embedding mixin used when vector_service is unavailable."""
+    from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
+except Exception:  # pragma: no cover - prefer canonical vector_service mixin
+    try:
+        from vector_service import EmbeddableDBMixin  # type: ignore
+        if EmbeddableDBMixin is object or not hasattr(EmbeddableDBMixin, "add_embedding"):
+            raise ImportError
+    except Exception:  # pragma: no cover - provide lightweight fallback
+        class EmbeddableDBMixin:  # type: ignore
+            """Minimal embedding mixin used when vector_service is unavailable."""
 
-        def __init__(self, *a: Any, **k: Any) -> None:
-            self._metadata: Dict[str, Dict[str, Any]] = {}
+            def __init__(self, *a: Any, **k: Any) -> None:
+                self._metadata: Dict[str, Dict[str, Any]] = {}
 
-        def encode_text(self, text: str) -> List[float]:  # pragma: no cover - dummy
-            return []
+            def encode_text(self, text: str) -> List[float]:  # pragma: no cover - dummy
+                return []
 
-        def add_embedding(
-            self,
-            record_id: Any,
-            record: Any,
-            kind: str,
-            *,
-            source_id: str = "",
-        ) -> None:
-            vec = self.vector(record)
-            if vec is None:
-                return
-            self._metadata[str(record_id)] = {"vector": vec}
+            def add_embedding(
+                self,
+                record_id: Any,
+                record: Any,
+                kind: str,
+                *,
+                source_id: str = "",
+            ) -> None:
+                vec = self.vector(record)
+                if vec is None:
+                    return
+                self._metadata[str(record_id)] = {"vector": vec}
 
-        def search_by_vector(
-            self, vector: List[float], top_k: int = 5
-        ) -> List[tuple[str, float]]:
-            results: List[tuple[str, float]] = []
-            for rid, meta in self._metadata.items():
-                vec = meta.get("vector", [])
-                score = sum(a * b for a, b in zip(vector, vec))
-                results.append((rid, score))
-            results.sort(key=lambda x: x[1], reverse=True)
-            return results[:top_k]
+            def search_by_vector(
+                self, vector: List[float], top_k: int = 5
+            ) -> List[tuple[str, float]]:
+                results: List[tuple[str, float]] = []
+                for rid, meta in self._metadata.items():
+                    vec = meta.get("vector", [])
+                    score = sum(a * b for a, b in zip(vector, vec))
+                    results.append((rid, score))
+                results.sort(key=lambda x: x[1], reverse=True)
+                return results[:top_k]
 
-        def backfill_embeddings(self, batch_size: int = 100) -> None:
-            for rec_id, rec, kind in self.iter_records():
-                if str(rec_id) not in self._metadata:
-                    self.add_embedding(rec_id, rec, kind)
+            def backfill_embeddings(self, batch_size: int = 100) -> None:
+                for rec_id, rec, kind in self.iter_records():
+                    if str(rec_id) not in self._metadata:
+                        self.add_embedding(rec_id, rec, kind)
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from enhancement_classifier import EnhancementSuggestion

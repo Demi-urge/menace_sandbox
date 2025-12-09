@@ -37,25 +37,31 @@ except ImportError:  # pragma: no cover - allow running as a script
     from safe_repr import basic_repr  # type: ignore
 
 import license_detector
-try:  # pragma: no cover - allow running without vector_service
-    from vector_service import EmbeddableDBMixin, EmbeddingBackfill
-except Exception:  # pragma: no cover - lightweight stub for tests
-    class EmbeddingBackfill:  # type: ignore
-        def watch_events(self, *a, **k) -> None:
-            return None
+try:  # pragma: no cover - prefer canonical menace_sandbox mixin
+    from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
+    from menace_sandbox.vector_service.embedding_backfill import EmbeddingBackfill
+except Exception:  # pragma: no cover - fallback to vector_service, then stubs
+    try:
+        from vector_service import EmbeddableDBMixin, EmbeddingBackfill
+        if EmbeddableDBMixin is object or not hasattr(EmbeddableDBMixin, "add_embedding"):
+            raise ImportError
+    except Exception:  # pragma: no cover - lightweight stub for tests
+        class EmbeddingBackfill:  # type: ignore
+            def watch_events(self, *a, **k) -> None:
+                return None
 
-    class EmbeddableDBMixin:  # type: ignore
-        def __init__(self, *a, **k):
-            pass
+        class EmbeddableDBMixin:  # type: ignore
+            def __init__(self, *a, **k):
+                pass
 
-        def add_embedding(self, *a, **k):  # pragma: no cover - simple stub
-            pass
+            def add_embedding(self, *a, **k):  # pragma: no cover - simple stub
+                pass
 
-        def try_add_embedding(self, *a, **k):  # pragma: no cover - simple stub
-            pass
+            def try_add_embedding(self, *a, **k):  # pragma: no cover - simple stub
+                pass
 
-        def encode_text(self, text):  # pragma: no cover - simple stub
-            return [0.0]
+            def encode_text(self, text):  # pragma: no cover - simple stub
+                return [0.0]
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 try:  # pragma: no cover - allow flat imports
     from .scope_utils import Scope, build_scope_clause, apply_scope
