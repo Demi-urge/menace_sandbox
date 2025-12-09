@@ -930,14 +930,15 @@ def ensure_embeddings_fresh(
             raise exc
 
     for _ in range(max(retries, 1)):
-        _run_backfill(list(pending.keys()))
+        processed = list(pending.keys())
+        _run_backfill(processed)
+        now = time.time()
+        for name in processed:
+            timestamps[name] = now
+        _store_timestamps(timestamps)
         time.sleep(delay)
-        pending = _needs_backfill(pending.keys())
+        pending = _needs_backfill(processed)
         if not pending:
-            now = time.time()
-            for name in names:
-                timestamps[name] = now
-            _store_timestamps(timestamps)
             return diagnostics if return_details else None
 
     logger.error(
