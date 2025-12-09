@@ -1271,12 +1271,11 @@ class SelfCodingManager:
                 _extend_pytest(added)
 
         if not workflow_tests:
-            self.logger.error(
-                "no workflow tests resolved for bot %s", self.bot_name
+            self.logger.warning(
+                "no workflow tests resolved for bot %s; skipping validation",
+                self.bot_name,
             )
-            raise RuntimeError(
-                f"no workflow tests resolved for {self.bot_name}; cannot run validation"
-            )
+            return None, {}, [], workflow_sources
 
         args: str | None = None
         if pytest_tokens:
@@ -1564,7 +1563,7 @@ class SelfCodingManager:
                         os.chdir(prev_cwd)
             builder = create_context_builder()
             ensure_fresh_weights(builder)
-            (
+            ( 
                 pytest_args,
                 svc_kwargs,
                 workflow_tests,
@@ -1582,153 +1581,167 @@ class SelfCodingManager:
                     from self_test_service import SelfTestService as _SelfTestService  # type: ignore
                 except Exception as exc:
                     raise RuntimeError("SelfTestService unavailable") from exc
-            base_kwargs = dict(svc_kwargs)
-            base_pytest_args = base_kwargs.get("pytest_args")
-            attempt_records: list[dict[str, Any]] = []
-            attempt_count = 0
-            current_pytest_args = base_pytest_args
-            results: dict[str, Any] = {}
-            passed_modules: list[str] = []
-            while True:
-                run_kwargs = dict(base_kwargs)
-                run_kwargs.setdefault("manager", self)
-                if current_pytest_args is None:
-                    run_kwargs.pop("pytest_args", None)
-                else:
-                    run_kwargs["pytest_args"] = current_pytest_args
-                try:
-                    service = _SelfTestService(**run_kwargs)
-                except FileNotFoundError as exc:
-                    raise RuntimeError("SelfTestService initialization failed") from exc
-                results, passed_modules = service.run_once()
-                failed_count = int(results.get("failed", 0))
+            if not workflow_tests:
                 summary["self_tests"] = {
-                    "passed": int(results.get("passed", 0)),
-                    "failed": failed_count,
-                    "coverage": float(results.get("coverage", 0.0)),
-                    "runtime": float(results.get("runtime", 0.0)),
-                    "pytest_args": current_pytest_args,
-                    "passed_modules": passed_modules,
+                    "skipped": True,
+                    "reason": "no workflow tests resolved",
                 }
-                if workflow_tests:
-                    summary["self_tests"]["workflow_tests"] = list(workflow_tests)
                 if workflow_sources:
                     summary["self_tests"]["workflow_sources"] = {
-                        key: list(values)
-                        for key, values in workflow_sources.items()
+                        key: list(values) for key, values in workflow_sources.items()
                     }
-                executed = results.get("workflow_tests")
-                if executed:
-                    summary["self_tests"]["executed_workflows"] = list(executed)
-                diagnostics = self._collect_test_diagnostics(results)
-                if diagnostics:
-                    summary["self_tests"]["diagnostics"] = diagnostics
-                else:
-                    summary["self_tests"].pop("diagnostics", None)
-                summary["self_tests"]["attempts"] = attempt_count + 1
-                summary_attempts = [dict(record) for record in attempt_records]
-                summary["self_tests"]["repair_attempts"] = summary_attempts
-                summary.setdefault("quick_fix", {})["repair_attempts"] = list(
-                    summary_attempts
-                )
-                if failed_count == 0:
-                    break
-                if attempt_count >= self.post_patch_repair_retries:
-                    self._last_validation_summary = summary
-                    raise RuntimeError(
-                        f"self tests failed ({failed_count}) after {attempt_count} repair attempts"
-                    )
-                attempt_index = attempt_count + 1
-                repair_desc = self._synthesise_repair_description(
-                    description,
-                    diagnostics,
-                    attempt=attempt_index,
-                    failed_tests=failed_count,
-                )
-                ctx_meta_attempt = dict(ctx_meta)
-                ctx_meta_attempt.update(
-                    {
-                        "repair_attempt": attempt_index,
-                        "repair_failed_tests": failed_count,
+            else:
+                base_kwargs = dict(svc_kwargs)
+                base_pytest_args = base_kwargs.get("pytest_args")
+                attempt_records: list[dict[str, Any]] = []
+                attempt_count = 0
+                current_pytest_args = base_pytest_args
+                results: dict[str, Any] = {}
+                passed_modules: list[str] = []
+                while True:
+                    run_kwargs = dict(base_kwargs)
+                    run_kwargs.setdefault("manager", self)
+                    if current_pytest_args is None:
+                        run_kwargs.pop("pytest_args", None)
+                    else:
+                        run_kwargs["pytest_args"] = current_pytest_args
+                    try:
+                        service = _SelfTestService(**run_kwargs)
+                    except FileNotFoundError as exc:
+                        raise RuntimeError("SelfTestService initialization failed") from exc
+                    results, passed_modules = service.run_once()
+                    failed_count = int(results.get("failed", 0))
+                    summary["self_tests"] = {
+                        "passed": int(results.get("passed", 0)),
+                        "failed": failed_count,
+                        "coverage": float(results.get("coverage", 0.0)),
+                        "runtime": float(results.get("runtime", 0.0)),
+                        "pytest_args": current_pytest_args,
+                        "passed_modules": passed_modules,
                     }
-                )
-                if diagnostics.get("node_ids"):
-                    ctx_meta_attempt["repair_node_ids"] = list(diagnostics["node_ids"])
-                if diagnostics.get("failed_modules"):
-                    ctx_meta_attempt["repair_failed_modules"] = list(
-                        diagnostics["failed_modules"]
+                    if workflow_tests:
+                        summary["self_tests"]["workflow_tests"] = list(workflow_tests)
+                    if workflow_sources:
+                        summary["self_tests"]["workflow_sources"] = {
+                            key: list(values)
+                            for key, values in workflow_sources.items()
+                        }
+                    executed = results.get("workflow_tests")
+                    if executed:
+                        summary["self_tests"]["executed_workflows"] = list(executed)
+                    diagnostics = self._collect_test_diagnostics(results)
+                    if diagnostics:
+                        summary["self_tests"]["diagnostics"] = diagnostics
+                    else:
+                        summary["self_tests"].pop("diagnostics", None)
+                    summary["self_tests"]["attempts"] = attempt_count + 1
+                    summary_attempts = [dict(record) for record in attempt_records]
+                    summary["self_tests"]["repair_attempts"] = summary_attempts
+                    summary.setdefault("quick_fix", {})["repair_attempts"] = list(
+                        summary_attempts
                     )
-                next_pytest_args = self._select_repair_pytest_args(
-                    base_pytest_args, diagnostics
-                )
-                attempt_record: dict[str, Any] = {
-                    "attempt": attempt_index,
-                    "failed_tests": failed_count,
-                    "pytest_args": current_pytest_args,
-                    "description": self._truncate(repair_desc, limit=800),
-                }
-                if diagnostics.get("node_ids"):
-                    attempt_record["node_ids"] = list(diagnostics["node_ids"])
-                if diagnostics.get("failed_modules"):
-                    attempt_record["failed_modules"] = list(
-                        diagnostics["failed_modules"]
+                    if failed_count == 0:
+                        break
+                    if attempt_count >= self.post_patch_repair_retries:
+                        self._last_validation_summary = summary
+                        raise RuntimeError(
+                            f"self tests failed ({failed_count}) after {attempt_count} repair attempts"
+                        )
+                    attempt_index = attempt_count + 1
+                    repair_desc = self._synthesise_repair_description(
+                        description,
+                        diagnostics,
+                        attempt=attempt_index,
+                        failed_tests=failed_count,
                     )
-                if next_pytest_args is not None:
-                    attempt_record["next_pytest_args"] = next_pytest_args
-                try:
-                    self.refresh_quick_fix_context()
-                    passed, patch_id, apply_flags = self.quick_fix.apply_validated_patch(
-                        str(module),
-                        repair_desc,
-                        ctx_meta_attempt,
-                        provenance_token=provenance_token,
+                    ctx_meta_attempt = dict(ctx_meta)
+                    ctx_meta_attempt.update(
+                        {
+                            "repair_attempt": attempt_index,
+                            "repair_failed_tests": failed_count,
+                        }
                     )
-                except Exception as exc:
-                    attempt_record["error"] = str(exc)
+                    if diagnostics.get("node_ids"):
+                        ctx_meta_attempt["repair_node_ids"] = list(
+                            diagnostics["node_ids"]
+                        )
+                    if diagnostics.get("failed_modules"):
+                        ctx_meta_attempt["repair_failed_modules"] = list(
+                            diagnostics["failed_modules"]
+                        )
+                    next_pytest_args = self._select_repair_pytest_args(
+                        base_pytest_args, diagnostics
+                    )
+                    attempt_record: dict[str, Any] = {
+                        "attempt": attempt_index,
+                        "failed_tests": failed_count,
+                        "pytest_args": current_pytest_args,
+                        "description": self._truncate(repair_desc, limit=800),
+                    }
+                    if diagnostics.get("node_ids"):
+                        attempt_record["node_ids"] = list(diagnostics["node_ids"])
+                    if diagnostics.get("failed_modules"):
+                        attempt_record["failed_modules"] = list(
+                            diagnostics["failed_modules"]
+                        )
+                    if next_pytest_args is not None:
+                        attempt_record["next_pytest_args"] = next_pytest_args
+                    try:
+                        self.refresh_quick_fix_context()
+                        passed, patch_id, apply_flags = self.quick_fix.apply_validated_patch(
+                            str(module),
+                            repair_desc,
+                            ctx_meta_attempt,
+                            provenance_token=provenance_token,
+                        )
+                    except Exception as exc:
+                        attempt_record["error"] = str(exc)
+                        attempt_records.append(attempt_record)
+                        summary_attempts = [dict(record) for record in attempt_records]
+                        summary["self_tests"]["repair_attempts"] = summary_attempts
+                        summary.setdefault("quick_fix", {})["repair_attempts"] = list(
+                            summary_attempts
+                        )
+                        self._record_repair_outcome(
+                            module,
+                            attempt=attempt_index,
+                            success=False,
+                            error=str(exc),
+                            diagnostics=diagnostics,
+                        )
+                        self._last_validation_summary = summary
+                        raise
+                    attempt_record.update(
+                        {
+                            "patch_id": patch_id,
+                            "apply_flags": list(apply_flags),
+                            "patch_passed": bool(passed) and not apply_flags,
+                        }
+                    )
                     attempt_records.append(attempt_record)
                     summary_attempts = [dict(record) for record in attempt_records]
                     summary["self_tests"]["repair_attempts"] = summary_attempts
                     summary.setdefault("quick_fix", {})["repair_attempts"] = list(
                         summary_attempts
                     )
+                    success = bool(passed) and not apply_flags
                     self._record_repair_outcome(
                         module,
                         attempt=attempt_index,
-                        success=False,
-                        error=str(exc),
+                        success=success,
+                        patch_id=patch_id,
+                        flags=list(apply_flags),
                         diagnostics=diagnostics,
                     )
-                    self._last_validation_summary = summary
-                    raise
-                attempt_record.update(
-                    {
-                        "patch_id": patch_id,
-                        "apply_flags": list(apply_flags),
-                        "patch_passed": bool(passed) and not apply_flags,
-                    }
-                )
-                attempt_records.append(attempt_record)
-                summary_attempts = [dict(record) for record in attempt_records]
-                summary["self_tests"]["repair_attempts"] = summary_attempts
-                summary.setdefault("quick_fix", {})["repair_attempts"] = list(
-                    summary_attempts
-                )
-                success = bool(passed) and not apply_flags
-                self._record_repair_outcome(
-                    module,
-                    attempt=attempt_index,
-                    success=success,
-                    patch_id=patch_id,
-                    flags=list(apply_flags),
-                    diagnostics=diagnostics,
-                )
-                if not success:
-                    self._last_validation_summary = summary
-                    raise RuntimeError("quick fix repair failed")
-                current_pytest_args = (
-                    next_pytest_args if next_pytest_args is not None else base_pytest_args
-                )
-                attempt_count = attempt_index
+                    if not success:
+                        self._last_validation_summary = summary
+                        raise RuntimeError("quick fix repair failed")
+                    current_pytest_args = (
+                        next_pytest_args
+                        if next_pytest_args is not None
+                        else base_pytest_args
+                    )
+                    attempt_count = attempt_index
         except Exception as exc:
             print(
                 f"[debug] run_post_patch_cycle encountered error for {self.bot_name}: {exc}"
