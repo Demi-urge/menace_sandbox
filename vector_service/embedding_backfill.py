@@ -905,8 +905,32 @@ def ensure_embeddings_fresh(
             pass
 
     pending = diagnostics
+
+    def _run_backfill(dbs: list[str]) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(schedule_backfill(dbs=dbs))
+            return
+
+        exc: BaseException | None = None
+
+        def runner() -> None:
+            nonlocal exc
+            try:
+                asyncio.run(schedule_backfill(dbs=dbs))
+            except BaseException as error:  # pragma: no cover - propagate failure
+                exc = error
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join()
+
+        if exc:
+            raise exc
+
     for _ in range(max(retries, 1)):
-        asyncio.run(schedule_backfill(dbs=list(pending.keys())))
+        _run_backfill(list(pending.keys()))
         time.sleep(delay)
         pending = _needs_backfill(pending.keys())
         if not pending:
