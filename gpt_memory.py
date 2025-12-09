@@ -133,6 +133,35 @@ STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}
 logger = logging.getLogger(__name__)
 
 
+def _bootstrap_failure_detail(probe) -> str | None:
+    heartbeat = probe.heartbeat if hasattr(probe, "heartbeat") else None
+    readiness = heartbeat.get("readiness") if isinstance(heartbeat, Mapping) else None
+    if not isinstance(readiness, Mapping):
+        return None
+
+    components = readiness.get("components") if isinstance(readiness, Mapping) else None
+    component_readiness = (
+        readiness.get("component_readiness") if isinstance(readiness, Mapping) else None
+    )
+    if not isinstance(components, Mapping):
+        return None
+
+    for component, status in components.items():
+        if str(status) != "failed":
+            continue
+        detail = None
+        if isinstance(component_readiness, Mapping):
+            meta = component_readiness.get(component)
+            if isinstance(meta, Mapping):
+                reason = meta.get("reason") or meta.get("error")
+                if reason:
+                    detail = str(reason)
+        detail = detail or "bootstrap component reported failure"
+        return f"{component} unavailable: {detail}"
+
+    return None
+
+
 def _ensure_bootstrap_ready(component: str, *, timeout: float = 12.0) -> None:
     env_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     try:
@@ -141,10 +170,22 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 12.0) -> None:
         parsed_timeout = None
 
     effective_timeout = max(timeout, parsed_timeout) if parsed_timeout else timeout
+    probe = _BOOTSTRAP_READINESS.probe()
+    failure_detail = _bootstrap_failure_detail(probe)
+    if failure_detail:
+        raise RuntimeError(
+            f"{component} cannot start because bootstrap failed: {failure_detail}"
+        )
+
     try:
         _BOOTSTRAP_READINESS.await_ready(timeout=effective_timeout)
     except TimeoutError as exc:  # pragma: no cover - defensive path
         probe = _BOOTSTRAP_READINESS.probe()
+        failure_detail = _bootstrap_failure_detail(probe)
+        if failure_detail:
+            raise RuntimeError(
+                f"{component} cannot start because bootstrap failed: {failure_detail}"
+            ) from exc
         if probe.heartbeat is None:
             logger.warning(
                 "%s proceeding without bootstrap heartbeat; readiness stalled after %.1fs: %s",

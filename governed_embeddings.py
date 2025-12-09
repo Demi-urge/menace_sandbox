@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import errno
 import contextlib
+import errno
 import inspect
 import logging
 import os
@@ -12,7 +12,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, TYPE_CHECKING, cast, Set
+from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, TYPE_CHECKING, cast, Set
 
 try:  # pragma: no cover - lock utilities are optional in some environments
     from lock_utils import (
@@ -437,17 +437,175 @@ def _prepare_bundled_model_dir() -> Path | None:
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             tmp_dir.mkdir(parents=True, exist_ok=True)
-            with tarfile.open(archive) as tar:
-                tar.extractall(tmp_dir)
+            _extract_bundled_archive(archive, tmp_dir)
             if target_dir.exists():
                 shutil.rmtree(target_dir, ignore_errors=True)
             tmp_dir.rename(target_dir)
         except Exception as exc:
             logger.warning("failed to extract bundled embedder archive: %s", exc)
+            _signal_vector_readiness_failure(
+                "bundled_embedder_extract_failed", error=str(exc)
+            )
             with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             return None
     return target_dir
+
+
+def _bundled_extract_timeout() -> float:
+    raw_timeout = os.getenv("MENACE_BUNDLED_EMBEDDER_EXTRACT_TIMEOUT", "").strip()
+    if not raw_timeout:
+        return 20.0
+    try:
+        parsed = float(raw_timeout)
+    except Exception:
+        logger.warning(
+            "invalid MENACE_BUNDLED_EMBEDDER_EXTRACT_TIMEOUT=%r; defaulting to 20s",
+            raw_timeout,
+        )
+        return 20.0
+    if parsed <= 0:
+        logger.warning(
+            "MENACE_BUNDLED_EMBEDDER_EXTRACT_TIMEOUT must be positive; defaulting to 20s"
+        )
+        return 20.0
+    return parsed
+
+
+def _signal_vector_readiness_failure(reason: str, *, error: str | None = None) -> None:
+    _update_vector_readiness_status("failed", reason=reason, error=error)
+
+
+def _update_vector_readiness_status(
+    status: str, *, remaining: float | None = None, reason: str | None = None, error: str | None = None
+) -> None:
+    try:  # pragma: no cover - defensive best effort
+        from bootstrap_timeout_policy import emit_bootstrap_heartbeat, read_bootstrap_heartbeat
+    except Exception:
+        return
+
+    try:  # pragma: no cover - lightweight bookkeeping
+        from bootstrap_readiness import CORE_COMPONENTS
+    except Exception:
+        CORE_COMPONENTS = ()
+
+    heartbeat = read_bootstrap_heartbeat() or {}
+    readiness = heartbeat.get("readiness") if isinstance(heartbeat, Mapping) else {}
+    components: MutableMapping[str, str] = {}
+    component_readiness: MutableMapping[str, Mapping[str, object]] = {}
+
+    if isinstance(readiness, Mapping):
+        raw_components = readiness.get("components")
+        if isinstance(raw_components, Mapping):
+            components.update({str(key): str(value) for key, value in raw_components.items()})
+
+        raw_component_readiness = readiness.get("component_readiness")
+        if isinstance(raw_component_readiness, Mapping):
+            for key, value in raw_component_readiness.items():
+                state = value if isinstance(value, Mapping) else {"status": value}
+                component_readiness[str(key)] = dict(state)
+
+    now = time.time()
+    components["vector_seeding"] = status
+    detail: MutableMapping[str, object] = {"status": status, "ts": now}
+    if reason:
+        detail["reason"] = reason
+    if error:
+        detail["error"] = error
+    if remaining is not None:
+        detail["remaining"] = max(0.0, remaining)
+    component_readiness["vector_seeding"] = dict(detail)
+
+    all_ready = all(components.get(name) == "ready" for name in CORE_COMPONENTS)
+    readiness_payload: dict[str, object] = {
+        "components": dict(components),
+        "component_readiness": dict(component_readiness),
+        "ready": all_ready,
+        "online": bool(all_ready or (isinstance(readiness, Mapping) and readiness.get("online"))),
+    }
+
+    enriched = dict(heartbeat)
+    enriched["readiness"] = readiness_payload
+
+    emit_bootstrap_heartbeat(enriched)
+
+
+def _extract_bundled_archive(archive: Path, dest: Path) -> None:
+    timeout = _bundled_extract_timeout()
+    stop_event = threading.Event()
+    done_event = threading.Event()
+    result: dict[str, Exception | None] = {"error": None}
+    deadline = time.perf_counter() + timeout if timeout > 0 else None
+
+    def _run() -> None:
+        try:
+            with tarfile.open(archive) as tar:
+                members = tar.getmembers()
+                next_heartbeat = time.perf_counter() + 2.5
+                for idx, member in enumerate(members, 1):
+                    if stop_event.is_set():
+                        raise TimeoutError("bundled embedder extraction cancelled")
+                    tar.extract(member, dest)
+                    now = time.perf_counter()
+                    if now >= next_heartbeat:
+                        remaining = None if deadline is None else max(0.0, deadline - now)
+                        _update_vector_readiness_status(
+                            "extracting",
+                            remaining=remaining,
+                            reason="bundled_embedder_extract",
+                            error=None,
+                        )
+                        next_heartbeat = now + 2.5
+        except Exception as exc:  # pragma: no cover - diagnostic path
+            result["error"] = exc
+        finally:
+            done_event.set()
+
+    _update_vector_readiness_status(
+        "extracting",
+        remaining=timeout if timeout > 0 else None,
+        reason="bundled_embedder_extract",
+        error=None,
+    )
+
+    thread = threading.Thread(
+        target=_run,
+        name="bundled-embedder-extract",
+        daemon=True,
+    )
+    thread.start()
+
+    while not done_event.wait(0.5):
+        if deadline is not None and time.perf_counter() >= deadline:
+            stop_event.set()
+            break
+        if deadline is not None:
+            _update_vector_readiness_status(
+                "extracting",
+                remaining=max(0.0, deadline - time.perf_counter()),
+                reason="bundled_embedder_extract",
+                error=None,
+            )
+
+    if stop_event.is_set():
+        logger.warning(
+            "bundled embedder extraction exceeded timeout; cancelling background task",
+            extra={"archive": str(archive), "timeout": timeout},
+        )
+        _signal_vector_readiness_failure("bundled_embedder_extract_timeout")
+        raise TimeoutError("bundled embedder extraction timed out")
+
+    done_event.wait(2.0)
+    if result["error"]:
+        raise result["error"]
+
+    _update_vector_readiness_status(
+        "warming",
+        remaining=None,
+        reason="bundled_embedder_extract_complete",
+        error=None,
+    )
+
 
 
 def _build_stub_embedder() -> Any:
