@@ -62,7 +62,6 @@ from menace_sandbox.code_database import CodeDB
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.db_router import set_audit_bootstrap_safe_default
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
-from menace_sandbox.menace_memory_manager import MenaceMemoryManager
 from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
 from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -4349,6 +4348,7 @@ def initialize_bootstrap_context(
         )
 
     from menace_sandbox.vector_service.vector_runtime import initialize_vector_service
+    from menace_sandbox.menace_memory_manager import MenaceMemoryManager
 
     initialize_vector_service()
 
