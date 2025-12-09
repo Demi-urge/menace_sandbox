@@ -1587,6 +1587,7 @@ class SelfCodingManager:
             passed_modules: list[str] = []
             while True:
                 run_kwargs = dict(base_kwargs)
+                run_kwargs.setdefault("manager", self)
                 if current_pytest_args is None:
                     run_kwargs.pop("pytest_args", None)
                 else:
