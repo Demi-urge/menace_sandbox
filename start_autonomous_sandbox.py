@@ -9,7 +9,9 @@ without requiring any manual post-launch edits.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -20,6 +22,37 @@ for _path in (_HERE, _HERE.parent):
     _str_path = str(_path)
     if _str_path not in sys.path:
         sys.path.insert(0, _str_path)
+
+# --- AUTO-START BOOTSTRAP WATCHDOG ---
+WATCHDOG_PATH = os.path.join(_HERE, "sandbox", "bootstrap_watchdog.py")
+
+
+def _watchdog_running() -> bool:
+    import psutil
+
+    for process in psutil.process_iter(attrs=["cmdline"]):
+        try:
+            cmdline = process.info.get("cmdline")
+            if cmdline and "bootstrap_watchdog.py" in cmdline:
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        except Exception:
+            continue
+    return False
+
+
+if not _watchdog_running():
+    print("[AUTO] Starting bootstrap watchdog...")
+    subprocess.Popen(
+        [sys.executable, WATCHDOG_PATH, "--interval", "2"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(1)
+else:
+    print("[AUTO] Watchdog already running.")
+# --------------------------------------
 
 from sandbox.preseed_bootstrap import initialize_bootstrap_context
 from sandbox_runner.bootstrap import bootstrap_environment
@@ -33,7 +66,6 @@ import faulthandler
 import json
 import logging
 import random
-import subprocess
 import signal
 import threading
 import time
