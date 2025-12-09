@@ -576,6 +576,7 @@ class SelfTestService:
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
         ephemeral: bool = True,
+        manager: Any | None = None,
         context_builder: ContextBuilder,
     ) -> None:
         """Create a new service instance.
@@ -647,7 +648,10 @@ class SelfTestService:
             ) from exc
         self.context_builder = context_builder
         self.error_logger = ErrorLoggerCls(
-            db, knowledge_graph=self.graph, context_builder=self.context_builder
+            db,
+            knowledge_graph=self.graph,
+            context_builder=self.context_builder,
+            manager=manager,
         )
         self.data_bot = data_bot
         self.result_callback = result_callback

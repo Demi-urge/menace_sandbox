@@ -533,10 +533,8 @@ class ErrorLogger:
         sentry: "SentryClient" | None = None,
         knowledge_graph: "KnowledgeGraph" | None = None,
         context_builder: ContextBuilder,
-        manager: SelfCodingManager,
+        manager: SelfCodingManager | None = None,
     ) -> None:
-        if manager is None:
-            raise TypeError("manager is required")
         if db is None:
             try:
                 from .error_bot import ErrorDB as _ErrorDB
@@ -660,9 +658,12 @@ class ErrorLogger:
                 self.replicator.replicate(event)
             except Exception as e:  # pragma: no cover - network issues
                 self.logger.error("failed to replicate telemetry: %s", e)
-        orchestrator = getattr(self.manager, "evolution_orchestrator", None)
-        token = getattr(orchestrator, "provenance_token", "")
-        if root_module:
+        orchestrator = None
+        token = ""
+        if self.manager:
+            orchestrator = getattr(self.manager, "evolution_orchestrator", None)
+            token = getattr(orchestrator, "provenance_token", "")
+        if self.manager and root_module:
             try:
                 self.manager.generate_patch(
                     root_module,
