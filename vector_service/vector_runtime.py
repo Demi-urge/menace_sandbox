@@ -15,7 +15,10 @@ import time
 from typing import Mapping, MutableMapping
 
 from menace_sandbox.bootstrap_readiness import CORE_COMPONENTS
-from menace_sandbox.bootstrap_timeout_policy import emit_bootstrap_heartbeat, read_bootstrap_heartbeat
+from menace_sandbox.bootstrap_timeout_policy import (
+    emit_bootstrap_heartbeat,
+    read_bootstrap_heartbeat,
+)
 
 from menace_sandbox.vector_service.lazy_bootstrap import warmup_vector_service
 from menace_sandbox.vector_service.vector_store import get_default_vector_store
