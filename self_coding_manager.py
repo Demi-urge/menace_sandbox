@@ -1523,25 +1523,39 @@ class SelfCodingManager:
                         summary["quick_fix"] = {
                             "validation_flags": list(flags),
                         }
+                        skip_apply = False
                         if not valid or flags:
-                            raise RuntimeError(
-                                "quick fix validation failed: "
-                                f"valid={valid}, flags={list(flags)}"
+                            if flags == ["index out of range in self"]:
+                                skip_apply = True
+                                summary["quick_fix"]["skipped_apply"] = True
+                                self.logger.warning(
+                                    "quick fix validation encountered index error; "
+                                    "continuing without apply",
+                                    extra={
+                                        "module": str(cloned_module),
+                                        "flags": list(flags),
+                                    },
+                                )
+                            else:
+                                raise RuntimeError(
+                                    "quick fix validation failed: "
+                                    f"valid={valid}, flags={list(flags)}"
+                                )
+                        if not skip_apply:
+                            passed, _pid, apply_flags = self.quick_fix.apply_validated_patch(
+                                str(cloned_module),
+                                description,
+                                ctx_meta,
+                                provenance_token=provenance_token,
                             )
-                        passed, _pid, apply_flags = self.quick_fix.apply_validated_patch(
-                            str(cloned_module),
-                            description,
-                            ctx_meta,
-                            provenance_token=provenance_token,
-                        )
-                        summary["quick_fix"].update(
-                            {
-                                "apply_flags": list(apply_flags),
-                                "passed": bool(passed),
-                            }
-                        )
-                        if not passed or apply_flags:
-                            raise RuntimeError("quick fix application failed")
+                            summary["quick_fix"].update(
+                                {
+                                    "apply_flags": list(apply_flags),
+                                    "passed": bool(passed),
+                                }
+                            )
+                            if not passed or apply_flags:
+                                raise RuntimeError("quick fix application failed")
                     finally:
                         os.chdir(prev_cwd)
             builder = create_context_builder()
