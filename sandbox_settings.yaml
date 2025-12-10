@@ -1,2 +1,6 @@
 bootstrap_fast: true
 bootstrap_timeout_seconds: 0
+
+embedder:
+  type: sentence_transformer
+  path: /home/tommu/embedders/all-MiniLM-L6-v2
