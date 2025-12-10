@@ -72,6 +72,7 @@ from bootstrap_timeout_policy import (
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
+from vector_service.embedding_backfill import rebuild_all_embeddings
 from dependency_hints import format_system_package_instructions
 
 
@@ -1428,6 +1429,7 @@ def _sandbox_init(
     sandbox.error_forecaster = forecaster
     sandbox.quick_fix_engine = quick_fix_engine
     sandbox.graph = graph
+    rebuild_all_embeddings(force=True)
     tester = SelfTestService(
         telem_db,
         include_orphans=include_orphans,

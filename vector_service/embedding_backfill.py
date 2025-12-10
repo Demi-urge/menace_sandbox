@@ -14,6 +14,7 @@ import hashlib
 import queue
 import threading
 import contextlib
+import shutil
 from datetime import datetime, timedelta
 
 from . import registry as _registry
@@ -953,6 +954,7 @@ __all__ = [
     "EmbeddableDBMixin",
     "schedule_backfill",
     "ensure_embeddings_fresh",
+    "rebuild_all_embeddings",
     "StaleEmbeddingsError",
     "KNOWN_DB_KINDS",
     "check_staleness",
@@ -960,6 +962,61 @@ __all__ = [
     "watch_event_bus",
     "consume_record_changes",
 ]
+
+
+def rebuild_all_embeddings(
+    *,
+    dbs: Iterable[str] | None = None,
+    force: bool = False,
+    retries: int = 2,
+    delay: float = 0.5,
+    log_hook: Callable[[Dict[str, Dict[str, Any]]], None] | None = None,
+) -> Dict[str, Dict[str, Any]] | None:
+    """Rebuild embeddings for the core databases.
+
+    Parameters
+    ----------
+    dbs:
+        Optional iterable of database names to rebuild. Defaults to ``code``,
+        ``error`` and ``workflow`` when omitted.
+    force:
+        When ``True`` existing embedding metadata and caches are removed before
+        running the backfill, ensuring a full rebuild.
+    retries:
+        Number of times to attempt the backfill before raising an error.
+    delay:
+        Delay between backfill attempts.
+    log_hook:
+        Optional callable invoked with staleness diagnostics.
+    """
+
+    targets = list(dbs) if dbs else ["code", "error", "workflow"]
+    if not targets:
+        return {}
+
+    if force:
+        timestamps = _load_timestamps()
+        for name in targets:
+            timestamps.pop(name, None)
+            with contextlib.suppress(Exception):
+                meta_path = resolve_path(f"{name}_embeddings.json")
+                if meta_path.is_dir():
+                    shutil.rmtree(meta_path)
+                elif meta_path.exists():
+                    meta_path.unlink()
+            with contextlib.suppress(Exception):
+                db_cache = resolve_path(f"local_db/{name}")
+                if db_cache.exists():
+                    shutil.rmtree(db_cache)
+        _store_timestamps(timestamps)
+
+    return ensure_embeddings_fresh(
+        targets,
+        retries=retries,
+        delay=delay,
+        return_details=True,
+        log_hook=log_hook,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - CLI entrypoint
