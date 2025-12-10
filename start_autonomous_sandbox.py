@@ -25,7 +25,7 @@ from typing import Any, Callable, Mapping, Sequence
 # Auto-start watchdog
 watchdog_script = os.path.expanduser("~/menace_sandbox/start_watchdog.py")
 subprocess.Popen([sys.executable, watchdog_script])
-print("[AUTO] Watchdog started.")
+print("🐶 [AUTO] Watchdog started.")
 
 # Normalize the import roots so that all menace_sandbox modules resolve from a
 # single location instead of mixing the repository root with a nested package
@@ -67,7 +67,7 @@ def _watchdog_running() -> bool:
 
 
 if not _watchdog_running():
-    print("[AUTO] Starting bootstrap watchdog...")
+    print("🐾 [AUTO] Starting bootstrap watchdog...")
     subprocess.Popen(
         [sys.executable, WATCHDOG_PATH, "--interval", "2"],
         stdout=subprocess.DEVNULL,
@@ -75,15 +75,17 @@ if not _watchdog_running():
     )
     time.sleep(1)
 else:
-    print("[AUTO] Watchdog already running.")
+    print("🐾 [AUTO] Watchdog already running.")
 # --------------------------------------
 
 from sandbox.preseed_bootstrap import initialize_bootstrap_context
 from sandbox_runner.bootstrap import bootstrap_environment
 
 # Force bootstrap readiness before any downstream imports touch GPTMemoryManager
+print("🧭 Normalizing import roots and initializing bootstrap helpers...", flush=True)
 initialize_bootstrap_context()
 bootstrap_environment()
+print("✅ Bootstrap helpers ready.", flush=True)
 
 import argparse
 import faulthandler
@@ -259,6 +261,22 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
 
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
+
+
+# Centralized helper for emoji-forward logging so critical launch phases are
+# easy to scan in dense startup logs.
+def _emoji_step(
+    logger: logging.Logger,
+    emoji: str,
+    message: str,
+    *,
+    event: str,
+    **context: Any,
+) -> None:
+    logger.info(
+        f"{emoji} {message}",
+        extra=log_record(event=event, emoji=emoji, **context),
+    )
 
 
 # --- BOOTSTRAP INITIALISATION FIX ---
@@ -537,6 +555,13 @@ def _acquire_bootstrap_lock(logger: logging.Logger) -> tuple[SandboxLock, Any]:
             lock_path=str(BOOTSTRAP_LOCK_PATH),
             timeout=BOOTSTRAP_LOCK_TIMEOUT,
         ),
+    )
+    _emoji_step(
+        logger,
+        "🔒",
+        "Bootstrap lock acquired",
+        event="step-bootstrap-lock",
+        lock_path=str(BOOTSTRAP_LOCK_PATH),
     )
     return lock, guard
 
@@ -2148,6 +2173,15 @@ def _run_prelaunch_improvement_cycles(
             bootstrap_mode=bootstrap_mode,
         ),
     )
+    _emoji_step(
+        logger,
+        "🚦",
+        "Prelaunch ROI gate evaluated",
+        event="step-prelaunch-roi",
+        ready=ready,
+        roi_backoff=roi_backoff,
+        bootstrap_mode=bootstrap_mode,
+    )
 
     return ready, roi_backoff
 
@@ -2475,7 +2509,9 @@ def main(argv: list[str] | None = None) -> None:
 
     print("[start_autonomous_sandbox] main() entry", flush=True)
 
+    system_binaries_validated = False
     assert_required_system_binaries()
+    system_binaries_validated = True
 
     argv_list = list(sys.argv[1:] if argv is None else argv)
     if "--health-check" in argv_list and not os.getenv("SANDBOX_DEPENDENCY_MODE"):
@@ -2580,6 +2616,33 @@ def main(argv: list[str] | None = None) -> None:
     cid = f"sas-{uuid.uuid4()}"
     set_correlation_id(cid)
     logger = get_logger(__name__)
+    _emoji_step(
+        logger,
+        "🧰",
+        "Prepare the sandbox environment and defaults",
+        event="step-prepare-environment",
+        sandbox_root=ROOT,
+        dependency_mode=os.getenv("SANDBOX_DEPENDENCY_MODE"),
+    )
+    _emoji_step(
+        logger,
+        "📜",
+        "Parsed CLI flags for sandbox launch",
+        event="step-parse-cli",
+        log_level=log_level,
+        include_orphans=args.include_orphans,
+        recursive_orphan_scan=args.recursive_orphan_scan,
+        monitor_roi_backoff=args.monitor_roi_backoff,
+    )
+    _emoji_step(
+        logger,
+        "🌿",
+        "Applied sandbox environment toggles",
+        event="step-apply-env-flags",
+        include_orphans=settings.include_orphans,
+        recursive_orphan_scan=settings.recursive_orphan_scan,
+        data_dir=os.getenv("SANDBOX_DATA_DIR"),
+    )
     logger.info(
         "bootstrap timeout configuration",
         extra=log_record(
@@ -2590,6 +2653,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     sandbox_restart_total.labels(service="start_autonomous", reason="launch").inc()
     logger.info("sandbox start", extra=log_record(event="start"))
+
+    if system_binaries_validated:
+        _emoji_step(
+            logger,
+            "🧪",
+            "System binaries validated (scripts/check_system_binaries.py)",
+            event="step-validate-binaries",
+        )
 
     if not args.health_check:
         _preflight_bootstrap_conflicts(logger)
@@ -2633,6 +2704,14 @@ def main(argv: list[str] | None = None) -> None:
             scale_cap=BUDGET_MAX_SCALE,
             store=str(BOOTSTRAP_DURATION_STORE),
         ),
+    )
+    _emoji_step(
+        logger,
+        "⏱️",
+        "Calibrated bootstrap budgets and deadlines",
+        event="step-calibrate-budgets",
+        bootstrap_timeout=round(calibrated_bootstrap_timeout, 2),
+        guard_scale=guard_scale,
     )
 
     heavy_bootstrap_detected, deadline_hints = _detect_heavy_bootstrap_hints(args)
@@ -3222,6 +3301,13 @@ def main(argv: list[str] | None = None) -> None:
                             discovered_preview=discovered_specs[:3],
                         ),
                     )
+                    _emoji_step(
+                        logger,
+                        "🧭",
+                        "Discovered workflow specifications",
+                        event="step-discover-workflows",
+                        discovered_count=len(discovered_specs),
+                    )
     
                     orphan_specs: list[Mapping[str, Any]] = []
                     include_orphans = bool(
@@ -3279,6 +3365,14 @@ def main(argv: list[str] | None = None) -> None:
                                 "[META-TRACE] orphan integration complete; modules=%s specs=%d"
                                 % (orphan_modules, len(orphan_specs)),
                                 flush=True,
+                            )
+                            _emoji_step(
+                                logger,
+                                "🧩",
+                                "Included orphan modules in workflow set",
+                                event="step-include-orphans",
+                                recursive=recursive_orphans,
+                                orphan_count=len(orphan_specs),
                             )
                         except Exception:
                             logger.exception(
@@ -4537,6 +4631,14 @@ def main(argv: list[str] | None = None) -> None:
             sys.stderr.write(f"sandbox launch blocked: {summary}\n")
             sys.stderr.flush()
             sys.exit(3)
+        _emoji_step(
+            logger,
+            "🧠",
+            "Starting sandbox orchestrator and launch thread",
+            event="step-start-sandbox",
+            roi_backoff=roi_backoff_triggered,
+            ready=ready_to_launch,
+        )
         print("[start_autonomous_sandbox] launching sandbox", flush=True)
         launch_sandbox()
         print("[start_autonomous_sandbox] sandbox exited", flush=True)
