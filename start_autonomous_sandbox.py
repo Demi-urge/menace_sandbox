@@ -9,8 +9,15 @@ without requiring any manual post-launch edits.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
+
+ROOT = os.path.expanduser("~/menace_sandbox")
+
+# Ensure ONLY the root is used
+sys.path = [p for p in sys.path if "menace_sandbox" not in p]
+sys.path.insert(0, ROOT)
+
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -19,9 +26,7 @@ from typing import Any, Callable, Mapping, Sequence
 # single location instead of mixing the repository root with a nested package
 # copy. A duplicated path causes metadata to be written and read from different
 # directories, which leads to stale embedding checks even after rebuilds.
-_ROOT = os.path.expanduser("~/menace_sandbox")
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+_ROOT = ROOT
 
 _NESTED = os.path.join(_ROOT, "menace_sandbox")
 if _NESTED in sys.path:
@@ -32,6 +37,8 @@ if _NESTED in sys.path:
 _HERE = Path(__file__).resolve().parent
 for _path in (_HERE, _HERE.parent):
     _str_path = str(_path)
+    if "menace_sandbox" in _str_path and _str_path != _ROOT:
+        continue
     if _str_path not in sys.path:
         sys.path.insert(0, _str_path)
 
