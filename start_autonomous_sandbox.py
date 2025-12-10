@@ -22,6 +22,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+# Auto-start watchdog
+watchdog_script = os.path.expanduser("~/menace_sandbox/start_watchdog.py")
+subprocess.Popen([sys.executable, watchdog_script])
+print("[AUTO] Watchdog started.")
+
 # Normalize the import roots so that all menace_sandbox modules resolve from a
 # single location instead of mixing the repository root with a nested package
 # copy. A duplicated path causes metadata to be written and read from different
