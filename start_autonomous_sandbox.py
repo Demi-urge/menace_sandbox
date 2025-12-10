@@ -23,9 +23,29 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 # Auto-start watchdog
-watchdog_script = os.path.expanduser("~/menace_fresh/start_watchdog.py")
-subprocess.Popen([sys.executable, watchdog_script])
-print("🐶 [AUTO] Watchdog started.")
+_WATCHDOG_SCRIPT = Path(__file__).resolve().parent / "start_watchdog.py"
+
+
+def _heartbeat_watchdog_running() -> bool:
+    import psutil
+
+    for process in psutil.process_iter(attrs=["cmdline"]):
+        try:
+            cmdline = process.info.get("cmdline")
+            if cmdline and "start_watchdog.py" in cmdline:
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        except Exception:
+            continue
+    return False
+
+
+if not _heartbeat_watchdog_running():
+    subprocess.Popen([sys.executable, str(_WATCHDOG_SCRIPT)])
+    print("🐶 [AUTO] Watchdog started.")
+else:
+    print("🐶 [AUTO] Watchdog already running.")
 
 print("🧭 Beginning import-root normalization...", flush=True)
 
