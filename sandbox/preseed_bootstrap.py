@@ -8440,6 +8440,8 @@ def initialize_bootstrap_context(
         promote_timeout = _resolve_step_timeout(
             step_name="promote_pipeline", vector_heavy=vector_heavy
         )
+        if promote_timeout is not None:
+            promote_timeout = max(promote_timeout, 600.0)
         try:
             LOGGER.info(
                 "starting promote_pipeline (last_step=%s)",
