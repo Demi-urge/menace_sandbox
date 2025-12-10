@@ -1,4 +1,5 @@
-menace_fresh/
+menace_fresh/*
+!menace_fresh/start_watchdog.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
