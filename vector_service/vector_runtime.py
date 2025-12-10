@@ -20,6 +20,10 @@ from menace_sandbox.bootstrap_timeout_policy import (
     read_bootstrap_heartbeat,
 )
 
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("VECTOR_SERVICE_SKIP_DISCOVERY", "1")
+
 from menace_sandbox.vector_service.lazy_bootstrap import warmup_vector_service
 from menace_sandbox.vector_service.vector_store import get_default_vector_store
 from menace_sandbox.vector_service.vectorizer import SharedVectorService
