@@ -301,10 +301,13 @@ def _persist_warmup_cache(logger: logging.Logger) -> None:
             meta["status"] = status
             meta["source_pid"] = os.getpid()
             snapshot[stage] = meta
-        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-        tmp_path.write_text(
-            json.dumps({"version": 1, "stages": snapshot, "persisted_at": now})
-        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", delete=False, dir=cache_path.parent
+        ) as tmp_file:
+            tmp_file.write(
+                json.dumps({"version": 1, "stages": snapshot, "persisted_at": now})
+            )
+            tmp_path = Path(tmp_file.name)
         os.replace(tmp_path, cache_path)
     except Exception:  # pragma: no cover - advisory cache
         logger.debug("Failed persisting warmup cache", exc_info=True)
