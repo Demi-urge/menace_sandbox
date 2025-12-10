@@ -27,6 +27,8 @@ watchdog_script = os.path.expanduser("~/menace_sandbox/start_watchdog.py")
 subprocess.Popen([sys.executable, watchdog_script])
 print("🐶 [AUTO] Watchdog started.")
 
+print("🧭 Beginning import-root normalization...", flush=True)
+
 # Normalize the import roots so that all menace_sandbox modules resolve from a
 # single location instead of mixing the repository root with a nested package
 # copy. A duplicated path causes metadata to be written and read from different
@@ -46,6 +48,8 @@ for _path in (_HERE, _HERE.parent):
         continue
     if _str_path not in sys.path:
         sys.path.insert(0, _str_path)
+
+print("🧭 Import roots normalized.", flush=True)
 
 # --- AUTO-START BOOTSTRAP WATCHDOG ---
 WATCHDOG_PATH = os.path.join(_HERE, "sandbox", "bootstrap_watchdog.py")
@@ -82,10 +86,13 @@ from sandbox.preseed_bootstrap import initialize_bootstrap_context
 from sandbox_runner.bootstrap import bootstrap_environment
 
 # Force bootstrap readiness before any downstream imports touch GPTMemoryManager
-print("🧭 Normalizing import roots and initializing bootstrap helpers...", flush=True)
+print("🛠️ Initializing bootstrap context...", flush=True)
 initialize_bootstrap_context()
+print("✅ Bootstrap context ready.", flush=True)
+
+print("🧰 Bootstrapping environment helpers...", flush=True)
 bootstrap_environment()
-print("✅ Bootstrap helpers ready.", flush=True)
+print("✅ Environment helpers ready.", flush=True)
 
 import argparse
 import faulthandler
