@@ -327,7 +327,12 @@ def _clear_warmup_cache() -> None:
 
 
 def _model_bundle_path() -> Path:
-    return resolve_path("vector_service/minilm/tiny-distilroberta-base.tar.xz")
+    # Allow the path to be resolved even when the archive has not been
+    # downloaded yet so callers can create it on demand during bootstrap.
+    return resolve_path(
+        "vector_service/minilm/tiny-distilroberta-base.tar.xz",
+        allow_missing_parents=True,
+    )
 
 
 def _note_model_background(
@@ -4537,7 +4542,20 @@ def warmup_vector_service(
                         stop_event=stop_event,
                         download_timeout=model_timeout,
                     )
-                return _model_bundle_path()
+                try:
+                    return _model_bundle_path()
+                except FileNotFoundError:
+                    # When the bundled archive is missing during bootstrap,
+                    # fall back to the friendly ensure helper so warmup can
+                    # defer or download the model instead of crashing.
+                    return ensure_embedding_model(
+                        logger=log,
+                        warmup=True,
+                        warmup_lite=model_probe_only,
+                        warmup_heavy=force_heavy,
+                        stop_event=stop_event,
+                        download_timeout=model_timeout,
+                    )
 
             completed, dest, elapsed, cancelled = _run_stage(
                 "model", _probe, timeout=model_timeout, estimate=0.1
