@@ -1,4 +1,3 @@
-# start_watchdog.py
 import json
 import os
 import time

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 # Auto-start watchdog
-watchdog_script = os.path.expanduser("~/menace_sandbox/start_watchdog.py")
+watchdog_script = os.path.expanduser("~/menace_fresh/start_watchdog.py")
 subprocess.Popen([sys.executable, watchdog_script])
 print("[AUTO] Watchdog started.")
 
