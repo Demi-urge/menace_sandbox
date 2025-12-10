@@ -15,6 +15,18 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+# Normalize the import roots so that all menace_sandbox modules resolve from a
+# single location instead of mixing the repository root with a nested package
+# copy. A duplicated path causes metadata to be written and read from different
+# directories, which leads to stale embedding checks even after rebuilds.
+_ROOT = os.path.expanduser("~/menace_sandbox")
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+_NESTED = os.path.join(_ROOT, "menace_sandbox")
+if _NESTED in sys.path:
+    sys.path.remove(_NESTED)
+
 # Ensure the repository and package roots are available before importing any
 # project modules that rely on ``menace_sandbox`` as an installed package.
 _HERE = Path(__file__).resolve().parent

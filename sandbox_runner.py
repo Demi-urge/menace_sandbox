@@ -1429,6 +1429,13 @@ def _sandbox_init(
     sandbox.error_forecaster = forecaster
     sandbox.quick_fix_engine = quick_fix_engine
     sandbox.graph = graph
+    from menace_sandbox.vector_service.embedding_backfill import EMBEDDING_DB_ROOT
+    import menace_sandbox.vector_service.embedding_backfill as embedding_backfill
+    import menace_sandbox.vector_service.context_builder as context_builder_module
+
+    print("EMBEDDING_DB_ROOT:", EMBEDDING_DB_ROOT)
+    print("backfill root:", embedding_backfill.EMBEDDING_DB_ROOT)
+    print("context builder root:", context_builder_module.EMBEDDING_DB_ROOT)
     rebuild_all_embeddings(force=True)
     tester = SelfTestService(
         telem_db,
