@@ -231,6 +231,7 @@ except Exception:  # pragma: no cover - flat layout fallback
         _SHARED_EVENT_BUS = None
 
 logger = logging.getLogger(__name__)
+_SELF_CODING_DISABLED = bool(os.getenv("MENACE_DISABLE_SELF_CODING"))
 _COMM_BOT_BOOTSTRAP_STATE: dict[str, Any] | None = None
 
 _PREPARE_PIPELINE_WATCHDOG: dict[str, Any] = {
@@ -3774,6 +3775,12 @@ _SELF_CODING_MANAGER_CLS: type[Any] | None | object = _SELF_CODING_MANAGER_SENTI
 
 def _import_self_coding_manager_cls() -> type[Any] | None | object:
     """Load ``SelfCodingManager`` lazily to avoid circular imports."""
+
+    if _SELF_CODING_DISABLED:
+        logger.info(
+            "MENACE_DISABLE_SELF_CODING set; self-coding manager will be disabled",
+        )
+        return None
 
     try:  # pragma: no cover - optional self-coding dependency
         return load_internal("self_coding_manager").SelfCodingManager
