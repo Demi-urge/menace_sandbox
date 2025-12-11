@@ -10,16 +10,22 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
-ROOT = os.path.expanduser("~/menace_sandbox")
+# Resolve the repository root from this file's location instead of assuming a
+# hard-coded home directory. The sandbox may live outside ``~/menace_sandbox``
+# (e.g., in CI or ephemeral containers), so anchor the import root to the
+# checked-out path to avoid missing modules like ``sandbox`` or
+# ``bootstrap_metrics``.
+ROOT = str(Path(__file__).resolve().parent)
 
-# Ensure ONLY the root is used
-sys.path = [p for p in sys.path if "menace_sandbox" not in p]
-sys.path.insert(0, ROOT)
+# Ensure ONLY the resolved root is used
+sys.path = [p for p in sys.path if "menace_sandbox" not in p or p == ROOT]
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
 import subprocess
 import time
-from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 # Auto-start watchdog
