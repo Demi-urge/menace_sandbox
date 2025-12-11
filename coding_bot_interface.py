@@ -39,6 +39,24 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
+# Ensure key decorator symbols are available immediately to avoid circular
+# import failures when dependent modules import this module while it is still
+# initialising.
+def self_coding_managed(*_args: object, **_kwargs: object):  # type: ignore[misc]
+    def _wrapper(cls: type) -> type:
+        return cls
+
+    return _wrapper
+
+
+class _DisabledSelfCodingManager:  # type: ignore[too-many-ancestors]
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+
+def prepare_pipeline_for_bootstrap(*_args: object, **_kwargs: object) -> None:
+    return None
+
 from bootstrap_metrics import BOOTSTRAP_PREPARE_REPEAT_TOTAL
 
 from bootstrap_timeout_policy import (
