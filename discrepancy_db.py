@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import logging
 import os
@@ -13,22 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Literal
 
 logger = logging.getLogger(__name__)
-
-def _resolve_mixin():
-    """
-    Fully deferred, cycle-safe loader for EmbeddableDBMixin.
-    Called only when DiscrepancyDB is instantiated.
-    """
-
-    try:
-        mod = importlib.import_module("menace_sandbox.embeddable_db_mixin")
-        return getattr(mod, "EmbeddableDBMixin", object)
-    except Exception:
-        try:
-            mod = importlib.import_module("vector_service")
-            return getattr(mod, "EmbeddableDBMixin", object)
-        except Exception:
-            return object
 
 try:  # pragma: no cover - package and top-level imports
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
@@ -62,15 +45,32 @@ class DiscrepancyDB:
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
-        # Dynamically resolve base class to avoid circular imports
-        Base = _resolve_mixin()
-        self.__class__.__bases__ = (Base,)
+        from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
+
+        index_path = (
+            Path(vector_index_path)
+            if vector_index_path is not None
+            else Path(path).with_suffix(".index")
+        )
+        meta_path = Path(index_path).with_suffix(".json")
+
+        self._mixin = EmbeddableDBMixin(
+            index_path=index_path,
+            metadata_path=meta_path,
+            embedding_version=embedding_version,
+            backend=vector_backend,
+        )
+        self._mixin.license_text = self.license_text
+        self._mixin.iter_records = self.iter_records
+        self._mixin.vector = self.vector
 
         self.router = router or GLOBAL_ROUTER or init_db_router(
             "discrepancies", str(path), str(path)
         )
         self.conn = self.router.get_connection("discrepancies")
         self.conn.row_factory = sqlite3.Row
+        self._mixin.conn = self.conn
+        self._mixin.router = self.router
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS discrepancies(
@@ -125,26 +125,15 @@ class DiscrepancyDB:
             "ON discrepancies(outcome_score)"
         )
         self.conn.commit()
-        index_path = (
-            Path(vector_index_path)
-            if vector_index_path is not None
-            else Path(path).with_suffix(".index")
-        )
-        meta_path = Path(index_path).with_suffix(".json")
-        mixin_cls = type(self).__mro__[1]
-        mixin_init = getattr(mixin_cls, "__init__", None)
-        if mixin_init is not None and mixin_init is not object.__init__:
-            mixin_init(
-                self,
-                index_path=index_path,
-                metadata_path=meta_path,
-                embedding_version=embedding_version,
-                backend=vector_backend,
-            )
-        else:  # pragma: no cover - executed when embedding mixin unavailable
-            logger.debug(
-                "EmbeddableDBMixin has no usable __init__; skipping embedding setup"
-            )
+
+    def __getattr__(self, name: str):
+        try:
+            return getattr(self._mixin, name)
+        except AttributeError:
+            raise AttributeError(name)
+
+    def embed_text(self, text: str) -> List[float]:
+        return self._mixin.encode_text(text)
 
     # ------------------------------------------------------------------
     def _embed_text(self, message: str, meta: Dict[str, Any]) -> str:
@@ -374,7 +363,5 @@ class DiscrepancyDB:
             yield row["id"], data, "discrepancy"
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        mixin_cls = type(self).__mro__[1]
-        backfill = getattr(mixin_cls, "backfill_embeddings", None)
-        if callable(backfill):
-            backfill(self, batch_size=batch_size)
+        if hasattr(self._mixin, "backfill_embeddings"):
+            self._mixin.backfill_embeddings()
