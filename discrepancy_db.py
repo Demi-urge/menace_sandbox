@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
-import sqlite3
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -13,41 +14,20 @@ from typing import Any, Dict, Iterator, List, Literal
 
 logger = logging.getLogger(__name__)
 
-try:
-    from menace_sandbox.embeddable_db_mixin import (
-        EmbeddableDBMixin as _DirectEmbeddableDBMixin,
-    )
-except ModuleNotFoundError:  # pragma: no cover - optional dependency path
-    try:
-        from embeddable_db_mixin import (
-            EmbeddableDBMixin as _DirectEmbeddableDBMixin,
-        )
-    except ModuleNotFoundError:  # pragma: no cover - optional dependency path
-        _DirectEmbeddableDBMixin = None
+def _load_EmbeddableDBMixin():
+    """
+    Deferred import to avoid circular dependencies during bootstrap.
+    """
 
-try:  # pragma: no cover - prefer vector_service when fully available
-    from vector_service import EmbeddableDBMixin as _VectorEmbeddableDBMixin
-except ImportError:  # pragma: no cover - degrade gracefully and support renamed mixins
     try:
-        from vector_service import EmbeddableDbMixin as _VectorEmbeddableDBMixin  # type: ignore
+        mod = importlib.import_module("menace_sandbox.embeddable_db_mixin")
+        return getattr(mod, "EmbeddableDBMixin")
     except Exception:
-        _VectorEmbeddableDBMixin = None
-
-if _DirectEmbeddableDBMixin is not None and (
-    _VectorEmbeddableDBMixin is None
-    or getattr(_VectorEmbeddableDBMixin, "__init__", object.__init__) is object.__init__
-):
-    if _VectorEmbeddableDBMixin is not None:
-        logger.debug(
-            "vector_service provided stub EmbeddableDBMixin; using direct import instead"
-        )
-    EmbeddableDBMixin = _DirectEmbeddableDBMixin
-else:
-    if _VectorEmbeddableDBMixin is None:
-        logger.debug(
-            "vector_service module unavailable; using stub EmbeddableDBMixin"
-        )
-    EmbeddableDBMixin = _VectorEmbeddableDBMixin or object  # type: ignore[assignment]
+        try:
+            mod = importlib.import_module("vector_service")
+            return getattr(mod, "EmbeddableDBMixin")
+        except Exception:
+            return object
 
 try:  # pragma: no cover - package and top-level imports
     from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
@@ -67,7 +47,7 @@ class DiscrepancyRecord:
     id: int = 0
 
 
-class DiscrepancyDB(EmbeddableDBMixin):
+class DiscrepancyDB(_load_EmbeddableDBMixin()):
     """SQLite-backed storage for discrepancy messages with embeddings."""
 
     DB_FILE = "discrepancies.db"
@@ -146,7 +126,8 @@ class DiscrepancyDB(EmbeddableDBMixin):
             else Path(path).with_suffix(".index")
         )
         meta_path = Path(index_path).with_suffix(".json")
-        mixin_init = getattr(EmbeddableDBMixin, "__init__", None)
+        mixin_cls = type(self).__mro__[1]
+        mixin_init = getattr(mixin_cls, "__init__", None)
         if mixin_init is not None and mixin_init is not object.__init__:
             mixin_init(
                 self,
