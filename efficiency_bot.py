@@ -13,7 +13,17 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING, Type
 
 from .bot_registry import BotRegistry
-from .coding_bot_interface import self_coding_managed
+# ``coding_bot_interface`` may still be importing when this module loads during
+# bootstrap.  Provide a defensive fallback so the efficiency bot remains
+# importable even if the decorator is unavailable.
+try:
+    from .coding_bot_interface import self_coding_managed
+except Exception:  # pragma: no cover - defensive fallback during bootstrap
+    def self_coding_managed(*_args: object, **_kwargs: object):  # type: ignore[misc]
+        def _wrapper(cls: type) -> type:
+            return cls
+
+        return _wrapper
 from .data_bot import DataBot
 from .sandbox_settings import SandboxSettings
 

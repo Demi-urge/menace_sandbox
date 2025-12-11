@@ -4,7 +4,22 @@ from __future__ import annotations
 
 from .bot_registry import BotRegistry
 
-from .coding_bot_interface import self_coding_managed, _DisabledSelfCodingManager
+# ``coding_bot_interface`` can be in a partially initialised state when this
+# module is imported from the pipeline loader.  When the decorator is not yet
+# available we fall back to inert stubs so the rest of the module can finish
+# loading without aborting the pipeline bootstrap.
+try:
+    from .coding_bot_interface import self_coding_managed, _DisabledSelfCodingManager
+except Exception:  # pragma: no cover - defensive fallback during bootstrap
+    def self_coding_managed(*_args: object, **_kwargs: object):  # type: ignore[misc]
+        def _wrapper(cls: type) -> type:
+            return cls
+
+        return _wrapper
+
+    class _DisabledSelfCodingManager:  # type: ignore[too-many-ancestors]
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
 from .safe_repr import basic_repr
 from dataclasses import dataclass
 from pathlib import Path
