@@ -8,14 +8,14 @@ WATCHDOG_PATH = "/tmp/menace_bootstrap_watchdog.json"
 os.makedirs("/tmp", exist_ok=True)
 
 
-def write_heartbeat() -> None:
-    data = {
+def write_heartbeat(path: str = WATCHDOG_PATH) -> None:
+    payload = {
         "ts": time.time(),
         "pid": os.getpid(),
-        "status": "ok",
+        "status": "alive",
     }
-    with open(WATCHDOG_PATH, "w") as f:
-        json.dump(data, f)
+    with open(path, "w") as f:
+        json.dump(payload, f)
 
 
 if __name__ == "__main__":
