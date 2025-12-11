@@ -57,7 +57,13 @@ class _DisabledSelfCodingManager:  # type: ignore[too-many-ancestors]
 def prepare_pipeline_for_bootstrap(*_args: object, **_kwargs: object) -> None:
     return None
 
-from bootstrap_metrics import BOOTSTRAP_PREPARE_REPEAT_TOTAL
+# Prefer package-relative import when available to avoid module resolution
+# failures when the sandbox is executed without the repository root on
+# ``sys.path``.
+try:  # pragma: no cover - prefer package-relative import
+    from menace_sandbox.bootstrap_metrics import BOOTSTRAP_PREPARE_REPEAT_TOTAL
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    from bootstrap_metrics import BOOTSTRAP_PREPARE_REPEAT_TOTAL  # type: ignore
 
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
