@@ -36,6 +36,12 @@ class DiscrepancyDB:
 
     DB_FILE = "discrepancies.db"
 
+    @staticmethod
+    def _load_mixin():
+        from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
+
+        return EmbeddableDBMixin
+
     def __init__(
         self,
         path: str | Path = "discrepancies.db",
@@ -45,7 +51,7 @@ class DiscrepancyDB:
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
-        from menace_sandbox.embeddable_db_mixin import EmbeddableDBMixin
+        EmbeddableDBMixin = self._load_mixin()
 
         index_path = (
             Path(vector_index_path)

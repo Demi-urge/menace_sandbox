@@ -77,13 +77,11 @@ MenaceMemoryManager = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-# Reuse a single DiscrepancyDB instance when available
-_DISCREPANCY_DB = DiscrepancyDB() if DiscrepancyDB is not None else None
+# Reuse DiscrepancyDB instances when available without instantiating at import time
+_DISCREPANCY_DB: DiscrepancyDB | None = None
 
 # Billing events leverage a dedicated DiscrepancyDB when available
-_BILLING_EVENT_DB = (
-    BillingDiscrepancyDB() if BillingDiscrepancyDB is not None else None
-)
+_BILLING_EVENT_DB: BillingDiscrepancyDB | None = None
 
 _GPT_MEMORY: GPTMemoryManager | None = None
 
@@ -188,6 +186,30 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
 
 
 _MEMORY_MANAGER: MenaceMemoryManager | None = None
+
+
+def _get_discrepancy_db() -> DiscrepancyDB | None:
+    """Lazily instantiate the shared discrepancy database."""
+
+    global _DISCREPANCY_DB
+    if _DISCREPANCY_DB is None and DiscrepancyDB is not None:
+        try:
+            _DISCREPANCY_DB = DiscrepancyDB()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to initialise discrepancy database")
+    return _DISCREPANCY_DB
+
+
+def _get_billing_event_db() -> BillingDiscrepancyDB | None:
+    """Lazily instantiate the billing discrepancy database."""
+
+    global _BILLING_EVENT_DB
+    if _BILLING_EVENT_DB is None and BillingDiscrepancyDB is not None:
+        try:
+            _BILLING_EVENT_DB = BillingDiscrepancyDB()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to initialise billing discrepancy database")
+    return _BILLING_EVENT_DB
 
 # ---------------------------------------------------------------------------
 # Anomaly suppression configuration
@@ -575,11 +597,10 @@ def record_payment_anomaly(
         "write_codex": write_codex,
         "export_training": export_training,
     }
-    if _DISCREPANCY_DB is not None:
+    db = _get_discrepancy_db()
+    if db is not None:
         try:
-            _DISCREPANCY_DB.log_detection(
-                event_type, severity, json.dumps(meta, sort_keys=True)
-            )
+            db.log_detection(event_type, severity, json.dumps(meta, sort_keys=True))
         except Exception:
             logger.exception(
                 "failed to log detection", extra={"event_type": event_type, "metadata": metadata}
@@ -684,13 +705,14 @@ def record_billing_event(
     parameters based on the event details.
     """
 
-    if _BILLING_EVENT_DB is not None and DiscrepancyRecord is not None:
+    db = _get_billing_event_db()
+    if db is not None and DiscrepancyRecord is not None:
         try:
             rec = DiscrepancyRecord(
                 message=event_type,
                 metadata={"instruction": instruction, **metadata},
             )
-            _BILLING_EVENT_DB.add(rec)
+            db.add(rec)
         except Exception:  # pragma: no cover - best effort
             logger.exception(
                 "failed to persist billing event",
