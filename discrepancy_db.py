@@ -14,18 +14,19 @@ from typing import Any, Dict, Iterator, List, Literal
 
 logger = logging.getLogger(__name__)
 
-def _load_EmbeddableDBMixin():
+def _resolve_mixin():
     """
-    Deferred import to avoid circular dependencies during bootstrap.
+    Fully deferred, cycle-safe loader for EmbeddableDBMixin.
+    Called only when DiscrepancyDB is instantiated.
     """
 
     try:
         mod = importlib.import_module("menace_sandbox.embeddable_db_mixin")
-        return getattr(mod, "EmbeddableDBMixin")
+        return getattr(mod, "EmbeddableDBMixin", object)
     except Exception:
         try:
             mod = importlib.import_module("vector_service")
-            return getattr(mod, "EmbeddableDBMixin")
+            return getattr(mod, "EmbeddableDBMixin", object)
         except Exception:
             return object
 
@@ -47,7 +48,7 @@ class DiscrepancyRecord:
     id: int = 0
 
 
-class DiscrepancyDB(_load_EmbeddableDBMixin()):
+class DiscrepancyDB:
     """SQLite-backed storage for discrepancy messages with embeddings."""
 
     DB_FILE = "discrepancies.db"
@@ -61,6 +62,10 @@ class DiscrepancyDB(_load_EmbeddableDBMixin()):
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
+        # Dynamically resolve base class to avoid circular imports
+        Base = _resolve_mixin()
+        self.__class__.__bases__ = (Base,)
+
         self.router = router or GLOBAL_ROUTER or init_db_router(
             "discrepancies", str(path), str(path)
         )
@@ -369,4 +374,7 @@ class DiscrepancyDB(_load_EmbeddableDBMixin()):
             yield row["id"], data, "discrepancy"
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        EmbeddableDBMixin.backfill_embeddings(self)
+        mixin_cls = type(self).__mro__[1]
+        backfill = getattr(mixin_cls, "backfill_embeddings", None)
+        if callable(backfill):
+            backfill(self, batch_size=batch_size)
