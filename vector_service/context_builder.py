@@ -39,7 +39,7 @@ except ModuleNotFoundError:  # pragma: no cover - lightweight fallback
 
 from redaction_utils import redact_text
 from snippet_compressor import compress_snippets
-from context_builder import handle_failure, PromptBuildError
+from menace_sandbox.context_builder import handle_failure, PromptBuildError
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError

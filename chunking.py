@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, TYPE_CHECKING
 
-from context_builder import handle_failure, PromptBuildError
+from menace_sandbox.context_builder import handle_failure, PromptBuildError
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
