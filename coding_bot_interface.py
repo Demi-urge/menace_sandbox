@@ -70,7 +70,7 @@ def _load_bootstrap_metrics():
     try:  # pragma: no cover - prefer package-relative import
         from menace_sandbox import bootstrap_metrics as _bootstrap_metrics
         return _bootstrap_metrics
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ImportError):
         module_path = _REPO_ROOT / "bootstrap_metrics.py"
         if not module_path.exists():
             raise
