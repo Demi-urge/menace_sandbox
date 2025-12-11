@@ -67,24 +67,42 @@ def prepare_pipeline_for_bootstrap(*_args: object, **_kwargs: object) -> None:
 def _load_bootstrap_metrics():
     """Load ``bootstrap_metrics`` regardless of package layout."""
 
-    try:  # pragma: no cover - prefer package-relative import
-        from menace_sandbox import bootstrap_metrics as _bootstrap_metrics
-        return _bootstrap_metrics
-    except (ModuleNotFoundError, ImportError):
-        module_path = _REPO_ROOT / "bootstrap_metrics.py"
-        if not module_path.exists():
-            raise
+    module_path = _REPO_ROOT / "bootstrap_metrics.py"
 
-        spec = importlib.util.spec_from_file_location(
-            "bootstrap_metrics", module_path
-        )
-        if spec is None or spec.loader is None:  # pragma: no cover - defensive
-            raise
+    # Prefer an importable module if one is already registered to avoid
+    # re-loading stateful gauge counters during bootstrap.
+    for candidate in (
+        "menace_sandbox.bootstrap_metrics",
+        "bootstrap_metrics",
+    ):
+        module = sys.modules.get(candidate)
+        if module is not None:
+            return module
 
-        module = importlib.util.module_from_spec(spec)
-        sys.modules.setdefault("bootstrap_metrics", module)
-        spec.loader.exec_module(module)
-        return module
+        try:  # pragma: no cover - prefer package-relative import
+            return importlib.import_module(candidate)
+        except ModuleNotFoundError:
+            continue
+        except ImportError:
+            # Continue to the file-loader fallback when the package shim exists
+            # but does not expose ``bootstrap_metrics`` (e.g., during partial
+            # initialization).
+            continue
+
+    if not module_path.exists():  # pragma: no cover - defensive guard
+        raise ImportError("bootstrap_metrics module not found")
+
+    spec = importlib.util.spec_from_file_location(
+        "bootstrap_metrics", module_path
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise ImportError("Unable to load bootstrap_metrics")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("bootstrap_metrics", module)
+    sys.modules.setdefault("menace_sandbox.bootstrap_metrics", module)
+    spec.loader.exec_module(module)
+    return module
 
 
 BOOTSTRAP_PREPARE_REPEAT_TOTAL = _load_bootstrap_metrics().BOOTSTRAP_PREPARE_REPEAT_TOTAL
