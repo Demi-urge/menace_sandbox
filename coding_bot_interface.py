@@ -39,6 +39,13 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
+# Ensure the repository root is discoverable when this module is executed from a
+# flat layout (e.g., invoked directly as a script) so fallback imports without
+# the ``menace_sandbox`` prefix can resolve local modules.
+_REPO_ROOT = Path(__file__).resolve().parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 # Ensure key decorator symbols are available immediately to avoid circular
 # import failures when dependent modules import this module while it is still
 # initialising.
