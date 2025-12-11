@@ -40,6 +40,12 @@ import socket
 logger = logging.getLogger(__name__)
 
 
+# Disable self-coding automation during task_handoff_bot bootstrap to avoid
+# recursive imports that can abort module initialization when running outside the
+# full Menace environment.
+os.environ.setdefault("MENACE_DISABLE_SELF_CODING", "1")
+
+
 def _can_reach_broker(mq_url: str, timeout: float = 0.25) -> bool:
     """Return True when the RabbitMQ broker is reachable."""
 
