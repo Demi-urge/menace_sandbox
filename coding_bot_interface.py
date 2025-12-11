@@ -64,13 +64,30 @@ class _DisabledSelfCodingManager:  # type: ignore[too-many-ancestors]
 def prepare_pipeline_for_bootstrap(*_args: object, **_kwargs: object) -> None:
     return None
 
-# Prefer package-relative import when available to avoid module resolution
-# failures when the sandbox is executed without the repository root on
-# ``sys.path``.
-try:  # pragma: no cover - prefer package-relative import
-    from menace_sandbox.bootstrap_metrics import BOOTSTRAP_PREPARE_REPEAT_TOTAL
-except ModuleNotFoundError:  # pragma: no cover - support flat execution
-    from bootstrap_metrics import BOOTSTRAP_PREPARE_REPEAT_TOTAL  # type: ignore
+def _load_bootstrap_metrics():
+    """Load ``bootstrap_metrics`` regardless of package layout."""
+
+    try:  # pragma: no cover - prefer package-relative import
+        from menace_sandbox import bootstrap_metrics as _bootstrap_metrics
+        return _bootstrap_metrics
+    except ModuleNotFoundError:
+        module_path = _REPO_ROOT / "bootstrap_metrics.py"
+        if not module_path.exists():
+            raise
+
+        spec = importlib.util.spec_from_file_location(
+            "bootstrap_metrics", module_path
+        )
+        if spec is None or spec.loader is None:  # pragma: no cover - defensive
+            raise
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault("bootstrap_metrics", module)
+        spec.loader.exec_module(module)
+        return module
+
+
+BOOTSTRAP_PREPARE_REPEAT_TOTAL = _load_bootstrap_metrics().BOOTSTRAP_PREPARE_REPEAT_TOTAL
 
 from bootstrap_timeout_policy import (
     SharedTimeoutCoordinator,
