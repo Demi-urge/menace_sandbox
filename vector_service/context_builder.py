@@ -40,7 +40,12 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
             if helper is not None:
                 return helper
 
-        raise ImportError("ensure_bootstrapped missing in bootstrap_helpers")
+        try:
+            from menace_sandbox.environment_bootstrap import ensure_bootstrapped
+
+            return ensure_bootstrapped
+        except Exception as exc:
+            raise ImportError("ensure_bootstrapped missing in bootstrap_helpers") from exc
 
     try:
         return _import_bootstrap()
