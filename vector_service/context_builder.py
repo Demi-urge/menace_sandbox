@@ -41,8 +41,10 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
         # ``menace_sandbox`` is the repository root, so we need to add its
         # *parent* to ``sys.path`` for the package import to resolve.
         repo_parent = repo_root.parent
-        if str(repo_parent) not in sys.path:
-            sys.path.insert(0, str(repo_parent))
+
+        for candidate in (repo_parent, repo_root):
+            if str(candidate) not in sys.path:
+                sys.path.insert(0, str(candidate))
 
         try:
             from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
