@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Mapping
 # coupling.
 import logging
 import os
+import sys
 import asyncio
 import uuid
 import time
@@ -21,12 +22,36 @@ import os
 
 from dynamic_path_router import resolve_path
 
-try:
-    from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
-except ModuleNotFoundError:
-    # When running from a source checkout without the package installed, fall back
-    # to a local import so bootstrap utilities remain available.
-    from bootstrap_helpers import ensure_bootstrapped
+def _load_bootstrap_helper() -> "Callable[[], None]":
+    """Return ``ensure_bootstrapped`` regardless of import context.
+
+    Running this module directly from the source tree means ``sys.path`` may
+    only include ``vector_service/`` rather than the repository root.  In that
+    scenario ``menace_sandbox`` cannot be resolved, so we opportunistically add
+    the repository root before retrying the absolute import and, as a final
+    fallback, import the helper from the local module.
+    """
+
+    try:
+        from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
+
+        return ensure_bootstrapped
+    except ModuleNotFoundError:
+        repo_root = Path(__file__).resolve().parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+
+        try:
+            from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
+
+            return ensure_bootstrapped
+        except ModuleNotFoundError:
+            from bootstrap_helpers import ensure_bootstrapped
+
+            return ensure_bootstrapped
+
+
+ensure_bootstrapped = _load_bootstrap_helper()
 
 if __name__ == "menace_sandbox.vector_service.context_builder":  # pragma: no cover
     # Ensure package-qualified imports exercise the bootstrap path.
