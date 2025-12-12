@@ -32,6 +32,16 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     fallback, import the helper from the local module.
     """
 
+    repo_root = Path(__file__).resolve().parent.parent
+    # ``menace_sandbox`` is the repository root, so we need to add its *parent*
+    # to ``sys.path`` for the package import to resolve when this module is
+    # executed directly from ``vector_service/``.
+    repo_parent = repo_root.parent
+
+    for candidate in (repo_parent, repo_root):
+        if str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+
     def _import_bootstrap() -> "Callable[[], None]":
         from menace_sandbox import bootstrap_helpers
 
@@ -50,15 +60,6 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     try:
         return _import_bootstrap()
     except (ImportError, AttributeError):
-        repo_root = Path(__file__).resolve().parent.parent
-        # ``menace_sandbox`` is the repository root, so we need to add its
-        # *parent* to ``sys.path`` for the package import to resolve.
-        repo_parent = repo_root.parent
-
-        for candidate in (repo_parent, repo_root):
-            if str(candidate) not in sys.path:
-                sys.path.insert(0, str(candidate))
-
         try:
             return _import_bootstrap()
         except (ImportError, AttributeError):
