@@ -501,12 +501,13 @@ _READINESS_GATE_WEIGHTS: dict[str, float] = {
 
 _CRITICAL_READINESS_GATES = frozenset({"pipeline_config", "orchestrator_state"})
 
-_ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
+_ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors() or {}
 
 
 def _shared_timeout_floor(env_var: str, *, default_floor: float) -> float:
     policy_floor = _BOOTSTRAP_TIMEOUT_MINIMUMS.get(env_var, default_floor)
-    return max(default_floor, policy_floor, _ESCALATED_TIMEOUT_FLOORS.get(env_var, 0.0))
+    escalated_floors = _ESCALATED_TIMEOUT_FLOORS if isinstance(_ESCALATED_TIMEOUT_FLOORS, Mapping) else {}
+    return max(default_floor, policy_floor, escalated_floors.get(env_var, 0.0))
 
 
 _BOOTSTRAP_TIMEOUT_FLOOR = _shared_timeout_floor(
@@ -1652,7 +1653,7 @@ def _refresh_bootstrap_wait_timeouts(
     global _BOOTSTRAP_WAIT_TIMEOUT, _BOOTSTRAP_TIMEOUT_FLOOR, _VECTOR_BOOTSTRAP_TIMEOUT_FLOOR
     global _MIN_STAGE_TIMEOUT, _MIN_STAGE_TIMEOUT_VECTOR, _ESCALATED_TIMEOUT_FLOORS, _SUBSYSTEM_BUDGET_FLOORS
 
-    _ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors()
+    _ESCALATED_TIMEOUT_FLOORS = load_escalated_timeout_floors() or {}
     _BOOTSTRAP_TIMEOUT_FLOOR = _shared_timeout_floor(
         "MENACE_BOOTSTRAP_WAIT_SECS",
         default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["MENACE_BOOTSTRAP_WAIT_SECS"],
