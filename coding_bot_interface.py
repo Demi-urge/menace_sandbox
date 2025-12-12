@@ -164,6 +164,8 @@ def _bootstrap_timeout_policy_placeholder() -> ModuleType:
     module.persist_bootstrap_wait_window = _noop
     module.read_bootstrap_heartbeat = _noop
     module.render_prepare_pipeline_timeout_hints = _noop
+    module.wait_for_bootstrap_quiet_period = _noop
+    module.emit_bootstrap_heartbeat = _noop
     module.track_prepare_pipeline_consumption = _noop
     module.track_prepare_pipeline_progress = _noop
     module.with_bootstrap_timeout_context = _noop_context
