@@ -36,7 +36,7 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
         from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
 
         return ensure_bootstrapped
-    except ModuleNotFoundError:
+    except ImportError:
         repo_root = Path(__file__).resolve().parent.parent
         # ``menace_sandbox`` is the repository root, so we need to add its
         # *parent* to ``sys.path`` for the package import to resolve.
@@ -50,10 +50,21 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
             from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
 
             return ensure_bootstrapped
-        except ModuleNotFoundError:
-            from bootstrap_helpers import ensure_bootstrapped
+        except ImportError:
+            import importlib.util
 
-            return ensure_bootstrapped
+            bootstrap_path = repo_root / "bootstrap_helpers.py"
+            spec = importlib.util.spec_from_file_location(
+                "menace_sandbox.bootstrap_helpers", bootstrap_path
+            )
+            if spec is None or spec.loader is None:
+                raise
+
+            module = importlib.util.module_from_spec(spec)
+            sys.modules.setdefault(spec.name, module)
+            spec.loader.exec_module(module)
+
+            return module.ensure_bootstrapped
 
 
 ensure_bootstrapped = _load_bootstrap_helper()
