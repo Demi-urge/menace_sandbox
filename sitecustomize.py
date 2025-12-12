@@ -28,6 +28,28 @@ if _PARENT.is_dir() and str(_PARENT) not in sys.path:
 if _NESTED.is_dir() and str(_NESTED) not in sys.path:
     sys.path.append(str(_NESTED))
 
+# Ensure bootstrap policy helpers remain importable even when callers prune
+# ``sys.path`` aggressively during startup. This registration mirrors the
+# behaviour used for ``context_builder_util`` below so that modules importing
+# ``bootstrap_timeout_policy`` (or its package-qualified variant) continue to
+# resolve the local implementation without relying on the execution context's
+# working directory.
+_BOOTSTRAP_TIMEOUT_PATH = _REPO_ROOT / "bootstrap_timeout_policy.py"
+if _BOOTSTRAP_TIMEOUT_PATH.is_file():
+    try:  # pragma: no cover - defensive import wiring
+        _btp_spec = importlib.util.spec_from_file_location(
+            "bootstrap_timeout_policy", _BOOTSTRAP_TIMEOUT_PATH
+        )
+        if _btp_spec is not None and _btp_spec.loader is not None:
+            _btp_mod = importlib.util.module_from_spec(_btp_spec)
+            sys.modules.setdefault("bootstrap_timeout_policy", _btp_mod)
+            sys.modules.setdefault("menace_sandbox.bootstrap_timeout_policy", _btp_mod)
+            _btp_spec.loader.exec_module(_btp_mod)
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Failed to register packaged bootstrap_timeout_policy", exc_info=True
+        )
+
 _CTX_BUILDER_PATH = _NESTED / "context_builder_util.py"
 try:  # pragma: no cover - defensive import wiring
     _ctx_spec = importlib.util.spec_from_file_location(
