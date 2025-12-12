@@ -132,6 +132,24 @@ def _bootstrap_timeout_policy_placeholder() -> ModuleType:
 
     module = ModuleType("bootstrap_timeout_policy_placeholder")
 
+    module._BACKGROUND_UNLIMITED_ENV = "MENACE_BOOTSTRAP_BACKGROUND_UNLIMITED"
+
+    def _truthy_env(value: str | None) -> bool:
+        if value is None:
+            return False
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _parse_float(value: str | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    module._truthy_env = _truthy_env
+    module._parse_float = _parse_float
+
     class _SharedTimeoutCoordinator:
         def __enter__(self) -> "_SharedTimeoutCoordinator":
             return self
@@ -166,6 +184,9 @@ def _bootstrap_timeout_policy_placeholder() -> ModuleType:
     module.render_prepare_pipeline_timeout_hints = _noop
     module.wait_for_bootstrap_quiet_period = _noop
     module.emit_bootstrap_heartbeat = _noop
+    module.derive_elastic_global_window = (
+        lambda *, base_window=None, **_kwargs: (base_window, {})
+    )
     module.track_prepare_pipeline_consumption = _noop
     module.track_prepare_pipeline_progress = _noop
     module.with_bootstrap_timeout_context = _noop_context
