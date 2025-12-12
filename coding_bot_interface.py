@@ -1457,7 +1457,12 @@ def _get_bootstrap_wait_timeout() -> float | None:
         historical_global_window, historical_window_inputs = None, {}
 
     try:
-        component_budgets = compute_prepare_pipeline_component_budgets()
+        computed_budgets = compute_prepare_pipeline_component_budgets()
+        if isinstance(computed_budgets, Mapping):
+            component_budgets = dict(computed_budgets)
+        else:
+            component_budget_source = "persisted"
+            component_budgets = {}
     except Exception:
         component_budget_source = "persisted"
         component_budgets = {}
