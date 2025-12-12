@@ -20,7 +20,13 @@ import threading
 import os
 
 from dynamic_path_router import resolve_path
-from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
+
+try:
+    from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
+except ModuleNotFoundError:
+    # When running from a source checkout without the package installed, fall back
+    # to a local import so bootstrap utilities remain available.
+    from bootstrap_helpers import ensure_bootstrapped
 
 if __name__ == "menace_sandbox.vector_service.context_builder":  # pragma: no cover
     # Ensure package-qualified imports exercise the bootstrap path.
