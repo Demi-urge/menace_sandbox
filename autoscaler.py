@@ -10,6 +10,7 @@ cooldown timers, history window and executable paths so deployments can adjust
 behaviour without modifying source code.
 """
 
+import importlib
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -58,22 +59,61 @@ def _resolve_binary(name: str, fallback_paths: list[str] | None = None) -> str:
             return candidate
     return name
 
-if os.getenv("MENACE_LIGHT_IMPORTS"):
-    from .light_bootstrap import EnvironmentBootstrapper  # pragma: no cover
-else:  # pragma: no cover - real import when available
-    try:
-        from .environment_bootstrap import EnvironmentBootstrapper
-    except Exception as exc:
-        logger.debug("primary bootstrap import failed: %s", exc)
+def _load_environment_bootstrapper():
+    """Import :class:`EnvironmentBootstrapper` with helpful fallbacks.
+
+    When ``MENACE_LIGHT_IMPORTS`` is set we prefer the lightweight bootstrapper
+    to minimise dependencies.  Otherwise we try the full bootstrapper first and
+    fall back to the lightweight version.  Import failures are logged with
+    actionable guidance instead of aborting module import.
+    """
+
+    prefer_light = bool(os.getenv("MENACE_LIGHT_IMPORTS"))
+    candidates = (
+        [
+            "menace_sandbox.light_bootstrap.EnvironmentBootstrapper",
+            "light_bootstrap.EnvironmentBootstrapper",
+        ]
+        if prefer_light
+        else [
+            "menace_sandbox.environment_bootstrap.EnvironmentBootstrapper",
+            "environment_bootstrap.EnvironmentBootstrapper",
+            "menace_sandbox.light_bootstrap.EnvironmentBootstrapper",
+            "light_bootstrap.EnvironmentBootstrapper",
+        ]
+    )
+
+    errors: list[str] = []
+    for path in candidates:
+        module_path, attr = path.rsplit(".", 1)
         try:
-            from .environment_bootstrap import EnvironmentBootstrapper  # type: ignore
-        except Exception as exc2:
-            logger.debug("fallback bootstrap import failed: %s", exc2)
-            try:
-                from .light_bootstrap import EnvironmentBootstrapper  # pragma: no cover
-            except Exception as exc3:
-                logger.error("light bootstrap import failed: %s", exc3)
-                raise ImportError("EnvironmentBootstrapper unavailable") from exc3
+            module = importlib.import_module(module_path)
+            return getattr(module, attr)
+        except Exception as exc:  # pragma: no cover - import depends on env
+            errors.append(f"{path}: {exc}")
+            logger.debug("Bootstrapper import failed for %s: %s", path, exc)
+
+    message = (
+        "EnvironmentBootstrapper unavailable. Tried imports: "
+        + "; ".join(errors)
+        + ". Ensure menace_sandbox is installed as a package and dependencies "
+          "for environment_bootstrap are available. Set MENACE_LIGHT_IMPORTS=1 "
+          "to prefer the lightweight bootstrap when dependencies are missing."
+    )
+    for error in errors:
+        logger.warning("Bootstrapper import attempt failed: %s", error)
+
+    class MissingBootstrapper:  # pragma: no cover - only used on failure
+        def __init__(self, *_: object, **__: object) -> None:
+            raise ImportError(message)
+
+        def deploy_across_hosts(self, *_: object, **__: object) -> None:
+            raise ImportError(message)
+
+    return MissingBootstrapper
+
+
+EnvironmentBootstrapper = _load_environment_bootstrapper()
 
 
 class Provider(ABC):
