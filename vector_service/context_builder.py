@@ -20,7 +20,11 @@ import threading
 import os
 
 from dynamic_path_router import resolve_path
-from bootstrap_helpers import ensure_bootstrapped
+from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
+
+if __name__ == "menace_sandbox.vector_service.context_builder":  # pragma: no cover
+    # Ensure package-qualified imports exercise the bootstrap path.
+    ensure_bootstrapped()
 
 try:  # pragma: no cover - optional dependency
     from filelock import FileLock
