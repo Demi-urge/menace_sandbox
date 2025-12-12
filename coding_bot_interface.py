@@ -532,7 +532,7 @@ _MIN_STAGE_TIMEOUT_VECTOR = _shared_timeout_floor(
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
     default_floor=_BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VECTOR_STEP_TIMEOUT"],
 )
-_SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = load_component_timeout_floors()
+_SUBSYSTEM_BUDGET_FLOORS: dict[str, float] = dict(load_component_timeout_floors() or {})
 _ADAPTIVE_BUDGET_GROWTH_CAP = 0.45
 _BOOTSTRAP_WAIT_GROWTH_CAP = 0.65
 _VECTOR_BUDGET_BIAS = 1.35
@@ -1276,7 +1276,7 @@ def _refresh_prepare_watchdog_budgets(
         "PREPARE_PIPELINE_VECTOR_BIAS", _VECTOR_BUDGET_BIAS, minimum=1.0
     )
 
-    base = {**_COMPONENT_TIMEOUT_MINIMUMS, **_SUBSYSTEM_BUDGET_FLOORS}
+    base = {**_COMPONENT_TIMEOUT_MINIMUMS, **(_SUBSYSTEM_BUDGET_FLOORS or {})}
     _PREPARE_STAGE_BUDGETS = _merge_stage_budgets(
         base,
         _parse_stage_budget_env("PREPARE_PIPELINE_STAGE_BUDGETS"),
