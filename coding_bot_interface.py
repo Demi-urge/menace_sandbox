@@ -127,6 +127,58 @@ def _load_bootstrap_metrics():
 BOOTSTRAP_PREPARE_REPEAT_TOTAL = _load_bootstrap_metrics().BOOTSTRAP_PREPARE_REPEAT_TOTAL
 
 
+def _bootstrap_timeout_policy_placeholder() -> ModuleType:
+    """Return a lightweight placeholder when the real module is absent."""
+
+    module = ModuleType("bootstrap_timeout_policy_placeholder")
+
+    class _SharedTimeoutCoordinator:
+        def __enter__(self) -> "_SharedTimeoutCoordinator":
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    def _noop_context(*_args: object, **_kwargs: object):
+        return contextlib.nullcontext()
+
+    def _noop(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    module.SharedTimeoutCoordinator = _SharedTimeoutCoordinator
+    module.enforce_bootstrap_timeout_policy = _noop_context
+    module.get_adaptive_timeout_context = _noop_context
+    module.get_bootstrap_guard_context = _noop_context
+    module._BOOTSTRAP_TIMEOUT_MINIMUMS = {}
+    module._COMPONENT_TIMEOUT_MINIMUMS = {}
+    module.compute_prepare_pipeline_component_budgets = _noop
+    module.DEFERRED_COMPONENTS = set()
+    module.load_component_timeout_floors = _noop
+    module.load_escalated_timeout_floors = _noop
+    module.load_persisted_bootstrap_wait = _noop
+    module.load_last_global_bootstrap_window = _noop
+    module.load_last_component_budgets = _noop
+    module.load_component_budget_pools = _noop
+    module.build_progress_signal_hook = _noop_context
+    module.persist_component_consumption = _noop
+    module.persist_bootstrap_wait_window = _noop
+    module.read_bootstrap_heartbeat = _noop
+    module.render_prepare_pipeline_timeout_hints = _noop
+    module.track_prepare_pipeline_consumption = _noop
+    module.track_prepare_pipeline_progress = _noop
+    module.with_bootstrap_timeout_context = _noop_context
+    module.restore_bootstrap_wait_window = _noop
+    module.restore_bootstrap_component_budgets = _noop
+    module.restore_bootstrap_component_budget_pools = _noop
+    module.persist_component_budget_pools = _noop
+    module.persist_last_component_budgets = _noop
+    module.persist_last_global_bootstrap_window = _noop
+    module.persist_component_timeout_floors = _noop
+    module.persist_escalated_timeout_floors = _noop
+
+    return module
+
+
 def _load_bootstrap_timeout_policy() -> ModuleType:
     """Load ``bootstrap_timeout_policy`` regardless of package layout."""
 
@@ -149,13 +201,19 @@ def _load_bootstrap_timeout_policy() -> ModuleType:
 
     module_path = _REPO_ROOT / "bootstrap_timeout_policy.py"
     if not module_path.exists():  # pragma: no cover - defensive guard
-        raise ImportError("Unable to locate bootstrap_timeout_policy")
+        logging.getLogger(__name__).warning(
+            "bootstrap_timeout_policy missing; falling back to placeholder"
+        )
+        return _bootstrap_timeout_policy_placeholder()
 
     spec = importlib.util.spec_from_file_location(
         "bootstrap_timeout_policy", module_path
     )
     if spec is None or spec.loader is None:  # pragma: no cover - defensive
-        raise ImportError("Unable to load bootstrap_timeout_policy")
+        logging.getLogger(__name__).warning(
+            "bootstrap_timeout_policy loader unavailable; using placeholder"
+        )
+        return _bootstrap_timeout_policy_placeholder()
 
     module = importlib.util.module_from_spec(spec)
     sys.modules.setdefault("bootstrap_timeout_policy", module)
