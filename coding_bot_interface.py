@@ -1439,7 +1439,12 @@ def _get_bootstrap_wait_timeout() -> float | None:
     deferred_component_budget_total: float | None = None
     component_budget_source = "computed"
     component_budgets: dict[str, float] = {}
-    budget_pools: dict[str, float] = load_component_budget_pools()
+    raw_budget_pools = load_component_budget_pools()
+    budget_pools: dict[str, float]
+    if isinstance(raw_budget_pools, Mapping):
+        budget_pools = dict(raw_budget_pools)
+    else:
+        budget_pools = {}
     raw_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     adaptive_context = get_adaptive_timeout_context()
     adaptive_overruns = 0
