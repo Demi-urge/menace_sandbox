@@ -1461,7 +1461,9 @@ def _get_bootstrap_wait_timeout() -> float | None:
         component_budget_source = "computed"
 
     if not budget_pools:
-        persisted_budgets = load_last_component_budgets()
+        persisted_budgets = load_last_component_budgets() or {}
+        if not isinstance(persisted_budgets, Mapping):
+            persisted_budgets = {}
         component_budget_total = persisted_budgets.pop("__total__", None)
         deferred_component_budget_total = persisted_budgets.pop("__deferred_total__", None)
         budget_pools.update(persisted_budgets)
@@ -7571,7 +7573,9 @@ def _prepare_pipeline_for_bootstrap_impl_inner(
     def _historical_gate_budgets(gates: Iterable[str]) -> dict[str, float]:
         readiness = _PREPARE_PIPELINE_WATCHDOG.get("readiness") or {}
         stage_history = _PREPARE_PIPELINE_WATCHDOG.get("stages") or []
-        persisted_budgets = load_last_component_budgets()
+        persisted_budgets = load_last_component_budgets() or {}
+        if not isinstance(persisted_budgets, Mapping):
+            persisted_budgets = {}
         persisted_budgets.pop("__total__", None)
         history: dict[str, list[float]] = {gate: [] for gate in gates}
 
