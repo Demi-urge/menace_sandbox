@@ -35,7 +35,17 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     def _import_bootstrap() -> "Callable[[], None]":
         from menace_sandbox import bootstrap_helpers
 
-        helper = getattr(bootstrap_helpers, "ensure_bootstrapped", None)
+        for attr in ("ensure_bootstrapped", "ensure_environment_bootstrapped"):
+            helper = getattr(bootstrap_helpers, attr, None)
+            if helper is not None:
+                return helper
+
+        # Fallback to the underlying environment bootstrap helper to avoid
+        # spurious failures when stale bytecode or namespace shadowing hides the
+        # re-exported helper.
+        from menace_sandbox import environment_bootstrap
+
+        helper = getattr(environment_bootstrap, "ensure_bootstrapped", None)
         if helper is None:
             raise ImportError("ensure_bootstrapped missing in bootstrap_helpers")
 
