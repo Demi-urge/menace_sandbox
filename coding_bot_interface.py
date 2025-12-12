@@ -134,6 +134,37 @@ def _bootstrap_timeout_policy_placeholder() -> ModuleType:
 
     module._BACKGROUND_UNLIMITED_ENV = "MENACE_BOOTSTRAP_BACKGROUND_UNLIMITED"
 
+    module._BOOTSTRAP_TIMEOUT_MINIMUMS = {
+        "MENACE_BOOTSTRAP_WAIT_SECS": 720.0,
+        "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS": 900.0,
+        "BOOTSTRAP_STEP_TIMEOUT": 720.0,
+        "BOOTSTRAP_VECTOR_STEP_TIMEOUT": 900.0,
+        "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS": 900.0,
+        "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS": 720.0,
+        "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS": 720.0,
+        "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS": 540.0,
+        "PREPARE_PIPELINE_CONFIG_BUDGET_SECS": 540.0,
+    }
+
+    module._COMPONENT_TIMEOUT_MINIMUMS = {
+        "vectorizers": module._BOOTSTRAP_TIMEOUT_MINIMUMS[
+            "PREPARE_PIPELINE_VECTORIZER_BUDGET_SECS"
+        ],
+        "retrievers": module._BOOTSTRAP_TIMEOUT_MINIMUMS[
+            "PREPARE_PIPELINE_RETRIEVER_BUDGET_SECS"
+        ],
+        "db_indexes": module._BOOTSTRAP_TIMEOUT_MINIMUMS[
+            "PREPARE_PIPELINE_DB_WARMUP_BUDGET_SECS"
+        ],
+        "orchestrator_state": module._BOOTSTRAP_TIMEOUT_MINIMUMS[
+            "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS"
+        ],
+        "pipeline_config": module._BOOTSTRAP_TIMEOUT_MINIMUMS[
+            "PREPARE_PIPELINE_CONFIG_BUDGET_SECS"
+        ],
+    }
+    module.DEFERRED_COMPONENTS = frozenset()
+
     def _truthy_env(value: str | None) -> bool:
         if value is None:
             return False
@@ -167,10 +198,9 @@ def _bootstrap_timeout_policy_placeholder() -> ModuleType:
     module.enforce_bootstrap_timeout_policy = _noop_context
     module.get_adaptive_timeout_context = _noop_context
     module.get_bootstrap_guard_context = _noop_context
-    module._BOOTSTRAP_TIMEOUT_MINIMUMS = {}
-    module._COMPONENT_TIMEOUT_MINIMUMS = {}
+    module._BOOTSTRAP_TIMEOUT_MINIMUMS = module._BOOTSTRAP_TIMEOUT_MINIMUMS
+    module._COMPONENT_TIMEOUT_MINIMUMS = module._COMPONENT_TIMEOUT_MINIMUMS
     module.compute_prepare_pipeline_component_budgets = _noop
-    module.DEFERRED_COMPONENTS = set()
     module.load_component_timeout_floors = _noop
     module.load_escalated_timeout_floors = _noop
     module.load_persisted_bootstrap_wait = _noop
