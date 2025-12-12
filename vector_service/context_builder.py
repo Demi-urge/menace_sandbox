@@ -32,11 +32,18 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     fallback, import the helper from the local module.
     """
 
-    try:
-        from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
+    def _import_bootstrap() -> "Callable[[], None]":
+        from menace_sandbox import bootstrap_helpers
 
-        return ensure_bootstrapped
-    except ImportError:
+        helper = getattr(bootstrap_helpers, "ensure_bootstrapped", None)
+        if helper is None:
+            raise ImportError("ensure_bootstrapped missing in bootstrap_helpers")
+
+        return helper
+
+    try:
+        return _import_bootstrap()
+    except (ImportError, AttributeError):
         repo_root = Path(__file__).resolve().parent.parent
         # ``menace_sandbox`` is the repository root, so we need to add its
         # *parent* to ``sys.path`` for the package import to resolve.
@@ -47,10 +54,8 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
                 sys.path.insert(0, str(candidate))
 
         try:
-            from menace_sandbox.bootstrap_helpers import ensure_bootstrapped
-
-            return ensure_bootstrapped
-        except ImportError:
+            return _import_bootstrap()
+        except (ImportError, AttributeError):
             import importlib.util
 
             bootstrap_path = repo_root / "bootstrap_helpers.py"
@@ -64,7 +69,13 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
             sys.modules.setdefault(spec.name, module)
             spec.loader.exec_module(module)
 
-            return module.ensure_bootstrapped
+            helper = getattr(module, "ensure_bootstrapped", None)
+            if helper is None:
+                raise ImportError(
+                    "ensure_bootstrapped missing in loaded bootstrap_helpers"
+                )
+
+            return helper
 
 
 ensure_bootstrapped = _load_bootstrap_helper()
