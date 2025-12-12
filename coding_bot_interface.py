@@ -1445,7 +1445,11 @@ def _get_bootstrap_wait_timeout() -> float | None:
     adaptive_overruns = 0
     host_load = None
     persisted_timeout = load_persisted_bootstrap_wait()
-    historical_global_window, historical_window_inputs = load_last_global_bootstrap_window()
+    historical_bootstrap_window = load_last_global_bootstrap_window()
+    if isinstance(historical_bootstrap_window, tuple):
+        historical_global_window, historical_window_inputs = historical_bootstrap_window
+    else:
+        historical_global_window, historical_window_inputs = None, {}
 
     try:
         component_budgets = compute_prepare_pipeline_component_budgets()
