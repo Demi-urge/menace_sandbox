@@ -126,33 +126,76 @@ def _load_bootstrap_metrics():
 
 BOOTSTRAP_PREPARE_REPEAT_TOTAL = _load_bootstrap_metrics().BOOTSTRAP_PREPARE_REPEAT_TOTAL
 
-from bootstrap_timeout_policy import (
-    SharedTimeoutCoordinator,
-    enforce_bootstrap_timeout_policy,
-    get_adaptive_timeout_context,
-    get_bootstrap_guard_context,
-    _BOOTSTRAP_TIMEOUT_MINIMUMS,
-    _COMPONENT_TIMEOUT_MINIMUMS,
-    compute_prepare_pipeline_component_budgets,
-    DEFERRED_COMPONENTS,
-    load_component_timeout_floors,
-    load_escalated_timeout_floors,
-    load_persisted_bootstrap_wait,
-    load_last_global_bootstrap_window,
-    load_last_component_budgets,
-    load_component_budget_pools,
-    build_progress_signal_hook,
-    persist_component_consumption,
-    persist_bootstrap_wait_window,
-    read_bootstrap_heartbeat,
-    render_prepare_pipeline_timeout_hints,
-    wait_for_bootstrap_quiet_period,
-    emit_bootstrap_heartbeat,
-    derive_elastic_global_window,
-    _BACKGROUND_UNLIMITED_ENV,
-    _parse_float,
-    _truthy_env,
+
+def _load_bootstrap_timeout_policy() -> ModuleType:
+    """Load ``bootstrap_timeout_policy`` regardless of package layout."""
+
+    for candidate in (
+        "menace_sandbox.bootstrap_timeout_policy",
+        "bootstrap_timeout_policy",
+    ):
+        module = sys.modules.get(candidate)
+        if module is not None:
+            return module
+
+        try:  # pragma: no cover - prefer package-relative import
+            return importlib.import_module(candidate)
+        except ModuleNotFoundError:
+            continue
+        except ImportError:
+            # Continue to file-loader fallback when a namespace package exists
+            # without the target module.
+            continue
+
+    module_path = _REPO_ROOT / "bootstrap_timeout_policy.py"
+    if not module_path.exists():  # pragma: no cover - defensive guard
+        raise ImportError("Unable to locate bootstrap_timeout_policy")
+
+    spec = importlib.util.spec_from_file_location(
+        "bootstrap_timeout_policy", module_path
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise ImportError("Unable to load bootstrap_timeout_policy")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("bootstrap_timeout_policy", module)
+    sys.modules.setdefault("menace_sandbox.bootstrap_timeout_policy", module)
+    spec.loader.exec_module(module)
+    return module
+
+
+_bootstrap_timeout_policy = _load_bootstrap_timeout_policy()
+SharedTimeoutCoordinator = _bootstrap_timeout_policy.SharedTimeoutCoordinator
+enforce_bootstrap_timeout_policy = _bootstrap_timeout_policy.enforce_bootstrap_timeout_policy
+get_adaptive_timeout_context = _bootstrap_timeout_policy.get_adaptive_timeout_context
+get_bootstrap_guard_context = _bootstrap_timeout_policy.get_bootstrap_guard_context
+_BOOTSTRAP_TIMEOUT_MINIMUMS = _bootstrap_timeout_policy._BOOTSTRAP_TIMEOUT_MINIMUMS
+_COMPONENT_TIMEOUT_MINIMUMS = _bootstrap_timeout_policy._COMPONENT_TIMEOUT_MINIMUMS
+compute_prepare_pipeline_component_budgets = (
+    _bootstrap_timeout_policy.compute_prepare_pipeline_component_budgets
 )
+DEFERRED_COMPONENTS = _bootstrap_timeout_policy.DEFERRED_COMPONENTS
+load_component_timeout_floors = _bootstrap_timeout_policy.load_component_timeout_floors
+load_escalated_timeout_floors = _bootstrap_timeout_policy.load_escalated_timeout_floors
+load_persisted_bootstrap_wait = _bootstrap_timeout_policy.load_persisted_bootstrap_wait
+load_last_global_bootstrap_window = (
+    _bootstrap_timeout_policy.load_last_global_bootstrap_window
+)
+load_last_component_budgets = _bootstrap_timeout_policy.load_last_component_budgets
+load_component_budget_pools = _bootstrap_timeout_policy.load_component_budget_pools
+build_progress_signal_hook = _bootstrap_timeout_policy.build_progress_signal_hook
+persist_component_consumption = _bootstrap_timeout_policy.persist_component_consumption
+persist_bootstrap_wait_window = _bootstrap_timeout_policy.persist_bootstrap_wait_window
+read_bootstrap_heartbeat = _bootstrap_timeout_policy.read_bootstrap_heartbeat
+render_prepare_pipeline_timeout_hints = (
+    _bootstrap_timeout_policy.render_prepare_pipeline_timeout_hints
+)
+wait_for_bootstrap_quiet_period = _bootstrap_timeout_policy.wait_for_bootstrap_quiet_period
+emit_bootstrap_heartbeat = _bootstrap_timeout_policy.emit_bootstrap_heartbeat
+derive_elastic_global_window = _bootstrap_timeout_policy.derive_elastic_global_window
+_BACKGROUND_UNLIMITED_ENV = _bootstrap_timeout_policy._BACKGROUND_UNLIMITED_ENV
+_parse_float = _bootstrap_timeout_policy._parse_float
+_truthy_env = _bootstrap_timeout_policy._truthy_env
 
 try:  # pragma: no cover - prefer package-relative import
     from menace_sandbox.shared.self_coding_import_guard import (
