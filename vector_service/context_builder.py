@@ -40,16 +40,7 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
             if helper is not None:
                 return helper
 
-        # Fallback to the underlying environment bootstrap helper to avoid
-        # spurious failures when stale bytecode or namespace shadowing hides the
-        # re-exported helper.
-        from menace_sandbox import environment_bootstrap
-
-        helper = getattr(environment_bootstrap, "ensure_bootstrapped", None)
-        if helper is None:
-            raise ImportError("ensure_bootstrapped missing in bootstrap_helpers")
-
-        return helper
+        raise ImportError("ensure_bootstrapped missing in bootstrap_helpers")
 
     try:
         return _import_bootstrap()
@@ -79,7 +70,12 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
             sys.modules.setdefault(spec.name, module)
             spec.loader.exec_module(module)
 
-            helper = getattr(module, "ensure_bootstrapped", None)
+            helper = None
+            for attr in ("ensure_bootstrapped", "ensure_environment_bootstrapped"):
+                helper = getattr(module, attr, None)
+                if helper is not None:
+                    break
+
             if helper is None:
                 raise ImportError(
                     "ensure_bootstrapped missing in loaded bootstrap_helpers"
