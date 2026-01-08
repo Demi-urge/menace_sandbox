@@ -8,10 +8,7 @@ to maintain the broker-first loading pattern. Troubleshooting steps live in
 
 from __future__ import annotations
 
-if __package__ in (None, ""):
-    from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
-else:
-    from .bootstrap_gate import resolve_bootstrap_placeholders
+from .bootstrap_gate import resolve_bootstrap_placeholders
 
 from .bot_registry import BotRegistry
 from .coding_bot_interface import (
