@@ -25,7 +25,10 @@ from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
-from bootstrap_readiness import readiness_signal
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox.bootstrap_readiness import readiness_signal
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    from bootstrap_readiness import readiness_signal
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
@@ -866,4 +869,3 @@ sys.modules["gpt_memory"] = sys.modules[__name__]
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     main()
-
