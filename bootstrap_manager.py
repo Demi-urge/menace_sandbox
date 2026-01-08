@@ -181,7 +181,7 @@ class BootstrapManager:
                     "event": "bootstrap-recursion",
                     "bootstrap_step": step,
                     "fingerprint": fingerprint_key,
-                    "module": module_label,
+                    "module_name": module_label,
                     **caller_info,
                 },
             )
