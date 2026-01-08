@@ -8,35 +8,36 @@ to maintain the broker-first loading pattern. Troubleshooting steps live in
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import import_compat
+
+
+import_compat.bootstrap(__name__, __file__)
+
 
 # Support both in-repo execution and installed package layouts.
 def _load_bootstrap_gate() -> ModuleType:
-    candidates = ["menace_sandbox.bootstrap_gate", "bootstrap_gate"]
-    for module_name in candidates:
-        try:
-            return importlib.import_module(module_name)
-        except ImportError:
-            continue
-
-    current_dir = Path(__file__).resolve().parent
-    for path in (current_dir, current_dir.parent):
-        path_str = str(path)
-        if path_str not in sys.path:
-            sys.path.insert(0, path_str)
-
     try:
-        return importlib.import_module("menace_sandbox.bootstrap_gate")
-    except ImportError as exc:
-        attempted = ", ".join(candidates)
-        raise ImportError(
-            "Unable to import bootstrap_gate; attempted modules: "
-            f"{attempted}"
-        ) from exc
+        return import_compat.load_internal("bootstrap_gate")
+    except ModuleNotFoundError:
+        bootstrap_path = Path(__file__).resolve().parent / "bootstrap_gate.py"
+        spec = importlib.util.spec_from_file_location(
+            "bootstrap_gate",
+            bootstrap_path,
+        )
+        if spec is None or spec.loader is None:
+            raise ModuleNotFoundError(
+                "bootstrap_gate could not be loaded from "
+                f"{bootstrap_path}"
+            )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault("bootstrap_gate", module)
+        spec.loader.exec_module(module)
+        return module
 
 
 resolve_bootstrap_placeholders = (
