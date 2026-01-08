@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
@@ -53,26 +53,74 @@ import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
 
-def _import_bootstrap_readiness():
+class _NoOpReadinessProbe:
+    heartbeat = None
+
+    def summary(self) -> str:
+        return "bootstrap readiness unavailable"
+
+
+class _NoOpReadinessSignal:
+    def probe(self) -> _NoOpReadinessProbe:
+        return _NoOpReadinessProbe()
+
+    def await_ready(self, timeout: float | None = None) -> bool:
+        return True
+
+    def describe(self) -> str:
+        return "bootstrap readiness unavailable"
+
+
+def _import_bootstrap_readiness() -> Callable[[], Any]:
     errors: List[BaseException] = []
     _module = None
 
     def _validate_module(module: Any, *, context: str) -> Any:
         if module is None:
             return None
-        if not hasattr(module, "readiness_signal"):
-            error = AttributeError(
-                f"bootstrap_readiness missing readiness_signal after {context} import."
-            )
-            errors.append(error)
-            LOGGER.warning(
-                "Detected partial bootstrap_readiness import; resetting module for reload.",
-                extra={"event": "bootstrap-readiness-partial", "context": context},
-            )
-            sys.modules.pop("bootstrap_readiness", None)
-            sys.modules.pop("menace_sandbox.bootstrap_readiness", None)
-            return None
         return module
+
+    def _resolve_readiness_signal(module: Any, *, context: str) -> Callable[[], Any] | None:
+        if module is None:
+            return None
+        readiness_signal = getattr(module, "readiness_signal", None)
+        if readiness_signal is not None:
+            return readiness_signal
+        LOGGER.warning(
+            "bootstrap_readiness missing readiness_signal after %s import; reloading.",
+            context,
+            extra={
+                "event": "bootstrap-readiness-missing-signal",
+                "context": context,
+                "module_file": getattr(module, "__file__", None),
+            },
+        )
+        try:
+            reloaded = importlib.reload(module)
+        except Exception as exc:  # pragma: no cover - defensive path
+            errors.append(exc)
+            reloaded = module
+        readiness_signal = getattr(reloaded, "readiness_signal", None)
+        if readiness_signal is not None:
+            return readiness_signal
+        return None
+
+    def _fallback_signal(module: Any, *, reason: str) -> Callable[[], Any]:
+        module_file = getattr(module, "__file__", None)
+        LOGGER.warning(
+            "Falling back to %s readiness signal for bootstrap_readiness (module_file=%s).",
+            reason,
+            module_file,
+            extra={
+                "event": "bootstrap-readiness-fallback",
+                "module_file": module_file,
+                "reason": reason,
+            },
+        )
+        fallback_class = getattr(module, "ReadinessSignal", None)
+        if fallback_class is not None:
+            return lambda: fallback_class()
+        return lambda: _NoOpReadinessSignal()
 
     try:  # pragma: no cover - prefer loader helper when installed
         _module = load_internal("bootstrap_readiness")
@@ -117,11 +165,20 @@ def _import_bootstrap_readiness():
 
     sys.modules.setdefault("bootstrap_readiness", _module)
     sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
-    return _module
+    readiness_signal = _resolve_readiness_signal(_module, context="module")
+    if readiness_signal is not None:
+        return readiness_signal
+    return _fallback_signal(_module, reason="ReadinessSignal or no-op")
+
+_BOOTSTRAP_READINESS: Any | None = None
 
 
-readiness_signal = _import_bootstrap_readiness().readiness_signal
-_BOOTSTRAP_READINESS = readiness_signal()
+def _get_bootstrap_readiness() -> Any:
+    global _BOOTSTRAP_READINESS
+    if _BOOTSTRAP_READINESS is None:
+        readiness_signal = _import_bootstrap_readiness()
+        _BOOTSTRAP_READINESS = readiness_signal()
+    return _BOOTSTRAP_READINESS
 
 _db_router = load_internal("db_router")
 DBRouter = _db_router.DBRouter
@@ -241,7 +298,8 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 12.0) -> None:
         parsed_timeout = None
 
     effective_timeout = max(timeout, parsed_timeout) if parsed_timeout else timeout
-    probe = _BOOTSTRAP_READINESS.probe()
+    readiness = _get_bootstrap_readiness()
+    probe = readiness.probe()
     failure_detail = _bootstrap_failure_detail(probe)
     if failure_detail:
         raise RuntimeError(
@@ -249,9 +307,9 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 12.0) -> None:
         )
 
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=effective_timeout)
+        readiness.await_ready(timeout=effective_timeout)
     except TimeoutError as exc:  # pragma: no cover - defensive path
-        probe = _BOOTSTRAP_READINESS.probe()
+        probe = readiness.probe()
         failure_detail = _bootstrap_failure_detail(probe)
         if failure_detail:
             raise RuntimeError(
@@ -269,7 +327,7 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 12.0) -> None:
 
         raise RuntimeError(
             f"{component} cannot start until bootstrap readiness clears: "
-            f"{_BOOTSTRAP_READINESS.describe()}"
+            f"{readiness.describe()}"
         ) from exc
 
 
