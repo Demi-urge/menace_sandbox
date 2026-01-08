@@ -123,8 +123,21 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
                 "Bootstrap dependency broker owner inactive; entering degraded ResearchAggregatorBot bootstrap",
                 extra={"event": "research-aggregator-bootstrap-degraded"},
             )
+            if any(
+                item is not None
+                for item in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER)
+            ):
+                if _BOOTSTRAP_BROKER is None:
+                    _BOOTSTRAP_BROKER = broker
+                return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+            placeholder, sentinel = advertise_bootstrap_placeholder(
+                dependency_broker=broker,
+                owner=False,
+            )
+            _BOOTSTRAP_PLACEHOLDER = placeholder
+            _BOOTSTRAP_SENTINEL = sentinel
             _BOOTSTRAP_BROKER = broker
-            return None, None, broker
+            return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
         raise RuntimeError(
             "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot"
         )
@@ -395,7 +408,7 @@ def _ensure_runtime_dependencies(
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
     placeholder_pipeline, placeholder_manager, placeholder_broker = (
-        _bootstrap_placeholders()
+        _bootstrap_placeholders(allow_degraded=False)
     )
     if not getattr(placeholder_broker, "active_owner", False):
         if _looks_like_pipeline_candidate(placeholder_pipeline) or placeholder_manager:
