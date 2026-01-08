@@ -32,7 +32,6 @@ try:  # pragma: no cover - optional
 except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None  # type: ignore
 
-from .research_data import InfoDB, ResearchItem
 from .chatgpt_research_bot import summarise_text
 from .proxy_manager import get_proxy
 from security.secret_redactor import redact
@@ -47,6 +46,17 @@ from governed_embeddings import (
 
 
 logger = logging.getLogger(__name__)
+
+_RESEARCH_AGGREGATOR_TYPES: tuple[type[Any], type[Any]] | None = None
+
+
+def _load_research_aggregator_types() -> tuple[type[Any], type[Any]]:
+    global _RESEARCH_AGGREGATOR_TYPES
+    if _RESEARCH_AGGREGATOR_TYPES is None:
+        from .research_aggregator_bot import InfoDB, ResearchItem
+
+        _RESEARCH_AGGREGATOR_TYPES = (InfoDB, ResearchItem)
+    return _RESEARCH_AGGREGATOR_TYPES
 
 
 registry = BotRegistry()
@@ -74,7 +84,11 @@ class ResearchFallbackBot:
         embedding_dim: int = 64,
         manager: "SelfCodingManager | None" = None,
     ) -> None:
-        self.info_db = info_db or InfoDB()
+        if info_db is None:
+            InfoDB, _ = _load_research_aggregator_types()
+            self.info_db = InfoDB()
+        else:
+            self.info_db = info_db
         self.max_retries = max_retries
         self.backoff = backoff
         if SentenceTransformer:
@@ -185,6 +199,7 @@ class ResearchFallbackBot:
             f"https://www.google.com/search?q={query}",
         ]
         results: List[FallbackResult] = []
+        _, ResearchItem = _load_research_aggregator_types()
         for url in sources:
             html = self.fetch_page(url)
             if not html:
@@ -220,5 +235,6 @@ class ResearchFallbackBot:
 __all__ = ["ResearchFallbackBot", "FallbackResult"]
 if TYPE_CHECKING:  # pragma: no cover - typing helper
     from .self_coding_manager import SelfCodingManager
+    from .research_aggregator_bot import InfoDB, ResearchItem
 else:  # pragma: no cover - runtime fallback when manager is unused
     SelfCodingManager = object  # type: ignore[assignment]
