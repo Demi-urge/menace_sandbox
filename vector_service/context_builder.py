@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import contextlib
+import importlib
 import importlib.util
 from dataclasses import dataclass, fields, field
 from pathlib import Path
@@ -45,59 +46,63 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
         if str(candidate) not in sys.path:
             sys.path.insert(0, str(candidate))
 
-    def _import_bootstrap() -> "Callable[[], None]":
-        from menace_sandbox import bootstrap_helpers
+    errors: list[str] = []
+    attempted_modules: list[str] = []
+    attempted_files: list[str] = []
 
-        for attr in ("ensure_bootstrapped", "ensure_environment_bootstrapped"):
-            helper = getattr(bootstrap_helpers, attr, None)
+    def _select_helper(
+        module: object, attr_names: tuple[str, ...]
+    ) -> "Callable[[], None] | None":
+        for attr in attr_names:
+            helper = getattr(module, attr, None)
+            if helper is not None:
+                return helper
+        return None
+
+    for module_name, attr_names in (
+        ("menace_sandbox.bootstrap_helpers", ("ensure_bootstrapped", "ensure_environment_bootstrapped")),
+        ("menace_sandbox.environment_bootstrap", ("ensure_bootstrapped",)),
+    ):
+        attempted_modules.append(module_name)
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            errors.append(f"{module_name}: {exc}")
+            continue
+        helper = _select_helper(module, attr_names)
+        if helper is not None:
+            return helper
+        errors.append(f"{module_name}: missing {', '.join(attr_names)}")
+
+    for module_name, filename, attr_names in (
+        ("bootstrap_helpers", "bootstrap_helpers.py", ("ensure_bootstrapped", "ensure_environment_bootstrapped")),
+        ("environment_bootstrap", "environment_bootstrap.py", ("ensure_bootstrapped",)),
+    ):
+        bootstrap_path = repo_root / filename
+        attempted_files.append(str(bootstrap_path))
+        if not bootstrap_path.exists():
+            continue
+        spec = importlib.util.spec_from_file_location(
+            f"menace_sandbox._bootstrap_fallback_{module_name}",
+            bootstrap_path,
+        )
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            helper = _select_helper(module, attr_names)
             if helper is not None:
                 return helper
 
-        try:
-            from menace_sandbox.environment_bootstrap import ensure_bootstrapped
-
-            return ensure_bootstrapped
-        except Exception as exc:
-            raise ImportError("ensure_bootstrapped missing in bootstrap_helpers") from exc
-
-    try:
-        return _import_bootstrap()
-    except (ImportError, AttributeError) as exc:
-        # Fall back to module-based lookup instead of assuming a source checkout
-        # layout. This relies on the installed package metadata instead of a
-        # hardcoded file path.
-
-        def _load_from_spec(
-            module_name: str, attr_names: tuple[str, ...]
-        ) -> "Callable[[], None]" | None:
-            spec = importlib.util.find_spec(module_name)
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                sys.modules.setdefault(module_name, module)
-                spec.loader.exec_module(module)
-                for attr in attr_names:
-                    helper = getattr(module, attr, None)
-                    if helper is not None:
-                        return helper
-            return None
-
-        helper = _load_from_spec(
-            "menace_sandbox.bootstrap_helpers",
-            ("ensure_bootstrapped", "ensure_environment_bootstrapped"),
-        )
-        if helper is not None:
-            return helper
-
-        helper = _load_from_spec(
-            "menace_sandbox.environment_bootstrap",
-            ("ensure_bootstrapped",),
-        )
-        if helper is not None:
-            return helper
-
-        raise ImportError(
-            "ensure_bootstrapped missing in menace_sandbox bootstrap helpers"
-        ) from exc
+    error_details = "; ".join(errors) if errors else "no module details available"
+    attempted = (
+        f"Attempted modules: {', '.join(attempted_modules)}. "
+        f"Attempted files: {', '.join(attempted_files)}."
+    )
+    raise ImportError(
+        "Unable to load ensure_bootstrapped from menace_sandbox. "
+        f"{attempted} Errors: {error_details}. "
+        "Install the menace_sandbox package or adjust PYTHONPATH to include it."
+    )
 
 
 ensure_bootstrapped = _load_bootstrap_helper()
