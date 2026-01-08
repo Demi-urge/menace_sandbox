@@ -35,7 +35,7 @@ from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, Mapping
 
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
-import menace_sandbox.model_automation_pipeline as mapipeline
+from menace_sandbox.entry_pipeline_loader import load_pipeline_class
 
 _bootstrap_dependency_broker = getattr(
     _coding_bot_interface, "_bootstrap_dependency_broker", lambda: lambda *_, **__: None
@@ -56,19 +56,6 @@ prepare_pipeline_for_bootstrap = getattr(
 _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
     dependency_broker=_bootstrap_dependency_broker()
 )
-
-try:
-    ModelAutomationPipeline = mapipeline.get_pipeline_class()
-except Exception as exc:
-    logging.getLogger(__name__).error(
-        "bootstrap.model_automation_pipeline_load_failed",
-        extra={
-            "error": str(exc),
-            "dependency_hint": "shared/pipeline_base.py import chain",
-        },
-        exc_info=True,
-    )
-    raise
 
 from lock_utils import LOCK_TIMEOUT, SandboxLock
 from menace_sandbox.bot_registry import BotRegistry
@@ -4138,6 +4125,19 @@ def initialize_bootstrap_context(
     """
 
     global _BOOTSTRAP_CACHE, _BOOTSTRAP_EMBEDDER_JOB
+
+    try:
+        ModelAutomationPipeline = load_pipeline_class()
+    except Exception as exc:
+        LOGGER.error(
+            "bootstrap.model_automation_pipeline_load_failed",
+            extra={
+                "error": str(exc),
+                "dependency_hint": "shared/pipeline_base.py import chain",
+            },
+            exc_info=True,
+        )
+        raise
 
     def _env_flag(name: str) -> bool:
         return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}

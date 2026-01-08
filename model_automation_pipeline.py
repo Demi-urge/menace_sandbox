@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import dataclass
+import logging
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from .model_automation_dependencies import (
@@ -33,6 +34,7 @@ else:  # pragma: no cover - runtime alias populated lazily
 
 
 _PIPELINE_CLS: "type[_ModelAutomationPipeline] | None" = None
+LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only imports
     from .pre_execution_roi_bot import ROIResult
@@ -61,6 +63,10 @@ def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
         try:
             _PIPELINE_CLS = load_pipeline_class()
         except Exception as exc:
+            LOGGER.exception(
+                "Failed to load ModelAutomationPipeline",
+                extra={"module": __name__},
+            )
             traceback_details = traceback.format_exc()
             raise ImportError(
                 "ModelAutomationPipeline unavailable: "
@@ -69,6 +75,38 @@ def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
         else:
             globals()["ModelAutomationPipeline"] = _PIPELINE_CLS
     return _PIPELINE_CLS
+
+
+class _ModelAutomationPipelineProxy:
+    """Callable proxy that resolves the pipeline class on first use."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+        self._resolved: "type[_ModelAutomationPipeline] | None" = None
+
+    def _resolve(self) -> "type[_ModelAutomationPipeline]":
+        if self._resolved is not None:
+            return self._resolved
+        try:
+            self._resolved = _load_pipeline_cls()
+        except Exception as exc:
+            LOGGER.exception(
+                "Deferred load of ModelAutomationPipeline failed",
+                extra={"module": __name__, "initial_error": str(self._error)},
+            )
+            raise self._error from exc
+        return self._resolved
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        cls = self._resolve()
+        return cls(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        cls = self._resolve()
+        return getattr(cls, name)
+
+    def __repr__(self) -> str:
+        return f"<ModelAutomationPipelineProxy error={self._error!r}>"
 
 
 def get_pipeline_class() -> "type[_ModelAutomationPipeline]":
@@ -92,3 +130,9 @@ def __dir__() -> List[str]:
 
 
 __all__ = ["AutomationResult", "ModelAutomationPipeline", "get_pipeline_class"]
+
+
+try:  # pragma: no cover - import-time availability hint
+    ModelAutomationPipeline = _load_pipeline_cls()
+except Exception as exc:  # pragma: no cover - defer failure
+    ModelAutomationPipeline = _ModelAutomationPipelineProxy(exc)
