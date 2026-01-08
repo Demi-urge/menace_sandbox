@@ -118,29 +118,30 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
     if not broker_owner:
+        logger.warning(
+            "Bootstrap dependency broker owner inactive; continuing with degraded ResearchAggregatorBot placeholders",
+            extra={"event": "research-aggregator-broker-owner-missing"},
+        )
         if allow_degraded:
             logger.warning(
                 "Bootstrap dependency broker owner inactive; entering degraded ResearchAggregatorBot bootstrap",
                 extra={"event": "research-aggregator-bootstrap-degraded"},
             )
-            if any(
-                item is not None
-                for item in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER)
-            ):
-                if _BOOTSTRAP_BROKER is None:
-                    _BOOTSTRAP_BROKER = broker
-                return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
-            placeholder, sentinel = advertise_bootstrap_placeholder(
-                dependency_broker=broker,
-                owner=False,
-            )
-            _BOOTSTRAP_PLACEHOLDER = placeholder
-            _BOOTSTRAP_SENTINEL = sentinel
-            _BOOTSTRAP_BROKER = broker
+        if any(
+            item is not None
+            for item in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER)
+        ):
+            if _BOOTSTRAP_BROKER is None:
+                _BOOTSTRAP_BROKER = broker
             return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
-        raise RuntimeError(
-            "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot"
+        placeholder, sentinel = advertise_bootstrap_placeholder(
+            dependency_broker=broker,
+            owner=False,
         )
+        _BOOTSTRAP_PLACEHOLDER = placeholder
+        _BOOTSTRAP_SENTINEL = sentinel
+        _BOOTSTRAP_BROKER = broker
+        return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
     pipeline, manager, broker = resolve_bootstrap_placeholders(
         timeout=_BOOTSTRAP_GATE_TIMEOUT,
@@ -284,12 +285,20 @@ def _ensure_bootstrap_ready(
 
 # Eagerly advertise the bootstrap placeholder as soon as the module loads so
 # downstream imports reuse the shared sentinel before instantiating helpers.
-_ensure_bootstrap_ready(
+_bootstrap_ready = _ensure_bootstrap_ready(
     "ResearchAggregatorBot bootstrap placeholder",
     timeout=_BOOTSTRAP_GATE_TIMEOUT,
     allow_degraded=True,
 )
-_bootstrap_placeholders(allow_degraded=True)
+_active_pipeline, _active_manager = get_active_bootstrap_pipeline()
+_broker_owner_active = bool(getattr(_bootstrap_dependency_broker(), "active_owner", False))
+if _bootstrap_ready or _active_pipeline is not None or _active_manager is not None or _broker_owner_active:
+    _bootstrap_placeholders(allow_degraded=True)
+else:
+    logger.info(
+        "Skipping ResearchAggregatorBot placeholder bootstrap; no active broker owner or pipeline detected",
+        extra={"event": "research-aggregator-broker-owner-missing"},
+    )
 
 
 def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
