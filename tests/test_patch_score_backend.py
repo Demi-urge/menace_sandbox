@@ -176,7 +176,7 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
 
     mdb = sie_tests.db.MetricsDB(tmp_path / "m.db")
     edb = sie_tests.eb.ErrorDB(tmp_path / "e.db")
-    info = sie_tests.rab.InfoDB(tmp_path / "i.db")
+    info = sie_tests.rd.InfoDB(tmp_path / "i.db")
     builder = DummyBuilder()
     diag = sie_tests.dm.DiagnosticManager(
         mdb,

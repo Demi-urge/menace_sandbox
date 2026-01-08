@@ -29,6 +29,7 @@ def _load_engine():
     modules = [
         "self_model_bootstrap",
         "research_aggregator_bot",
+        "research_data",
         "model_automation_pipeline",
         "diagnostic_manager",
         "error_bot",
@@ -70,6 +71,8 @@ def _load_engine():
     m["menace.research_aggregator_bot"].ResearchAggregatorBot = DummyAgg
     m["menace.research_aggregator_bot"].ResearchItem = Dummy
     m["menace.research_aggregator_bot"].InfoDB = Dummy
+    m["menace.research_data"].ResearchItem = Dummy
+    m["menace.research_data"].InfoDB = Dummy
     m["menace.model_automation_pipeline"].ModelAutomationPipeline = lambda *a, **k: Dummy()
     m["menace.model_automation_pipeline"].AutomationResult = Dummy
     m["menace.diagnostic_manager"].DiagnosticManager = lambda *a, **k: Dummy()

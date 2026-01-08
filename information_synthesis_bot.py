@@ -94,7 +94,8 @@ try:
 except Exception:  # pragma: no cover - optional
     requests = None  # type: ignore
 
-from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
+from .research_aggregator_bot import ResearchAggregatorBot
+from .research_data import ResearchItem
 try:  # pragma: no cover - optional dependency
     from .task_handoff_bot import WorkflowDB
 except Exception:  # pragma: no cover - import may fail in trimmed environments

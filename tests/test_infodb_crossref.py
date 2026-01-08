@@ -26,16 +26,17 @@ for name, attrs in mods.items():
     sys.modules.setdefault(name, module)
 
 import menace.research_aggregator_bot as rab
+import menace.research_data as rd
 
 
 def test_cross_reference_notes(tmp_path):
-    db = rab.InfoDB(tmp_path / "info.db")
+    db = rd.InfoDB(tmp_path / "info.db")
     db.set_current_model(1)
-    it1 = rab.ResearchItem(topic="Topic", content="a", timestamp=time.time(), model_id=1)
+    it1 = rd.ResearchItem(topic="Topic", content="a", timestamp=time.time(), model_id=1)
     db.add(it1)
-    it2 = rab.ResearchItem(topic="Topic", content="b", timestamp=time.time(), model_id=1, energy=2)
+    it2 = rd.ResearchItem(topic="Topic", content="b", timestamp=time.time(), model_id=1, energy=2)
     db.add(it2)
-    it3 = rab.ResearchItem(topic="Topic", content="c", timestamp=time.time(), model_id=2, energy=3)
+    it3 = rd.ResearchItem(topic="Topic", content="c", timestamp=time.time(), model_id=2, energy=3)
     db.add(it3)
 
     items = db.search("Topic")
@@ -65,8 +66,8 @@ def test_high_energy_validation(monkeypatch, tmp_path):
 
     text_bot = T()
     video_bot = V()
-    db = rab.InfoDB(tmp_path / "info.db", text_bot=text_bot, video_bot=video_bot)
-    item = rab.ResearchItem(topic="Topic", content="x", timestamp=time.time(), model_id=1, energy=3)
+    db = rd.InfoDB(tmp_path / "info.db", text_bot=text_bot, video_bot=video_bot)
+    item = rd.ResearchItem(topic="Topic", content="x", timestamp=time.time(), model_id=1, energy=3)
     db.add(item)
     stored = db.search("Topic")[0]
     assert text_bot.called

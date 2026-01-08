@@ -116,7 +116,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - circular imports
     from .bot_database import BotDB
-    from .research_aggregator_bot import InfoDB
+    from .research_data import InfoDB
     from .databases import MenaceDB
 else:  # pragma: no cover
     BotDB = InfoDB = MenaceDB = object  # type: ignore

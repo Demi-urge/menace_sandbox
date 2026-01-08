@@ -51,7 +51,7 @@ def test_db_hit_avoids_download(monkeypatch):
     pytest.skip("optional dependencies not installed")
     from types import SimpleNamespace
     import time
-    from menace.research_aggregator_bot import ResearchItem
+    from menace.research_data import ResearchItem
     
     router = SimpleNamespace()
     router.query_all = lambda term: SimpleNamespace(code=[], bots=[], info=[ResearchItem(topic=term, content="cached", timestamp=time.time(), source_url="u")], memory=[], menace=[])
@@ -63,4 +63,3 @@ def test_db_hit_avoids_download(monkeypatch):
     monkeypatch.setattr(trb, "_download", fail)
     res = bot.process(["Topic"], [])
     assert res and res[0].content == "cached"
-

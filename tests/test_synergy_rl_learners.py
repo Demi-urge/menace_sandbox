@@ -56,6 +56,7 @@ def sie(monkeypatch):
     modules = [
         "menace.self_model_bootstrap",
         "menace.research_aggregator_bot",
+        "menace.research_data",
         "menace.model_automation_pipeline",
         "menace.diagnostic_manager",
         "menace.error_bot",
@@ -83,6 +84,9 @@ def sie(monkeypatch):
     ra.ResearchAggregatorBot = DummyAgg
     ra.ResearchItem = object
     ra.InfoDB = object
+    rd = sys.modules["menace.research_data"]
+    rd.ResearchItem = object
+    rd.InfoDB = object
     map_mod = sys.modules["menace.model_automation_pipeline"]
     map_mod.ModelAutomationPipeline = lambda *a, **k: object()
     map_mod.AutomationResult = object

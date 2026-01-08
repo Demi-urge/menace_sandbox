@@ -89,10 +89,11 @@ def test_self_improvement_logs_capital(monkeypatch, tmp_path):
     import menace.self_improvement as sie
     import menace.capital_management_bot as cmb
     import menace.research_aggregator_bot as rab
+import menace.research_data as rd
     import menace.data_bot as db
 
     mdb = db.MetricsDB(tmp_path / "m.db")
-    info = rab.InfoDB(tmp_path / "i.db")
+    info = rd.InfoDB(tmp_path / "i.db")
     diag = types.SimpleNamespace(metrics=mdb, error_bot=types.SimpleNamespace(db=types.SimpleNamespace(discrepancies=lambda: [])), diagnose=lambda: [])
     cap_calls = []
     cap_bot = cmb.CapitalManagementBot(roi_db=cmb.ROIEventDB(tmp_path / "d.db"))

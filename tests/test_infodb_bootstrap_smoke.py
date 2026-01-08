@@ -2,7 +2,8 @@ import sqlite3
 import time
 
 from menace_sandbox import coding_bot_interface
-from menace_sandbox.research_aggregator_bot import InfoDB, ResearchAggregatorBot
+from menace_sandbox.research_aggregator_bot import ResearchAggregatorBot
+from menace_sandbox.research_data import InfoDB
 
 
 class _StubBuilder:

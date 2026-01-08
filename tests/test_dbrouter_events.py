@@ -29,6 +29,7 @@ dr = _load("db_router")
 bd = _load("bot_database")
 cd = _load("code_database")
 rab = _load("research_aggregator_bot")
+rd = _load("research_data")
 mm_mod = _load("menace_memory_manager")
 thb = _load("task_handoff_bot")
 ueb = _load("unified_event_bus")
@@ -38,7 +39,7 @@ def _make_router(tmp_path, bus):
     return dr.DBRouter(
         code_db=cd.CodeDB(tmp_path / "c.db", event_bus=bus),
         bot_db=bd.BotDB(tmp_path / "b.db", event_bus=bus),
-        info_db=rab.InfoDB(tmp_path / "i.db", event_bus=bus),
+        info_db=rd.InfoDB(tmp_path / "i.db", event_bus=bus),
         memory_mgr=mm_mod.MenaceMemoryManager(tmp_path / "mem.db", event_bus=bus),
         workflow_db=thb.WorkflowDB(tmp_path / "wf.db", event_bus=bus),
         menace_db=mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}"),
@@ -70,4 +71,3 @@ def test_update_bot_emits_cdc_event(tmp_path):
     router.update_bot(bid, status="inactive")
 
     assert events and events[0] == {"action": "update", "bot_id": bid, "status": "inactive"}
-

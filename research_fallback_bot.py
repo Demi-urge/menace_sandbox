@@ -32,7 +32,7 @@ try:  # pragma: no cover - optional
 except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None  # type: ignore
 
-from .research_aggregator_bot import InfoDB, ResearchItem
+from .research_data import InfoDB, ResearchItem
 from .chatgpt_research_bot import summarise_text
 from .proxy_manager import get_proxy
 from security.secret_redactor import redact

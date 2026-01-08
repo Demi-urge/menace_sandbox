@@ -10,7 +10,7 @@ import logging
 from .bot_registry import BotRegistry
 from .neuroplasticity import PathwayDB
 from .databases import MenaceDB
-from .research_aggregator_bot import InfoDB
+from .research_data import InfoDB
 from gpt_memory_interface import GPTMemoryInterface
 from .scope_utils import Scope
 

@@ -72,6 +72,7 @@ import menace.code_database as cd
 import menace.menace_memory_manager as mm
 import menace.data_bot as db
 import menace.research_aggregator_bot as rab
+import menace.research_data as rd
 from menace.evolution_history_db import EvolutionHistoryDB
 
 
@@ -79,7 +80,7 @@ def test_full_self_optimisation(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
     hist = EvolutionHistoryDB(tmp_path / "e.db")
-    info_db = rab.InfoDB(tmp_path / "i.db")
+    info_db = rd.InfoDB(tmp_path / "i.db")
     data_bot = db.DataBot(mdb, patch_db=patch_db, evolution_db=hist)
 
     builder = types.SimpleNamespace(

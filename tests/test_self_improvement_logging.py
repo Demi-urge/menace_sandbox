@@ -53,6 +53,7 @@ sys.modules["menace.synergy_history_db"] = types.ModuleType("menace.synergy_hist
 for name in [
     "self_model_bootstrap",
     "research_aggregator_bot",
+    "research_data",
     "model_automation_pipeline",
     "diagnostic_manager",
     "error_bot",
@@ -85,6 +86,8 @@ class _Dummy:
 sys.modules["menace.research_aggregator_bot"].ResearchAggregatorBot = _Dummy
 sys.modules["menace.research_aggregator_bot"].ResearchItem = _Dummy
 sys.modules["menace.research_aggregator_bot"].InfoDB = _Dummy
+sys.modules["menace.research_data"].ResearchItem = _Dummy
+sys.modules["menace.research_data"].InfoDB = _Dummy
 
 sys.modules["menace.model_automation_pipeline"].ModelAutomationPipeline = _Dummy
 sys.modules["menace.model_automation_pipeline"].AutomationResult = _Dummy

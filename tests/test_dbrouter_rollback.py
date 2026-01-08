@@ -51,6 +51,13 @@ rab = importlib.util.module_from_spec(spec)
 sys.modules["menace.research_aggregator_bot"] = rab
 spec.loader.exec_module(rab)
 
+spec = importlib.util.spec_from_file_location(
+    "menace.research_data", ROOT / "research_data.py", submodule_search_locations=[str(ROOT)]  # path-ignore
+)
+rd = importlib.util.module_from_spec(spec)
+sys.modules["menace.research_data"] = rd
+spec.loader.exec_module(rd)
+
 
 class FailingTM(dr.TransactionManager):
     def run(self, operation, rollback):
@@ -88,9 +95,9 @@ def test_update_bot_rollback(tmp_path):
 
 def test_delete_info_rollback(tmp_path):
     mdb = mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
-    info = rab.InfoDB(tmp_path / 'i.db')
+    info = rd.InfoDB(tmp_path / 'i.db')
     router = dr.DBRouter(info_db=info, menace_db=mdb)
-    item = rab.ResearchItem(topic="t", content="c", timestamp=0.0)
+    item = rd.ResearchItem(topic="t", content="c", timestamp=0.0)
     info_id = router.insert_info(item)
     router.transaction_manager = FailingTM()
     with pytest.raises(RuntimeError):

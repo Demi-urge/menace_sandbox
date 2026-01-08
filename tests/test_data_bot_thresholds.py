@@ -207,6 +207,10 @@ def test_internalize_persists_defaults(monkeypatch, tmp_path):
     stub_ra.ResearchAggregatorBot = object
     stub_ra.ResearchItem = object
     monkeypatch.setitem(sys.modules, "menace.research_aggregator_bot", stub_ra)
+    stub_rd = types.ModuleType("menace.research_data")
+    stub_rd.ResearchItem = object
+    stub_rd.InfoDB = object
+    monkeypatch.setitem(sys.modules, "menace.research_data", stub_rd)
     import menace.self_coding_manager as scm  # noqa: WPS433
 
     def _persist(

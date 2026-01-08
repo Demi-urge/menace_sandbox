@@ -17,6 +17,7 @@ spec.loader.exec_module(menace)
 modules = [
     "menace.self_model_bootstrap",
     "menace.research_aggregator_bot",
+    "menace.research_data",
     "menace.model_automation_pipeline",
     "menace.diagnostic_manager",
     "menace.error_bot",
@@ -85,6 +86,8 @@ class DummyAgg:
 sys.modules["menace.research_aggregator_bot"].ResearchAggregatorBot = DummyAgg
 sys.modules["menace.research_aggregator_bot"].ResearchItem = object
 sys.modules["menace.research_aggregator_bot"].InfoDB = lambda *a, **k: object()
+sys.modules["menace.research_data"].ResearchItem = object
+sys.modules["menace.research_data"].InfoDB = lambda *a, **k: object()
 sys.modules["menace.patch_score_backend"] = types.ModuleType("menace.patch_score_backend")
 sys.modules["menace.patch_score_backend"].PatchScoreBackend = object
 sys.modules["menace.patch_score_backend"].backend_from_url = lambda *a, **k: object()
@@ -240,4 +243,3 @@ def test_synergy_history_and_weight_update():
     # test weight learner update using metric deltas
     engine._update_synergy_weights(1.0)
     assert engine.synergy_weight_roi != 1.0
-

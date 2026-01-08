@@ -27,15 +27,16 @@ for name, attrs in mods.items():
     sys.modules.setdefault(name, module)
 
 import menace.research_aggregator_bot as rab
+import menace.research_data as rd
 
 
 def test_fts_search(tmp_path):
-    db = rab.InfoDB(tmp_path / "i.db")
+    db = rd.InfoDB(tmp_path / "i.db")
     if not getattr(db, "has_fts", False):
         pytest.skip("fts5 not available")
-    item1 = rab.ResearchItem(topic="A", content="alpha", timestamp=time.time())
+    item1 = rd.ResearchItem(topic="A", content="alpha", timestamp=time.time())
     db.add(item1)
-    item2 = rab.ResearchItem(topic="B", content="bravo", tags=["tag"], timestamp=time.time())
+    item2 = rd.ResearchItem(topic="B", content="bravo", tags=["tag"], timestamp=time.time())
     db.add(item2)
     res1 = db.search("alpha")
     titles = [r.title for r in res1]

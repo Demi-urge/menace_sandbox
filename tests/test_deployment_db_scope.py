@@ -11,6 +11,7 @@ sys.modules.setdefault(
     SimpleNamespace(EnhancementDB=object, ChatGPTEnhancementBot=object, Enhancement=object),
 )
 sys.modules.setdefault("menace.research_aggregator_bot", SimpleNamespace(InfoDB=object))
+sys.modules.setdefault("menace.research_data", SimpleNamespace(InfoDB=object))
 sys.modules.setdefault("menace.error_bot", SimpleNamespace(ErrorDB=object))
 sys.modules.setdefault("menace.deployment_governance", SimpleNamespace(evaluate_scorecard=lambda *a, **k: None))
 sys.modules.setdefault("menace.governance", SimpleNamespace(evaluate_rules=lambda *a, **k: None))

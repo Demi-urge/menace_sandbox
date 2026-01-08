@@ -27,6 +27,7 @@ for name, attrs in mods.items():
     sys.modules.setdefault(name, module)
 
 import menace.research_aggregator_bot as rab
+import menace.research_data as rd
 import pytest
 
 
@@ -35,7 +36,7 @@ def test_embedding_workflow(tmp_path, backend):
     if backend == "faiss":
         pytest.importorskip("faiss")
         pytest.importorskip("numpy")
-    db = rab.InfoDB(
+    db = rd.InfoDB(
         tmp_path / "i.db",
         vector_backend=backend,
         vector_index_path=tmp_path / f"i.{backend}.index",
@@ -53,7 +54,7 @@ def test_embedding_workflow(tmp_path, backend):
 
     db._embed = MethodType(fake_embed, db)
 
-    item = rab.ResearchItem(
+    item = rd.ResearchItem(
         topic="Topic",
         content="first",
         tags=["t1"],
