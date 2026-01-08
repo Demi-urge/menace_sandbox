@@ -13,7 +13,7 @@ from typing import Literal
 from db_dedup import insert_if_unique, ensure_content_hash_column
 from db_router import queue_insert, SHARED_TABLES
 
-from .env_config import DATABASE_URL, normalize_database_url
+from .env_config import DATABASE_URL, DEFAULT_DATABASE_URL, normalize_db_url
 from .scope_utils import build_scope_clause, apply_scope
 try:
     from sqlalchemy import (
@@ -62,8 +62,16 @@ class MenaceDB:
     def __init__(
         self, url: str | None = None, queue_path: str | Path | None = None
     ) -> None:
-        resolved_url = DATABASE_URL if url is None else url
-        normalized_url = normalize_database_url(resolved_url)
+        if url is None:
+            resolved_url = DATABASE_URL
+        elif not str(url).strip():
+            logger.warning(
+                "Blank database URL provided; falling back to %s", DEFAULT_DATABASE_URL
+            )
+            resolved_url = DEFAULT_DATABASE_URL
+        else:
+            resolved_url = url
+        normalized_url = normalize_db_url(resolved_url)
         self.engine = create_engine(normalized_url)
         if event is not None and self.engine.url.get_backend_name() == "sqlite":
             event.listen(self.engine, "connect", _configure_sqlite_connection)
