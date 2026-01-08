@@ -82,7 +82,17 @@ SYNC_INTERVAL = float(os.getenv("SYNC_INTERVAL", "10"))
 # Cloud configuration ---------------------------------------------------------
 # DATABASE_URL defines the persistent database connection string.  When unset
 # Menace falls back to a local SQLite file for easier development.
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///menace.db")
+DEFAULT_DATABASE_URL = "sqlite:///menace.db"
+
+
+def _normalize_db_url(raw_url: str | None) -> str:
+    if raw_url is None:
+        return DEFAULT_DATABASE_URL
+    normalized = raw_url.strip()
+    return normalized or DEFAULT_DATABASE_URL
+
+
+DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL"))
 # Optional autoscaler endpoint used by ResourceAllocationOptimizer
 AUTOSCALER_ENDPOINT = os.getenv("AUTOSCALER_ENDPOINT")
 # Provider used by Autoscaler: local, kubernetes or swarm

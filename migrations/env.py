@@ -18,7 +18,9 @@ config = context.config
 # Interpret the config file for Python logging.
 fileConfig(config.config_file_name)
 
-db_url = os.getenv("DATABASE_URL", "sqlite:///menace.db")
+import env_config
+
+db_url = env_config.DATABASE_URL
 config.set_main_option("sqlalchemy.url", db_url)
 
 from menace.databases import MenaceDB  # type: ignore
