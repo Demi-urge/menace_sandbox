@@ -175,34 +175,59 @@ def bootstrap(module_name: str, module_file: str | Path | None = None) -> Module
 
 
 def load_internal(name: str) -> ModuleType:
-    cached = _MODULE_CACHE.get(name)
-    if cached is not None:
-        return cached
-
     qualified = f"{PACKAGE_NAME}.{name}"
+    repo_root = _discover_repo_root(Path(__file__).resolve().parent)
 
     expected_path: Path | None = None
+    required_attrs: set[str] = set()
+    require_repo_file = False
     if name == "context_builder_util":
-        expected_path = Path(__file__).resolve().parent / "menace_sandbox" / f"{name}.py"
+        expected_path = repo_root / "menace_sandbox" / f"{name}.py"
+    elif name == "bootstrap_readiness":
+        expected_path = repo_root / f"{name}.py"
+        required_attrs = {"readiness_signal"}
+        require_repo_file = True
 
-    def _is_expected(module: ModuleType) -> bool:
-        if expected_path is None:
+    def _is_within_repo(mod_file: str) -> bool:
+        try:
+            Path(mod_file).resolve().relative_to(repo_root)
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def _is_valid(module: ModuleType) -> bool:
+        if expected_path is None and not required_attrs and not require_repo_file:
             return True
         mod_file = getattr(module, "__file__", None)
-        if not mod_file:
+        if required_attrs and any(not hasattr(module, attr) for attr in required_attrs):
             return False
-        try:
-            return Path(mod_file).resolve() == expected_path
-        except OSError:
-            return False
+        if require_repo_file:
+            if not mod_file or not _is_within_repo(mod_file):
+                return False
+        if expected_path is not None:
+            if not mod_file:
+                return False
+            try:
+                return Path(mod_file).resolve() == expected_path
+            except OSError:
+                return False
+        return True
+
+    cached = _MODULE_CACHE.get(name)
+    if cached is not None:
+        if _is_valid(cached):
+            return cached
+        _MODULE_CACHE.pop(name, None)
+        for alias in (name, qualified):
+            sys.modules.pop(alias, None)
 
     # Clear any previously loaded shadow modules that would mask the packaged
-    # implementation.  This specifically targets stale versions of
-    # ``context_builder_util`` that might be present earlier on ``sys.path``
-    # when running bootstrap flows from a different working directory.
+    # implementation.  This specifically targets stale versions of critical
+    # modules that might be present earlier on ``sys.path`` when running
+    # bootstrap flows from a different working directory.
     for alias in (name, qualified):
         loaded = sys.modules.get(alias)
-        if loaded is not None and not _is_expected(loaded):
+        if loaded is not None and not _is_valid(loaded):
             sys.modules.pop(alias, None)
 
     try:
@@ -215,7 +240,9 @@ def load_internal(name: str) -> ModuleType:
         except ModuleNotFoundError as secondary_exc:
             raise primary_exc from secondary_exc
 
-    if expected_path is not None and not _is_expected(module):
+    if expected_path is not None and not _is_valid(module):
+        for alias in (name, qualified):
+            sys.modules.pop(alias, None)
         spec = importlib.util.spec_from_file_location(qualified, expected_path)
         if spec is None or spec.loader is None:  # pragma: no cover - defensive
             raise ImportError(f"unable to load {qualified} from {expected_path!s}")
