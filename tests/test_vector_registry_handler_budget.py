@@ -146,21 +146,21 @@ def test_global_budget_short_circuits(monkeypatch):
 def test_stop_event_cancels_without_error_log(monkeypatch):
     registry = _load_registry()
 
-    module = types.ModuleType("vector_service.fast_vectorizer")
+    called = False
 
-    class FastVectorizer:
-        def __init__(self, *_, **__):
-            pass
+    def _fail_import(name):
+        nonlocal called
+        called = True
+        raise AssertionError(f"import_module called for {name}")
 
-        def transform(self, _record):  # pragma: no cover - behaviour only
-            return [3.0]
-
-    module.FastVectorizer = FastVectorizer
-    monkeypatch.setitem(sys.modules, "vector_service.fast_vectorizer", module)
+    monkeypatch.setattr(registry, "importlib", types.SimpleNamespace(import_module=_fail_import))
     monkeypatch.setattr(
         registry,
         "_VECTOR_REGISTRY",
-        {"fast": ("vector_service.fast_vectorizer", "FastVectorizer", None, None)},
+        {
+            "fast": ("vector_service.fast_vectorizer", "FastVectorizer", None, None),
+            "faster": ("vector_service.faster_vectorizer", "FastVectorizer", None, None),
+        },
     )
 
     stop_event = threading.Event()
@@ -169,8 +169,10 @@ def test_stop_event_cancels_without_error_log(monkeypatch):
     with _capture_logs(registry.logger) as records:
         handlers = registry.load_handlers(stop_event=stop_event, bootstrap_fast=False)
 
-    assert "fast" in handlers
-    assert getattr(handlers["fast"], "is_patch_stub", False)
+    assert set(handlers.keys()) == {"fast", "faster"}
+    assert all(getattr(handler, "is_patch_stub", False) for handler in handlers.values())
     assert handlers.deferral_statuses.get("fast") == "cancelled"
+    assert handlers.deferral_statuses.get("faster") == "cancelled"
     assert any(getattr(record, "reason", None) == "cancelled" for record in records)
     assert not any("vector_registry.handler.error" in record.getMessage() for record in records)
+    assert not called
