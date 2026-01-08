@@ -7,7 +7,10 @@ from .coding_bot_interface import (
     prepare_pipeline_for_bootstrap,
     self_coding_managed,
 )
-from bootstrap_gate import resolve_bootstrap_placeholders
+if __package__ in (None, ""):
+    from bootstrap_gate import resolve_bootstrap_placeholders
+else:
+    from .bootstrap_gate import resolve_bootstrap_placeholders
 import importlib
 import inspect
 import doctest

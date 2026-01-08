@@ -19,7 +19,10 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Iterator, Mapping, TYPE_CHECKING, Any
 
-from bootstrap_gate import resolve_bootstrap_placeholders
+if __package__ in (None, ""):
+    from bootstrap_gate import resolve_bootstrap_placeholders
+else:
+    from .bootstrap_gate import resolve_bootstrap_placeholders
 from coding_bot_interface import get_active_bootstrap_pipeline
 from logging_utils import log_record
 from .bootstrap_placeholder import advertise_broker_placeholder

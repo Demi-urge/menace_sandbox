@@ -33,7 +33,10 @@ from menace_sandbox.self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
-from bootstrap_gate import wait_for_bootstrap_gate
+if __package__ in (None, ""):
+    from bootstrap_gate import wait_for_bootstrap_gate
+else:
+    from .bootstrap_gate import wait_for_bootstrap_gate
 from menace_sandbox.coding_bot_interface import (
     _GLOBAL_BOOTSTRAP_COORDINATOR,
     _bootstrap_dependency_broker,
