@@ -73,6 +73,7 @@ class _NoOpReadinessSignal:
 
 def _import_bootstrap_readiness() -> Callable[[], Any]:
     errors: List[BaseException] = []
+    attempts: List[str] = []
     _module = None
 
     def _validate_module(module: Any, *, context: str) -> Any:
@@ -123,19 +124,24 @@ def _import_bootstrap_readiness() -> Callable[[], Any]:
         return lambda: _NoOpReadinessSignal()
 
     try:  # pragma: no cover - prefer loader helper when installed
+        attempts.append("import_compat.load_internal('bootstrap_readiness')")
         _module = load_internal("bootstrap_readiness")
     except Exception as exc:  # pragma: no cover - fallback to importlib
+        attempts.append(f"import_compat.load_internal failed: {exc!r}")
         errors.append(exc)
     _module = _validate_module(_module, context="import_compat")
     if _module is None:
         try:  # pragma: no cover - support flat execution
+            attempts.append("importlib.import_module('bootstrap_readiness')")
             _module = importlib.import_module("bootstrap_readiness")
         except Exception as exc:  # pragma: no cover - file-based fallback
+            attempts.append(f"importlib.import_module failed: {exc!r}")
             errors.append(exc)
         _module = _validate_module(_module, context="importlib")
     if _module is None:
         _module_path = Path(__file__).resolve().parent / "bootstrap_readiness.py"
         if _module_path.exists():  # pragma: no cover - file-based fallback
+            attempts.append(f"spec_from_file_location({str(_module_path)!r})")
             _spec = importlib.util.spec_from_file_location(
                 "menace_sandbox.bootstrap_readiness",
                 _module_path,
@@ -168,7 +174,14 @@ def _import_bootstrap_readiness() -> Callable[[], Any]:
     readiness_signal = _resolve_readiness_signal(_module, context="module")
     if readiness_signal is not None:
         return readiness_signal
-    return _fallback_signal(_module, reason="ReadinessSignal or no-op")
+    module_file = getattr(_module, "__file__", None)
+    available_attrs = sorted(set(dir(_module))) if _module is not None else []
+    attempts_detail = "; ".join(attempts) or "no import attempts recorded"
+    raise ImportError(
+        "bootstrap_readiness missing readiness_signal after import attempts. "
+        f"module_file={module_file!r}; available_attrs={available_attrs}; "
+        f"attempts={attempts_detail}"
+    )
 
 _BOOTSTRAP_READINESS: Any | None = None
 
