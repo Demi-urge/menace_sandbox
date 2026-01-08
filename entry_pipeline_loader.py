@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 import sys
 import time
 from pathlib import Path
@@ -23,41 +24,48 @@ else:  # pragma: no cover - runtime fallback avoids circular import
     _ModelAutomationPipeline = Any  # type: ignore[misc, assignment]
 
 __all__ = ["load_pipeline_class"]
+LOGGER = logging.getLogger(__name__)
+_LAST_PIPELINE_ERROR: BaseException | None = None
 
 
 def _resolve_pipeline_module() -> Any:
     """Import ``pipeline_base`` handling partially initialised modules."""
 
     module_name = "menace_sandbox.shared.pipeline_base"
-    module = sys.modules.get(module_name)
-    if module is not None and getattr(module, "ModelAutomationPipeline", None) is not None:
-        return module
-
+    global _LAST_PIPELINE_ERROR
     try:
-        module = importlib.import_module(module_name)
-    except (ModuleNotFoundError, KeyError):
-        module = _import_pipeline_via_spec(module_name)
-    pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
-    if pipeline_cls is not None:
-        return module
+        module = sys.modules.get(module_name)
+        if module is not None and getattr(module, "ModelAutomationPipeline", None) is not None:
+            return module
 
-    # The module is present but still initialising.  Wait briefly for the
-    # attribute to appear before attempting a clean re-import.  This situation
-    # occurs when ``pipeline_base`` is imported indirectly while one of its
-    # dependencies is still importing ``capital_management_bot``.
-    for _ in range(10):
-        time.sleep(0.05)
+        try:
+            module = importlib.import_module(module_name)
+        except (ModuleNotFoundError, KeyError):
+            module = _import_pipeline_via_spec(module_name)
         pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
         if pipeline_cls is not None:
             return module
 
-    # Last resort: remove the partially initialised module and import again.
-    sys.modules.pop(module_name, None)
-    try:
-        module = importlib.import_module(module_name)
-    except (ModuleNotFoundError, KeyError):
-        module = _import_pipeline_via_spec(module_name)
-    return module
+        # The module is present but still initialising.  Wait briefly for the
+        # attribute to appear before attempting a clean re-import.  This situation
+        # occurs when ``pipeline_base`` is imported indirectly while one of its
+        # dependencies is still importing ``capital_management_bot``.
+        for _ in range(10):
+            time.sleep(0.05)
+            pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+            if pipeline_cls is not None:
+                return module
+
+        # Last resort: remove the partially initialised module and import again.
+        sys.modules.pop(module_name, None)
+        try:
+            module = importlib.import_module(module_name)
+        except (ModuleNotFoundError, KeyError):
+            module = _import_pipeline_via_spec(module_name)
+        return module
+    except Exception as exc:
+        _LAST_PIPELINE_ERROR = exc
+        raise ImportError(f"Failed to resolve pipeline module {module_name}") from exc
 
 
 def _import_pipeline_via_spec(module_name: str) -> ModuleType:
@@ -102,8 +110,27 @@ def _import_pipeline_via_spec(module_name: str) -> ModuleType:
 def load_pipeline_class() -> "type[_ModelAutomationPipeline]":
     """Return the concrete :class:`ModelAutomationPipeline` implementation."""
 
-    module = _resolve_pipeline_module()
+    module_name = "menace_sandbox.shared.pipeline_base"
+    global _LAST_PIPELINE_ERROR
+    try:
+        module = _resolve_pipeline_module()
+    except Exception as exc:
+        _LAST_PIPELINE_ERROR = exc
+        raise ImportError(f"Failed to load pipeline module {module_name}") from exc
+
     pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
     if pipeline_cls is None:
-        raise ImportError("ModelAutomationPipeline is unavailable")
+        message = f"ModelAutomationPipeline is unavailable from {module_name}"
+        if _LAST_PIPELINE_ERROR is not None:
+            LOGGER.error(
+                "ModelAutomationPipeline is unavailable; last import error follows.",
+                extra={"module": module_name},
+                exc_info=_LAST_PIPELINE_ERROR,
+            )
+            raise ImportError(message) from _LAST_PIPELINE_ERROR
+        LOGGER.error(
+            "ModelAutomationPipeline is unavailable with no captured import error.",
+            extra={"module": module_name},
+        )
+        raise ImportError(message)
     return pipeline_cls
