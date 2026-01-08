@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
+LOGGER = logging.getLogger(__name__)
 
 try:  # pragma: no cover - prefer package import when installed
     from menace_sandbox import import_compat  # type: ignore
@@ -55,15 +56,35 @@ load_internal = import_compat.load_internal
 def _import_bootstrap_readiness():
     errors: List[BaseException] = []
     _module = None
+
+    def _validate_module(module: Any, *, context: str) -> Any:
+        if module is None:
+            return None
+        if not hasattr(module, "readiness_signal"):
+            error = AttributeError(
+                f"bootstrap_readiness missing readiness_signal after {context} import."
+            )
+            errors.append(error)
+            LOGGER.warning(
+                "Detected partial bootstrap_readiness import; resetting module for reload.",
+                extra={"event": "bootstrap-readiness-partial", "context": context},
+            )
+            sys.modules.pop("bootstrap_readiness", None)
+            sys.modules.pop("menace_sandbox.bootstrap_readiness", None)
+            return None
+        return module
+
     try:  # pragma: no cover - prefer loader helper when installed
         _module = load_internal("bootstrap_readiness")
     except Exception as exc:  # pragma: no cover - fallback to importlib
         errors.append(exc)
+    _module = _validate_module(_module, context="import_compat")
     if _module is None:
         try:  # pragma: no cover - support flat execution
             _module = importlib.import_module("bootstrap_readiness")
         except Exception as exc:  # pragma: no cover - file-based fallback
             errors.append(exc)
+        _module = _validate_module(_module, context="importlib")
     if _module is None:
         _module_path = Path(__file__).resolve().parent / "bootstrap_readiness.py"
         if _module_path.exists():  # pragma: no cover - file-based fallback
@@ -79,10 +100,20 @@ def _import_bootstrap_readiness():
             sys.modules.setdefault("bootstrap_readiness", _module)
             sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
             _spec.loader.exec_module(_module)
+            _module = _validate_module(_module, context="file")
         else:  # pragma: no cover - explicit failure
             raise ModuleNotFoundError(
                 "bootstrap_readiness could not be loaded after import_compat bootstrap."
             ) from (errors[-1] if errors else None)
+
+    if _module is None:
+        formatted_errors = "; ".join(
+            f"{type(error).__name__}: {error}" for error in errors
+        ) or "no additional details"
+        raise ImportError(
+            "bootstrap_readiness could not be loaded with readiness_signal. "
+            f"Attempts failed: {formatted_errors}"
+        ) from (errors[-1] if errors else None)
 
     sys.modules.setdefault("bootstrap_readiness", _module)
     sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
