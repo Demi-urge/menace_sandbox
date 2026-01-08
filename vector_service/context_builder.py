@@ -50,6 +50,14 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     attempted_modules: list[str] = []
     attempted_files: list[str] = []
 
+    # Extra candidates handle packaged or nested layouts where repo-root shims
+    # are not present.
+    def _bootstrap_file_candidates(filename: str) -> tuple[Path, ...]:
+        return (
+            repo_root / "menace_sandbox" / filename,
+            repo_root / filename,
+        )
+
     def _select_helper(
         module: object, attr_names: tuple[str, ...]
     ) -> "Callable[[], None] | None":
@@ -73,19 +81,19 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
         except Exception as exc:
             errors.append(f"{module_name}: {exc}")
             if module_name == "menace_sandbox.environment_bootstrap":
-                bootstrap_path = repo_root / filename
-                attempted_files.append(str(bootstrap_path))
-                if bootstrap_path.exists():
-                    spec = importlib.util.spec_from_file_location(
-                        "menace_sandbox._bootstrap_fallback_environment_bootstrap",
-                        bootstrap_path,
-                    )
-                    if spec and spec.loader:
-                        module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(module)
-                        helper = _select_helper(module, attr_names)
-                        if helper is not None:
-                            return helper
+                for bootstrap_path in _bootstrap_file_candidates(filename):
+                    attempted_files.append(str(bootstrap_path))
+                    if bootstrap_path.exists():
+                        spec = importlib.util.spec_from_file_location(
+                            "menace_sandbox._bootstrap_fallback_environment_bootstrap",
+                            bootstrap_path,
+                        )
+                        if spec and spec.loader:
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            helper = _select_helper(module, attr_names)
+                            if helper is not None:
+                                return helper
             continue
         helper = _select_helper(module, attr_names)
         if helper is not None:
@@ -96,25 +104,29 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
         ("bootstrap_helpers", "bootstrap_helpers.py", ("ensure_bootstrapped", "ensure_environment_bootstrapped")),
         ("environment_bootstrap", "environment_bootstrap.py", ("ensure_bootstrapped",)),
     ):
-        bootstrap_path = repo_root / filename
-        attempted_files.append(str(bootstrap_path))
-        if not bootstrap_path.exists():
+        candidates = _bootstrap_file_candidates(filename)
+        for bootstrap_path in candidates:
+            attempted_files.append(str(bootstrap_path))
+        if not any(candidate.exists() for candidate in candidates):
             if module_name == "bootstrap_helpers":
                 errors.append(
                     "bootstrap_helpers fallback missing expected file at "
-                    f"{bootstrap_path}"
+                    f"{', '.join(str(candidate) for candidate in candidates)}"
                 )
             continue
-        spec = importlib.util.spec_from_file_location(
-            f"menace_sandbox._bootstrap_fallback_{module_name}",
-            bootstrap_path,
-        )
-        if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            helper = _select_helper(module, attr_names)
-            if helper is not None:
-                return helper
+        for bootstrap_path in candidates:
+            if not bootstrap_path.exists():
+                continue
+            spec = importlib.util.spec_from_file_location(
+                f"menace_sandbox._bootstrap_fallback_{module_name}",
+                bootstrap_path,
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                helper = _select_helper(module, attr_names)
+                if helper is not None:
+                    return helper
 
     error_details = "; ".join(errors) if errors else "no module details available"
     attempted = (
