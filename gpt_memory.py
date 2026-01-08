@@ -25,10 +25,6 @@ from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence
-try:  # pragma: no cover - prefer package import when installed
-    from menace_sandbox.bootstrap_readiness import readiness_signal
-except ModuleNotFoundError:  # pragma: no cover - support flat execution
-    from bootstrap_readiness import readiness_signal
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
@@ -53,6 +49,7 @@ else:  # pragma: no cover - ensure helper aliases exist
 
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
+readiness_signal = load_internal("bootstrap_readiness").readiness_signal
 _BOOTSTRAP_READINESS = readiness_signal()
 
 _db_router = load_internal("db_router")
