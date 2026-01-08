@@ -22,40 +22,56 @@ import_compat.bootstrap(__name__, __file__)
 
 # Support both in-repo execution and installed package layouts.
 def _load_bootstrap_gate() -> ModuleType:
+    import_compat.bootstrap(__name__, __file__)
+    repo_root = Path(__file__).resolve().parent
+    for candidate in (str(repo_root.parent), str(repo_root)):
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+
+    last_exc: Exception | None = None
     try:
         return import_compat.load_internal("bootstrap_gate")
-    except ModuleNotFoundError:
-        repo_root = Path(__file__).resolve().parent
-        for candidate in (str(repo_root.parent), str(repo_root)):
-            if candidate not in sys.path:
-                sys.path.insert(0, candidate)
+    except Exception as exc:
+        last_exc = exc
 
-        qualified_name = f"{import_compat.PACKAGE_NAME}.bootstrap_gate"
-        for module_name in (qualified_name, "bootstrap_gate"):
-            try:
-                module = importlib.import_module(module_name)
-            except ModuleNotFoundError:
-                continue
-            sys.modules.setdefault("bootstrap_gate", module)
-            sys.modules.setdefault(qualified_name, module)
-            return module
-
-        # Fallback: load the file directly when module discovery fails.
-        bootstrap_path = repo_root / "bootstrap_gate.py"
-        spec = importlib.util.spec_from_file_location(
-            "bootstrap_gate",
-            bootstrap_path,
-        )
-        if spec is None or spec.loader is None:
-            raise ModuleNotFoundError(
-                "bootstrap_gate could not be loaded from "
-                f"{bootstrap_path}"
-            )
-        module = importlib.util.module_from_spec(spec)
+    qualified_name = f"{import_compat.PACKAGE_NAME}.bootstrap_gate"
+    for module_name in (qualified_name, "bootstrap_gate"):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            last_exc = exc
+            continue
         sys.modules.setdefault("bootstrap_gate", module)
         sys.modules.setdefault(qualified_name, module)
-        spec.loader.exec_module(module)
         return module
+
+    # Fallback: load the file directly when module discovery fails.
+    bootstrap_path = repo_root / "bootstrap_gate.py"
+    spec = importlib.util.spec_from_file_location(
+        "bootstrap_gate",
+        bootstrap_path,
+    )
+    if spec is None or spec.loader is None:
+        last_exc = ModuleNotFoundError(
+            "bootstrap_gate could not be loaded from "
+            f"{bootstrap_path}"
+        )
+        raise ImportError(
+            "bootstrap_gate could not be loaded; see chained exception "
+            "for details."
+        ) from last_exc
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("bootstrap_gate", module)
+    sys.modules.setdefault(qualified_name, module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        last_exc = exc
+        raise ImportError(
+            "bootstrap_gate could not be loaded; see chained exception "
+            "for details."
+        ) from last_exc
+    return module
 
 
 resolve_bootstrap_placeholders = (
