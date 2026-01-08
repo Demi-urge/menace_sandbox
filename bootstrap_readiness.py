@@ -3,26 +3,51 @@ from __future__ import annotations
 """Readiness helpers managed by the bootstrap orchestrator."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
 import atexit
+import importlib.util
 import logging
 import os
+import sys
 import threading
 import time
 
-from bootstrap_manager import bootstrap_manager
-from bootstrap_timeout_policy import (
-    _BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV,
-    _DEFAULT_HEARTBEAT_MAX_AGE,
-    emit_bootstrap_heartbeat,
-    read_bootstrap_heartbeat,
-    _heartbeat_path,
-)
+_HELPER_NAME = "import_compat"
+_PACKAGE_NAME = "menace_sandbox"
 
-from bootstrap_timeout_policy import (
-    _COMPONENT_TIMEOUT_MINIMUMS,
-    _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS,
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox import import_compat  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    _helper_path = Path(__file__).resolve().parent / f"{_HELPER_NAME}.py"
+    _spec = importlib.util.spec_from_file_location(
+        f"{_PACKAGE_NAME}.{_HELPER_NAME}",
+        _helper_path,
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise
+    import_compat = importlib.util.module_from_spec(_spec)
+    sys.modules[f"{_PACKAGE_NAME}.{_HELPER_NAME}"] = import_compat
+    sys.modules[_HELPER_NAME] = import_compat
+    _spec.loader.exec_module(import_compat)
+else:  # pragma: no cover - ensure helper aliases exist
+    sys.modules.setdefault(_HELPER_NAME, import_compat)
+    sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
+
+import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
+
+bootstrap_manager = load_internal("bootstrap_manager").bootstrap_manager
+bootstrap_timeout_policy = load_internal("bootstrap_timeout_policy")
+_BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV = bootstrap_timeout_policy._BOOTSTRAP_HEARTBEAT_MAX_AGE_ENV
+_DEFAULT_HEARTBEAT_MAX_AGE = bootstrap_timeout_policy._DEFAULT_HEARTBEAT_MAX_AGE
+emit_bootstrap_heartbeat = bootstrap_timeout_policy.emit_bootstrap_heartbeat
+read_bootstrap_heartbeat = bootstrap_timeout_policy.read_bootstrap_heartbeat
+_heartbeat_path = bootstrap_timeout_policy._heartbeat_path
+_COMPONENT_TIMEOUT_MINIMUMS = bootstrap_timeout_policy._COMPONENT_TIMEOUT_MINIMUMS
+_DEFERRED_COMPONENT_TIMEOUT_MINIMUMS = (
+    bootstrap_timeout_policy._DEFERRED_COMPONENT_TIMEOUT_MINIMUMS
 )
 
 LOGGER = logging.getLogger(__name__)
