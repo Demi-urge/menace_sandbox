@@ -28,8 +28,7 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     Running this module directly from the source tree means ``sys.path`` may
     only include ``vector_service/`` rather than the repository root.  In that
     scenario ``menace_sandbox`` cannot be resolved, so we opportunistically add
-    the repository root before retrying the absolute import and, as a final
-    fallback, import the helper from the local module.
+    the repository root before retrying the absolute import.
     """
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -59,35 +58,10 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
 
     try:
         return _import_bootstrap()
-    except (ImportError, AttributeError):
-        try:
-            return _import_bootstrap()
-        except (ImportError, AttributeError):
-            import importlib.util
-
-            bootstrap_path = repo_root / "bootstrap_helpers.py"
-            spec = importlib.util.spec_from_file_location(
-                "menace_sandbox.bootstrap_helpers", bootstrap_path
-            )
-            if spec is None or spec.loader is None:
-                raise
-
-            module = importlib.util.module_from_spec(spec)
-            sys.modules.setdefault(spec.name, module)
-            spec.loader.exec_module(module)
-
-            helper = None
-            for attr in ("ensure_bootstrapped", "ensure_environment_bootstrapped"):
-                helper = getattr(module, attr, None)
-                if helper is not None:
-                    break
-
-            if helper is None:
-                raise ImportError(
-                    "ensure_bootstrapped missing in loaded bootstrap_helpers"
-                )
-
-            return helper
+    except (ImportError, AttributeError) as exc:
+        raise ImportError(
+            "ensure_bootstrapped missing in menace_sandbox bootstrap helpers"
+        ) from exc
 
 
 ensure_bootstrapped = _load_bootstrap_helper()
