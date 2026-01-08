@@ -8,6 +8,7 @@ to maintain the broker-first loading pattern. Troubleshooting steps live in
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -24,7 +25,23 @@ def _load_bootstrap_gate() -> ModuleType:
     try:
         return import_compat.load_internal("bootstrap_gate")
     except ModuleNotFoundError:
-        bootstrap_path = Path(__file__).resolve().parent / "bootstrap_gate.py"
+        repo_root = Path(__file__).resolve().parent
+        for candidate in (str(repo_root.parent), str(repo_root)):
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+
+        qualified_name = f"{import_compat.PACKAGE_NAME}.bootstrap_gate"
+        for module_name in (qualified_name, "bootstrap_gate"):
+            try:
+                module = importlib.import_module(module_name)
+            except ModuleNotFoundError:
+                continue
+            sys.modules.setdefault("bootstrap_gate", module)
+            sys.modules.setdefault(qualified_name, module)
+            return module
+
+        # Fallback: load the file directly when module discovery fails.
+        bootstrap_path = repo_root / "bootstrap_gate.py"
         spec = importlib.util.spec_from_file_location(
             "bootstrap_gate",
             bootstrap_path,
@@ -36,6 +53,7 @@ def _load_bootstrap_gate() -> ModuleType:
             )
         module = importlib.util.module_from_spec(spec)
         sys.modules.setdefault("bootstrap_gate", module)
+        sys.modules.setdefault(qualified_name, module)
         spec.loader.exec_module(module)
         return module
 
