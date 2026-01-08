@@ -85,8 +85,9 @@ Path(SHARED_QUEUE_DIR).mkdir(parents=True, exist_ok=True)
 SYNC_INTERVAL = float(os.getenv("SYNC_INTERVAL", "10"))
 
 # Cloud configuration ---------------------------------------------------------
-# DATABASE_URL defines the persistent database connection string.  When unset
-# Menace falls back to a local SQLite file for easier development.
+# DATABASE_URL defines the persistent database connection string. When unset,
+# Menace falls back to a local SQLite file for easier development; invalid URLs
+# are tolerated outside production to keep local bootstrap working.
 DEFAULT_DATABASE_URL = "sqlite:///menace.db"
 
 
@@ -113,9 +114,9 @@ def normalize_db_url(raw_url: str | None) -> str:
     except ArgumentError as exc:
         if MENACE_MODE.lower() == "production":
             raise ValueError(
-                "Invalid DATABASE_URL. Set DATABASE_URL to a SQLAlchemy URL like "
-                "postgresql://user@host/db (or sqlite:///path.db for non-prod). "
-                "Do not use SecretsManager-generated tokens."
+                "Invalid DATABASE_URL. Set DATABASE_URL to a valid SQLAlchemy URL "
+                "(e.g., postgresql://user@host/db or sqlite:///path.db). Invalid "
+                "values will block bootstrap in production."
             ) from exc
         logger.warning(
             "Invalid DATABASE_URL %s; falling back to %s",
