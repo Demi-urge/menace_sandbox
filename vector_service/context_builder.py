@@ -59,15 +59,33 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
                 return helper
         return None
 
-    for module_name, attr_names in (
-        ("menace_sandbox.bootstrap_helpers", ("ensure_bootstrapped", "ensure_environment_bootstrapped")),
-        ("menace_sandbox.environment_bootstrap", ("ensure_bootstrapped",)),
+    for module_name, filename, attr_names in (
+        (
+            "menace_sandbox.bootstrap_helpers",
+            "bootstrap_helpers.py",
+            ("ensure_bootstrapped", "ensure_environment_bootstrapped"),
+        ),
+        ("menace_sandbox.environment_bootstrap", "environment_bootstrap.py", ("ensure_bootstrapped",)),
     ):
         attempted_modules.append(module_name)
         try:
             module = importlib.import_module(module_name)
         except Exception as exc:
             errors.append(f"{module_name}: {exc}")
+            if module_name == "menace_sandbox.environment_bootstrap":
+                bootstrap_path = repo_root / filename
+                attempted_files.append(str(bootstrap_path))
+                if bootstrap_path.exists():
+                    spec = importlib.util.spec_from_file_location(
+                        "menace_sandbox._bootstrap_fallback_environment_bootstrap",
+                        bootstrap_path,
+                    )
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        helper = _select_helper(module, attr_names)
+                        if helper is not None:
+                            return helper
             continue
         helper = _select_helper(module, attr_names)
         if helper is not None:
@@ -81,6 +99,11 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
         bootstrap_path = repo_root / filename
         attempted_files.append(str(bootstrap_path))
         if not bootstrap_path.exists():
+            if module_name == "bootstrap_helpers":
+                errors.append(
+                    "bootstrap_helpers fallback missing expected file at "
+                    f"{bootstrap_path}"
+                )
             continue
         spec = importlib.util.spec_from_file_location(
             f"menace_sandbox._bootstrap_fallback_{module_name}",

@@ -39,12 +39,13 @@ for _name, _path in _MANUAL_MODULES.items():
             sys.modules[_qualified] = _module
             _spec.loader.exec_module(_module)
 
-try:  # pragma: no cover - ensure legacy import compatibility
-    from . import bootstrap_gate as _bootstrap_gate
-except Exception:
-    _bootstrap_gate = None
-else:
-    sys.modules.setdefault("bootstrap_gate", _bootstrap_gate)
+for _name in ("bootstrap_gate", "bootstrap_helpers", "environment_bootstrap"):
+    try:  # pragma: no cover - ensure legacy import compatibility
+        _module = importlib.import_module(f".{_name}", __name__)
+    except Exception:
+        continue
+    else:
+        sys.modules.setdefault(_name, _module)
 
 
 class _DynamicPathRouterProxy(types.ModuleType):
