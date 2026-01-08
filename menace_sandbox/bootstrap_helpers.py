@@ -21,7 +21,7 @@ def bootstrap_state_snapshot() -> dict[str, bool]:
 
     try:
         from .environment_bootstrap import bootstrap_in_progress, is_bootstrapped
-    except Exception:  # pragma: no cover - fallback for direct execution
+    except ModuleNotFoundError:  # pragma: no cover - fallback for direct execution
         try:
             from importlib import import_module
 
@@ -56,7 +56,7 @@ def ensure_bootstrapped(**kwargs: Any) -> dict[str, object]:
 
     try:
         from .environment_bootstrap import ensure_bootstrapped as _ensure_bootstrapped
-    except Exception:  # pragma: no cover - fallback for direct execution
+    except ModuleNotFoundError:  # pragma: no cover - fallback for direct execution
         from importlib import import_module
 
         env_bootstrap = import_module("menace_sandbox.environment_bootstrap")
