@@ -20,7 +20,7 @@ fileConfig(config.config_file_name)
 
 import env_config
 
-db_url = env_config.normalize_database_url(os.getenv("DATABASE_URL"))
+db_url = env_config.normalize_db_url(os.getenv("DATABASE_URL"))
 config.set_main_option("sqlalchemy.url", db_url)
 
 from menace.databases import MenaceDB  # type: ignore

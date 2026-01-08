@@ -92,13 +92,13 @@ DEFAULT_DATABASE_URL = "sqlite:///menace.db"
 logger = logging.getLogger(__name__)
 
 
-def normalize_database_url(raw_url: str | None) -> str:
-    if raw_url is None or not raw_url.strip():
+def normalize_db_url(raw_url: str | None) -> str:
+    if raw_url is None or not str(raw_url).strip():
         logger.info(
             "DATABASE_URL not set; falling back to %s", DEFAULT_DATABASE_URL
         )
         return DEFAULT_DATABASE_URL
-    normalized = raw_url.strip()
+    normalized = str(raw_url).strip()
     if normalized.startswith("postgres://"):
         normalized = f"postgresql://{normalized[len('postgres://'):]}"
     try:
@@ -110,7 +110,11 @@ def normalize_database_url(raw_url: str | None) -> str:
     return normalized
 
 
-DATABASE_URL = normalize_database_url(os.getenv("DATABASE_URL"))
+def normalize_database_url(raw_url: str | None) -> str:
+    return normalize_db_url(raw_url)
+
+
+DATABASE_URL = normalize_db_url(os.getenv("DATABASE_URL"))
 # Optional autoscaler endpoint used by ResourceAllocationOptimizer
 AUTOSCALER_ENDPOINT = os.getenv("AUTOSCALER_ENDPOINT")
 # Provider used by Autoscaler: local, kubernetes or swarm
