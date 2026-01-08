@@ -49,7 +49,42 @@ else:  # pragma: no cover - ensure helper aliases exist
 
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
-readiness_signal = load_internal("bootstrap_readiness").readiness_signal
+
+
+def _import_bootstrap_readiness():
+    try:  # pragma: no cover - prefer package import when installed
+        from menace_sandbox import bootstrap_readiness  # type: ignore
+
+        sys.modules.setdefault("bootstrap_readiness", bootstrap_readiness)
+        sys.modules.setdefault(
+            "menace_sandbox.bootstrap_readiness",
+            bootstrap_readiness,
+        )
+        return bootstrap_readiness
+    except ModuleNotFoundError:  # pragma: no cover - support flat execution
+        try:
+            from bootstrap_readiness import readiness_signal as _readiness_signal  # noqa: F401
+        except ModuleNotFoundError:  # pragma: no cover - file-based fallback
+            _module_path = Path(__file__).resolve().parent / "bootstrap_readiness.py"
+            _spec = importlib.util.spec_from_file_location(
+                "menace_sandbox.bootstrap_readiness",
+                _module_path,
+            )
+            if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+                raise
+            _module = importlib.util.module_from_spec(_spec)
+            sys.modules.setdefault("bootstrap_readiness", _module)
+            sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
+            _spec.loader.exec_module(_module)
+            return _module
+        _module = sys.modules.get("bootstrap_readiness")
+        if _module is None:  # pragma: no cover - defensive
+            raise
+        sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
+        return _module
+
+
+readiness_signal = _import_bootstrap_readiness().readiness_signal
 _BOOTSTRAP_READINESS = readiness_signal()
 
 _db_router = load_internal("db_router")
