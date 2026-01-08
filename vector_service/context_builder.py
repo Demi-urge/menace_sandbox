@@ -63,33 +63,38 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     try:
         return _import_bootstrap()
     except (ImportError, AttributeError) as exc:
-        # Fall back to direct file loading only after the package import path
-        # has been attempted with the corrected ``sys.path`` ordering.
-        helper_path = repo_root / "bootstrap_helpers.py"
-        if helper_path.exists():
-            spec = importlib.util.spec_from_file_location(
-                "menace_sandbox.bootstrap_helpers", helper_path
-            )
+        # Fall back to module-based lookup instead of assuming a source checkout
+        # layout. This relies on the installed package metadata instead of a
+        # hardcoded file path.
+
+        def _load_from_spec(
+            module_name: str, attr_names: tuple[str, ...]
+        ) -> "Callable[[], None]" | None:
+            spec = importlib.util.find_spec(module_name)
             if spec and spec.loader:
                 module = importlib.util.module_from_spec(spec)
-                sys.modules.setdefault(spec.name, module)
+                sys.modules.setdefault(module_name, module)
                 spec.loader.exec_module(module)
-                for attr in ("ensure_bootstrapped", "ensure_environment_bootstrapped"):
+                for attr in attr_names:
                     helper = getattr(module, attr, None)
                     if helper is not None:
                         return helper
-        env_path = repo_root / "environment_bootstrap.py"
-        if env_path.exists():
-            spec = importlib.util.spec_from_file_location(
-                "menace_sandbox.environment_bootstrap", env_path
-            )
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                sys.modules.setdefault(spec.name, module)
-                spec.loader.exec_module(module)
-                helper = getattr(module, "ensure_bootstrapped", None)
-                if helper is not None:
-                    return helper
+            return None
+
+        helper = _load_from_spec(
+            "menace_sandbox.bootstrap_helpers",
+            ("ensure_bootstrapped", "ensure_environment_bootstrapped"),
+        )
+        if helper is not None:
+            return helper
+
+        helper = _load_from_spec(
+            "menace_sandbox.environment_bootstrap",
+            ("ensure_bootstrapped",),
+        )
+        if helper is not None:
+            return helper
+
         raise ImportError(
             "ensure_bootstrapped missing in menace_sandbox bootstrap helpers"
         ) from exc
