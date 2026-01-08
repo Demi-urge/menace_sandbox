@@ -23,7 +23,8 @@ sys.modules["menace"] = menace_pkg
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import menace.model_automation_pipeline as mapl  # noqa: E402
-import menace.research_aggregator_bot as rab  # noqa: E402
+import menace.research_aggregator_bot as rab
+import menace.research_data as rd  # noqa: E402
 import menace.task_handoff_bot as thb  # noqa: E402
 import menace.information_synthesis_bot as isb  # noqa: E402
 import menace.task_validation_bot as tvb  # noqa: E402
@@ -36,7 +37,7 @@ import types  # noqa: E402
 
 class DummyAggregator:
     def __init__(self):
-        self.info_db = rab.InfoDB(":memory:")
+        self.info_db = rd.InfoDB(":memory:")
 
     def process(self, topic: str, energy: int = 1):
         return []

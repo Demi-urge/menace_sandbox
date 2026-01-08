@@ -12,15 +12,17 @@ mde.run_cycle = _stub_run_cycle
 sys.modules.setdefault("menace.menace_discovery_engine", mde)
 
 rab = types.ModuleType("menace.research_aggregator_bot")
+rd = types.ModuleType("menace.research_data")
 class _InfoDB:
     def add(self, *a, **k):
         pass
 class _ResearchItem:
     def __init__(self, *a, **k):
         pass
-rab.InfoDB = _InfoDB
-rab.ResearchItem = _ResearchItem
+rd.InfoDB = _InfoDB
+rd.ResearchItem = _ResearchItem
 sys.modules.setdefault("menace.research_aggregator_bot", rab)
+sys.modules.setdefault("menace.research_data", rd)
 
 bcb = types.ModuleType("menace.bot_creation_bot")
 class _BotCreationBot:

@@ -31,6 +31,7 @@ for name, attrs in mods.items():
 import menace.bot_database as bdbm
 import menace.code_database as cdbm
 import menace.research_aggregator_bot as rab
+import menace.research_data as rd
 import menace.error_bot as eb
 from menace.auto_link import auto_link
 
@@ -38,7 +39,7 @@ from menace.auto_link import auto_link
 def test_auto_link(tmp_path):
     bot_db = bdbm.BotDB(tmp_path / "bots.db")
     code_db = cdbm.CodeDB(tmp_path / "code.db")
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     err_db = eb.ErrorDB(tmp_path / "err.db")
 
     bid = bot_db.add_bot(
@@ -58,7 +59,7 @@ def test_auto_link(tmp_path):
         assert conn.execute("SELECT error_id FROM code_errors WHERE code_id=?", (cid,)).fetchone()[0] == 5
 
     info_id = info_db.add(
-        rab.ResearchItem(topic="t", content="c", timestamp=0.0),
+        rd.ResearchItem(topic="t", content="c", timestamp=0.0),
         workflows=[7],
         enhancements=[8],
     )

@@ -10,6 +10,7 @@ import menace
 modules = [
     "menace.self_model_bootstrap",
     "menace.research_aggregator_bot",
+    "menace.research_data",
     "menace.model_automation_pipeline",
     "menace.diagnostic_manager",
     "menace.error_bot",
@@ -33,6 +34,8 @@ sys.modules["menace.self_model_bootstrap"].bootstrap = lambda *a, **k: 0
 sys.modules["menace.research_aggregator_bot"].ResearchAggregatorBot = object
 sys.modules["menace.research_aggregator_bot"].ResearchItem = object
 sys.modules["menace.research_aggregator_bot"].InfoDB = object
+sys.modules["menace.research_data"].ResearchItem = object
+sys.modules["menace.research_data"].InfoDB = object
 map_mod = sys.modules["menace.model_automation_pipeline"]
 map_mod.ModelAutomationPipeline = lambda *a, **k: object()
 map_mod.AutomationResult = object

@@ -75,7 +75,8 @@ sys.modules.setdefault("menace.self_test_service", sts_stub)
 import menace.self_improvement as sie  # noqa: E402
 import menace.error_bot as eb  # noqa: E402
 import menace.data_bot as db  # noqa: E402
-import menace.research_aggregator_bot as rab  # noqa: E402
+import menace.research_aggregator_bot as rab
+import menace.research_data as rd  # noqa: E402
 import menace.pre_execution_roi_bot as prb  # noqa: E402
 import menace.model_automation_pipeline as mp  # noqa: E402
 
@@ -95,7 +96,7 @@ class StubPipeline:
 def _make_engine(tmp_path, name: str, monkeypatch):
     mdb = db.MetricsDB(tmp_path / f"{name}.m.db")
     edb = eb.ErrorDB(tmp_path / f"{name}.e.db")
-    info = rab.InfoDB(tmp_path / f"{name}.i.db")
+    info = rd.InfoDB(tmp_path / f"{name}.i.db")
     builder = DummyBuilder()
     diag = dm.DiagnosticManager(
         mdb, eb.ErrorBot(edb, mdb, context_builder=builder), context_builder=builder

@@ -13,6 +13,7 @@ import menace.deployment_bot as dep
 import menace.error_bot as eb
 import menace.task_handoff_bot as thb
 import menace.research_aggregator_bot as rab
+import menace.research_data as rd
 import menace.chatgpt_enhancement_bot as ceb
 import menace.database_manager as dm
 import menace.contrarian_db as cdb
@@ -169,7 +170,7 @@ def test_create_bots(tmp_path):
 
     deployer = dep.DeploymentBot(
         dep.DeploymentDB(tmp_path / "d.db"),
-        info_db=rab.InfoDB(tmp_path / "info.db"),
+        info_db=rd.InfoDB(tmp_path / "info.db"),
         db_router=router,
     )
     bot = bcb.BotCreationBot(
@@ -302,7 +303,7 @@ def test_create_bots_records_workflows(tmp_path):
     developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     enh_db = ceb.EnhancementDB(tmp_path / "e.db")
     deployer = dep.DeploymentBot(
         dep.DeploymentDB(tmp_path / "d.db"),
@@ -323,7 +324,7 @@ def test_create_bots_records_workflows(tmp_path):
     dm.DB_PATH = tmp_path / "models.db"
     model_id = dm.add_model("m", db_path=dm.DB_PATH)
     info_db.set_current_model(model_id)
-    info_db.add(rab.ResearchItem(topic="t", content="c", timestamp=0.0))
+    info_db.add(rd.ResearchItem(topic="t", content="c", timestamp=0.0))
     eid = enh_db.add(ceb.Enhancement(idea="i", rationale="r", model_ids=[model_id]))
 
     task = bp.PlanningTask(

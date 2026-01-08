@@ -9,7 +9,7 @@ import logging
 
 from .trending_scraper import TrendingScraper, TrendingItem
 from .menace_discovery_engine import run_cycle as discovery_run_cycle
-from .research_aggregator_bot import InfoDB, ResearchItem
+from .research_data import InfoDB, ResearchItem
 from .bot_creation_bot import BotCreationBot
 from .bot_planning_bot import PlanningTask
 from .normalize_scraped_data import load_items, normalize

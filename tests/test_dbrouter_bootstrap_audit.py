@@ -8,8 +8,10 @@ import audit
 import db_router as dr
 try:
     import menace_sandbox.research_aggregator_bot as rab
+    import menace_sandbox.research_data as rd
 except ImportError:  # pragma: no cover - flat import fallback
     import research_aggregator_bot as rab
+    import research_data as rd
 
 
 def test_logged_cursor_skips_audit_when_bootstrap_safe(monkeypatch) -> None:
@@ -101,7 +103,7 @@ def test_infodb_bootstrap_ignores_locked_audit_log(tmp_path, monkeypatch) -> Non
     with state_path.open("r+") as sf:
         flock(sf.fileno(), LOCK_EX | LOCK_NB)
         start = time.perf_counter()
-        rab.InfoDB(tmp_path / "info.db")
+        rd.InfoDB(tmp_path / "info.db")
         duration = time.perf_counter() - start
 
     assert duration < 1

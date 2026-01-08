@@ -83,6 +83,12 @@ rab_module.ResearchItem = ResearchItem
 sys.modules.setdefault("menace.research_aggregator_bot", rab_module)
 rab = rab_module
 
+rd_module = types.ModuleType("menace.research_data")
+rd_module.InfoDB = InfoDB
+rd_module.ResearchItem = ResearchItem
+sys.modules.setdefault("menace.research_data", rd_module)
+rd = rd_module
+
 
 class ResourceAllocationBot:
     def __init__(self, *, context_builder: DummyBuilder) -> None:
@@ -207,7 +213,7 @@ def test_load_workflows(tmp_path: Path):
 def test_merge_and_innovate(tmp_path: Path):
     db = make_workflow_db(tmp_path)
     innovations = cmb.InnovationsDB(tmp_path / "innov.json")
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
     builder = DummyBuilder()
     bot = cmb.ContrarianModelBot(
@@ -260,7 +266,7 @@ def test_ideate_logs_contrarian(tmp_path: Path):
     db = make_workflow_db(tmp_path)
     innovations = cmb.InnovationsDB(tmp_path / "innov.json")
     contr_db = cdb.ContrarianDB(tmp_path / "c.db")
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     builder = DummyBuilder()
     bot = cmb.ContrarianModelBot(
         workflow_db=db,
@@ -325,7 +331,7 @@ def test_allocate_resources_logs(tmp_path: Path, monkeypatch):
 def test_ideate_logs_aggregator_error(tmp_path: Path, monkeypatch):
     class Agg:
         def __init__(self, *, context_builder: DummyBuilder) -> None:
-            self.info_db = rab.InfoDB(tmp_path / "info.db")
+            self.info_db = rd.InfoDB(tmp_path / "info.db")
             self.requirements = []
             self.context_builder = context_builder
 
@@ -355,4 +361,3 @@ def test_requires_context_builder(tmp_path: Path):
     db = make_workflow_db(tmp_path)
     with pytest.raises(ValueError):
         cmb.ContrarianModelBot(workflow_db=db, context_builder=None)
-

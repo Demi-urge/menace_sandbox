@@ -124,16 +124,17 @@ def test_related_resources(tmp_path):
         sys.modules.setdefault(name, module)
 
     import menace.research_aggregator_bot as rab
+import menace.research_data as rd
     from menace.gpt_memory import GPTMemoryManager
 
     db = _setup_menace(tmp_path)
     reg = BotRegistry()
     reg.register_interaction('A', 'B')
 
-    info_db = rab.InfoDB(tmp_path / "info.db", menace_db=db)
-    it1 = rab.ResearchItem(topic="t", content="c", timestamp=time.time(), title="A info", summary="sa", associated_bots=["A"])
+    info_db = rd.InfoDB(tmp_path / "info.db", menace_db=db)
+    it1 = rd.ResearchItem(topic="t", content="c", timestamp=time.time(), title="A info", summary="sa", associated_bots=["A"])
     info_db.add(it1)
-    it2 = rab.ResearchItem(topic="t2", content="c", timestamp=time.time(), title="B info", summary="sb", associated_bots=["B"])
+    it2 = rd.ResearchItem(topic="t2", content="c", timestamp=time.time(), title="B info", summary="sb", associated_bots=["B"])
     info_db.add(it2)
 
     mm = GPTMemoryManager(tmp_path / "mem.db")
@@ -214,14 +215,15 @@ def test_bot_roi_stats_and_ranking(tmp_path):
 def test_related_resources_failures(tmp_path, monkeypatch):
     import types
     import menace.research_aggregator_bot as rab
+import menace.research_data as rd
     from menace.gpt_memory import GPTMemoryManager
 
     db = _setup_menace(tmp_path)
     reg = BotRegistry()
     reg.register_interaction("A", "B")
 
-    info_db = rab.InfoDB(tmp_path / "info_fail.db", menace_db=db)
-    it = rab.ResearchItem(topic="t", content="c", timestamp=0.0, title="A info", summary="s", associated_bots=["A"])
+    info_db = rd.InfoDB(tmp_path / "info_fail.db", menace_db=db)
+    it = rd.ResearchItem(topic="t", content="c", timestamp=0.0, title="A info", summary="s", associated_bots=["A"])
     info_db.add(it)
 
     mm = GPTMemoryManager(tmp_path / "mem_fail.db")

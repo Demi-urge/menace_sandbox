@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import List, Iterable, Dict, Any, Optional
 from dynamic_path_router import resolve_path
 
-from .research_aggregator_bot import ResearchAggregatorBot, InfoDB, ResearchItem
+from .research_aggregator_bot import ResearchAggregatorBot
+from .research_data import InfoDB, ResearchItem
 from .chatgpt_enhancement_bot import EnhancementDB
 from .prediction_manager_bot import PredictionManager
 from .data_bot import DataBot

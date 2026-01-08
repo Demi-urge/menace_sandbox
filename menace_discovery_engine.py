@@ -25,7 +25,7 @@ from .niche_saturation_bot import NicheSaturationBot, NicheCandidate as SatCandi
 from vector_service.context_builder import ContextBuilder
 from .candidate_matcher import find_matching_models
 from .database_management_bot import DatabaseManagementBot
-from .research_aggregator_bot import InfoDB, ResearchItem
+from .research_data import InfoDB, ResearchItem
 
 logger = logging.getLogger("MenaceDiscoveryEngine")
 

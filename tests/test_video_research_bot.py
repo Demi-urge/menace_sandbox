@@ -39,7 +39,7 @@ def test_whisper_transcribe(monkeypatch, tmp_path: Path):
 
 
 def test_db_hit_skips_network(monkeypatch, tmp_path: Path):
-    from menace.research_aggregator_bot import ResearchItem
+    from menace.research_data import ResearchItem
     info = ResearchItem(topic="T", content="trans", summary="sum", timestamp=0.0, source_url="http://y")
     router = SimpleNamespace()
     router.query_all = lambda q: SimpleNamespace(code=[], bots=[], info=[info], memory=[], menace=[])

@@ -1,7 +1,8 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 import time  # noqa: E402
-import menace.research_aggregator_bot as rab  # noqa: E402
+import menace.research_aggregator_bot as rab
+import menace.research_data as rd  # noqa: E402
 import menace.chatgpt_research_bot as crb  # noqa: E402
 import menace.chatgpt_idea_bot as cib  # noqa: E402
 import menace.chatgpt_enhancement_bot as ceb  # noqa: E402
@@ -19,9 +20,9 @@ def _builder():
 
 def test_memory_decay(monkeypatch):
     mem = rab.ResearchMemory()
-    old = rab.ResearchItem(topic="t", content="c", timestamp=0)
+    old = rd.ResearchItem(topic="t", content="c", timestamp=0)
     mem.add(old)
-    mem.add(rab.ResearchItem(topic="t", content="d", timestamp=time.time()))
+    mem.add(rd.ResearchItem(topic="t", content="d", timestamp=time.time()))
     monkeypatch.setattr(time, "time", lambda: 1000)
     mem.decay()
     assert all(it.content != "c" for it in mem.short)
@@ -29,7 +30,7 @@ def test_memory_decay(monkeypatch):
 
 def test_process_uses_memory(monkeypatch):
     mem = rab.ResearchMemory()
-    item = rab.ResearchItem(topic="Topic", content="cached", timestamp=time.time())
+    item = rd.ResearchItem(topic="Topic", content="cached", timestamp=time.time())
     mem.add(item)
     bot = rab.ResearchAggregatorBot(["Topic"], memory=mem, context_builder=_builder())
     called = False
@@ -46,9 +47,9 @@ def test_process_uses_memory(monkeypatch):
 
 def test_refine_removes_duplicates():
     items = [
-        rab.ResearchItem(topic="a", content="one", timestamp=0),
-        rab.ResearchItem(topic="a", content="one", timestamp=1),
-        rab.ResearchItem(topic="a", content="two", timestamp=2),
+        rd.ResearchItem(topic="a", content="one", timestamp=0),
+        rd.ResearchItem(topic="a", content="one", timestamp=1),
+        rd.ResearchItem(topic="a", content="two", timestamp=2),
     ]
     refined = rab.ResearchAggregatorBot._refine(items)
     texts = [i.content for i in refined]
@@ -65,7 +66,7 @@ def test_interactive_loop(monkeypatch, tmp_path):
         return [rab.text_research_bot.TextSource(content=f"data {urls[0]}")]
 
     monkeypatch.setattr(text_bot, "process", fake_process)
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     enh_db = ceb.EnhancementDB(tmp_path / "e.db")
     bot = rab.ResearchAggregatorBot(
         ["A", "B"],
@@ -148,7 +149,7 @@ def test_enhancement_links(monkeypatch, tmp_path):
             ceb.Enhancement(idea="imp", rationale="fast")
         ],
     )
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     info_db.set_current_model(1)
     bot = rab.ResearchAggregatorBot(
         ["Topic"],
@@ -174,7 +175,7 @@ def test_info_db_persistence(monkeypatch, tmp_path):
             rab.text_research_bot.TextSource(content="info", url="http://src")
         ],
     )
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     bot = rab.ResearchAggregatorBot(
         ["Topic"], text_bot=text_bot, info_db=info_db, context_builder=_builder()
     )
@@ -185,9 +186,9 @@ def test_info_db_persistence(monkeypatch, tmp_path):
 
 
 def test_infodb_summary_and_depth(tmp_path):
-    db = rab.InfoDB(tmp_path / "info.db")
+    db = rd.InfoDB(tmp_path / "info.db")
     text = "One. Two. Three. Four."
-    it = rab.ResearchItem(topic="T", content=text, timestamp=time.time())
+    it = rd.ResearchItem(topic="T", content=text, timestamp=time.time())
     db.add(it)
     stored = db.search("T")[0]
     assert stored.data_depth > 0
@@ -222,7 +223,7 @@ def test_enhancement_generates_followup_research(monkeypatch, tmp_path):
         def process(self, inst, depth=1, ratio=0.2):
             return rab.chatgpt_research_bot.ResearchResult([], "chat")
 
-    info_db = rab.InfoDB(tmp_path / "info.db")
+    info_db = rd.InfoDB(tmp_path / "info.db")
     bot = rab.ResearchAggregatorBot(
         ["Topic"],
         enhancement_bot=enh_bot,
@@ -242,8 +243,8 @@ def test_enhancement_generates_followup_research(monkeypatch, tmp_path):
 
 
 def test_workflow_reusable_tagging(tmp_path):
-    db = rab.InfoDB(tmp_path / "info.db")
-    full = rab.ResearchItem(
+    db = rd.InfoDB(tmp_path / "info.db")
+    full = rd.ResearchItem(
         topic="Topic",
         content="x" * 600,
         timestamp=time.time(),
@@ -253,7 +254,7 @@ def test_workflow_reusable_tagging(tmp_path):
         data_depth=1.0,
     )
     db.add(full)
-    partial = rab.ResearchItem(
+    partial = rd.ResearchItem(
         topic="Topic",
         content="short",
         timestamp=time.time(),
@@ -303,7 +304,7 @@ def test_delegate_sub_bots_respects_missing(monkeypatch):
     chat_bot = C()
 
     mem = rab.ResearchMemory()
-    mem.add(rab.ResearchItem(topic="T", content="x", timestamp=time.time(), type_="text"))
+    mem.add(rd.ResearchItem(topic="T", content="x", timestamp=time.time(), type_="text"))
 
     bot = rab.ResearchAggregatorBot(
         ["T"],
@@ -328,7 +329,7 @@ def test_cache_ttl_refresh(monkeypatch):
 
     def gather(topic, energy):
         calls["n"] += 1
-        return [rab.ResearchItem(topic=topic, content="d", timestamp=time.time())]
+        return [rd.ResearchItem(topic=topic, content="d", timestamp=time.time())]
 
     monkeypatch.setattr(bot, "_collect_topic", gather)
 

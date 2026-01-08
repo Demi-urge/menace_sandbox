@@ -34,7 +34,7 @@ from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
 # Internal imports
 from .bot_database import BotDB, BotRecord
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
-from .research_aggregator_bot import InfoDB
+from .research_data import InfoDB
 from .chatgpt_enhancement_bot import EnhancementDB
 from .error_bot import ErrorDB
 from .db_router import DBRouter

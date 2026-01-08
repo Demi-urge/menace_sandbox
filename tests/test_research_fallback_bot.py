@@ -48,11 +48,12 @@ for name, attrs in mods.items():
 
 import menace.research_fallback_bot as rfb
 import menace.research_aggregator_bot as rab
+import menace.research_data as rd
 from pathlib import Path
 
 
 def test_process(monkeypatch, tmp_path: Path):
-    bot = rfb.ResearchFallbackBot(info_db=rab.InfoDB(tmp_path / "info.db"))
+    bot = rfb.ResearchFallbackBot(info_db=rd.InfoDB(tmp_path / "info.db"))
     html = "<html><body><p>Some detailed answer about python.</p></body></html>"
     monkeypatch.setattr(bot, "fetch_page", lambda url: html)
     results = bot.process("python error")

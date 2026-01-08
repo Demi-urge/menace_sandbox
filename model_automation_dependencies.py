@@ -21,7 +21,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only imports
     from .bot_registry import BotRegistry
     from .bot_creation_bot import BotCreationBot
     from .capital_management_bot import CapitalManagementBot
-    from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
+    from .research_aggregator_bot import ResearchAggregatorBot
+    from .research_data import ResearchItem
     from .information_synthesis_bot import InformationSynthesisBot
     from .synthesis_models import SynthesisTask
     from .implementation_optimiser_bot import ImplementationOptimiserBot
@@ -91,7 +92,7 @@ def _load_research_aggregator(
 
 
 def _make_research_item(**kwargs: Any) -> "ResearchItem":
-    from .research_aggregator_bot import ResearchItem
+    from .research_data import ResearchItem
 
     return ResearchItem(**kwargs)
 
