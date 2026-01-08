@@ -1,5 +1,9 @@
+import logging
 import os
 from pathlib import Path
+
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 
 def load_env(path: str | None = None) -> None:
@@ -85,14 +89,28 @@ SYNC_INTERVAL = float(os.getenv("SYNC_INTERVAL", "10"))
 DEFAULT_DATABASE_URL = "sqlite:///menace.db"
 
 
-def _normalize_db_url(raw_url: str | None) -> str:
-    if raw_url is None:
+logger = logging.getLogger(__name__)
+
+
+def normalize_database_url(raw_url: str | None) -> str:
+    if raw_url is None or not raw_url.strip():
+        logger.info(
+            "DATABASE_URL not set; falling back to %s", DEFAULT_DATABASE_URL
+        )
         return DEFAULT_DATABASE_URL
     normalized = raw_url.strip()
-    return normalized or DEFAULT_DATABASE_URL
+    if normalized.startswith("postgres://"):
+        normalized = f"postgresql://{normalized[len('postgres://'):]}"
+    try:
+        make_url(normalized)
+    except ArgumentError as exc:
+        raise ValueError(
+            f"Invalid DATABASE_URL {normalized!r}; unable to parse database URL."
+        ) from exc
+    return normalized
 
 
-DATABASE_URL = _normalize_db_url(os.getenv("DATABASE_URL"))
+DATABASE_URL = normalize_database_url(os.getenv("DATABASE_URL"))
 # Optional autoscaler endpoint used by ResourceAllocationOptimizer
 AUTOSCALER_ENDPOINT = os.getenv("AUTOSCALER_ENDPOINT")
 # Provider used by Autoscaler: local, kubernetes or swarm
