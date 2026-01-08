@@ -8,7 +8,6 @@ data.
 
 from __future__ import annotations
 
-import traceback
 from dataclasses import dataclass
 import logging
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -62,16 +61,12 @@ def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
         from .entry_pipeline_loader import load_pipeline_class
         try:
             _PIPELINE_CLS = load_pipeline_class()
-        except Exception as exc:
+        except Exception:
             LOGGER.exception(
                 "Failed to load ModelAutomationPipeline",
                 extra={"module": __name__},
             )
-            traceback_details = traceback.format_exc()
-            raise ImportError(
-                "ModelAutomationPipeline unavailable: "
-                f"{exc}\n{traceback_details}"
-            ) from exc
+            raise
         else:
             globals()["ModelAutomationPipeline"] = _PIPELINE_CLS
     return _PIPELINE_CLS
