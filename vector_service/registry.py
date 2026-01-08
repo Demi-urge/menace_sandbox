@@ -178,6 +178,7 @@ def load_handlers(
     ):
         result: list[Callable[[Dict[str, any]], list[float]]] = []
         error: list[Exception] = []
+        cancelled: list[TimeoutError] = []
         done = threading.Event()
 
         def _target() -> None:
@@ -190,6 +191,8 @@ def load_handlers(
                     kwargs["bootstrap_fast"] = bootstrap_fast
                 inst = cls(**kwargs)
                 result.append(inst.transform)
+            except TimeoutError as exc:
+                cancelled.append(exc)
             except Exception as exc:  # pragma: no cover - best effort
                 error.append(exc)
             finally:
@@ -216,6 +219,8 @@ def load_handlers(
 
         if error:
             raise error[0]
+        if cancelled:
+            return None, cancelled[0]
         return result[0] if result else None, None
 
     start = time.perf_counter()
@@ -360,17 +365,28 @@ def load_handlers(
                 kind, mod_name, cls_name, effective_timeout, effective_budget=remaining_budget
             )
             if timeout_error:
-                logger.info(
-                    "vector_registry.handler.deferred",
-                    extra={
-                        "kind": kind,
-                        "reason": "timeout",
-                        "timeout_s": timeout,
-                        "bootstrap_fast": bootstrap_fast,
-                    },
-                )
-                _record_deferred(kind, "timeout")
-                _schedule_background(kind, mod_name, cls_name)
+                if str(timeout_error).startswith("handler hydration cancelled"):
+                    logger.info(
+                        "vector_registry.handler.deferred",
+                        extra={
+                            "kind": kind,
+                            "reason": "cancelled",
+                            "bootstrap_fast": bootstrap_fast,
+                        },
+                    )
+                    _record_deferred(kind, "cancelled")
+                else:
+                    logger.info(
+                        "vector_registry.handler.deferred",
+                        extra={
+                            "kind": kind,
+                            "reason": "timeout",
+                            "timeout_s": timeout,
+                            "bootstrap_fast": bootstrap_fast,
+                        },
+                    )
+                    _record_deferred(kind, "timeout")
+                    _schedule_background(kind, mod_name, cls_name)
                 continue
             if handler is None:
                 _record_deferred(kind, "cancelled")

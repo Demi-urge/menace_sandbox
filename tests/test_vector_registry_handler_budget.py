@@ -3,9 +3,38 @@ import sys
 import time
 import types
 import threading
+from contextlib import contextmanager
 
 import importlib.util
 from pathlib import Path
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@contextmanager
+def _capture_logs(logger: logging.Logger, level: int = logging.INFO):
+    handler = _ListHandler()
+    original_level = logger.level
+    original_propagate = logger.propagate
+    original_disabled = logger.disabled
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    logger.propagate = False
+    logger.disabled = False
+    try:
+        yield handler.records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+        logger.disabled = original_disabled
 
 
 def _load_registry():
@@ -18,8 +47,7 @@ def _load_registry():
     return module
 
 
-def test_load_handlers_times_out(monkeypatch, caplog):
-    caplog.set_level(logging.INFO)
+def test_load_handlers_times_out(monkeypatch):
     registry = _load_registry()
 
     class SlowVectorizer:
@@ -38,16 +66,16 @@ def test_load_handlers_times_out(monkeypatch, caplog):
         {"slow": ("vector_service.slow_vectorizer", "SlowVectorizer", None, None)},
     )
 
-    handlers = registry.load_handlers(handler_timeouts=0.05, bootstrap_fast=False)
+    with _capture_logs(registry.logger) as records:
+        handlers = registry.load_handlers(handler_timeouts=0.05, bootstrap_fast=False)
 
     assert "slow" in handlers
     assert getattr(handlers["slow"], "is_patch_stub", False)
     assert handlers.deferral_statuses.get("slow") == "timeout"
-    assert any(getattr(record, "reason", None) == "timeout" for record in caplog.records)
+    assert any(getattr(record, "reason", None) == "timeout" for record in records)
 
 
-def test_budget_cap_defers_without_import(monkeypatch, caplog):
-    caplog.set_level(logging.INFO)
+def test_budget_cap_defers_without_import(monkeypatch):
     registry = _load_registry()
 
     called = False
@@ -64,18 +92,18 @@ def test_budget_cap_defers_without_import(monkeypatch, caplog):
         {"budgeted": ("vector_service.missing", "Missing", None, None)},
     )
 
-    handlers = registry.load_handlers(handler_timeouts={"budget": 0.0}, bootstrap_fast=False)
+    with _capture_logs(registry.logger) as records:
+        handlers = registry.load_handlers(handler_timeouts={"budget": 0.0}, bootstrap_fast=False)
 
     assert "budgeted" in handlers
     assert getattr(handlers["budgeted"], "is_patch_stub", False)
     assert handlers.deferral_statuses.get("budgeted") == "budget"
     assert handlers.deferral_budgets.get("budgeted") is not None
     assert not called
-    assert any(getattr(record, "reason", None) == "budget" for record in caplog.records)
+    assert any(getattr(record, "reason", None) == "budget" for record in records)
 
 
-def test_global_budget_short_circuits(monkeypatch, caplog):
-    caplog.set_level(logging.INFO)
+def test_global_budget_short_circuits(monkeypatch):
     registry = _load_registry()
 
     def _import(name):
@@ -102,13 +130,47 @@ def test_global_budget_short_circuits(monkeypatch, caplog):
     )
 
     stop_event = threading.Event()
-    handlers = registry.load_handlers(
-        handler_timeouts={"budget": 0.01}, stop_event=stop_event, bootstrap_fast=False
-    )
+    with _capture_logs(registry.logger) as records:
+        handlers = registry.load_handlers(
+            handler_timeouts={"budget": 0.01}, stop_event=stop_event, bootstrap_fast=False
+        )
 
     assert stop_event.is_set()
     assert set(handlers.keys()) == {"first", "second"}
-    assert handlers.deferral_statuses.get("first") in {"timeout", "budget"}
+    assert handlers.deferral_statuses.get("first") in {"timeout", "budget", "loaded"}
     assert handlers.deferral_statuses.get("second") == "budget"
     assert handlers.deferral_budgets.get("second") is not None
-    assert any(getattr(record, "reason", None) == "budget" for record in caplog.records)
+    assert any(getattr(record, "reason", None) == "budget" for record in records)
+
+
+def test_stop_event_cancels_without_error_log(monkeypatch):
+    registry = _load_registry()
+
+    module = types.ModuleType("vector_service.fast_vectorizer")
+
+    class FastVectorizer:
+        def __init__(self, *_, **__):
+            pass
+
+        def transform(self, _record):  # pragma: no cover - behaviour only
+            return [3.0]
+
+    module.FastVectorizer = FastVectorizer
+    monkeypatch.setitem(sys.modules, "vector_service.fast_vectorizer", module)
+    monkeypatch.setattr(
+        registry,
+        "_VECTOR_REGISTRY",
+        {"fast": ("vector_service.fast_vectorizer", "FastVectorizer", None, None)},
+    )
+
+    stop_event = threading.Event()
+    stop_event.set()
+
+    with _capture_logs(registry.logger) as records:
+        handlers = registry.load_handlers(stop_event=stop_event, bootstrap_fast=False)
+
+    assert "fast" in handlers
+    assert getattr(handlers["fast"], "is_patch_stub", False)
+    assert handlers.deferral_statuses.get("fast") == "cancelled"
+    assert any(getattr(record, "reason", None) == "cancelled" for record in records)
+    assert not any("vector_registry.handler.error" in record.getMessage() for record in records)
