@@ -52,14 +52,6 @@ _DEFERRED_COMPONENT_TIMEOUT_MINIMUMS = (
 
 LOGGER = logging.getLogger(__name__)
 
-_READINESS_SIGNAL: "ReadinessSignal | None" = None
-
-
-def readiness_signal() -> "ReadinessSignal":
-    """Return the shared readiness signal instance."""
-
-    return _READINESS_SIGNAL  # type: ignore[return-value]
-
 
 _HEARTBEAT_SHUTDOWN = threading.Event()
 _HEARTBEAT_LOCK = threading.Lock()

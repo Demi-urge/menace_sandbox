@@ -81,47 +81,31 @@ def _import_bootstrap_readiness() -> Callable[[], Any]:
             return None
         return module
 
-    def _resolve_readiness_signal(module: Any, *, context: str) -> Callable[[], Any] | None:
-        if module is None:
-            return None
-        readiness_signal = getattr(module, "readiness_signal", None)
-        if readiness_signal is not None:
-            return readiness_signal
-        LOGGER.warning(
-            "bootstrap_readiness missing readiness_signal after %s import; reloading.",
-            context,
-            extra={
-                "event": "bootstrap-readiness-missing-signal",
-                "context": context,
-                "module_file": getattr(module, "__file__", None),
-            },
-        )
-        try:
-            reloaded = importlib.reload(module)
-        except Exception as exc:  # pragma: no cover - defensive path
+    def _clean_reload(module_path: Path) -> Any:
+        for name in ("menace_sandbox.bootstrap_readiness", "bootstrap_readiness"):
+            sys.modules.pop(name, None)
+        try:  # pragma: no cover - support flat execution
+            attempts.append("importlib.import_module('bootstrap_readiness')")
+            return importlib.import_module("bootstrap_readiness")
+        except Exception as exc:  # pragma: no cover - file-based fallback
+            attempts.append(f"importlib.import_module failed: {exc!r}")
             errors.append(exc)
-            reloaded = module
-        readiness_signal = getattr(reloaded, "readiness_signal", None)
-        if readiness_signal is not None:
-            return readiness_signal
+        if module_path.exists():  # pragma: no cover - file-based fallback
+            attempts.append(f"spec_from_file_location({str(module_path)!r})")
+            _spec = importlib.util.spec_from_file_location(
+                "menace_sandbox.bootstrap_readiness",
+                module_path,
+            )
+            if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+                raise ModuleNotFoundError(
+                    "bootstrap_readiness could not be loaded: spec loader unavailable."
+                )
+            _module = importlib.util.module_from_spec(_spec)
+            sys.modules.setdefault("bootstrap_readiness", _module)
+            sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
+            _spec.loader.exec_module(_module)
+            return _module
         return None
-
-    def _fallback_signal(module: Any, *, reason: str) -> Callable[[], Any]:
-        module_file = getattr(module, "__file__", None)
-        LOGGER.warning(
-            "Falling back to %s readiness signal for bootstrap_readiness (module_file=%s).",
-            reason,
-            module_file,
-            extra={
-                "event": "bootstrap-readiness-fallback",
-                "module_file": module_file,
-                "reason": reason,
-            },
-        )
-        fallback_class = getattr(module, "ReadinessSignal", None)
-        if fallback_class is not None:
-            return lambda: fallback_class()
-        return lambda: _NoOpReadinessSignal()
 
     try:  # pragma: no cover - prefer loader helper when installed
         attempts.append("import_compat.load_internal('bootstrap_readiness')")
@@ -171,16 +155,32 @@ def _import_bootstrap_readiness() -> Callable[[], Any]:
 
     sys.modules.setdefault("bootstrap_readiness", _module)
     sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
-    readiness_signal = _resolve_readiness_signal(_module, context="module")
+    readiness_signal = getattr(_module, "readiness_signal", None)
+    if readiness_signal is None:
+        LOGGER.warning(
+            "bootstrap_readiness missing readiness_signal after import; reloading.",
+            extra={
+                "event": "bootstrap-readiness-missing-signal",
+                "module_file": getattr(_module, "__file__", None),
+            },
+        )
+        _module_path = Path(__file__).resolve().parent / "bootstrap_readiness.py"
+        _reloaded = _clean_reload(_module_path)
+        if _reloaded is not None:
+            _module = _reloaded
+            readiness_signal = getattr(_module, "readiness_signal", None)
+
     if readiness_signal is not None:
         return readiness_signal
+
     module_file = getattr(_module, "__file__", None)
     available_attrs = sorted(set(dir(_module))) if _module is not None else []
     attempts_detail = "; ".join(attempts) or "no import attempts recorded"
-    raise ImportError(
+    error_detail = "; ".join(f"{type(error).__name__}: {error}" for error in errors) or "none"
+    raise RuntimeError(
         "bootstrap_readiness missing readiness_signal after import attempts. "
         f"module_file={module_file!r}; available_attrs={available_attrs}; "
-        f"attempts={attempts_detail}"
+        f"attempts={attempts_detail}; errors={error_detail}"
     )
 
 _BOOTSTRAP_READINESS: Any | None = None
