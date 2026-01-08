@@ -22,7 +22,10 @@ from .coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
 )
-from bootstrap_gate import resolve_bootstrap_placeholders
+if __package__ in (None, ""):
+    from bootstrap_gate import resolve_bootstrap_placeholders
+else:
+    from .bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_readiness import readiness_signal
 
 _BOOTSTRAP_READINESS = readiness_signal()

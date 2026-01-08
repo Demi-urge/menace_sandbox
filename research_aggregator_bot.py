@@ -12,7 +12,10 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Type, Callable
 
-from bootstrap_gate import resolve_bootstrap_placeholders
+if __package__ in (None, ""):
+    from bootstrap_gate import resolve_bootstrap_placeholders
+else:
+    from .bootstrap_gate import resolve_bootstrap_placeholders
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
