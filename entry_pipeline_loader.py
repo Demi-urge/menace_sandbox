@@ -18,6 +18,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
+from logging_utils import log_record
+
 if TYPE_CHECKING:  # pragma: no cover - used only for type checking
     from .shared.pipeline_base import ModelAutomationPipeline as _ModelAutomationPipeline
 else:  # pragma: no cover - runtime fallback avoids circular import
@@ -129,13 +131,13 @@ def load_pipeline_class() -> "type[_ModelAutomationPipeline]":
         if _LAST_PIPELINE_ERROR is not None:
             LOGGER.error(
                 "ModelAutomationPipeline is unavailable; last import error follows.",
-                extra={"module_name": module_name},
+                extra=log_record(pipeline_module=module_name),
                 exc_info=_LAST_PIPELINE_ERROR,
             )
             raise ImportError(message) from _LAST_PIPELINE_ERROR
         LOGGER.error(
             "ModelAutomationPipeline is unavailable with no captured import error.",
-            extra={"module_name": module_name},
+            extra=log_record(pipeline_module=module_name),
         )
         raise ImportError(message)
     return pipeline_cls
