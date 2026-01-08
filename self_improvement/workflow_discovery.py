@@ -114,10 +114,10 @@ def discover_workflow_specs(
                 saved_spec = json.load(fh)
             discovered.append(saved_spec)
             log.debug(
-                "discovered workflow module", extra={"module": module_name, "path": str(saved_path)}
+                "discovered workflow module", extra={"module_name": module_name, "path": str(saved_path)}
             )
         except Exception:
-            log.exception("failed to persist discovered workflow", extra={"module": module_name})
+            log.exception("failed to persist discovered workflow", extra={"module_name": module_name})
 
     return discovered
 

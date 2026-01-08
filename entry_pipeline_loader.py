@@ -129,13 +129,13 @@ def load_pipeline_class() -> "type[_ModelAutomationPipeline]":
         if _LAST_PIPELINE_ERROR is not None:
             LOGGER.error(
                 "ModelAutomationPipeline is unavailable; last import error follows.",
-                extra={"module": module_name},
+                extra={"module_name": module_name},
                 exc_info=_LAST_PIPELINE_ERROR,
             )
             raise ImportError(message) from _LAST_PIPELINE_ERROR
         LOGGER.error(
             "ModelAutomationPipeline is unavailable with no captured import error.",
-            extra={"module": module_name},
+            extra={"module_name": module_name},
         )
         raise ImportError(message)
     return pipeline_cls
