@@ -43,7 +43,8 @@ try:
 except Exception:  # pragma: no cover - bootstrap should log and re-raise
     logging.getLogger(__name__).exception(
         "Failed to load ModelAutomationPipeline during bootstrap",
-        extra=log_record(pipeline_module=__name__),
+        # Avoid reserved LogRecord keys like "module" in Logger.extra.
+        extra=log_record(bootstrap_module=__name__),
     )
     raise
 
