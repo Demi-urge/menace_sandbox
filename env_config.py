@@ -113,8 +113,8 @@ def normalize_db_url(raw_url: str | None) -> str:
 def normalize_database_url(raw_url: str | None) -> str:
     return normalize_db_url(raw_url)
 
-
-DATABASE_URL = normalize_db_url(os.getenv("DATABASE_URL"))
+_raw_database_url = os.getenv("DATABASE_URL")
+DATABASE_URL = normalize_database_url(_raw_database_url)
 # Optional autoscaler endpoint used by ResourceAllocationOptimizer
 AUTOSCALER_ENDPOINT = os.getenv("AUTOSCALER_ENDPOINT")
 # Provider used by Autoscaler: local, kubernetes or swarm
