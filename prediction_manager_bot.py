@@ -9,15 +9,39 @@ to maintain the broker-first loading pattern. Troubleshooting steps live in
 from __future__ import annotations
 
 import importlib
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
-if __package__:
-    resolve_bootstrap_placeholders = importlib.import_module(
-        f"{__package__}.bootstrap_gate"
-    ).resolve_bootstrap_placeholders
-else:
-    resolve_bootstrap_placeholders = importlib.import_module(
-        "bootstrap_gate"
-    ).resolve_bootstrap_placeholders
+
+# Support both in-repo execution and installed package layouts.
+def _load_bootstrap_gate() -> ModuleType:
+    candidates = ["menace_sandbox.bootstrap_gate", "bootstrap_gate"]
+    for module_name in candidates:
+        try:
+            return importlib.import_module(module_name)
+        except ImportError:
+            continue
+
+    current_dir = Path(__file__).resolve().parent
+    for path in (current_dir, current_dir.parent):
+        path_str = str(path)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
+    try:
+        return importlib.import_module("menace_sandbox.bootstrap_gate")
+    except ImportError as exc:
+        attempted = ", ".join(candidates)
+        raise ImportError(
+            "Unable to import bootstrap_gate; attempted modules: "
+            f"{attempted}"
+        ) from exc
+
+
+resolve_bootstrap_placeholders = (
+    _load_bootstrap_gate().resolve_bootstrap_placeholders
+)
 
 from .bot_registry import BotRegistry
 from .coding_bot_interface import (
@@ -30,12 +54,10 @@ from .data_bot import DataBot, MetricsDB
 from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, TYPE_CHECKING
 from uuid import uuid4
 import os
 import logging
-from types import ModuleType, SimpleNamespace
 from functools import lru_cache
 
 
