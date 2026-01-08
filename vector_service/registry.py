@@ -182,8 +182,7 @@ def load_handlers(
     ):
         result: list[Callable[[Dict[str, any]], list[float]]] = []
         error: list[Exception] = []
-        cancelled: list[TimeoutError] = []
-        cancelled_flag = threading.Event()
+        timeout_error: list[TimeoutError] = []
         done = threading.Event()
 
         def _target() -> None:
@@ -191,8 +190,7 @@ def load_handlers(
                 try:
                     _check_cancelled(f"{kind}-target", event=cancel_event)
                 except TimeoutError as exc:
-                    cancelled_flag.set()
-                    cancelled.append(_mark_cancelled(exc))
+                    timeout_error.append(_mark_cancelled(exc))
                     return
                 mod = importlib.import_module(mod_name)
                 cls = getattr(mod, cls_name)
@@ -202,7 +200,7 @@ def load_handlers(
                 inst = cls(**kwargs)
                 result.append(inst.transform)
             except TimeoutError as exc:
-                cancelled.append(_mark_cancelled(exc))
+                timeout_error.append(_mark_cancelled(exc))
             except Exception as exc:  # pragma: no cover - best effort
                 error.append(exc)
             finally:
@@ -227,14 +225,10 @@ def load_handlers(
                     stop_event.set()
                 return None, TimeoutError(f"handler init exceeded budget ({timeout}s)")
 
-        if cancelled_flag.is_set():
-            return None, cancelled[0] if cancelled else _mark_cancelled(
-                TimeoutError("handler hydration cancelled")
-            )
         if error:
             raise error[0]
-        if cancelled:
-            return None, cancelled[0]
+        if timeout_error:
+            return None, timeout_error[0]
         return result[0] if result else None, None
 
     start = time.perf_counter()
@@ -280,15 +274,16 @@ def load_handlers(
         thread = threading.Thread(target=_background, daemon=True)
         thread.start()
 
-    def _cancel_remaining_budget(
-        pending: list[tuple[str, tuple[str, str, Optional[str], Optional[str]]]]
+    def _defer_remaining(
+        pending: list[tuple[str, tuple[str, str, Optional[str], Optional[str]]]],
+        reason: str,
     ) -> None:
         for remaining_kind, _ in pending:
             logger.info(
                 "vector_registry.handler.deferred",
-                extra={"kind": remaining_kind, "reason": "budget", "bootstrap_fast": bootstrap_fast},
+                extra={"kind": remaining_kind, "reason": reason, "bootstrap_fast": bootstrap_fast},
             )
-            _record_deferred(remaining_kind, "budget")
+            _record_deferred(remaining_kind, reason)
 
     registry_items = list(_VECTOR_REGISTRY.items())
     logger.debug(
@@ -314,6 +309,9 @@ def load_handlers(
             },
         )
     for index, (kind, (mod_name, cls_name, _, _)) in enumerate(registry_items):
+        if stop_event is not None and stop_event.is_set():
+            _defer_remaining(registry_items[index:], "cancelled")
+            break
         remaining = _remaining_budget()
         if remaining is not None and remaining <= 0:
             logger.info(
@@ -322,7 +320,7 @@ def load_handlers(
             )
             if stop_event is not None:
                 stop_event.set()
-            _cancel_remaining_budget(registry_items[index:])
+            _defer_remaining(registry_items[index:], "budget")
             break
         handler_start = time.perf_counter()
         logger.debug(
