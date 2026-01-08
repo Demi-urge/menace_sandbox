@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from pathlib import Path
 
 from sqlalchemy.engine import make_url
@@ -92,6 +93,12 @@ DEFAULT_DATABASE_URL = "sqlite:///menace.db"
 logger = logging.getLogger(__name__)
 
 
+def _redact_db_url(raw_url: str) -> str:
+    if not raw_url:
+        return raw_url
+    return re.sub(r"(://[^:/@]+):[^/@]*@", r"\1:***@", raw_url)
+
+
 def normalize_db_url(raw_url: str | None) -> str:
     if raw_url is None or not str(raw_url).strip():
         logger.info(
@@ -104,9 +111,17 @@ def normalize_db_url(raw_url: str | None) -> str:
     try:
         make_url(normalized)
     except ArgumentError as exc:
-        raise ValueError(
-            f"Invalid DATABASE_URL {normalized!r}; unable to parse database URL."
-        ) from exc
+        if MENACE_MODE.lower() == "production":
+            raise RuntimeError(
+                "Invalid DATABASE_URL; expected a SQLAlchemy URL such as "
+                "postgresql://user:pass@host:5432/dbname or sqlite:///path.db."
+            ) from exc
+        logger.warning(
+            "Invalid DATABASE_URL %s; falling back to %s",
+            _redact_db_url(normalized),
+            DEFAULT_DATABASE_URL,
+        )
+        return DEFAULT_DATABASE_URL
     return normalized
 
 
