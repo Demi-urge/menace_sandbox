@@ -8,7 +8,9 @@ The sandbox expects a few variables to be set before launch:
 
 - `SANDBOX_REPO_PATH` – path to the repository root.
 - `SANDBOX_DATA_DIR` – directory for runtime state and metrics.
-- `DATABASE_URL` – database connection string.
+- `DATABASE_URL` – database connection string. This must be a real SQLAlchemy
+  URL (for example `postgresql://user@host/db`). Do not generate or rotate this
+  value through `SecretsManager`.
 
 Run `auto_env_setup.ensure_env()` to generate a `.env` file with these variables when
 missing. Values may also be supplied via the shell environment.

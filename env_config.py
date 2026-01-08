@@ -112,9 +112,10 @@ def normalize_db_url(raw_url: str | None) -> str:
         make_url(normalized)
     except ArgumentError as exc:
         if MENACE_MODE.lower() == "production":
-            raise RuntimeError(
-                "Invalid DATABASE_URL; expected a SQLAlchemy URL such as "
-                "postgresql://user:pass@host:5432/dbname or sqlite:///path.db."
+            raise ValueError(
+                "Invalid DATABASE_URL. Set DATABASE_URL to a SQLAlchemy URL like "
+                "postgresql://user@host/db (or sqlite:///path.db for non-prod). "
+                "Do not use SecretsManager-generated tokens."
             ) from exc
         logger.warning(
             "Invalid DATABASE_URL %s; falling back to %s",
