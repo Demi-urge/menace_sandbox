@@ -35,6 +35,7 @@ from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, Mapping
 
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
+import menace_sandbox.model_automation_pipeline as mapipeline
 
 _bootstrap_dependency_broker = getattr(
     _coding_bot_interface, "_bootstrap_dependency_broker", lambda: lambda *_, **__: None
@@ -56,13 +57,25 @@ _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
     dependency_broker=_bootstrap_dependency_broker()
 )
 
+try:
+    ModelAutomationPipeline = mapipeline.get_pipeline_class()
+except Exception as exc:
+    logging.getLogger(__name__).error(
+        "bootstrap.model_automation_pipeline_load_failed",
+        extra={
+            "error": str(exc),
+            "dependency_hint": "shared/pipeline_base.py import chain",
+        },
+        exc_info=True,
+    )
+    raise
+
 from lock_utils import LOCK_TIMEOUT, SandboxLock
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.code_database import CodeDB
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.db_router import set_audit_bootstrap_safe_default
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
-from menace_sandbox.model_automation_pipeline import ModelAutomationPipeline
 from menace_sandbox.self_coding_engine import SelfCodingEngine
 from menace_sandbox.self_coding_manager import SelfCodingManager, internalize_coding_bot
 from menace_sandbox.self_coding_thresholds import get_thresholds

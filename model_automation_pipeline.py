@@ -8,6 +8,7 @@ data.
 
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -57,10 +58,23 @@ def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
     global _PIPELINE_CLS
     if _PIPELINE_CLS is None:
         from .entry_pipeline_loader import load_pipeline_class
-
-        _PIPELINE_CLS = load_pipeline_class()
-        globals()["ModelAutomationPipeline"] = _PIPELINE_CLS
+        try:
+            _PIPELINE_CLS = load_pipeline_class()
+        except Exception as exc:
+            traceback_details = traceback.format_exc()
+            raise ImportError(
+                "ModelAutomationPipeline unavailable: "
+                f"{exc}\n{traceback_details}"
+            ) from exc
+        else:
+            globals()["ModelAutomationPipeline"] = _PIPELINE_CLS
     return _PIPELINE_CLS
+
+
+def get_pipeline_class() -> "type[_ModelAutomationPipeline]":
+    """Return the concrete :class:`ModelAutomationPipeline` implementation."""
+
+    return _load_pipeline_cls()
 
 
 def __getattr__(name: str) -> Any:
@@ -77,4 +91,4 @@ def __dir__() -> List[str]:
     return sorted(list(globals().keys()) + ["ModelAutomationPipeline"])
 
 
-__all__ = ["AutomationResult", "ModelAutomationPipeline"]
+__all__ = ["AutomationResult", "ModelAutomationPipeline", "get_pipeline_class"]
