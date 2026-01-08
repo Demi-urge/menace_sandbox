@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import contextlib
+import importlib.util
 from dataclasses import dataclass, fields, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Mapping
@@ -37,7 +38,10 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     # executed directly from ``vector_service/``.
     repo_parent = repo_root.parent
 
-    for candidate in (repo_parent, repo_root):
+    # ``menace_sandbox`` must resolve from the parent directory so the real
+    # package (and its ``environment_bootstrap``/``bootstrap_helpers`` modules)
+    # is imported instead of the nested shim.
+    for candidate in (repo_root, repo_parent):
         if str(candidate) not in sys.path:
             sys.path.insert(0, str(candidate))
 
@@ -59,6 +63,33 @@ def _load_bootstrap_helper() -> "Callable[[], None]":
     try:
         return _import_bootstrap()
     except (ImportError, AttributeError) as exc:
+        # Fall back to direct file loading only after the package import path
+        # has been attempted with the corrected ``sys.path`` ordering.
+        helper_path = repo_root / "bootstrap_helpers.py"
+        if helper_path.exists():
+            spec = importlib.util.spec_from_file_location(
+                "menace_sandbox.bootstrap_helpers", helper_path
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules.setdefault(spec.name, module)
+                spec.loader.exec_module(module)
+                for attr in ("ensure_bootstrapped", "ensure_environment_bootstrapped"):
+                    helper = getattr(module, attr, None)
+                    if helper is not None:
+                        return helper
+        env_path = repo_root / "environment_bootstrap.py"
+        if env_path.exists():
+            spec = importlib.util.spec_from_file_location(
+                "menace_sandbox.environment_bootstrap", env_path
+            )
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules.setdefault(spec.name, module)
+                spec.loader.exec_module(module)
+                helper = getattr(module, "ensure_bootstrapped", None)
+                if helper is not None:
+                    return helper
         raise ImportError(
             "ensure_bootstrapped missing in menace_sandbox bootstrap helpers"
         ) from exc
