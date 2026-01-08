@@ -49,6 +49,16 @@ class SecretsManager:
 
     # ------------------------------------------------------------------
     def get(self, name: str, *, rotate: bool = True) -> str:
+        normalized = name.strip().lower()
+        if normalized == "database_url":
+            for key in (name, name.lower(), name.upper()):
+                if key in self.secrets:
+                    return self.secrets[key]
+            raise ValueError(
+                "SecretsManager does not generate DATABASE_URL. "
+                "Set DATABASE_URL to a real SQLAlchemy URL (e.g. "
+                "postgresql://user@host/db) instead of using generated tokens."
+            )
         token = self.secrets.get(name)
         if token is None:
             token = self._new_secret()

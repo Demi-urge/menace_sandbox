@@ -26,6 +26,8 @@ import urllib.request
 
 import bootstrap_timeout_policy
 import bootstrap_metrics
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 # Fallback-friendly imports to support both package and script execution
 try:  # pragma: no cover - prefer package relative imports
@@ -2012,7 +2014,40 @@ class EnvironmentBootstrapper:
             if not n:
                 continue
             try:
-                if self.vault:
+                if n.upper() == "DATABASE_URL":
+                    if "DATABASE_URL" in os.environ:
+                        self.logger.info(
+                            "DATABASE_URL already set; skipping secret export for %s",
+                            n,
+                        )
+                        continue
+                    if self.vault:
+                        token = self.vault.get(n)
+                    else:
+                        token = self.secrets.get(n)
+                    if not token or not str(token).strip():
+                        self.logger.error(
+                            "Secret %s did not provide DATABASE_URL. "
+                            "Set DATABASE_URL to a real SQLAlchemy URL such as "
+                            "postgresql://user@host/db.",
+                            n,
+                        )
+                        continue
+                    normalized = str(token).strip()
+                    if normalized.startswith("postgres://"):
+                        normalized = f"postgresql://{normalized[len('postgres://'):]}"
+                    try:
+                        make_url(normalized)
+                    except ArgumentError:
+                        self.logger.error(
+                            "Secret %s is not a valid SQLAlchemy DATABASE_URL. "
+                            "Set DATABASE_URL to a real SQLAlchemy URL such as "
+                            "postgresql://user@host/db.",
+                            n,
+                        )
+                        continue
+                    os.environ["DATABASE_URL"] = normalized
+                elif self.vault:
                     self.vault.export_env(n)
                 else:
                     self.secrets.export_env(n)
