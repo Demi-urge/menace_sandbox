@@ -109,13 +109,16 @@ def normalize_db_url(raw_url: str | None) -> str:
     normalized = str(raw_url).strip()
     if normalized.startswith("postgres://"):
         normalized = f"postgresql://{normalized[len('postgres://'):]}"
+    if "://" not in normalized and ("/" in normalized or normalized.endswith(".db")):
+        db_path = Path(normalized).expanduser().resolve()
+        return f"sqlite:///{db_path.as_posix()}"
     try:
         make_url(normalized)
     except ArgumentError as exc:
         if MENACE_MODE.lower() == "production":
             raise ValueError(
                 "Invalid DATABASE_URL. Set DATABASE_URL to a valid SQLAlchemy URL "
-                "(e.g., postgresql://user@host/db or sqlite:///path.db). Invalid "
+                "(e.g., postgresql://user@host/db or sqlite:///path). Invalid "
                 "values will block bootstrap in production."
             ) from exc
         logger.warning(
