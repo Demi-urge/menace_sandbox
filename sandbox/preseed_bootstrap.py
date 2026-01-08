@@ -36,13 +36,14 @@ from typing import Any, Callable, Dict, Iterable, Mapping
 
 from menace_sandbox import coding_bot_interface as _coding_bot_interface
 from menace_sandbox.entry_pipeline_loader import load_pipeline_class
+from logging_utils import log_record
 
 try:
     ModelAutomationPipeline = load_pipeline_class()
 except Exception:  # pragma: no cover - bootstrap should log and re-raise
     logging.getLogger(__name__).exception(
         "Failed to load ModelAutomationPipeline during bootstrap",
-        extra={"module_name": __name__},
+        extra=log_record(pipeline_module=__name__),
     )
     raise
 
