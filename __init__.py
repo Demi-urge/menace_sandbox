@@ -39,6 +39,13 @@ for _name, _path in _MANUAL_MODULES.items():
             sys.modules[_qualified] = _module
             _spec.loader.exec_module(_module)
 
+try:  # pragma: no cover - ensure legacy import compatibility
+    from . import bootstrap_gate as _bootstrap_gate
+except Exception:
+    _bootstrap_gate = None
+else:
+    sys.modules.setdefault("bootstrap_gate", _bootstrap_gate)
+
 
 class _DynamicPathRouterProxy(types.ModuleType):
     """Lazy loader that defers importing ``dynamic_path_router`` until needed."""

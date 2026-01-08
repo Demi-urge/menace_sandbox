@@ -35,7 +35,7 @@ from typing import Any, Mapping, Tuple
 from vector_service.context_builder import ContextBuilder
 from coding_bot_interface import advertise_bootstrap_placeholder, get_active_bootstrap_pipeline
 if __package__ in (None, ""):
-    from bootstrap_gate import resolve_bootstrap_placeholders
+    from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
 else:
     from .bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped

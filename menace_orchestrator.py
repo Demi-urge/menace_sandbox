@@ -23,7 +23,7 @@ from .coding_bot_interface import (
     advertise_bootstrap_placeholder,
 )
 if __package__ in (None, ""):
-    from bootstrap_gate import resolve_bootstrap_placeholders
+    from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
 else:
     from .bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_readiness import readiness_signal
