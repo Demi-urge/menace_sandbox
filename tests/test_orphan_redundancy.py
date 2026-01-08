@@ -57,7 +57,7 @@ class DummyEngine:
             path = Path(p)
             try:
                 if analyze_redundancy(path):
-                    self.logger.info("redundant module skipped", extra={"module": path.name})
+                    self.logger.info("redundant module skipped", extra={"module_name": path.name})
                     continue
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("redundancy analysis failed", exc)

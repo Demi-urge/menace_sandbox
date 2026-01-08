@@ -1701,7 +1701,7 @@ def _sandbox_cycle_runner(
                         except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
                     logger.info(
-                        "patch applied", extra={"module": mod, "patch_id": patch_id}
+                        "patch applied", extra={"module_name": mod, "patch_id": patch_id}
                     )
                 except PermissionError as exc:
                     logger.error("patch permission denied for %s: %s", mod, exc)
@@ -2039,7 +2039,7 @@ def _sandbox_cycle_runner(
                         context_meta=context_meta,
                     )
                     logger.info(
-                        "patch applied", extra={"module": mod, "patch_id": patch_id}
+                        "patch applied", extra={"module_name": mod, "patch_id": patch_id}
                     )
                     patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:

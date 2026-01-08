@@ -701,7 +701,7 @@ def record_module_usage(module_name: str) -> None:
             MODULE_USAGE_PATH.write_text(json.dumps(data, indent=2))
         except (OSError, json.JSONDecodeError) as exc:
             logger.exception(
-                "module usage logging failed", extra={"module": module_name}, exc_info=exc
+                "module usage logging failed", extra={"module_name": module_name}, exc_info=exc
             )
 
 # path to cleanup log file

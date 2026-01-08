@@ -64,7 +64,7 @@ def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
         except Exception:
             LOGGER.exception(
                 "Failed to load ModelAutomationPipeline",
-                extra={"module": __name__},
+                extra={"module_name": __name__},
             )
             raise
         else:
@@ -86,7 +86,7 @@ class _ModelAutomationPipelineProxy:
         except Exception as exc:
             LOGGER.exception(
                 "Deferred load of ModelAutomationPipeline failed",
-                extra={"module": __name__},
+                extra={"module_name": __name__},
             )
             raise
         else:
