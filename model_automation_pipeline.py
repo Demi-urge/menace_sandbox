@@ -75,8 +75,7 @@ def _load_pipeline_cls() -> "type[_ModelAutomationPipeline]":
 class _ModelAutomationPipelineProxy:
     """Callable proxy that resolves the pipeline class on first use."""
 
-    def __init__(self, error: BaseException) -> None:
-        self._error = error
+    def __init__(self) -> None:
         self._resolved: "type[_ModelAutomationPipeline] | None" = None
 
     def _resolve(self) -> "type[_ModelAutomationPipeline]":
@@ -87,9 +86,11 @@ class _ModelAutomationPipelineProxy:
         except Exception as exc:
             LOGGER.exception(
                 "Deferred load of ModelAutomationPipeline failed",
-                extra={"module": __name__, "initial_error": str(self._error)},
+                extra={"module": __name__},
             )
-            raise self._error from exc
+            raise
+        else:
+            globals()["ModelAutomationPipeline"] = self._resolved
         return self._resolved
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -101,7 +102,7 @@ class _ModelAutomationPipelineProxy:
         return getattr(cls, name)
 
     def __repr__(self) -> str:
-        return f"<ModelAutomationPipelineProxy error={self._error!r}>"
+        return "<ModelAutomationPipelineProxy deferred=True>"
 
 
 def get_pipeline_class() -> "type[_ModelAutomationPipeline]":
@@ -127,7 +128,4 @@ def __dir__() -> List[str]:
 __all__ = ["AutomationResult", "ModelAutomationPipeline", "get_pipeline_class"]
 
 
-try:  # pragma: no cover - import-time availability hint
-    ModelAutomationPipeline = _load_pipeline_cls()
-except Exception as exc:  # pragma: no cover - defer failure
-    ModelAutomationPipeline = _ModelAutomationPipelineProxy(exc)
+ModelAutomationPipeline = _ModelAutomationPipelineProxy()

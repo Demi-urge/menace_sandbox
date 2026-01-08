@@ -120,7 +120,12 @@ def load_pipeline_class() -> "type[_ModelAutomationPipeline]":
 
     pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
     if pipeline_cls is None:
-        message = f"ModelAutomationPipeline is unavailable from {module_name}"
+        module_file = getattr(module, "__file__", None)
+        module_dir = sorted(set(dir(module)))
+        message = (
+            "ModelAutomationPipeline is unavailable from "
+            f"{module_name} (file={module_file}, attrs={module_dir})"
+        )
         if _LAST_PIPELINE_ERROR is not None:
             LOGGER.error(
                 "ModelAutomationPipeline is unavailable; last import error follows.",
