@@ -129,12 +129,14 @@ def load_pipeline_class() -> "type[_ModelAutomationPipeline]":
             f"{module_name} (file={module_file}, attrs={module_dir})"
         )
         if _LAST_PIPELINE_ERROR is not None:
+            # Avoid reserved LogRecord keys like "module" in Logger.extra.
             LOGGER.error(
                 "ModelAutomationPipeline is unavailable; last import error follows.",
                 extra=log_record(pipeline_module=module_name),
                 exc_info=_LAST_PIPELINE_ERROR,
             )
             raise ImportError(message) from _LAST_PIPELINE_ERROR
+        # Avoid reserved LogRecord keys like "module" in Logger.extra.
         LOGGER.error(
             "ModelAutomationPipeline is unavailable with no captured import error.",
             extra=log_record(pipeline_module=module_name),
