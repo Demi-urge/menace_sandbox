@@ -8,7 +8,16 @@ to maintain the broker-first loading pattern. Troubleshooting steps live in
 
 from __future__ import annotations
 
-from .bootstrap_gate import resolve_bootstrap_placeholders
+import importlib
+
+if __package__:
+    resolve_bootstrap_placeholders = importlib.import_module(
+        f"{__package__}.bootstrap_gate"
+    ).resolve_bootstrap_placeholders
+else:
+    resolve_bootstrap_placeholders = importlib.import_module(
+        "bootstrap_gate"
+    ).resolve_bootstrap_placeholders
 
 from .bot_registry import BotRegistry
 from .coding_bot_interface import (
@@ -19,8 +28,6 @@ from .coding_bot_interface import (
 )
 from .data_bot import DataBot, MetricsDB
 from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
-
-import importlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
