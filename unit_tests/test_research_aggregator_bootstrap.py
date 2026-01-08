@@ -17,7 +17,7 @@ def _install_stub(name: str, **attrs: object) -> ModuleType:
     return module
 
 
-def _load_module_with_stubs(monkeypatch):
+def _load_module_with_stubs(monkeypatch, *, bootstrap_broker=None):
     root = Path(__file__).resolve().parents[1]
     package = ModuleType("menace_sandbox")
     package.__path__ = [str(root)]
@@ -44,7 +44,7 @@ def _load_module_with_stubs(monkeypatch):
         "coding_bot_interface",
         _BOOTSTRAP_STATE=bootstrap_state,
         _looks_like_pipeline_candidate=lambda obj: obj is not None,
-        _bootstrap_dependency_broker=lambda: None,
+        _bootstrap_dependency_broker=lambda: bootstrap_broker,
         advertise_bootstrap_placeholder=lambda **_: (None, None),
         read_bootstrap_heartbeat=lambda: False,
         get_active_bootstrap_pipeline=lambda: (None, None),
@@ -253,3 +253,13 @@ def test_bootstrap_placeholders_advertise_active_when_owner_missing(monkeypatch)
     assert manager is placeholder_manager
     assert resolved_broker is broker
     assert advertise_calls == [(placeholder_pipeline, placeholder_manager)]
+
+
+def test_import_allows_degraded_bootstrap_when_owner_inactive(monkeypatch):
+    broker = SimpleNamespace(active_owner=False)
+
+    module = _load_module_with_stubs(monkeypatch, bootstrap_broker=broker)
+
+    assert module._BOOTSTRAP_PLACEHOLDER is None
+    assert module._BOOTSTRAP_SENTINEL is None
+    assert module._BOOTSTRAP_BROKER is broker

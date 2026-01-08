@@ -104,7 +104,7 @@ _DEPENDENCY_RESOLUTION_WAIT_FLOOR = 0.05
 _DEPENDENCY_RESOLUTION_MAX_WAIT_DEFAULT = 3.0
 
 
-def _bootstrap_placeholders() -> tuple[object, object, object]:
+def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, object, object]:
     """Resolve bootstrap placeholders after the readiness gate clears."""
 
     global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
@@ -130,6 +130,13 @@ def _bootstrap_placeholders() -> tuple[object, object, object]:
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
     if not broker_owner:
+        if allow_degraded:
+            logger.warning(
+                "Bootstrap dependency broker owner inactive; entering degraded ResearchAggregatorBot bootstrap",
+                extra={"event": "research-aggregator-bootstrap-degraded"},
+            )
+            _BOOTSTRAP_BROKER = broker
+            return None, None, broker
         raise RuntimeError(
             "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot"
         )
@@ -281,7 +288,7 @@ _ensure_bootstrap_ready(
     timeout=_BOOTSTRAP_GATE_TIMEOUT,
     allow_degraded=True,
 )
-_bootstrap_placeholders()
+_bootstrap_placeholders(allow_degraded=True)
 
 
 def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
