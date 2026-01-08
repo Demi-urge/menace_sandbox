@@ -182,6 +182,7 @@ def load_handlers(
     ):
         result: list[Callable[[Dict[str, any]], list[float]]] = []
         error: list[Exception] = []
+        cancelled: list[TimeoutError] = []
         timeout_error: list[TimeoutError] = []
         done = threading.Event()
 
@@ -190,7 +191,7 @@ def load_handlers(
                 try:
                     _check_cancelled(f"{kind}-target", event=cancel_event)
                 except TimeoutError as exc:
-                    timeout_error.append(_mark_cancelled(exc))
+                    cancelled.append(_mark_cancelled(exc))
                     return
                 mod = importlib.import_module(mod_name)
                 cls = getattr(mod, cls_name)
@@ -200,7 +201,10 @@ def load_handlers(
                 inst = cls(**kwargs)
                 result.append(inst.transform)
             except TimeoutError as exc:
-                timeout_error.append(_mark_cancelled(exc))
+                if getattr(exc, "cancelled", False):
+                    cancelled.append(exc)
+                else:
+                    timeout_error.append(exc)
             except Exception as exc:  # pragma: no cover - best effort
                 error.append(exc)
             finally:
@@ -214,22 +218,24 @@ def load_handlers(
             try:
                 _check_cancelled(f"{kind}-wait", event=cancel_event)
             except TimeoutError as exc:
-                return None, _mark_cancelled(exc)
+                return None, _mark_cancelled(exc), True
             now = time.perf_counter()
             if deadline is not None and now >= deadline:
                 if stop_event is not None:
                     stop_event.set()
-                return None, TimeoutError("handler init exceeded global budget")
+                return None, TimeoutError("handler init exceeded global budget"), False
             if timeout is not None and now - start >= timeout:
                 if stop_event is not None:
                     stop_event.set()
-                return None, TimeoutError(f"handler init exceeded budget ({timeout}s)")
+                return None, TimeoutError(f"handler init exceeded budget ({timeout}s)"), False
 
         if error:
             raise error[0]
         if timeout_error:
-            return None, timeout_error[0]
-        return result[0] if result else None, None
+            return None, timeout_error[0], False
+        if cancelled:
+            return None, cancelled[0], True
+        return result[0] if result else None, None, False
 
     start = time.perf_counter()
     deadline = None if provided_budget is None else start + provided_budget
@@ -250,7 +256,7 @@ def load_handlers(
         def _background() -> None:
             background_event = threading.Event()
             try:
-                handler, timeout_error = _instantiate_handler_with_timeout(
+                handler, timeout_error, cancelled = _instantiate_handler_with_timeout(
                     kind,
                     mod_name,
                     cls_name,
@@ -258,7 +264,7 @@ def load_handlers(
                     effective_budget=None,
                     cancel_event=background_event,
                 )
-                if timeout_error and getattr(timeout_error, "cancelled", False):
+                if cancelled or (timeout_error and getattr(timeout_error, "cancelled", False)):
                     return
                 if handler is None:
                     return
@@ -375,34 +381,42 @@ def load_handlers(
                     filter(lambda value: value is not None, [timeout, remaining_budget]),
                     default=remaining_budget,
                 )
-            handler, timeout_error = _instantiate_handler_with_timeout(
+            handler, timeout_error, cancelled = _instantiate_handler_with_timeout(
                 kind, mod_name, cls_name, effective_timeout, effective_budget=remaining_budget
             )
+            if cancelled or (timeout_error and getattr(timeout_error, "cancelled", False)):
+                logger.info(
+                    "vector_registry.handler.deferred",
+                    extra={
+                        "kind": kind,
+                        "reason": "cancelled",
+                        "bootstrap_fast": bootstrap_fast,
+                    },
+                )
+                _record_deferred(kind, "cancelled")
+                continue
             if timeout_error:
-                if getattr(timeout_error, "cancelled", False):
-                    logger.info(
-                        "vector_registry.handler.deferred",
-                        extra={
-                            "kind": kind,
-                            "reason": "cancelled",
-                            "bootstrap_fast": bootstrap_fast,
-                        },
-                    )
-                    _record_deferred(kind, "cancelled")
-                else:
-                    logger.info(
-                        "vector_registry.handler.deferred",
-                        extra={
-                            "kind": kind,
-                            "reason": "timeout",
-                            "timeout_s": timeout,
-                            "bootstrap_fast": bootstrap_fast,
-                        },
-                    )
-                    _record_deferred(kind, "timeout")
-                    _schedule_background(kind, mod_name, cls_name)
+                logger.info(
+                    "vector_registry.handler.deferred",
+                    extra={
+                        "kind": kind,
+                        "reason": "timeout",
+                        "timeout_s": timeout,
+                        "bootstrap_fast": bootstrap_fast,
+                    },
+                )
+                _record_deferred(kind, "timeout")
+                _schedule_background(kind, mod_name, cls_name)
                 continue
             if handler is None:
+                logger.info(
+                    "vector_registry.handler.deferred",
+                    extra={
+                        "kind": kind,
+                        "reason": "cancelled",
+                        "bootstrap_fast": bootstrap_fast,
+                    },
+                )
                 _record_deferred(kind, "cancelled")
                 continue
             handlers[kind] = handler
