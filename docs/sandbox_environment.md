@@ -115,7 +115,7 @@ If bootstrap logs start looping with `prepare_pipeline_for_bootstrap` owner/reus
 Bootstrap entrypoints now sit behind a shared gate that serialises new requests and exposes the current pipeline and manager placeholders to latecomers. Align with the gate before any pipeline work by calling:
 
 ```python
-from bootstrap_gate import wait_for_bootstrap_gate
+from menace_sandbox.bootstrap_gate import wait_for_bootstrap_gate
 from coding_bot_interface import advertise_bootstrap_placeholder, prepare_pipeline_for_bootstrap
 
 advertise_bootstrap_placeholder()

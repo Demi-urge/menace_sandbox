@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from typing import Iterator, Mapping, TYPE_CHECKING, Any
 
 if __package__ in (None, ""):
-    from bootstrap_gate import resolve_bootstrap_placeholders
+    from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
 else:
     from .bootstrap_gate import resolve_bootstrap_placeholders
 from coding_bot_interface import get_active_bootstrap_pipeline

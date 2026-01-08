@@ -34,7 +34,7 @@ from vector_service.context_builder import ContextBuilder
 from menace_sandbox.bot_registry import BotRegistry
 from menace_sandbox.data_bot import DataBot, persist_sc_thresholds
 if __package__ in (None, ""):
-    from bootstrap_gate import wait_for_bootstrap_gate
+    from menace_sandbox.bootstrap_gate import wait_for_bootstrap_gate
 else:
     from .bootstrap_gate import wait_for_bootstrap_gate
 from menace_sandbox.coding_bot_interface import (
