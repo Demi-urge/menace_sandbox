@@ -107,6 +107,13 @@ watch = [
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+py-modules = [
+    "bootstrap_gate",
+    "bootstrap_helpers",
+    "environment_bootstrap",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["*", "tools", "tools.*", "tools.windows_sandbox_launcher_gui"]
