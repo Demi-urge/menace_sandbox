@@ -14,6 +14,7 @@ This wrapper is exercised in the unit tests and provides a minimal ``store`` and
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.util
 import json
 import logging
@@ -52,36 +53,40 @@ load_internal = import_compat.load_internal
 
 
 def _import_bootstrap_readiness():
-    try:  # pragma: no cover - prefer package import when installed
-        from menace_sandbox import bootstrap_readiness  # type: ignore
-
-        sys.modules.setdefault("bootstrap_readiness", bootstrap_readiness)
-        sys.modules.setdefault(
-            "menace_sandbox.bootstrap_readiness",
-            bootstrap_readiness,
-        )
-        return bootstrap_readiness
-    except ModuleNotFoundError:  # pragma: no cover - support flat execution
-        try:
-            from bootstrap_readiness import readiness_signal as _readiness_signal  # noqa: F401
-        except ModuleNotFoundError:  # pragma: no cover - file-based fallback
-            _module_path = Path(__file__).resolve().parent / "bootstrap_readiness.py"
+    errors: List[BaseException] = []
+    _module = None
+    try:  # pragma: no cover - prefer loader helper when installed
+        _module = load_internal("bootstrap_readiness")
+    except Exception as exc:  # pragma: no cover - fallback to importlib
+        errors.append(exc)
+    if _module is None:
+        try:  # pragma: no cover - support flat execution
+            _module = importlib.import_module("bootstrap_readiness")
+        except Exception as exc:  # pragma: no cover - file-based fallback
+            errors.append(exc)
+    if _module is None:
+        _module_path = Path(__file__).resolve().parent / "bootstrap_readiness.py"
+        if _module_path.exists():  # pragma: no cover - file-based fallback
             _spec = importlib.util.spec_from_file_location(
                 "menace_sandbox.bootstrap_readiness",
                 _module_path,
             )
             if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
-                raise
+                raise ModuleNotFoundError(
+                    "bootstrap_readiness could not be loaded: spec loader unavailable."
+                )
             _module = importlib.util.module_from_spec(_spec)
             sys.modules.setdefault("bootstrap_readiness", _module)
             sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
             _spec.loader.exec_module(_module)
-            return _module
-        _module = sys.modules.get("bootstrap_readiness")
-        if _module is None:  # pragma: no cover - defensive
-            raise
-        sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
-        return _module
+        else:  # pragma: no cover - explicit failure
+            raise ModuleNotFoundError(
+                "bootstrap_readiness could not be loaded after import_compat bootstrap."
+            ) from (errors[-1] if errors else None)
+
+    sys.modules.setdefault("bootstrap_readiness", _module)
+    sys.modules.setdefault("menace_sandbox.bootstrap_readiness", _module)
+    return _module
 
 
 readiness_signal = _import_bootstrap_readiness().readiness_signal
