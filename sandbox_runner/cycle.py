@@ -1730,7 +1730,7 @@ def _sandbox_cycle_runner(
                         logger.info(
                             "rolling back patch",
                             extra={
-                                "module": mod,
+                                "module_name": mod,
                                 "patch_id": patch_id,
                                 "roi_delta": roi_delta,
                                 "threshold": tracker.diminishing(),
@@ -2081,7 +2081,7 @@ def _sandbox_cycle_runner(
                         logger.info(
                             "rolling back patch",
                             extra={
-                                "module": mod,
+                                "module_name": mod,
                                 "patch_id": patch_id,
                                 "roi_delta": roi_delta,
                                 "threshold": tracker.diminishing(),

@@ -1535,7 +1535,7 @@ class SelfCodingManager:
                                     "quick fix validation encountered non-fatal flags; "
                                     "continuing without apply",
                                     extra={
-                                        "module": str(cloned_module),
+                                        "module_name": str(cloned_module),
                                         "flags": list(flags),
                                     },
                                 )
