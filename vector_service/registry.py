@@ -167,6 +167,10 @@ def load_handlers(
         if budget_check is not None:
             budget_check(event)
 
+    def _mark_cancelled(exc: TimeoutError) -> TimeoutError:
+        setattr(exc, "cancelled", True)
+        return exc
+
     def _instantiate_handler_with_timeout(
         kind: str,
         mod_name: str,
@@ -179,11 +183,17 @@ def load_handlers(
         result: list[Callable[[Dict[str, any]], list[float]]] = []
         error: list[Exception] = []
         cancelled: list[TimeoutError] = []
+        cancelled_flag = threading.Event()
         done = threading.Event()
 
         def _target() -> None:
             try:
-                _check_cancelled(f"{kind}-target", event=cancel_event)
+                try:
+                    _check_cancelled(f"{kind}-target", event=cancel_event)
+                except TimeoutError as exc:
+                    cancelled_flag.set()
+                    cancelled.append(_mark_cancelled(exc))
+                    return
                 mod = importlib.import_module(mod_name)
                 cls = getattr(mod, cls_name)
                 kwargs = {}
@@ -192,7 +202,7 @@ def load_handlers(
                 inst = cls(**kwargs)
                 result.append(inst.transform)
             except TimeoutError as exc:
-                cancelled.append(exc)
+                cancelled.append(_mark_cancelled(exc))
             except Exception as exc:  # pragma: no cover - best effort
                 error.append(exc)
             finally:
@@ -206,7 +216,7 @@ def load_handlers(
             try:
                 _check_cancelled(f"{kind}-wait", event=cancel_event)
             except TimeoutError as exc:
-                return None, exc
+                return None, _mark_cancelled(exc)
             now = time.perf_counter()
             if deadline is not None and now >= deadline:
                 if stop_event is not None:
@@ -217,6 +227,10 @@ def load_handlers(
                     stop_event.set()
                 return None, TimeoutError(f"handler init exceeded budget ({timeout}s)")
 
+        if cancelled_flag.is_set():
+            return None, cancelled[0] if cancelled else _mark_cancelled(
+                TimeoutError("handler hydration cancelled")
+            )
         if error:
             raise error[0]
         if cancelled:
@@ -242,7 +256,7 @@ def load_handlers(
         def _background() -> None:
             background_event = threading.Event()
             try:
-                handler, _ = _instantiate_handler_with_timeout(
+                handler, timeout_error = _instantiate_handler_with_timeout(
                     kind,
                     mod_name,
                     cls_name,
@@ -250,6 +264,8 @@ def load_handlers(
                     effective_budget=None,
                     cancel_event=background_event,
                 )
+                if timeout_error and getattr(timeout_error, "cancelled", False):
+                    return
                 if handler is None:
                     return
                 logger.info(
@@ -365,7 +381,7 @@ def load_handlers(
                 kind, mod_name, cls_name, effective_timeout, effective_budget=remaining_budget
             )
             if timeout_error:
-                if str(timeout_error).startswith("handler hydration cancelled"):
+                if getattr(timeout_error, "cancelled", False):
                     logger.info(
                         "vector_registry.handler.deferred",
                         extra={
