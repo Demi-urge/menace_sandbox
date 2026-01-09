@@ -8,7 +8,6 @@ configuration is incomplete.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any, Callable, Dict
 
 import logging
@@ -26,24 +25,6 @@ from metrics_exporter import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _default_repo_path(settings: SandboxSettings) -> Path:
-    repo_path = os.getenv("SANDBOX_REPO_PATH") or getattr(
-        settings, "sandbox_repo_path", None
-    )
-    if repo_path:
-        repo_root = Path(resolve_path(repo_path))
-    else:
-        try:
-            repo_root = get_project_root()
-        except Exception:
-            repo_root = None
-        if repo_root is None:
-            repo_root = Path(resolve_path("."))
-    if not repo_root.exists():
-        logger.warning("Resolved repo path does not exist: %s", repo_root)
-    return repo_root
 
 
 def _load_orphan_module(attr: str) -> Callable[..., Any]:
@@ -72,7 +53,9 @@ def integrate_orphans(
     """Invoke sandbox runner orphan integration with safeguards."""
     settings = SandboxSettings()
     if not args and "repo" not in kwargs:
-        kwargs["repo"] = _default_repo_path(settings)
+        kwargs["repo"] = resolve_path(
+            os.getenv("SANDBOX_REPO_PATH", get_project_root())
+        )
     if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
         kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
@@ -105,7 +88,9 @@ def post_round_orphan_scan(
     """Trigger the sandbox post-round orphan scan."""
     settings = SandboxSettings()
     if not args and "repo" not in kwargs:
-        kwargs["repo"] = _default_repo_path(settings)
+        kwargs["repo"] = resolve_path(
+            os.getenv("SANDBOX_REPO_PATH", get_project_root())
+        )
     if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
         kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
