@@ -1603,22 +1603,26 @@ async def self_improvement_cycle(
             orphan_workflows: list[str] = []
             if DISCOVER_ORPHANS:
                 try:
-                    result = integrate_orphans(recursive=RECURSIVE_ORPHANS)
-                    if inspect.isawaitable(result):
-                        result = await result
-                    if result:
+                    integrate_result = integrate_orphans(recursive=RECURSIVE_ORPHANS)
+                    if inspect.isawaitable(integrate_result):
+                        integrate_result = await integrate_result
+                    if integrate_result:
                         orphan_workflows.extend(
-                            w for w in result if isinstance(w, str)
+                            w for w in integrate_result if isinstance(w, str)
                         )
                 except Exception:
                     logger.exception("orphan integration failed")
 
                 if RECURSIVE_ORPHANS:
                     try:
-                        result = post_round_orphan_scan(recursive=True)
-                        if inspect.isawaitable(result):
-                            result = await result
-                        integrated = result.get("integrated") if isinstance(result, dict) else None
+                        scan_result = post_round_orphan_scan(recursive=True)
+                        if inspect.isawaitable(scan_result):
+                            scan_result = await scan_result
+                        integrated = (
+                            scan_result.get("integrated")
+                            if isinstance(scan_result, dict)
+                            else None
+                        )
                         if inspect.isawaitable(integrated):
                             integrated = await integrated
                         if integrated:
