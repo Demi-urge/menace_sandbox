@@ -16,6 +16,7 @@ import threading
 import contextlib
 import shutil
 from datetime import datetime, timedelta
+import inspect
 
 from . import registry as _registry
 
@@ -815,38 +816,78 @@ def ensure_embeddings_fresh(
     logger = logging.getLogger(__name__)
     timestamps = _load_timestamps()
 
+    def _instantiate_metadata_reader(cls: type | None) -> Any | None:
+        if cls is None:
+            return None
+        kwargs: Dict[str, Any] = {}
+        try:
+            signature = inspect.signature(cls)
+        except (TypeError, ValueError):
+            signature = None
+
+        if signature:
+            params = signature.parameters
+            if "defer_index_load" in params:
+                kwargs["defer_index_load"] = True
+            if "vector_backend" in params:
+                kwargs["vector_backend"] = "annoy"
+            required = [
+                param
+                for param in params.values()
+                if param.name != "self"
+                and param.default is inspect._empty
+                and param.kind
+                in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            ]
+            if required and any(param.name not in kwargs for param in required):
+                return None
+
+        try:
+            return cls(**kwargs)
+        except Exception:
+            try:
+                return cls()
+            except Exception:
+                try:
+                    return cls(vector_backend="annoy")  # type: ignore[call-arg]
+                except Exception:
+                    return None
+
+    def _resolve_metadata_path(name: str, cls: type | None, db_path: Path) -> Path:
+        instance = _instantiate_metadata_reader(cls)
+        if instance is not None:
+            meta_candidate = getattr(
+                instance, "metadata_path", getattr(instance, "index_path", None)
+            )
+            if meta_candidate:
+                return Path(meta_candidate)
+        try:
+            return resolve_path(f"{name}_embeddings.json")
+        except FileNotFoundError:
+            return db_path.with_suffix(".json")
+
     def _needs_backfill(check: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         registry = _load_registry()
         pending: Dict[str, Dict[str, Any]] = {}
         for name in check:
             cls = None
-            db = None
             mod_cls = registry.get(name)
             db_file = f"{name}.db"
-            meta_path = resolve_path(f"{name}_embeddings.json")
             if mod_cls:
                 mod_name, cls_name = mod_cls
                 try:
                     mod = importlib.import_module(mod_name)
                     cls = getattr(mod, cls_name)
                     db_file = getattr(cls, "DB_FILE", getattr(cls, "DB_PATH", db_file))
-                    try:
-                        try:
-                            db = cls(vector_backend="annoy")  # type: ignore[call-arg]
-                        except Exception:
-                            db = cls()  # type: ignore[call-arg]
-                    except Exception:
-                        db = None
-                    if db is not None:
-                        meta_candidate = getattr(
-                            db, "metadata_path", getattr(db, "index_path", None)
-                        )
-                        if meta_candidate:
-                            meta_path = Path(meta_candidate)
                 except Exception:
                     cls = None
 
             db_path = resolve_path(db_file)
+            meta_path = _resolve_metadata_path(name, cls, db_path)
             try:
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
@@ -873,11 +914,9 @@ def ensure_embeddings_fresh(
 
             if cls:
                 try:
+                    db = _instantiate_metadata_reader(cls)
                     if db is None:
-                        try:
-                            db = cls(vector_backend="annoy")  # type: ignore[call-arg]
-                        except Exception:
-                            db = cls()  # type: ignore[call-arg]
+                        continue
                     record_count = sum(1 for _ in db.iter_records())
                     vector_count = len(getattr(db, "_metadata", {}))
                     info["record_count"] = record_count
