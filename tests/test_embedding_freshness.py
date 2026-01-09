@@ -1,6 +1,7 @@
 import json
 import importlib
 import logging
+import os
 import time
 from pathlib import Path
 import sys
@@ -142,8 +143,8 @@ def test_needs_backfill_ignores_meta_mtime_when_vectorization_newer(
 
     meta_path.touch()
     db_path.touch()
-    meta_path.utime((meta_time, meta_time))
-    db_path.utime((db_time, db_time))
+    os.utime(meta_path, (meta_time, meta_time))
+    os.utime(db_path, (db_time, db_time))
 
     async def fail_schedule_backfill(*, dbs=None):
         raise AssertionError("schedule_backfill should not be called")
@@ -209,3 +210,31 @@ def test_metadata_path_fallback_to_db_suffix(monkeypatch, tmp_path, caplog):
     meta_path.write_text("{}")
     result = eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0, return_details=True)
     assert result == {}
+
+
+def test_backfill_accepts_non_default_metadata_location(monkeypatch, tmp_path):
+    trans_mod = types.ModuleType("transformers")
+    trans_mod.AutoModel = object
+    trans_mod.AutoTokenizer = object
+    sys.modules["transformers"] = trans_mod
+    monkeypatch.setattr("dynamic_path_router.resolve_path", lambda p: Path(tmp_path / p))
+
+    import vector_service.embedding_backfill as eb
+    eb = importlib.reload(eb)
+
+    monkeypatch.setattr(eb, "_TIMESTAMP_FILE", Path(tmp_path / "ts.json"))
+    monkeypatch.setattr(eb, "_load_registry", lambda path=None: {})
+
+    db_path = Path(tmp_path / "dummy.db")
+    db_path.write_text("x")
+    alt_meta_path = db_path.with_suffix(".json")
+
+    eb._TIMESTAMP_FILE.write_text(json.dumps({"dummy": 0}))
+
+    async def fake_schedule_backfill(*, dbs=None):
+        alt_meta_path.write_text("{}")
+
+    monkeypatch.setattr(eb, "schedule_backfill", fake_schedule_backfill)
+
+    eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0)
+    assert alt_meta_path.exists()

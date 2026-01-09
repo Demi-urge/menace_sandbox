@@ -857,18 +857,44 @@ def ensure_embeddings_fresh(
                 except Exception:
                     return None
 
-    def _resolve_metadata_path(name: str, cls: type | None, db_path: Path) -> Path:
+    def _resolve_metadata_candidates(
+        name: str, cls: type | None, db_path: Path
+    ) -> list[Path]:
         instance = _instantiate_metadata_reader(cls)
+        candidates: list[Path] = []
         if instance is not None:
-            meta_candidate = getattr(
-                instance, "metadata_path", getattr(instance, "index_path", None)
-            )
+            meta_candidate = getattr(instance, "metadata_path", None)
             if meta_candidate:
-                return Path(meta_candidate)
-        try:
-            return resolve_path(f"{name}_embeddings.json")
-        except FileNotFoundError:
-            return db_path.with_suffix(".json")
+                candidates.append(Path(meta_candidate))
+            index_candidate = getattr(instance, "index_path", None)
+            if index_candidate:
+                candidates.append(Path(index_candidate).with_suffix(".json"))
+        if not candidates:
+            candidates.append(db_path.with_suffix(".json"))
+            try:
+                candidates.append(resolve_path(f"{name}_embeddings.json"))
+            except FileNotFoundError:
+                candidates.append(db_path.with_name(f"{name}_embeddings.json"))
+            for suffix in (".ann", f"{db_path.suffix}.ann"):
+                index_candidate = db_path.with_suffix(suffix)
+                if index_candidate.exists():
+                    candidates.append(index_candidate.with_suffix(".json"))
+
+        seen: set[Path] = set()
+        unique: list[Path] = []
+        for candidate in candidates:
+            if candidate not in seen:
+                seen.add(candidate)
+                unique.append(candidate)
+        return unique
+
+    def _select_metadata_path(candidates: Iterable[Path]) -> tuple[Path, float, bool]:
+        existing = [candidate for candidate in candidates if candidate.exists()]
+        if existing:
+            selected = max(existing, key=lambda path: path.stat().st_mtime)
+            return selected, selected.stat().st_mtime, True
+        fallback = next(iter(candidates), Path("embeddings.json"))
+        return fallback, 0.0, False
 
     def _needs_backfill(check: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         registry = _load_registry()
@@ -887,7 +913,8 @@ def ensure_embeddings_fresh(
                     cls = None
 
             db_path = resolve_path(db_file)
-            meta_path = _resolve_metadata_path(name, cls, db_path)
+            meta_candidates = _resolve_metadata_candidates(name, cls, db_path)
+            meta_path, meta_mtime, meta_exists = _select_metadata_path(meta_candidates)
             try:
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
@@ -899,15 +926,13 @@ def ensure_embeddings_fresh(
                 "last_vectorization": last_vec,
                 "meta_path": str(meta_path),
             }
-            meta_exists = meta_path.exists()
-            meta_mtime = meta_path.stat().st_mtime if meta_exists else 0.0
             info["meta_mtime"] = meta_mtime
             if not meta_exists:
                 info["reason"] = "embedding metadata missing"
                 pending[name] = info
                 continue
 
-            if last_vec < db_mtime:
+            if last_vec < db_mtime and meta_mtime < db_mtime:
                 info["reason"] = "db modified after last vectorisation"
                 pending[name] = info
                 continue
