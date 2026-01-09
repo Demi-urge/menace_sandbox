@@ -113,24 +113,40 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
         if not broker_owner:
             logger.error(
                 "Bootstrap dependency broker missing active owner; reusing active ResearchAggregatorBot placeholder",
-                extra={"event": "research-aggregator-broker-owner-missing"},
+                extra={
+                    "event": "research-aggregator-broker-owner-missing",
+                    "broker_owner": broker_owner,
+                },
             )
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
     if not broker_owner:
         logger.warning(
             "Bootstrap dependency broker owner inactive; continuing with degraded ResearchAggregatorBot placeholders",
-            extra={"event": "research-aggregator-broker-owner-missing"},
+            extra={
+                "event": "research-aggregator-broker-owner-missing",
+                "broker_owner": broker_owner,
+            },
         )
         if allow_degraded:
             logger.warning(
                 "Bootstrap dependency broker owner inactive; entering degraded ResearchAggregatorBot bootstrap",
-                extra={"event": "research-aggregator-bootstrap-degraded"},
+                extra={
+                    "event": "research-aggregator-bootstrap-degraded",
+                    "broker_owner": broker_owner,
+                },
             )
         if any(
             item is not None
             for item in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER)
         ):
+            logger.warning(
+                "Bootstrap dependency broker owner inactive; returning cached ResearchAggregatorBot placeholders",
+                extra={
+                    "event": "research-aggregator-bootstrap-degraded",
+                    "broker_owner": broker_owner,
+                },
+            )
             if _BOOTSTRAP_BROKER is None:
                 _BOOTSTRAP_BROKER = broker
             return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
@@ -150,7 +166,10 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
     if not getattr(broker, "active_owner", False):
         logger.error(
             "Bootstrap dependency broker missing active owner; reusing cached placeholder for ResearchAggregatorBot",
-            extra={"event": "research-aggregator-broker-owner-missing"},
+            extra={
+                "event": "research-aggregator-broker-owner-missing",
+                "broker_owner": bool(getattr(broker, "active_owner", False)),
+            },
         )
         return (
             _BOOTSTRAP_PLACEHOLDER or pipeline,
@@ -293,11 +312,19 @@ _bootstrap_ready = _ensure_bootstrap_ready(
 _active_pipeline, _active_manager = get_active_bootstrap_pipeline()
 _broker_owner_active = bool(getattr(_bootstrap_dependency_broker(), "active_owner", False))
 if _bootstrap_ready or _active_pipeline is not None or _active_manager is not None or _broker_owner_active:
+    if not _broker_owner_active and _active_pipeline is None and _active_manager is None:
+        logger.warning(
+            "Eager ResearchAggregatorBot bootstrap running in degraded mode; broker owner inactive",
+            extra={
+                "event": "research-aggregator-bootstrap-degraded",
+                "broker_owner": _broker_owner_active,
+            },
+        )
     _bootstrap_placeholders(allow_degraded=True)
 else:
     logger.info(
         "Skipping ResearchAggregatorBot placeholder bootstrap; no active broker owner or pipeline detected",
-        extra={"event": "research-aggregator-broker-owner-missing"},
+        extra={"event": "research-aggregator-broker-owner-missing", "broker_owner": _broker_owner_active},
     )
 
 
@@ -419,11 +446,15 @@ def _ensure_runtime_dependencies(
     placeholder_pipeline, placeholder_manager, placeholder_broker = (
         _bootstrap_placeholders(allow_degraded=False)
     )
-    if not getattr(placeholder_broker, "active_owner", False):
+    placeholder_broker_owner = bool(getattr(placeholder_broker, "active_owner", False))
+    if not placeholder_broker_owner:
         if _looks_like_pipeline_candidate(placeholder_pipeline) or placeholder_manager:
             logger.error(
                 "Bootstrap dependency broker owner inactive; reusing advertised ResearchAggregatorBot placeholder",
-                extra={"event": "research-aggregator-placeholder-owner-missing"},
+                extra={
+                    "event": "research-aggregator-placeholder-owner-missing",
+                    "broker_owner": placeholder_broker_owner,
+                },
             )
         else:
             raise RuntimeError(
