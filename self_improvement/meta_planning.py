@@ -19,7 +19,6 @@ import threading
 import queue
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
-import inspect
 
 if __package__ in {None, ""}:  # pragma: no cover - script execution compatibility
     _here = Path(__file__).resolve()
@@ -82,7 +81,12 @@ except (ImportError, ValueError):  # pragma: no cover - fallback for manual_boot
         WorkflowCycleController = None  # type: ignore
 
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
-from .orphan_handling import integrate_orphans, post_round_orphan_scan
+from .orphan_handling import (
+    integrate_orphans,
+    integrate_orphans_sync,
+    post_round_orphan_scan,
+    post_round_orphan_scan_sync,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - used for static analysis only
     try:
@@ -1603,9 +1607,9 @@ async def self_improvement_cycle(
             orphan_workflows: list[str] = []
             if DISCOVER_ORPHANS:
                 try:
-                    integrate_result = integrate_orphans(recursive=RECURSIVE_ORPHANS)
-                    if inspect.isawaitable(integrate_result):
-                        integrate_result = await integrate_result
+                    integrate_result = await integrate_orphans(
+                        recursive=RECURSIVE_ORPHANS
+                    )
                     if integrate_result:
                         orphan_workflows.extend(
                             w for w in integrate_result if isinstance(w, str)
@@ -1615,16 +1619,12 @@ async def self_improvement_cycle(
 
                 if RECURSIVE_ORPHANS:
                     try:
-                        scan_result = post_round_orphan_scan(recursive=True)
-                        if inspect.isawaitable(scan_result):
-                            scan_result = await scan_result
+                        scan_result = await post_round_orphan_scan(recursive=True)
                         integrated = (
                             scan_result.get("integrated")
                             if isinstance(scan_result, dict)
                             else None
                         )
-                        if inspect.isawaitable(integrated):
-                            integrated = await integrated
                         if integrated:
                             orphan_workflows.extend(
                                 w for w in integrated if isinstance(w, str)
@@ -1957,9 +1957,9 @@ def start_self_improvement_cycle(
 
     if discover_orphans:
         try:
-            integrate_orphans(recursive=recursive_orphans)
+            integrate_orphans_sync(recursive=recursive_orphans)
             if recursive_orphans:
-                post_round_orphan_scan(recursive=True)
+                post_round_orphan_scan_sync(recursive=True)
         except Exception:
             get_logger(__name__).exception(
                 "startup orphan discovery failed",

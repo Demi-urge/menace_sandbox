@@ -127,8 +127,8 @@ def test_orphan_handlers_delegate():
 
     module._load_orphan_module = loader
 
-    assert module.integrate_orphans(1) == 'integrate_orphans'
+    assert module.integrate_orphans_sync(1) == 'integrate_orphans'
     assert calls['integrate_orphans'] == ((1,), {'retries': 5, 'delay': 0.7})
-    assert module.post_round_orphan_scan() == 'post_round_orphan_scan'
+    assert module.post_round_orphan_scan_sync() == 'post_round_orphan_scan'
     assert calls['post_round_orphan_scan'] == ((), {'retries': 5, 'delay': 0.7})
     sys.modules.pop("sandbox_settings", None)

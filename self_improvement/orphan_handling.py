@@ -8,7 +8,10 @@ configuration is incomplete.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict
+
+import asyncio
+import inspect
 
 import logging
 
@@ -43,7 +46,7 @@ def _load_orphan_module(attr: str) -> Callable[..., Any]:
     return getattr(_oi, attr)
 
 
-def integrate_orphans(
+async def integrate_orphans(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
@@ -68,6 +71,8 @@ def integrate_orphans(
         modules = _call_with_retries(
             func, *args, retries=retries, delay=delay, **kwargs
         )
+        if inspect.isawaitable(modules):
+            modules = await modules
     except Exception:
         orphan_integration_failure_total.inc()
         logger.exception("orphan integration failed")
@@ -78,7 +83,7 @@ def integrate_orphans(
         return modules
 
 
-def post_round_orphan_scan(
+async def post_round_orphan_scan(
     *args: object,
     retries: int | None = None,
     delay: float | None = None,
@@ -103,6 +108,8 @@ def post_round_orphan_scan(
         result = _call_with_retries(
             func, *args, retries=retries, delay=delay, **kwargs
         )
+        if inspect.isawaitable(result):
+            result = await result
     except Exception:
         orphan_integration_failure_total.inc()
         logger.exception("post round orphan scan failed")
@@ -117,4 +124,55 @@ def post_round_orphan_scan(
         return result
 
 
-__all__ = ["integrate_orphans", "post_round_orphan_scan"]
+def _run_async(coro: Awaitable[Any]) -> Any:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    return loop.create_task(coro)
+
+
+def integrate_orphans_sync(
+    *args: object,
+    retries: int | None = None,
+    delay: float | None = None,
+    context_builder: object | None = None,
+    **kwargs: object,
+) -> Any:
+    """Run :func:`integrate_orphans` from sync contexts."""
+    return _run_async(
+        integrate_orphans(
+            *args,
+            retries=retries,
+            delay=delay,
+            context_builder=context_builder,
+            **kwargs,
+        )
+    )
+
+
+def post_round_orphan_scan_sync(
+    *args: object,
+    retries: int | None = None,
+    delay: float | None = None,
+    context_builder: object | None = None,
+    **kwargs: object,
+) -> Any:
+    """Run :func:`post_round_orphan_scan` from sync contexts."""
+    return _run_async(
+        post_round_orphan_scan(
+            *args,
+            retries=retries,
+            delay=delay,
+            context_builder=context_builder,
+            **kwargs,
+        )
+    )
+
+
+__all__ = [
+    "integrate_orphans",
+    "post_round_orphan_scan",
+    "integrate_orphans_sync",
+    "post_round_orphan_scan_sync",
+]
