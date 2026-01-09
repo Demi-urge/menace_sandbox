@@ -358,7 +358,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..discrepancy_detection_bot import DiscrepancyDetectionBot
     from .capital_management_bot import CapitalManagementBot
     from ..finance_router_bot import FinanceRouterBot
-    from ..research_aggregator_bot import ResearchAggregatorBot, ResearchItem
+    from ..research_aggregator_bot import ResearchAggregatorBot
+    from ..research_models import ResearchItem
     from ..information_synthesis_bot import InformationSynthesisBot
     from ..synthesis_models import SynthesisTask
     from ..implementation_optimiser_bot import ImplementationOptimiserBot
@@ -2080,4 +2081,3 @@ class ModelAutomationPipeline:
 
 
 __all__ = ["ModelAutomationPipeline"]
-
