@@ -153,3 +153,59 @@ def test_needs_backfill_ignores_meta_mtime_when_vectorization_newer(
     result = eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0, return_details=True)
 
     assert result == {}
+
+
+def test_metadata_path_fallback_to_db_suffix(monkeypatch, tmp_path, caplog):
+    trans_mod = types.ModuleType("transformers")
+    trans_mod.AutoModel = object
+    trans_mod.AutoTokenizer = object
+    sys.modules["transformers"] = trans_mod
+
+    def resolve_path_stub(p):
+        if p == "dummy_embeddings.json":
+            raise FileNotFoundError(p)
+        return Path(tmp_path / p)
+
+    monkeypatch.setattr("dynamic_path_router.resolve_path", resolve_path_stub)
+
+    import vector_service.embedding_backfill as eb
+    eb = importlib.reload(eb)
+
+    monkeypatch.setattr(eb, "_TIMESTAMP_FILE", Path(tmp_path / "ts.json"))
+
+    class DummyDB:
+        DB_FILE = "dummy.db"
+
+        def __init__(self, required):
+            self._metadata = {"1": {"embedding_version": 1}}
+
+        def iter_records(self):
+            return iter([(1, "a", None)])
+
+    dummy_mod = types.ModuleType("dummy_mod_suffix")
+    dummy_mod.DummyDB = DummyDB
+    sys.modules["dummy_mod_suffix"] = dummy_mod
+
+    monkeypatch.setattr(
+        eb, "_load_registry", lambda path=None: {"dummy": ("dummy_mod_suffix", "DummyDB")}
+    )
+
+    db_path = Path(tmp_path / "dummy.db")
+    db_path.write_text("x")
+    meta_path = db_path.with_suffix(".json")
+
+    future = time.time() + 100
+    eb._TIMESTAMP_FILE.write_text(json.dumps({"dummy": future}))
+
+    monkeypatch.setattr(eb, "schedule_backfill", _noop_schedule_backfill)
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(eb.StaleEmbeddingsError) as exc:
+            eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0, return_details=True)
+
+    assert exc.value.stale_dbs == {"dummy": "embedding metadata missing"}
+    assert str(meta_path) in caplog.text
+
+    meta_path.write_text("{}")
+    result = eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0, return_details=True)
+    assert result == {}
