@@ -19,6 +19,7 @@ import threading
 import queue
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
+import inspect
 
 if __package__ in {None, ""}:  # pragma: no cover - script execution compatibility
     _here = Path(__file__).resolve()
@@ -1602,18 +1603,24 @@ async def self_improvement_cycle(
             orphan_workflows: list[str] = []
             if DISCOVER_ORPHANS:
                 try:
-                    orphan_workflows.extend(
-                        w
-                        for w in integrate_orphans(recursive=RECURSIVE_ORPHANS)
-                        if isinstance(w, str)
-                    )
+                    result = integrate_orphans(recursive=RECURSIVE_ORPHANS)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    if result:
+                        orphan_workflows.extend(
+                            w for w in result if isinstance(w, str)
+                        )
                 except Exception:
                     logger.exception("orphan integration failed")
 
                 if RECURSIVE_ORPHANS:
                     try:
                         result = post_round_orphan_scan(recursive=True)
+                        if inspect.isawaitable(result):
+                            result = await result
                         integrated = result.get("integrated") if isinstance(result, dict) else None
+                        if inspect.isawaitable(integrated):
+                            integrated = await integrated
                         if integrated:
                             orphan_workflows.extend(
                                 w for w in integrated if isinstance(w, str)
