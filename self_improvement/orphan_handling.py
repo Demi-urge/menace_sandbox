@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict
 
-from pathlib import Path
-
 import logging
 
 from sandbox_settings import SandboxSettings
+from dynamic_path_router import resolve_path
 from context_builder_util import create_context_builder
 from context_builder import create_context_builder
 
@@ -51,14 +50,14 @@ def integrate_orphans(
     **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards."""
+    settings = SandboxSettings()
     if not args and "repo" not in kwargs:
-        kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
+        kwargs["repo"] = resolve_path(settings.sandbox_repo_path)
     if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
         kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
         context_builder = create_context_builder()
     kwargs.setdefault("context_builder", context_builder)
-    settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     func = _load_orphan_module("integrate_orphans")
@@ -84,14 +83,14 @@ def post_round_orphan_scan(
     **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan."""
+    settings = SandboxSettings()
     if not args and "repo" not in kwargs:
-        kwargs["repo"] = Path("C:/menace_sandbox/menace_sandbox")
+        kwargs["repo"] = resolve_path(settings.sandbox_repo_path)
     if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
         kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
         context_builder = create_context_builder()
     kwargs.setdefault("context_builder", context_builder)
-    settings = SandboxSettings()
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
     func = _load_orphan_module("post_round_orphan_scan")
