@@ -264,6 +264,126 @@ def test_self_improvement_cycle_handles_db_errors(tmp_path, monkeypatch, in_memo
     assert InMemoryStability.instances[0].data
 
 
+def test_self_improvement_cycle_awaits_orphan_scans(tmp_path, monkeypatch, in_memory_dbs):
+    _stub_deps()
+    menace_pkg = types.ModuleType("menace")
+    menace_pkg.__path__ = []
+    sys.modules["menace"] = menace_pkg
+    si_pkg = types.ModuleType("menace.self_improvement")
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
+    sys.modules["menace.self_improvement"] = si_pkg
+
+    bootstrap = types.ModuleType("sandbox_runner.bootstrap")
+    bootstrap.initialize_autonomous_sandbox = lambda s: None
+    sys.modules["sandbox_runner.bootstrap"] = bootstrap
+
+    logger = types.SimpleNamespace(
+        info=lambda *a, **k: None,
+        warning=lambda *a, **k: None,
+        exception=lambda *a, **k: None,
+        debug=lambda *a, **k: None,
+        error=lambda *a, **k: None,
+    )
+    logging_utils = types.SimpleNamespace(
+        get_logger=lambda name: logger,
+        log_record=lambda **k: k,
+        setup_logging=lambda: None,
+    )
+    sys.modules["menace.logging_utils"] = logging_utils
+
+    InMemoryROI, InMemoryStability = in_memory_dbs
+
+    class DummyLock:
+        def __init__(self, *a, **k):
+            pass
+
+        def acquire(self, *a, **k):
+            class Ctx:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Ctx()
+
+    sys.modules["menace.lock_utils"] = types.SimpleNamespace(
+        SandboxLock=DummyLock, Timeout=Exception, LOCK_TIMEOUT=1
+    )
+    sys.modules["menace.unified_event_bus"] = types.SimpleNamespace(UnifiedEventBus=None)
+    sys.modules["menace.meta_workflow_planner"] = types.SimpleNamespace(
+        MetaWorkflowPlanner=None
+    )
+
+    import sandbox_settings as sandbox_settings_module
+
+    sys.modules["menace.sandbox_settings"] = sandbox_settings_module
+
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
+    )
+    meta_planning = _load_module(
+        "menace.self_improvement.meta_planning",
+        resolve_path("self_improvement/meta_planning.py"),  # path-ignore
+    )
+
+    monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
+
+    settings = SandboxSettings()
+    settings.sandbox_data_dir = str(tmp_path)
+    settings.sandbox_central_logging = False
+
+    monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: settings)
+    init_module.init_self_improvement()
+
+    class DummyPlanner:
+        def __init__(self):
+            self.roi_db = InMemoryROI()
+            self.stability_db = InMemoryStability()
+            self.cluster_map = {}
+
+        def discover_and_persist(self, workflows):
+            return [
+                {"chain": ["w"], "roi_gain": 1.0, "failures": 0, "entropy": 0.1}
+            ]
+
+    monkeypatch.setattr(meta_planning, "_FallbackPlanner", DummyPlanner)
+    monkeypatch.setattr(meta_planning, "MetaWorkflowPlanner", None)
+    monkeypatch.setattr(meta_planning, "DISCOVER_ORPHANS", True)
+    monkeypatch.setattr(meta_planning, "RECURSIVE_ORPHANS", True)
+
+    flags = {"integrate": False, "post_scan": False}
+
+    async def integrate_stub(*_a, **_k):
+        flags["integrate"] = True
+        return ["wf_orphan"]
+
+    async def post_scan_stub(*_a, **_k):
+        flags["post_scan"] = True
+        return {"integrated": ["wf_orphan_2"]}
+
+    monkeypatch.setattr(meta_planning, "integrate_orphans", integrate_stub)
+    monkeypatch.setattr(meta_planning, "post_round_orphan_scan", post_scan_stub)
+
+    stop_event = threading.Event()
+
+    def evaluate_cycle(*_a, **_k):
+        stop_event.set()
+        return "run", {}
+
+    async def run_cycle():
+        await meta_planning.self_improvement_cycle(
+            {"w": lambda: None},
+            interval=0,
+            stop_event=stop_event,
+            evaluate_cycle=evaluate_cycle,
+        )
+
+    asyncio.run(run_cycle())
+    assert flags["integrate"] is True
+    assert flags["post_scan"] is True
+
+
 def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, in_memory_dbs):
     menace_pkg = types.ModuleType("menace")
     menace_pkg.__path__ = []
