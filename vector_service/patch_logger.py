@@ -177,7 +177,7 @@ except Exception:  # pragma: no cover - lightweight fallback
         return _trim_to_tokens(summary, _MAX_SUMMARY_TOKENS)
 
 try:  # pragma: no cover - optional info database
-    from research_aggregator_bot import InfoDB, ResearchItem  # type: ignore
+    from research_models import InfoDB, ResearchItem  # type: ignore
 except Exception:  # pragma: no cover
     InfoDB = ResearchItem = None  # type: ignore
 

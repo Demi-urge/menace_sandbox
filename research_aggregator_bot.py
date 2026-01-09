@@ -79,7 +79,7 @@ from .database_manager import get_connection, DB_PATH
 from .db_router import DBRouter
 from vector_service import ContextBuilder
 from snippet_compressor import compress_snippets
-from .research_data import InfoDB, ResearchItem
+from .research_models import InfoDB, ResearchItem
 
 logger = logging.getLogger(__name__)
 _BOOTSTRAP_READINESS = readiness_signal()
