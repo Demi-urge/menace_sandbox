@@ -7,12 +7,13 @@ configuration is incomplete.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Dict
 
 import logging
 
 from sandbox_settings import SandboxSettings
-from dynamic_path_router import resolve_path
+from dynamic_path_router import get_project_root, resolve_path
 from context_builder_util import create_context_builder
 from context_builder import create_context_builder
 
@@ -24,6 +25,22 @@ from metrics_exporter import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _default_repo_path(settings: SandboxSettings) -> Path:
+    # Defaults must be cross-platform and honor configured repo roots.
+    try:
+        repo_root = get_project_root()
+    except Exception:
+        repo_root = None
+    if repo_root is None or not repo_root.exists():
+        try:
+            repo_root = Path(resolve_path(settings.sandbox_repo_path))
+        except Exception:
+            repo_root = Path.cwd()
+    if not repo_root.exists():
+        repo_root = Path.cwd()
+    return repo_root
 
 
 def _load_orphan_module(attr: str) -> Callable[..., Any]:
@@ -52,7 +69,7 @@ def integrate_orphans(
     """Invoke sandbox runner orphan integration with safeguards."""
     settings = SandboxSettings()
     if not args and "repo" not in kwargs:
-        kwargs["repo"] = resolve_path(settings.sandbox_repo_path)
+        kwargs["repo"] = _default_repo_path(settings)
     if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
         kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
@@ -85,7 +102,7 @@ def post_round_orphan_scan(
     """Trigger the sandbox post-round orphan scan."""
     settings = SandboxSettings()
     if not args and "repo" not in kwargs:
-        kwargs["repo"] = resolve_path(settings.sandbox_repo_path)
+        kwargs["repo"] = _default_repo_path(settings)
     if "context_builder" not in kwargs or kwargs.get("context_builder") is None:
         kwargs["context_builder"] = create_context_builder()
     if context_builder is None:
