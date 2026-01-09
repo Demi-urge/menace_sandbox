@@ -820,19 +820,33 @@ def ensure_embeddings_fresh(
         pending: Dict[str, Dict[str, Any]] = {}
         for name in check:
             cls = None
+            db = None
             mod_cls = registry.get(name)
             db_file = f"{name}.db"
+            meta_path = resolve_path(f"{name}_embeddings.json")
             if mod_cls:
                 mod_name, cls_name = mod_cls
                 try:
                     mod = importlib.import_module(mod_name)
                     cls = getattr(mod, cls_name)
                     db_file = getattr(cls, "DB_FILE", getattr(cls, "DB_PATH", db_file))
+                    try:
+                        try:
+                            db = cls(vector_backend="annoy")  # type: ignore[call-arg]
+                        except Exception:
+                            db = cls()  # type: ignore[call-arg]
+                    except Exception:
+                        db = None
+                    if db is not None:
+                        meta_candidate = getattr(
+                            db, "metadata_path", getattr(db, "index_path", None)
+                        )
+                        if meta_candidate:
+                            meta_path = Path(meta_candidate)
                 except Exception:
                     cls = None
 
             db_path = resolve_path(db_file)
-            meta_path = resolve_path(f"{name}_embeddings.json")
             try:
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
@@ -842,6 +856,7 @@ def ensure_embeddings_fresh(
             info: Dict[str, Any] = {
                 "db_mtime": db_mtime,
                 "last_vectorization": last_vec,
+                "meta_path": str(meta_path),
             }
             if last_vec < db_mtime:
                 info["reason"] = "db modified after last vectorisation"
@@ -862,10 +877,11 @@ def ensure_embeddings_fresh(
 
             if cls:
                 try:
-                    try:
-                        db = cls(vector_backend="annoy")  # type: ignore[call-arg]
-                    except Exception:
-                        db = cls()  # type: ignore[call-arg]
+                    if db is None:
+                        try:
+                            db = cls(vector_backend="annoy")  # type: ignore[call-arg]
+                        except Exception:
+                            db = cls()  # type: ignore[call-arg]
                     record_count = sum(1 for _ in db.iter_records())
                     vector_count = len(getattr(db, "_metadata", {}))
                     info["record_count"] = record_count
@@ -889,10 +905,11 @@ def ensure_embeddings_fresh(
 
     for db_name, info in diagnostics.items():
         logger.info(
-            "embedding check %s: db_mtime=%s meta_mtime=%s last_vectorization=%s record_count=%s vector_count=%s reason=%s",
+            "embedding check %s: db_mtime=%s meta_mtime=%s meta_path=%s last_vectorization=%s record_count=%s vector_count=%s reason=%s",
             db_name,
             info.get("db_mtime"),
             info.get("meta_mtime"),
+            info.get("meta_path"),
             info.get("last_vectorization"),
             info.get("record_count"),
             info.get("vector_count"),
