@@ -15,7 +15,9 @@ from .init import (
 print("🧱 SI-2b: importing orchestration")
 from .orchestration import (
     integrate_orphans,
+    integrate_orphans_sync,
     post_round_orphan_scan,
+    post_round_orphan_scan_sync,
     self_improvement_cycle,
     start_self_improvement_cycle,
     stop_self_improvement_cycle,
@@ -74,7 +76,9 @@ __all__ = [
     "_atomic_write",
     "get_default_synergy_weights",
     "integrate_orphans",
+    "integrate_orphans_sync",
     "post_round_orphan_scan",
+    "post_round_orphan_scan_sync",
     "self_improvement_cycle",
     "start_self_improvement_cycle",
     "stop_self_improvement_cycle",

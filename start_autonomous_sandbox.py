@@ -281,7 +281,11 @@ from self_improvement.workflow_discovery import discover_workflow_specs
 from self_improvement.component_workflow_synthesis import discover_component_workflows
 from sandbox_orchestrator import SandboxOrchestrator
 from context_builder_util import create_context_builder
-from self_improvement.orphan_handling import integrate_orphans, post_round_orphan_scan
+from self_improvement.orphan_handling import (
+    integrate_orphans,
+    integrate_orphans_sync,
+    post_round_orphan_scan,
+)
 from self_improvement.meta_planning import (
     record_workflow_iteration,
     workflow_controller_status,
@@ -3374,7 +3378,9 @@ def main(argv: list[str] | None = None) -> None:
                     )
                     if include_orphans:
                         try:
-                            orphan_modules = integrate_orphans(recursive=recursive_orphans)
+                            orphan_modules = integrate_orphans_sync(
+                                recursive=recursive_orphans
+                            )
                             orphan_specs.extend(
                                 {
                                     "workflow": [module],

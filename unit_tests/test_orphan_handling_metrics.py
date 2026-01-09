@@ -56,7 +56,7 @@ def test_integrate_orphans_success(monkeypatch):
         orphan_handling, "_call_with_retries", lambda func, *a, **kw: func(*a, **kw)
     )
 
-    result = orphan_handling.integrate_orphans()
+    result = orphan_handling.integrate_orphans_sync()
     assert result == ["mod_a"]
     assert orphan_handling.orphan_integration_success_total._value.get() == 1.0
     assert orphan_handling.orphan_integration_failure_total._value.get() == 0.0
@@ -74,8 +74,7 @@ def test_post_round_orphan_scan_failure(monkeypatch):
     )
 
     with pytest.raises(RuntimeError):
-        orphan_handling.post_round_orphan_scan()
+        orphan_handling.post_round_orphan_scan_sync()
 
     assert orphan_handling.orphan_integration_success_total._value.get() == 0.0
     assert orphan_handling.orphan_integration_failure_total._value.get() == 1.0
-
