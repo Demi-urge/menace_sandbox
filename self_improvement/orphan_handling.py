@@ -7,6 +7,7 @@ configuration is incomplete.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict
 
@@ -28,18 +29,20 @@ logger = logging.getLogger(__name__)
 
 
 def _default_repo_path(settings: SandboxSettings) -> Path:
-    # Defaults must be cross-platform and honor configured repo roots.
-    try:
-        repo_root = get_project_root()
-    except Exception:
-        repo_root = None
-    if repo_root is None or not repo_root.exists():
+    repo_path = os.getenv("SANDBOX_REPO_PATH") or getattr(
+        settings, "sandbox_repo_path", None
+    )
+    if repo_path:
+        repo_root = Path(resolve_path(repo_path))
+    else:
         try:
-            repo_root = Path(resolve_path(settings.sandbox_repo_path))
+            repo_root = get_project_root()
         except Exception:
-            repo_root = Path.cwd()
+            repo_root = None
+        if repo_root is None:
+            repo_root = Path(resolve_path("."))
     if not repo_root.exists():
-        repo_root = Path.cwd()
+        logger.warning("Resolved repo path does not exist: %s", repo_root)
     return repo_root
 
 
