@@ -53,7 +53,7 @@ _RESEARCH_AGGREGATOR_TYPES: tuple[type[Any], type[Any]] | None = None
 def _load_research_aggregator_types() -> tuple[type[Any], type[Any]]:
     global _RESEARCH_AGGREGATOR_TYPES
     if _RESEARCH_AGGREGATOR_TYPES is None:
-        from .research_models import InfoDB, ResearchItem
+        from .research_storage import InfoDB, ResearchItem
 
         _RESEARCH_AGGREGATOR_TYPES = (InfoDB, ResearchItem)
     return _RESEARCH_AGGREGATOR_TYPES
@@ -235,6 +235,6 @@ class ResearchFallbackBot:
 __all__ = ["ResearchFallbackBot", "FallbackResult"]
 if TYPE_CHECKING:  # pragma: no cover - typing helper
     from .self_coding_manager import SelfCodingManager
-    from .research_models import InfoDB, ResearchItem
+    from .research_storage import InfoDB, ResearchItem
 else:  # pragma: no cover - runtime fallback when manager is unused
     SelfCodingManager = object  # type: ignore[assignment]
