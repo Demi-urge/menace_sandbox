@@ -858,20 +858,16 @@ def ensure_embeddings_fresh(
                 "last_vectorization": last_vec,
                 "meta_path": str(meta_path),
             }
-            if last_vec < db_mtime:
-                info["reason"] = "db modified after last vectorisation"
-                info["meta_mtime"] = meta_path.stat().st_mtime if meta_path.exists() else 0.0
-                pending[name] = info
-                continue
-
             meta_exists = meta_path.exists()
             meta_mtime = meta_path.stat().st_mtime if meta_exists else 0.0
             info["meta_mtime"] = meta_mtime
-            if meta_mtime < db_mtime:
-                reason = (
-                    "embedding metadata missing" if not meta_exists else "embedding metadata stale"
-                )
-                info["reason"] = reason
+            if not meta_exists:
+                info["reason"] = "embedding metadata missing"
+                pending[name] = info
+                continue
+
+            if last_vec < db_mtime:
+                info["reason"] = "db modified after last vectorisation"
                 pending[name] = info
                 continue
 
@@ -950,12 +946,13 @@ def ensure_embeddings_fresh(
     for _ in range(max(retries, 1)):
         processed = list(pending.keys())
         _run_backfill(processed)
+        pending = _needs_backfill(processed)
         now = time.time()
         for name in processed:
-            timestamps[name] = now
+            if name not in pending:
+                timestamps[name] = now
         _store_timestamps(timestamps)
         time.sleep(delay)
-        pending = _needs_backfill(processed)
         if not pending:
             return diagnostics if return_details else None
 
