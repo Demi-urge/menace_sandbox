@@ -204,6 +204,10 @@ def create_context_builder(*args, bootstrap_safe: bool = False, **kwargs):  # ty
     except TypeError as exc:
         raise ValueError("ContextBuilder implementation rejected database paths") from exc
 
+    if hasattr(builder, "validate_retriever_config"):
+        diagnostics = builder.validate_retriever_config()
+        _LOGGER.debug("ContextBuilder retriever diagnostics: %s", diagnostics)
+
     try:
         # Hint downstream bootstrap helpers that vector workloads are expected so
         # they can select the correct timeout tier.

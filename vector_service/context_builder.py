@@ -1085,6 +1085,11 @@ class ContextBuilder:
             "workflows": self.workflows_db,
             "information": self.information_db,
         }
+        if not any(self._db_paths.values()):
+            logger.warning(
+                "ContextBuilder initialised without database paths; retriever "
+                "validation will fail until DB paths are provided."
+            )
         self._retriever_kwargs_ready = False
         # Environment overrides allow runtime experimentation without config
         # reloads.  ``STACK_CONTEXT_ENABLED`` takes precedence over the value
@@ -1169,6 +1174,125 @@ class ContextBuilder:
         except Exception:
             return value
 
+    def _retriever_db_specs(
+        self,
+    ) -> tuple[tuple[str, tuple[str, ...], str, str, str], ...]:
+        return (
+            (
+                "bots",
+                ("bot_database", "menace.bot_database", "menace_sandbox.bot_database"),
+                "BotDB",
+                "bots",
+                "bot_db",
+            ),
+            (
+                "workflows",
+                (
+                    "task_handoff_bot",
+                    "menace.task_handoff_bot",
+                    "menace_sandbox.task_handoff_bot",
+                ),
+                "WorkflowDB",
+                "workflows",
+                "workflow_db",
+            ),
+            (
+                "errors",
+                ("error_bot", "menace.error_bot", "menace_sandbox.error_bot"),
+                "ErrorDB",
+                "errors",
+                "error_db",
+            ),
+            (
+                "information",
+                (
+                    "information_db",
+                    "menace.information_db",
+                    "menace_sandbox.information_db",
+                ),
+                "InformationDB",
+                "information",
+                "information_db",
+            ),
+            (
+                "code",
+                ("code_database", "menace.code_database", "menace_sandbox.code_database"),
+                "CodeDB",
+                "code",
+                "code_db",
+            ),
+        )
+
+    def validate_retriever_config(self) -> Dict[str, str]:
+        """Validate retriever DB configuration and return diagnostics."""
+
+        diagnostics: Dict[str, str] = {}
+        successes = 0
+        db_paths = dict(self._db_paths or {})
+
+        for label, module_names, class_name, path_key, _kwarg_name in self._retriever_db_specs():
+            raw_path = db_paths.get(path_key)
+            if not raw_path or not str(raw_path).strip():
+                diagnostics[label] = "error: missing path"
+                continue
+            resolved_path = self._resolve_db_path(raw_path)
+            if not resolved_path:
+                diagnostics[label] = "error: missing path"
+                continue
+            path = Path(resolved_path)
+            if not path.exists():
+                diagnostics[label] = "error: path does not exist"
+                continue
+            if not path.is_file():
+                diagnostics[label] = "error: path is not a file"
+                continue
+            try:
+                with path.open("rb"):
+                    pass
+            except Exception as exc:
+                diagnostics[label] = f"error: unreadable ({exc})"
+                continue
+
+            db_class = None
+            import_error: Exception | None = None
+            for module_name in module_names:
+                try:
+                    module = importlib.import_module(module_name)
+                except Exception as exc:
+                    import_error = exc
+                    continue
+                db_class = getattr(module, class_name, None)
+                if db_class is not None:
+                    import_error = None
+                    break
+            if db_class is None:
+                detail = (
+                    f"import failed: {import_error}"
+                    if import_error is not None
+                    else f"missing {class_name} in {module_names}"
+                )
+                diagnostics[label] = f"error: {detail}"
+                continue
+            try:
+                db_class(Path(resolved_path))
+            except Exception as exc:
+                diagnostics[label] = f"error: {exc}"
+                continue
+
+            diagnostics[label] = "ok"
+            successes += 1
+
+        if successes == 0:
+            detail = ", ".join(
+                f"{name}={status}" for name, status in diagnostics.items()
+            )
+            raise VectorServiceError(
+                "No retriever databases could be initialised. Diagnostics: "
+                f"{detail}"
+            )
+
+        return diagnostics
+
     def _build_retriever_kwargs(self) -> Dict[str, Any]:
         db_paths = dict(self._db_paths or {})
         if not any(db_paths.values()):
@@ -1219,42 +1343,14 @@ class ContextBuilder:
             except Exception as exc:
                 failures[label] = str(exc)
                 logger.exception("failed to initialise %s at %s", class_name, resolved_path)
-
-        _init_db(
-            label="bot_db",
-            module_names=("bot_database", "menace.bot_database", "menace_sandbox.bot_database"),
-            class_name="BotDB",
-            path_key="bots",
-            kwarg_name="bot_db",
-        )
-        _init_db(
-            label="workflow_db",
-            module_names=("task_handoff_bot", "menace.task_handoff_bot", "menace_sandbox.task_handoff_bot"),
-            class_name="WorkflowDB",
-            path_key="workflows",
-            kwarg_name="workflow_db",
-        )
-        _init_db(
-            label="error_db",
-            module_names=("error_bot", "menace.error_bot", "menace_sandbox.error_bot"),
-            class_name="ErrorDB",
-            path_key="errors",
-            kwarg_name="error_db",
-        )
-        _init_db(
-            label="information_db",
-            module_names=("information_db", "menace.information_db", "menace_sandbox.information_db"),
-            class_name="InformationDB",
-            path_key="information",
-            kwarg_name="information_db",
-        )
-        _init_db(
-            label="code_db",
-            module_names=("code_database", "menace.code_database", "menace_sandbox.code_database"),
-            class_name="CodeDB",
-            path_key="code",
-            kwarg_name="code_db",
-        )
+        for label, module_names, class_name, path_key, kwarg_name in self._retriever_db_specs():
+            _init_db(
+                label=label,
+                module_names=module_names,
+                class_name=class_name,
+                path_key=path_key,
+                kwarg_name=kwarg_name,
+            )
 
         if not retriever_kwargs and failures:
             detail = ", ".join(f"{name}: {reason}" for name, reason in failures.items())

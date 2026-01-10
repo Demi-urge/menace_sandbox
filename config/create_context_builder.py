@@ -98,7 +98,14 @@ def create_context_builder() -> ContextBuilder:
         pass
 
     try:
-        return ContextBuilder(**builder_kwargs)
+        builder = ContextBuilder(**builder_kwargs)
+        try:
+            diagnostics = builder.validate_retriever_config()
+            logger.debug("ContextBuilder retriever diagnostics: %s", diagnostics)
+        except Exception:
+            logger.exception("ContextBuilder retriever validation failed")
+            raise
+        return builder
     except TypeError:  # pragma: no cover - fallback to stub builder
 
         class _StubContextBuilder:
