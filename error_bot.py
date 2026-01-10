@@ -425,6 +425,12 @@ class ErrorDB(EmbeddableDBMixin):
     """SQLite-backed storage for known errors and discrepancies."""
 
     DB_FILE = "errors.db"
+    DEFAULT_VECTOR_INDEX_PATH = "error_embeddings.index"
+
+    @classmethod
+    def default_embedding_paths(cls) -> tuple[Path, Path]:
+        index_path = Path(cls.DEFAULT_VECTOR_INDEX_PATH)
+        return index_path, index_path.with_suffix(".json")
 
     def __init__(
         self,
