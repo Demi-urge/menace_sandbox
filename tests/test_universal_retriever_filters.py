@@ -56,10 +56,29 @@ def test_register_db_without_encode_text_does_not_replace_encoder():
     assert "lookup" in retriever._non_encoder_dbs
 
 
-def test_missing_encoder_raises_clear_error():
-    with pytest.raises(ValueError, match="No registered db exposes encode_text"):
-        UniversalRetriever(
-            bot_db=DummyLookupDB(),
-            enable_model_ranking=False,
-            enable_reliability_bias=False,
-        )
+def test_missing_encoder_raises_clear_error(monkeypatch):
+    retriever = UniversalRetriever(
+        bot_db=DummyLookupDB(),
+        enable_model_ranking=False,
+        enable_reliability_bias=False,
+    )
+    monkeypatch.setattr(
+        "vector_service.embed_utils.get_text_embeddings", lambda *_args, **_kwargs: []
+    )
+    retriever._encoder = None
+    with pytest.raises(RuntimeError, match="No text embedding backend available"):
+        retriever._to_vector("query")
+
+
+def test_text_embeddings_fallback_when_no_encoder(monkeypatch):
+    retriever = UniversalRetriever(
+        bot_db=DummyLookupDB(),
+        enable_model_ranking=False,
+        enable_reliability_bias=False,
+    )
+    monkeypatch.setattr(
+        "vector_service.embed_utils.get_text_embeddings",
+        lambda *_args, **_kwargs: [[0.25, 0.5]],
+    )
+    retriever._encoder = None
+    assert retriever._to_vector("query") == [0.25, 0.5]

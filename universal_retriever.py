@@ -19,7 +19,7 @@ import joblib
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import build_scope_clause
 from dynamic_path_router import get_project_roots, resolve_path
-from vector_service.exceptions import RetrieverConfigurationError
+from vector_service import embed_utils
 
 logger = logging.getLogger(__name__)
 
@@ -682,13 +682,15 @@ class UniversalRetriever:
         self.register_db("enhancement", enhancement_db, ("id",))
         self.register_db("information", information_db, ("id", "info_id", "item_id"))
 
-        if self._encoder is None and code_db is not None and hasattr(code_db, "encode_text"):
+        if self._encoder is None and code_db is not None and (
+            hasattr(code_db, "encode_text") or hasattr(code_db, "vectorise")
+        ):
             self._encoder = code_db
 
-        if self._encoder is None:
+        if self._encoder is None and not hasattr(embed_utils, "get_text_embeddings"):
             registered = ", ".join(sorted(self._dbs)) or "none"
             raise ValueError(
-                "No registered db exposes encode_text; registered dbs: "
+                "No registered db exposes encode_text or vectorise; registered dbs: "
                 f"{registered}"
             )
 
@@ -779,7 +781,7 @@ class UniversalRetriever:
             return
         self._dbs[name] = db
         self._id_fields[name] = tuple(id_fields)
-        if hasattr(db, "encode_text"):
+        if hasattr(db, "encode_text") or hasattr(db, "vectorise"):
             if self._encoder is None:
                 self._encoder = db
         else:
@@ -790,7 +792,7 @@ class UniversalRetriever:
             )
         if self._encoder is None:
             for candidate_name, candidate in self._dbs.items():
-                if hasattr(candidate, "encode_text"):
+                if hasattr(candidate, "encode_text") or hasattr(candidate, "vectorise"):
                     self._encoder = candidate
                     self._non_encoder_dbs.discard(candidate_name)
                     break
@@ -822,11 +824,16 @@ class UniversalRetriever:
         """
 
         if isinstance(query, str):
-            if self._encoder is None or not hasattr(self._encoder, "encode_text"):
-                raise RetrieverConfigurationError(
-                    "No encoder with encode_text is available; check DB registration."
-                )
-            return self._encoder.encode_text(query)
+            if self._encoder is not None:
+                if hasattr(self._encoder, "encode_text"):
+                    return self._encoder.encode_text(query)
+                if hasattr(self._encoder, "vectorise"):
+                    return self._encoder.vectorise("text", {"text": query})
+            if hasattr(embed_utils, "get_text_embeddings"):
+                embeddings = embed_utils.get_text_embeddings([query])
+                if embeddings:
+                    return list(embeddings[0])
+            raise RuntimeError("No text embedding backend available")
 
         if isinstance(query, Sequence) and not isinstance(query, (bytes, bytearray)):
             try:
