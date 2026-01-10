@@ -963,19 +963,17 @@ def ensure_embeddings_fresh(
                 pending[name] = info
                 continue
 
-            effective_meta_mtime = max(meta_mtime, last_vec)
-            if effective_meta_mtime < db_mtime:
-                info["reason"] = "db modified after last vectorisation"
-                pending[name] = info
-                continue
-
-            if cls:
+            db = _instantiate_metadata_reader(cls) if cls else None
+            if db is not None:
                 try:
-                    db = _instantiate_metadata_reader(cls)
-                    if db is None:
-                        continue
-                    record_count = sum(1 for _ in db.iter_records())
+                    record_count = 0
                     vector_count = len(getattr(db, "_metadata", {}))
+                    stale_record = False
+                    for record_id, record, _ in db.iter_records():
+                        record_count += 1
+                        if db.needs_refresh(record_id, record):
+                            stale_record = True
+                            break
                     info["record_count"] = record_count
                     info["vector_count"] = vector_count
                     if record_count != vector_count:
@@ -983,8 +981,17 @@ def ensure_embeddings_fresh(
                             f"record/vector count mismatch {record_count}/{vector_count}"
                         )
                         pending[name] = info
+                    elif stale_record:
+                        info["reason"] = "record requires refresh"
+                        pending[name] = info
                 except Exception:
-                    pass
+                    db = None
+
+            if db is None:
+                effective_meta_mtime = max(meta_mtime, last_vec)
+                if effective_meta_mtime < db_mtime:
+                    info["reason"] = "db modified after last vectorisation"
+                    pending[name] = info
         return pending
 
     diagnostics = _needs_backfill(names)
