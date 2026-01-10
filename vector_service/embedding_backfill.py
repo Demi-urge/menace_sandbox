@@ -976,6 +976,8 @@ def ensure_embeddings_fresh(
                     continue
 
                 last_vec = float(timestamps.get(name, 0.0))
+                effective_meta_mtime = max(meta_mtime, last_vec)
+                stale_by_mtime = effective_meta_mtime < db_mtime
                 info: Dict[str, Any] = {
                     "db_mtime": db_mtime,
                     "last_vectorization": last_vec,
@@ -1011,11 +1013,12 @@ def ensure_embeddings_fresh(
                     except Exception:
                         db = None
 
-                if db is None:
-                    effective_meta_mtime = max(meta_mtime, last_vec)
-                    if effective_meta_mtime < db_mtime:
+                if stale_by_mtime:
+                    if db is None:
                         info["reason"] = "db modified after last vectorisation"
                         pending[name] = info
+                    elif name not in pending:
+                        timestamps[name] = db_mtime
                 if name not in pending and import_failed:
                     info["reason"] = "import failed"
                     if import_error:
