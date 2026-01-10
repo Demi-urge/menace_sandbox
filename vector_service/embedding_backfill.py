@@ -929,69 +929,100 @@ def ensure_embeddings_fresh(
     def _needs_backfill(check: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         registry = _load_registry()
         pending: Dict[str, Dict[str, Any]] = {}
-        for name in check:
-            cls = None
-            mod_cls = registry.get(name)
-            db_file = f"{name}.db"
-            if mod_cls:
-                mod_name, cls_name = mod_cls
+        pkg_root_path = resolve_path("vector_service")
+        pkg_root = pkg_root_path.name
+        parent = pkg_root_path.parent
+        added_path: str | None = None
+        if str(parent) not in sys.path:
+            added_path = str(parent)
+            sys.path.insert(0, added_path)
+        try:
+            for name in check:
+                cls = None
+                mod_cls = registry.get(name)
+                db_file = f"{name}.db"
+                import_failed = False
+                import_error: BaseException | None = None
+                if mod_cls:
+                    mod_name, cls_name = mod_cls
+                    try:
+                        mod = importlib.import_module(mod_name)
+                    except BaseException:
+                        try:
+                            mod = importlib.import_module(f"{pkg_root}.{mod_name}")
+                        except BaseException as exc:
+                            import_failed = True
+                            import_error = exc
+                            mod = None
+                    if mod is not None:
+                        try:
+                            cls = getattr(mod, cls_name)
+                            db_file = getattr(
+                                cls, "DB_FILE", getattr(cls, "DB_PATH", db_file)
+                            )
+                        except BaseException as exc:
+                            import_failed = True
+                            import_error = exc
+                            cls = None
+
+                db_path = resolve_path(db_file)
+                meta_path, meta_mtime, meta_exists = _resolve_metadata_path(
+                    name, cls, db_path
+                )
                 try:
-                    mod = importlib.import_module(mod_name)
-                    cls = getattr(mod, cls_name)
-                    db_file = getattr(cls, "DB_FILE", getattr(cls, "DB_PATH", db_file))
-                except Exception:
-                    cls = None
+                    db_mtime = db_path.stat().st_mtime
+                except FileNotFoundError:
+                    continue
 
-            db_path = resolve_path(db_file)
-            meta_path, meta_mtime, meta_exists = _resolve_metadata_path(
-                name, cls, db_path
-            )
-            try:
-                db_mtime = db_path.stat().st_mtime
-            except FileNotFoundError:
-                continue
-
-            last_vec = float(timestamps.get(name, 0.0))
-            info: Dict[str, Any] = {
-                "db_mtime": db_mtime,
-                "last_vectorization": last_vec,
-                "meta_path": str(meta_path),
-            }
-            info["meta_mtime"] = meta_mtime
-            if not meta_exists:
-                info["reason"] = "embedding metadata missing"
-                pending[name] = info
-                continue
-
-            db = _instantiate_metadata_reader(cls) if cls else None
-            if db is not None:
-                try:
-                    record_count = 0
-                    vector_count = len(getattr(db, "_metadata", {}))
-                    stale_record = False
-                    for record_id, record, _ in db.iter_records():
-                        record_count += 1
-                        if db.needs_refresh(record_id, record):
-                            stale_record = True
-                            break
-                    info["record_count"] = record_count
-                    info["vector_count"] = vector_count
-                    if record_count != vector_count:
-                        info["reason"] = (
-                            f"record/vector count mismatch {record_count}/{vector_count}"
-                        )
-                        pending[name] = info
-                    elif stale_record:
-                        info["reason"] = "record requires refresh"
-                        pending[name] = info
-                except Exception:
-                    db = None
-
-            if db is None:
-                effective_meta_mtime = max(meta_mtime, last_vec)
-                if effective_meta_mtime < db_mtime:
-                    info["reason"] = "db modified after last vectorisation"
+                last_vec = float(timestamps.get(name, 0.0))
+                info: Dict[str, Any] = {
+                    "db_mtime": db_mtime,
+                    "last_vectorization": last_vec,
+                    "meta_path": str(meta_path),
+                }
+                info["meta_mtime"] = meta_mtime
+                if not meta_exists:
+                    info["reason"] = "embedding metadata missing"
                     pending[name] = info
+                    continue
+
+                db = _instantiate_metadata_reader(cls) if cls else None
+                if db is not None:
+                    try:
+                        record_count = 0
+                        vector_count = len(getattr(db, "_metadata", {}))
+                        stale_record = False
+                        for record_id, record, _ in db.iter_records():
+                            record_count += 1
+                            if db.needs_refresh(record_id, record):
+                                stale_record = True
+                                break
+                        info["record_count"] = record_count
+                        info["vector_count"] = vector_count
+                        if record_count != vector_count:
+                            info["reason"] = (
+                                f"record/vector count mismatch {record_count}/{vector_count}"
+                            )
+                            pending[name] = info
+                        elif stale_record:
+                            info["reason"] = "record requires refresh"
+                            pending[name] = info
+                    except Exception:
+                        db = None
+
+                if db is None:
+                    effective_meta_mtime = max(meta_mtime, last_vec)
+                    if effective_meta_mtime < db_mtime:
+                        info["reason"] = "db modified after last vectorisation"
+                        pending[name] = info
+                if name not in pending and import_failed:
+                    info["reason"] = "import failed"
+                    if import_error:
+                        info["import_error"] = str(import_error)
+                    pending[name] = info
+        finally:
+            if added_path and added_path in sys.path:
+                sys.path.remove(added_path)
         return pending
 
     diagnostics = _needs_backfill(names)
