@@ -156,6 +156,67 @@ def test_needs_backfill_ignores_meta_mtime_when_vectorization_newer(
     assert result == {}
 
 
+def test_ensure_embeddings_fresh_updates_timestamp_when_db_mtime_changes(
+    monkeypatch, tmp_path
+):
+    trans_mod = types.ModuleType("transformers")
+    trans_mod.AutoModel = object
+    trans_mod.AutoTokenizer = object
+    sys.modules["transformers"] = trans_mod
+    monkeypatch.setattr("dynamic_path_router.resolve_path", lambda p: Path(tmp_path / p))
+
+    import vector_service.embedding_backfill as eb
+    eb = importlib.reload(eb)
+
+    monkeypatch.setattr(eb, "_TIMESTAMP_FILE", Path(tmp_path / "ts.json"))
+
+    class DummyDB:
+        DB_FILE = "dummy.db"
+        embedding_version = 1
+
+        def __init__(self, *args, **kwargs):
+            self._metadata = {"1": {"embedding_version": 1}, "2": {"embedding_version": 1}}
+
+        def iter_records(self):
+            return iter([(1, "a", None), (2, "b", None)])
+
+        def needs_refresh(self, record_id, record):
+            return False
+
+    dummy_mod = types.ModuleType("dummy_mod_mtime")
+    dummy_mod.DummyDB = DummyDB
+    sys.modules["dummy_mod_mtime"] = dummy_mod
+
+    monkeypatch.setattr(
+        eb, "_load_registry", lambda path=None: {"dummy": ("dummy_mod_mtime", "DummyDB")}
+    )
+
+    db_path = Path(tmp_path / "dummy.db")
+    db_path.write_text("x")
+    meta_path = Path(tmp_path / "dummy_embeddings.json")
+    meta_path.write_text("{}")
+
+    now = time.time()
+    meta_time = now - 200
+    db_time = now - 50
+    last_vec = now - 150
+    eb._TIMESTAMP_FILE.write_text(json.dumps({"dummy": last_vec}))
+
+    os.utime(meta_path, (meta_time, meta_time))
+    os.utime(db_path, (db_time, db_time))
+
+    async def fail_schedule_backfill(*, dbs=None):
+        raise AssertionError("schedule_backfill should not be called")
+
+    monkeypatch.setattr(eb, "schedule_backfill", fail_schedule_backfill)
+
+    result = eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0, return_details=True)
+
+    assert result == {}
+    updated = json.loads(eb._TIMESTAMP_FILE.read_text())["dummy"]
+    assert updated >= db_time
+
+
 def test_ensure_embeddings_fresh_uses_last_vectorization_over_stale_metadata(
     monkeypatch, tmp_path
 ):
