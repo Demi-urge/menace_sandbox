@@ -57,6 +57,7 @@ class InformationDB(EmbeddableDBMixin):
         embedding_version: int = 1,
         vector_backend: str = "annoy",
         event_bus: UnifiedEventBus | None = None,
+        defer_index_load: bool | None = None,
     ) -> None:
         self.router = router or GLOBAL_ROUTER or init_db_router(
             "information", path, path
@@ -101,6 +102,7 @@ class InformationDB(EmbeddableDBMixin):
             metadata_path=meta_path,
             embedding_version=embedding_version,
             backend=vector_backend,
+            defer_index_load=defer_index_load,
         )
 
     # ------------------------------------------------------------------

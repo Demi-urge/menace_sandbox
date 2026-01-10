@@ -168,6 +168,7 @@ class EnhancementDB(EmbeddableDBMixin):
         embedding_version: int = 1,
         event_bus: UnifiedEventBus | None = None,
         router: "DBRouter | None" = None,
+        defer_index_load: bool | None = None,
     ) -> None:
         self.path = Path(path) if path else DB_PATH
         self.override_manager = override_manager
@@ -187,6 +188,7 @@ class EnhancementDB(EmbeddableDBMixin):
             metadata_path=metadata_path,
             embedding_version=embedding_version,
             backend=vector_backend,
+            defer_index_load=defer_index_load,
         )
 
     def _current_menace_id(self, source_menace_id: str | None) -> str:

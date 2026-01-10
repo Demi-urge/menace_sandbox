@@ -7,6 +7,7 @@ import re
 import contextlib
 import importlib
 import importlib.util
+import inspect
 from dataclasses import dataclass, fields, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Mapping
@@ -1319,13 +1320,48 @@ class ContextBuilder:
 
         return diagnostics
 
-    def _build_retriever_kwargs(self) -> Dict[str, Any]:
+    def _build_retriever_kwargs(
+        self,
+        *,
+        bootstrap_fast: bool | None = None,
+        warmup: bool | None = None,
+    ) -> Dict[str, Any]:
         db_paths = dict(self._db_paths or {})
         if not any(db_paths.values()):
             return {}
 
         failures: Dict[str, str] = {}
         retriever_kwargs: Dict[str, Any] = {}
+        bootstrap_flag = bool(
+            self._bootstrap_fast if bootstrap_fast is None else bootstrap_fast
+        )
+        warmup_flag = bool(warmup or _VECTOR_SERVICE_WARMUP)
+
+        def _db_init_kwargs(db_class: Any) -> Dict[str, Any]:
+            if not (bootstrap_flag or warmup_flag):
+                return {}
+            try:
+                signature = inspect.signature(db_class)
+            except (TypeError, ValueError):
+                try:
+                    signature = inspect.signature(db_class.__init__)
+                except (TypeError, ValueError):
+                    signature = None
+            if signature is None:
+                return {}
+            params = signature.parameters
+            supports_kwargs = any(
+                param.kind is inspect.Parameter.VAR_KEYWORD
+                for param in params.values()
+            )
+            init_kwargs: Dict[str, Any] = {}
+            if supports_kwargs or "bootstrap_fast" in params:
+                init_kwargs["bootstrap_fast"] = bootstrap_flag
+            if supports_kwargs or "warmup" in params:
+                init_kwargs["warmup"] = warmup_flag
+            if supports_kwargs or "defer_index_load" in params:
+                init_kwargs["defer_index_load"] = bool(bootstrap_flag or warmup_flag)
+            return init_kwargs
 
         def _init_db(
             *,
@@ -1365,8 +1401,10 @@ class ContextBuilder:
                 )
                 return
             try:
+                init_kwargs = _db_init_kwargs(db_class)
                 retriever_kwargs[kwarg_name] = db_class(
-                    Path(resolved_path) if resolved_path is not None else None
+                    Path(resolved_path) if resolved_path is not None else None,
+                    **init_kwargs,
                 )
             except Exception as exc:
                 failures[label] = str(exc)

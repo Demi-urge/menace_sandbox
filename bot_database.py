@@ -178,6 +178,7 @@ class BotDB(EmbeddableDBMixin):
         vector_backend: str = "annoy",
         vector_index_path: Path | str = "bot_embeddings.index",
         embedding_version: int = 1,
+        defer_index_load: bool | None = None,
     ) -> None:
         if GLOBAL_ROUTER is None:
             raise RuntimeError("Database router is not initialised")
@@ -258,6 +259,7 @@ class BotDB(EmbeddableDBMixin):
             index_path=vector_index_path,
             embedding_version=embedding_version,
             backend=vector_backend,
+            defer_index_load=defer_index_load,
         )
 
     # basic helpers -----------------------------------------------------

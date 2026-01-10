@@ -14,6 +14,7 @@ import asyncio
 import math
 import os
 import json
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Sequence
 import copy
 import contextlib
@@ -69,6 +70,8 @@ try:  # pragma: no cover - optional dependency for stack integration
     from .stack_retriever import StackRetriever as _StackDatasetRetriever  # type: ignore
 except Exception:  # pragma: no cover - stack dataset optional
     _StackDatasetRetriever = None  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -139,9 +142,41 @@ class Retriever:
         if self.retriever is None:
             if UniversalRetriever is None:  # pragma: no cover - defensive
                 raise RuntimeError("UniversalRetriever unavailable")
+            self._populate_retriever_kwargs()
             self._validate_retriever_config()
             self.retriever = UniversalRetriever(**self.retriever_kwargs)
         return self.retriever
+
+    def _populate_retriever_kwargs(self) -> None:
+        if self.retriever_kwargs:
+            return
+        builder = self.context_builder
+        if builder is None:
+            return
+        build_kwargs = getattr(builder, "_build_retriever_kwargs", None)
+        if callable(build_kwargs):
+            bootstrap_fast = self.bootstrap_fast
+            if bootstrap_fast is None:
+                bootstrap_fast = getattr(builder, "_bootstrap_fast", None)
+            try:
+                kwargs = build_kwargs(
+                    bootstrap_fast=bootstrap_fast,
+                    warmup=None,
+                )
+            except TypeError:
+                kwargs = build_kwargs()
+            except Exception:
+                logger.exception("failed to build retriever kwargs from context builder")
+                kwargs = {}
+            if kwargs:
+                self.retriever_kwargs.update(kwargs)
+                return
+        db_paths = getattr(builder, "_db_paths", None)
+        if isinstance(db_paths, Mapping) and any(db_paths.values()):
+            logger.error(
+                "No retriever databases were initialised despite configured DB paths: %s",
+                dict(db_paths),
+            )
 
     def _validate_retriever_config(self) -> None:
         db_keys = (
@@ -185,6 +220,12 @@ class Retriever:
         else:
             config_hint = "ContextBuilder DB paths (context_builder._db_paths) are unavailable"
 
+        logger.error(
+            "Retriever configuration missing database inputs; no DB instances available. "
+            "Missing DBs: %s. %s.",
+            missing_list,
+            config_hint,
+        )
         raise RetrieverConfigurationError(
             "Retriever configuration missing database inputs. "
             f"Missing DBs: {missing_list}. {config_hint}."
