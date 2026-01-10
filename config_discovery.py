@@ -60,7 +60,7 @@ class ConfigDiscovery:
     ]
     HOST_FILES = ["hosts", "hosts.txt", "cluster_hosts", "/etc/menace/hosts"]
     DEFAULT_STACK_DIR = Path("~/.cache/menace/stack")
-    STACK_ENV_FILENAMES = (".stack_env", "stack.env")
+    STACK_ENV_FILENAMES = (".stack_env", "stack.env", ".env", ".env.local")
 
     def _find_terraform_dir(self) -> str | None:
         for name in self.TERRAFORM_PATHS:
@@ -102,7 +102,6 @@ class ConfigDiscovery:
             os.environ.setdefault("REMOTE_HOSTS", ",".join(hosts))
 
         self.reload_stack_settings()
-        self.reload_tokens()
         self._detect_hardware()
         self._detect_cloud()
 
@@ -155,6 +154,7 @@ class ConfigDiscovery:
                     self._apply_stack_env_value(key, value)
 
         self._apply_stack_defaults()
+        self.reload_tokens()
 
     # ------------------------------------------------------------------
     def _discover_huggingface_token(self) -> str | None:
