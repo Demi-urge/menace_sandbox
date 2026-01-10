@@ -918,6 +918,12 @@ def ensure_embeddings_fresh(
         fallback = next(iter(candidates), Path("embeddings.json"))
         return fallback, 0.0, False
 
+    def _resolve_metadata_path(
+        name: str, cls: type | None, db_path: Path
+    ) -> tuple[Path, float, bool]:
+        candidates = _resolve_metadata_candidates(name, cls, db_path)
+        return _select_metadata_path(candidates)
+
     def _needs_backfill(check: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         registry = _load_registry()
         pending: Dict[str, Dict[str, Any]] = {}
@@ -935,8 +941,9 @@ def ensure_embeddings_fresh(
                     cls = None
 
             db_path = resolve_path(db_file)
-            candidates = _resolve_metadata_candidates(name, cls, db_path)
-            meta_path, meta_mtime, meta_exists = _select_metadata_path(candidates)
+            meta_path, meta_mtime, meta_exists = _resolve_metadata_path(
+                name, cls, db_path
+            )
             try:
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
@@ -1034,11 +1041,20 @@ def ensure_embeddings_fresh(
         processed = list(pending.keys())
         _run_backfill(processed)
         pending = _needs_backfill(processed)
+        if pending:
+            for name, info in pending.items():
+                logger.warning(
+                    "embedding still pending for %s: reason=%s meta_path=%s",
+                    name,
+                    info.get("reason"),
+                    info.get("meta_path"),
+                )
         now = time.time()
-        for name in processed:
-            if name not in pending:
+        updated = [name for name in processed if name not in pending]
+        if updated:
+            for name in updated:
                 timestamps[name] = now
-        _store_timestamps(timestamps)
+            _store_timestamps(timestamps)
         time.sleep(delay)
         if not pending:
             return diagnostics if return_details else None

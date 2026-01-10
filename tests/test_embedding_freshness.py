@@ -296,6 +296,38 @@ def test_backfill_accepts_non_default_metadata_location(monkeypatch, tmp_path):
     assert alt_meta_path.exists()
 
 
+def test_ensure_embeddings_fresh_does_not_update_timestamp_when_pending(
+    monkeypatch, tmp_path, caplog
+):
+    trans_mod = types.ModuleType("transformers")
+    trans_mod.AutoModel = object
+    trans_mod.AutoTokenizer = object
+    sys.modules["transformers"] = trans_mod
+    monkeypatch.setattr("dynamic_path_router.resolve_path", lambda p: Path(tmp_path / p))
+
+    import vector_service.embedding_backfill as eb
+    eb = importlib.reload(eb)
+
+    monkeypatch.setattr(eb, "_TIMESTAMP_FILE", Path(tmp_path / "ts.json"))
+    monkeypatch.setattr(eb, "_load_registry", lambda path=None: {})
+    monkeypatch.setattr(eb, "schedule_backfill", _noop_schedule_backfill)
+
+    db_path = Path(tmp_path / "dummy.db")
+    db_path.write_text("x")
+    initial_ts = 123.0
+    eb._TIMESTAMP_FILE.write_text(json.dumps({"dummy": initial_ts}))
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(eb.StaleEmbeddingsError):
+            eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0)
+
+    updated = json.loads(eb._TIMESTAMP_FILE.read_text())
+    assert updated["dummy"] == initial_ts
+    assert "embedding still pending for dummy" in caplog.text
+    assert "embedding metadata missing" in caplog.text
+    assert str(db_path.with_suffix(".json")) in caplog.text
+
+
 def test_ensure_embeddings_fresh_uses_index_metadata_path(monkeypatch, tmp_path):
     trans_mod = types.ModuleType("transformers")
     trans_mod.AutoModel = object
