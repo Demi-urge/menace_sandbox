@@ -349,6 +349,7 @@ class CodeDB(EmbeddableDBMixin):
         event_bus: Optional[UnifiedEventBus] = None,
         engine: "Engine" | None = None,
         router: DBRouter | None = None,
+        defer_index_load: bool | None = None,
     ) -> None:
         """Create a new ``CodeDB`` instance.
 
@@ -438,6 +439,7 @@ class CodeDB(EmbeddableDBMixin):
                 metadata_path=meta_path,
                 backend="annoy",
                 event_bus=event_bus,
+                defer_index_load=defer_index_load,
             )
         except TypeError as exc:
             # ``object.__init__`` does not accept keyword arguments which can
@@ -452,6 +454,7 @@ class CodeDB(EmbeddableDBMixin):
                 metadata_path=meta_path,
                 backend="annoy",
                 event_bus=event_bus,
+                defer_index_load=defer_index_load,
             )
 
     @contextmanager

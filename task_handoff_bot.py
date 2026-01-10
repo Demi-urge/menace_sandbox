@@ -826,6 +826,7 @@ class WorkflowDB(EmbeddableDBMixin):
         vector_index_path: Path | str = "workflow_embeddings.index",
         embedding_version: int = 1,
         router: DBRouter | None = None,
+        defer_index_load: bool | None = None,
     ) -> None:
         logger.debug(
             "[trace] MRO chain: %s",
@@ -908,6 +909,7 @@ class WorkflowDB(EmbeddableDBMixin):
             embedding_version=embedding_version,
             backend=vector_backend,
             event_bus=event_bus,
+            defer_index_load=defer_index_load,
             logger=logger,
         )
 

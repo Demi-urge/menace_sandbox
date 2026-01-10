@@ -442,6 +442,7 @@ class ErrorDB(EmbeddableDBMixin):
         vector_index_path: Path | str = "error_embeddings.index",
         embedding_version: int = 1,
         router: DBRouter | None = None,
+        defer_index_load: bool | None = None,
     ) -> None:
         p = Path(path or "errors.db")
         self.router = router or GLOBAL_ROUTER or init_db_router(
@@ -588,6 +589,7 @@ class ErrorDB(EmbeddableDBMixin):
             metadata_path=Path(vector_index_path).with_suffix(".json"),
             embedding_version=embedding_version,
             backend=vector_backend,
+            defer_index_load=defer_index_load,
         )
 
     def _menace_id(self, override: str | None = None) -> str:
