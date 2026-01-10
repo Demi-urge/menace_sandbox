@@ -945,6 +945,7 @@ class ContextBuilder:
         stack_penalty_weight: float | None = None,
         provenance_token: str | None = None,
         bots_db: str | os.PathLike[str] | None = None,
+        enhancements_db: str | os.PathLike[str] | None = None,
         code_db: str | os.PathLike[str] | None = None,
         errors_db: str | os.PathLike[str] | None = None,
         workflows_db: str | os.PathLike[str] | None = None,
@@ -1074,12 +1075,14 @@ class ContextBuilder:
                 return str(value)
 
         self.bots_db = _normalise_db_path(bots_db)
+        self.enhancements_db = _normalise_db_path(enhancements_db)
         self.code_db = _normalise_db_path(code_db)
         self.errors_db = _normalise_db_path(errors_db)
         self.workflows_db = _normalise_db_path(workflows_db)
         self.information_db = _normalise_db_path(information_db)
         self._db_paths = {
             "bots": self.bots_db,
+            "enhancements": self.enhancements_db,
             "code": self.code_db,
             "errors": self.errors_db,
             "workflows": self.workflows_db,
@@ -1091,6 +1094,7 @@ class ContextBuilder:
                 "validation will fail until DB paths are provided."
             )
         self._retriever_kwargs_ready = False
+        self._ensure_retriever_kwargs()
         # Environment overrides allow runtime experimentation without config
         # reloads.  ``STACK_CONTEXT_ENABLED`` takes precedence over the value
         # in configuration, while ``STACK_CONTEXT_DISABLED`` always forces the
@@ -1186,6 +1190,17 @@ class ContextBuilder:
                 "bot_db",
             ),
             (
+                "enhancements",
+                (
+                    "chatgpt_enhancement_bot",
+                    "menace.chatgpt_enhancement_bot",
+                    "menace_sandbox.chatgpt_enhancement_bot",
+                ),
+                "EnhancementDB",
+                "enhancements",
+                "enhancement_db",
+            ),
+            (
                 "workflows",
                 (
                     "task_handoff_bot",
@@ -1211,6 +1226,17 @@ class ContextBuilder:
                     "menace_sandbox.information_db",
                 ),
                 "InformationDB",
+                "information",
+                "information_db",
+            ),
+            (
+                "information_fallback",
+                (
+                    "research_storage",
+                    "menace.research_storage",
+                    "menace_sandbox.research_storage",
+                ),
+                "InfoDB",
                 "information",
                 "information_db",
             ),
@@ -1309,6 +1335,8 @@ class ContextBuilder:
             path_key: str,
             kwarg_name: str,
         ) -> None:
+            if kwarg_name in retriever_kwargs:
+                return
             raw_path = db_paths.get(path_key)
             if not raw_path:
                 return
@@ -1354,9 +1382,8 @@ class ContextBuilder:
 
         if not retriever_kwargs and failures:
             detail = ", ".join(f"{name}: {reason}" for name, reason in failures.items())
-            raise VectorServiceError(
-                "Failed to initialise retriever databases. "
-                f"Tried: {detail}"
+            logger.warning(
+                "Failed to initialise retriever databases. Tried: %s", detail
             )
 
         return retriever_kwargs

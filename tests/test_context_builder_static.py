@@ -268,6 +268,34 @@ def test_flags_string_concatenation_prompt(tmp_path):
     ]
 
 
+def test_context_builder_populates_retriever_kwargs(tmp_path):
+    from db_router import init_db_router
+    from vector_service.context_builder import ContextBuilder
+
+    db_paths = {}
+    for name in ("bots.db", "code.db", "errors.db", "workflows.db", "information.db"):
+        path = tmp_path / name
+        path.write_text("")
+        db_paths[name] = str(path)
+
+    init_db_router(
+        "context_builder_test",
+        local_db_path=str(tmp_path / "menace_context_builder.db"),
+        shared_db_path=str(tmp_path / "shared_context_builder.db"),
+    )
+
+    builder = ContextBuilder(
+        bots_db=db_paths["bots.db"],
+        code_db=db_paths["code.db"],
+        errors_db=db_paths["errors.db"],
+        workflows_db=db_paths["workflows.db"],
+        information_db=db_paths["information.db"],
+    )
+
+    assert builder.retriever.retriever_kwargs
+    assert builder.retriever._get_retriever() is not None
+
+
 def test_flags_prompt_engine_build_prompt(tmp_path):
     from scripts.check_context_builder_usage import check_file
 
