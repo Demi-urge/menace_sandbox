@@ -3104,6 +3104,9 @@ class VectorMetricsDB:
         """Upgrade from bootstrap stub to full schema on first meaningful use."""
 
         init_start = time.perf_counter()
+        prior_boot_stub = self._boot_stub_active
+        prior_lazy_mode = self._lazy_mode
+        prior_lazy_primed = self._lazy_primed
         logger.info(
             "vector_metrics_db.bootstrap.lazy_exit.start",
             extra=_timestamp_payload(
@@ -3119,12 +3122,28 @@ class VectorMetricsDB:
         self._read_only = False
         self._boot_stub_active = False
         self._activation_requested = True
-        self._lazy_mode = False
-        self._lazy_primed = False
         self._persistence_activated = True
         self._persistence_activation_pending = False
         self._initialize_schema_defaults()
-        self._prepare_connection(init_start)
+        if not self._prepare_connection(init_start):
+            self._boot_stub_active = prior_boot_stub or True
+            self._lazy_mode = prior_lazy_mode or True
+            self._lazy_primed = prior_lazy_primed or True
+            self._persistence_activated = False
+            self._persistence_activation_pending = True
+            self._activation_requested = False
+            self._conn = self._stub_conn
+            logger.warning(
+                "vector_metrics_db.bootstrap.lazy_exit.deferred",
+                extra=_timestamp_payload(
+                    init_start,
+                    reason="schema_init_failed",
+                    warmup_mode=self._warmup_mode,
+                    bootstrap_fast=self.bootstrap_fast,
+                    stub_mode=self._boot_stub_active,
+                ),
+            )
+            return
         self._flush_stub_buffer()
         self._commit_required = False
         self._commit_reason = "first_use"
@@ -3414,10 +3433,10 @@ class VectorMetricsDB:
             p = requested
         return p, default_path
 
-    def _prepare_connection(self, init_start: float | None = None) -> None:
+    def _prepare_connection(self, init_start: float | None = None) -> bool:
         init_start = init_start or time.perf_counter()
         if self._conn is not None:
-            return
+            return True
         if not self._activation_requested:
             logger.info(
                 "vector_metrics_db.bootstrap.activation_not_requested",
@@ -3428,7 +3447,7 @@ class VectorMetricsDB:
                     stub_mode=self._boot_stub_active,
                 ),
             )
-            return
+            return False
         if self._warmup_mode or self._boot_stub_active:
             logger.info(
                 "vector_metrics_db.bootstrap.fast_return",
@@ -3439,7 +3458,7 @@ class VectorMetricsDB:
                     stub_mode=self._boot_stub_active,
                 ),
             )
-            return
+            return False
         if not self._persistence_activated:
             logger.info(
                 "vector_metrics_db.bootstrap.persistence_suspended",
@@ -3450,7 +3469,7 @@ class VectorMetricsDB:
                     stub_mode=self._boot_stub_active,
                 ),
             )
-            return
+            return False
         if self._bootstrap_context and not self._warmup_mode:
             logger.info(
                 "vector_metrics_db.bootstrap.eager_initialization",
@@ -3531,6 +3550,7 @@ class VectorMetricsDB:
                 logger.exception("vector_metrics_db.sidecar.inspect_failed")
 
         schema_timeout_ms = _vector_metrics_schema_timeout_ms()
+        schema_ready = False
         with self.router.bootstrap_connection(
             "vector_metrics", timeout_ms=schema_timeout_ms
         ) as conn:
@@ -3740,7 +3760,7 @@ class VectorMetricsDB:
                         )
                         raise
                     if attempt >= max_attempts - 1:
-                        logger.error(
+                        logger.warning(
                             "vector_metrics_db.schema.retry_exhausted",
                             extra=_timestamp_payload(
                                 schema_start,
@@ -3749,20 +3769,38 @@ class VectorMetricsDB:
                                 reason=str(exc),
                             ),
                         )
-                        logger.exception(
-                            "vector_metrics_db.schema.migration_failed",
-                            extra=_timestamp_payload(schema_start, attempts=attempt + 1),
+                        logger.warning(
+                            "vector_metrics_db.init.deferred",
+                            extra=_timestamp_payload(
+                                init_start,
+                                reason="database_locked",
+                                path=str(self._resolved_path)
+                                if self._resolved_path
+                                else None,
+                                attempts=attempt + 1,
+                                max_attempts=max_attempts,
+                            ),
                         )
-                        raise
+                        self._conn = self._stub_conn
+                        self._boot_stub_active = True
+                        self._lazy_mode = True
+                        self._lazy_primed = True
+                        self._persistence_activated = False
+                        self._persistence_activation_pending = True
+                        self._activation_requested = False
+                        return False
                     delay = _sqlite_schema_backoff(attempt)
                     logger.warning(
-                        "vector_metrics_db.schema.retry",
+                        "vector_metrics_db.init.retry",
                         extra=_timestamp_payload(
                             schema_start,
                             attempt=attempt + 1,
                             max_attempts=max_attempts,
                             delay_seconds=delay,
-                            reason="schema_init_locked",
+                            reason="database_locked",
+                            path=str(self._resolved_path)
+                            if self._resolved_path
+                            else None,
                             error=str(exc),
                         ),
                     )
@@ -3793,8 +3831,11 @@ class VectorMetricsDB:
                         "vector_metrics_db.bootstrap.fast_path_enabled",
                         extra=_timestamp_payload(migration_start),
                     )
+                schema_ready = True
                 break
 
+        if not schema_ready:
+            return False
         self._lazy_primed = False
         self._lazy_mode = False
         logger.info(
@@ -3805,6 +3846,7 @@ class VectorMetricsDB:
                 using_global_router=using_global_router,
             ),
         )
+        return True
 
     def _ensure_prometheus_ready(self) -> None:
         if self._prometheus_ready:
