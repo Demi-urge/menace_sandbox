@@ -4050,12 +4050,41 @@ class VectorMetricsDB:
     ) -> Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]]:
         """Return mapping of session_id to stored vectors and metadata."""
 
-        conn = self._conn_for(reason="load_sessions", commit_required=False)
-        cur = conn.execute(
-            "SELECT session_id, vectors, metadata FROM pending_sessions"
-        )
+        rows: list[tuple[Any, Any, Any]] = []
+        if self._lazy_mode or self._boot_stub_active:
+            path = self.planned_path()
+            if not path.exists():
+                return {}
+            try:
+                conn = sqlite3.connect(
+                    f"file:{path.as_posix()}?mode=ro", uri=True
+                )
+            except sqlite3.Error:
+                return {}
+            try:
+                cur = conn.execute(
+                    """
+                    SELECT name
+                      FROM sqlite_master
+                     WHERE type='table' AND name='pending_sessions'
+                    """
+                )
+                if cur.fetchone() is None:
+                    return {}
+                cur = conn.execute(
+                    "SELECT session_id, vectors, metadata FROM pending_sessions"
+                )
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+        else:
+            conn = self._conn_for(reason="load_sessions", commit_required=False)
+            cur = conn.execute(
+                "SELECT session_id, vectors, metadata FROM pending_sessions"
+            )
+            rows = cur.fetchall()
         sessions: Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]] = {}
-        for sid, vec_json, meta_json in cur.fetchall():
+        for sid, vec_json, meta_json in rows:
             try:
                 raw_vecs = json.loads(vec_json or "[]")
                 vecs = [
