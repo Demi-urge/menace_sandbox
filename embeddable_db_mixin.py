@@ -741,7 +741,23 @@ class EmbeddableDBMixin:
             from huggingface_hub import login
             import os
 
-            login(token=os.getenv("HUGGINGFACE_API_TOKEN"))
+            token = None
+            for env_var in (
+                "HUGGINGFACE_API_TOKEN",
+                "HUGGINGFACE_TOKEN",
+                "HF_TOKEN",
+                "HUGGINGFACEHUB_API_TOKEN",
+            ):
+                value = os.getenv(env_var)
+                if value:
+                    token = value
+                    break
+            if token:
+                login(token=token)
+            else:
+                logger.debug(
+                    "Skipping huggingface_hub.login; no token in env to avoid prompts."
+                )
             model_name = _normalise_model_name(self.model_name)
             self.model_name = model_name
             if _initialise_sentence_transformer is not None:
