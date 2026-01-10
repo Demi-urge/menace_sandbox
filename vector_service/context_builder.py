@@ -1527,6 +1527,45 @@ class ContextBuilder:
                 logger.exception("failed to set retriever kwargs")
         self._retriever_kwargs_ready = True
 
+    def _configured_retriever_dbs(self) -> Dict[str, Any]:
+        configured: Dict[str, Any] = {}
+        sources = [
+            self._retriever_dbs,
+            getattr(self.retriever, "retriever_kwargs", None),
+        ]
+        for source in sources:
+            if not isinstance(source, Mapping):
+                continue
+            for key, value in source.items():
+                if value is not None:
+                    configured[key] = value
+        return configured
+
+    def _ensure_retriever_dbs_available(self) -> None:
+        if getattr(self.retriever, "retriever", None) is not None:
+            return
+        configured = self._configured_retriever_dbs()
+        if configured:
+            return
+        db_paths = dict(self._db_paths or {})
+        path_mapping: Dict[str, set[str]] = {}
+        for _label, _kind, _modules, _class, path_key, kwarg_name in self._retriever_db_specs():
+            path_mapping.setdefault(path_key, set()).add(kwarg_name)
+        if db_paths:
+            statuses = []
+            for path_key, path in db_paths.items():
+                opened = any(
+                    kwarg in configured for kwarg in path_mapping.get(path_key, set())
+                )
+                statuses.append(f"{path_key}={path!r} (opened={opened})")
+            path_detail = ", ".join(statuses)
+            hint = f"ContextBuilder DB paths: {path_detail}."
+        else:
+            hint = "ContextBuilder DB paths are unavailable."
+        raise VectorServiceError(
+            "Retriever requires at least one configured database. " + hint
+        )
+
     def teardown_retriever_dbs(self) -> None:
         """Best-effort teardown for retriever DB instances."""
 
@@ -3159,6 +3198,7 @@ class ContextBuilder:
             start = time.perf_counter()
             try:
                 self._ensure_retriever_kwargs()
+                self._ensure_retriever_dbs_available()
                 hits = self.retriever.search(
                     query,
                     top_k=top_k * 5,
@@ -3170,10 +3210,12 @@ class ContextBuilder:
             except VectorServiceError:
                 raise
             except (TypeError, ValueError) as exc:
+                logger.exception("retriever configuration failure")
                 raise VectorServiceError(
                     f"retriever configuration failure: {exc}"
                 ) from exc
             except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("retriever failure")
                 raise VectorServiceError("retriever failure") from exc
             patch_hits: List[Dict[str, Any]] = []
             if self.patch_retriever is not None:
