@@ -3035,6 +3035,10 @@ class ContextBuilder:
                 raise
             except VectorServiceError:
                 raise
+            except (TypeError, ValueError) as exc:
+                raise VectorServiceError(
+                    f"retriever configuration failure: {exc}"
+                ) from exc
             except Exception as exc:  # pragma: no cover - defensive
                 raise VectorServiceError("retriever failure") from exc
             patch_hits: List[Dict[str, Any]] = []
