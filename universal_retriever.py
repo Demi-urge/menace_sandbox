@@ -1870,6 +1870,18 @@ class UniversalRetriever:
             return result_container, session_id, vector_info, metrics_list
         return result_container, session_id, vector_info
 
+    def search(
+        self,
+        query: str,
+        top_k: int | None = None,
+        dbs: Sequence[str] | None = None,
+    ) -> List[ResultBundle]:
+        """Compatibility-only wrapper returning hits without session metadata."""
+
+        k = top_k if top_k is not None else 10
+        results, _, _ = self.retrieve(query, top_k=k, dbs=dbs)
+        return list(results)
+
     # Backwards compatibility for older callers
     def retrieve_with_confidence(
         self,
