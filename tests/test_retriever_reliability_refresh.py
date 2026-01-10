@@ -5,6 +5,11 @@ from vector_service.cognition_layer import CognitionLayer
 from vector_service.retriever import Retriever
 
 
+class DummyEncoder:
+    def encode_text(self, _text: str):
+        return [0.0]
+
+
 def test_reliability_reload_calls_universal_retriever(monkeypatch):
     calls = []
 
@@ -25,14 +30,14 @@ def test_reliability_reload_calls_universal_retriever(monkeypatch):
     ur = ur_mod.UniversalRetriever(
         enable_model_ranking=False,
         enable_reliability_bias=False,
-        code_db=object(),
+        code_db=DummyEncoder(),
     )
 
-    builder = SimpleNamespace()
+    builder = SimpleNamespace(roi_tag_penalties={})
     patch_logger = SimpleNamespace(roi_tracker=None, event_bus=None)
     layer = CognitionLayer(
         context_builder=builder,
-        retriever=Retriever(retriever=ur),
+        retriever=Retriever(context_builder=builder, retriever=ur),
         patch_logger=patch_logger,
         vector_metrics=None,
         roi_tracker=None,

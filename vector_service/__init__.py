@@ -325,7 +325,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
             return []
 
         def encode_text(self, text: str) -> list[float]:
-            """Return an embedding vector or a stable fallback."""
+            """Return an embedding vector or raise when embeddings are unavailable."""
 
             try:
                 real_module = load_internal("embeddable_db_mixin")
@@ -336,6 +336,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
             except Exception:
                 pass
 
+            vectorizer_instance = None
+            vectorizer_encode = None
             try:
                 vectorizer_module = load_internal("vector_service.vectorizer")
                 vectorizer_cls = getattr(vectorizer_module, "Vectorizer", None)
@@ -345,7 +347,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
                     )
                 vectorizer_encode = getattr(vectorizer_cls, "_encode_text", None)
                 if callable(vectorizer_encode):
-                    vectorizer_instance = None
                     for attr_name in (
                         "vectorizer",
                         "vector_service",
@@ -360,25 +361,27 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
                             vectorizer_instance = vectorizer_cls()
                         except Exception:
                             vectorizer_instance = None
-                    if vectorizer_instance is not None:
-                        start = perf_counter()
-                        vec = vectorizer_encode(vectorizer_instance, text)
-                        if hasattr(self, "_last_embedding_time"):
-                            self._last_embedding_time = perf_counter() - start
-                        if hasattr(self, "_last_embedding_tokens"):
-                            self._last_embedding_tokens = 0
-                        return vec or [0.0]
             except Exception:
                 pass
+
+            if vectorizer_instance is not None and callable(vectorizer_encode):
+                start = perf_counter()
+                vec = vectorizer_encode(vectorizer_instance, text)
+                if hasattr(self, "_last_embedding_time"):
+                    self._last_embedding_time = perf_counter() - start
+                if hasattr(self, "_last_embedding_tokens"):
+                    self._last_embedding_tokens = 0
+                return vec or [0.0]
 
             if hasattr(self, "_last_embedding_time"):
                 self._last_embedding_time = 0.0
             if hasattr(self, "_last_embedding_tokens"):
                 self._last_embedding_tokens = 0
-            _fallback_logger.warning(
-                "[vector-service] Falling back to placeholder embedding vector."
+            raise RuntimeError(
+                "Embeddings are unavailable because no shared vector service is "
+                "configured. Register a database with encode_text or configure "
+                "SharedVectorService."
             )
-            return [0.0]
 
     EmbeddableDBMixin = _FallbackEmbeddableDBMixin  # type: ignore
 

@@ -665,6 +665,7 @@ class UniversalRetriever:
         self._dbs: dict[str, Any] = {}
         self._id_fields: dict[str, tuple[str, ...]] = {}
         self._encoder: Any | None = None
+        self._non_encoder_dbs: set[str] = set()
         self._last_db_times: Dict[str, float] = {}
         self._last_fallback_sources: List[str] = []
 
@@ -676,6 +677,16 @@ class UniversalRetriever:
         self.register_db("enhancement", enhancement_db, ("id",))
         self.register_db("information", information_db, ("id", "info_id", "item_id"))
 
+        if self._encoder is None and code_db is not None and hasattr(code_db, "encode_text"):
+            self._encoder = code_db
+
+        if self._encoder is None:
+            registered = ", ".join(sorted(self._dbs)) or "none"
+            raise ValueError(
+                "No registered db exposes encode_text; registered dbs: "
+                f"{registered}"
+            )
+
         self._load_reliability_stats()
         if self.enable_reliability_bias and self._reliability_stats:
             self._dbs = dict(
@@ -686,9 +697,6 @@ class UniversalRetriever:
                     reverse=True,
                 )
             )
-
-        if self._encoder is None and code_db is None:
-            raise ValueError("At least one database instance is required")
 
         self.event_bus = event_bus
         if self.event_bus is None and UnifiedEventBus is not None:
@@ -766,12 +774,20 @@ class UniversalRetriever:
             return
         self._dbs[name] = db
         self._id_fields[name] = tuple(id_fields)
-        if self._encoder is None and hasattr(db, "encode_text"):
-            self._encoder = db
+        if hasattr(db, "encode_text"):
+            if self._encoder is None:
+                self._encoder = db
+        else:
+            self._non_encoder_dbs.add(name)
+            logger.debug(
+                "Registered db %s without encode_text; available for record lookup only",
+                name,
+            )
         if self._encoder is None:
-            for candidate in self._dbs.values():
+            for candidate_name, candidate in self._dbs.items():
                 if hasattr(candidate, "encode_text"):
                     self._encoder = candidate
+                    self._non_encoder_dbs.discard(candidate_name)
                     break
 
     # ------------------------------------------------------------------
