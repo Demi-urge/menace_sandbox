@@ -329,11 +329,13 @@ class CodeDB(EmbeddableDBMixin):
     """SQLite storage for code templates and relationships."""
 
     DB_FILE = "code.db"
+    EMBEDDINGS_INDEX_NAME = "code_embeddings.index"
+    EMBEDDINGS_METADATA_NAME = "code_embeddings.json"
 
     @classmethod
     def default_embedding_paths(cls) -> tuple[Path, Path]:
-        index_path = Path(cls.DB_FILE).with_suffix(".index")
-        return index_path, index_path.with_suffix(".json")
+        index_path = Path(cls.DB_FILE).with_name(cls.EMBEDDINGS_INDEX_NAME)
+        return index_path, index_path.with_name(cls.EMBEDDINGS_METADATA_NAME)
 
     def __init__(
         self,
@@ -403,12 +405,28 @@ class CodeDB(EmbeddableDBMixin):
             with self._connect() as conn:
                 self._ensure_schema(conn)
 
-        index_path = (
-            self.path.with_suffix(".index")
-            if self.path
-            else resolve_path(".") / "code_embeddings.index"
-        )
-        meta_path = index_path.with_suffix(".json")
+        if self.path:
+            index_path = self.path.with_name(self.EMBEDDINGS_INDEX_NAME)
+        else:
+            index_path = resolve_path(".") / self.EMBEDDINGS_INDEX_NAME
+        meta_path = index_path.with_name(self.EMBEDDINGS_METADATA_NAME)
+        legacy_meta_path = index_path.with_name("code.json")
+        if legacy_meta_path.exists() and not meta_path.exists():
+            try:
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                meta_path.write_bytes(legacy_meta_path.read_bytes())
+                logger.warning(
+                    "Copied legacy metadata %s to %s; consider removing the old file.",
+                    legacy_meta_path,
+                    meta_path,
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Unable to copy legacy metadata %s to %s: %s",
+                    legacy_meta_path,
+                    meta_path,
+                    exc,
+                )
         try:
             super().__init__(
                 index_path=index_path,
