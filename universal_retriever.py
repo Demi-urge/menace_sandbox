@@ -615,7 +615,12 @@ def boost_linked_candidates(
 
 
 class UniversalRetriever:
-    """Search across multiple databases using vector similarity."""
+    """Search across multiple databases using vector similarity.
+
+    Callers should prefer ``retrieve`` or ``retrieve_with_confidence``; a
+    lightweight ``search`` wrapper remains for compatibility with older
+    integrations expecting that method name.
+    """
 
     def __init__(
         self,
@@ -1886,16 +1891,10 @@ class UniversalRetriever:
             return result_container, session_id, vector_info, metrics_list
         return result_container, session_id, vector_info
 
-    def search(
-        self,
-        query: str,
-        top_k: int | None = None,
-        dbs: Sequence[str] | None = None,
-    ) -> List[ResultBundle]:
-        """Compatibility-only wrapper returning hits without session metadata."""
+    def search(self, query: str, top_k: int = 5, **kwargs: Any) -> List[ResultBundle]:
+        """Compatibility wrapper returning hits without session metadata."""
 
-        k = top_k if top_k is not None else 10
-        results, _, _ = self.retrieve(query, top_k=k, dbs=dbs)
+        results, _, _ = self.retrieve(query, top_k=top_k, **kwargs)
         return list(results)
 
     # Backwards compatibility for older callers
