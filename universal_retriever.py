@@ -19,6 +19,7 @@ import joblib
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import build_scope_clause
 from dynamic_path_router import get_project_roots, resolve_path
+from vector_service.exceptions import RetrieverConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -765,8 +766,13 @@ class UniversalRetriever:
             return
         self._dbs[name] = db
         self._id_fields[name] = tuple(id_fields)
-        if self._encoder is None:
+        if self._encoder is None and hasattr(db, "encode_text"):
             self._encoder = db
+        if self._encoder is None:
+            for candidate in self._dbs.values():
+                if hasattr(candidate, "encode_text"):
+                    self._encoder = candidate
+                    break
 
     # ------------------------------------------------------------------
     def _extract_id(self, obj: Any, names: Sequence[str]) -> Any | None:
@@ -795,6 +801,10 @@ class UniversalRetriever:
         """
 
         if isinstance(query, str):
+            if self._encoder is None or not hasattr(self._encoder, "encode_text"):
+                raise RetrieverConfigurationError(
+                    "No encoder with encode_text is available; check DB registration."
+                )
             return self._encoder.encode_text(query)
 
         if isinstance(query, Sequence) and not isinstance(query, (bytes, bytearray)):
