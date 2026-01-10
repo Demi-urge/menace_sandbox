@@ -479,37 +479,52 @@ class Retriever:
         backoff = 1.0
         hits: List[Any] = []
         confidence = 0.0
+        has_retrieve_with_confidence = hasattr(retriever, "retrieve_with_confidence")
+        has_retrieve = hasattr(retriever, "retrieve")
+        has_search = hasattr(retriever, "search")
+        if not (has_retrieve_with_confidence or has_retrieve or has_search):
+            methods = [
+                name
+                for name in dir(retriever)
+                if callable(getattr(retriever, name, None))
+            ]
+            raise VectorServiceError(
+                "Retriever %s does not expose a retrieval method. Available methods: %s"
+                % (retriever.__class__.__name__, ", ".join(sorted(methods)))
+            )
+
         for attempt in range(attempts):
             try:
                 if dbs is None:
-                    try:
+                    if has_retrieve_with_confidence:
                         hits, confidence, _ = retriever.retrieve_with_confidence(
                             query, top_k=k
                         )  # type: ignore[attr-defined]
-                    except AttributeError as exc:  # pragma: no cover - compatibility fallback
-                        if not hasattr(retriever, "retrieve_with_confidence"):
-                            try:
-                                hits = retriever.search(query)[:k]  # type: ignore[assignment]
-                                confidence = (
-                                    max(getattr(h, "score", 0.0) for h in hits)
-                                    if hits
-                                    else 0.0
-                                )
-                            except Exception as search_exc:
-                                raise VectorServiceError(
-                                    "vector search failed in compatibility fallback"
-                                ) from search_exc
-                        else:
-                            raise VectorServiceError(
-                                "vector search failed during embedding generation"
-                            ) from exc
+                    elif has_retrieve:
+                        hits, _, _ = retriever.retrieve(  # type: ignore[arg-type]
+                            query, top_k=k, dbs=dbs
+                        )
+                        confidence = (
+                            max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
+                        )
+                    elif has_search:
+                        hits = retriever.search(query)[:k]  # type: ignore[assignment]
+                        confidence = (
+                            max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
+                        )
                 else:
-                    hits, _, _ = retriever.retrieve(  # type: ignore[arg-type]
-                        query, top_k=k, dbs=dbs
-                    )
-                    confidence = (
-                        max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
-                    )
+                    if has_retrieve:
+                        hits, _, _ = retriever.retrieve(  # type: ignore[arg-type]
+                            query, top_k=k, dbs=dbs
+                        )
+                        confidence = (
+                            max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
+                        )
+                    elif has_search:
+                        hits = retriever.search(query)[:k]  # type: ignore[assignment]
+                        confidence = (
+                            max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
+                        )
             except Exception as exc:  # pragma: no cover - best effort
                 msg = str(exc).lower()
                 if ("rate" in msg and "limit" in msg) or "429" in msg:
