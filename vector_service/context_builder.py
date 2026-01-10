@@ -411,6 +411,33 @@ UniversalRetriever = Retriever
 
 logger = logging.getLogger(__name__)
 
+_EMBEDDING_REGISTRY_CACHE: Dict[str, Tuple[str, str]] | None = None
+
+
+def _load_embedding_registry() -> Dict[str, Tuple[str, str]]:
+    """Load the static embedding registry for DB fallbacks."""
+
+    global _EMBEDDING_REGISTRY_CACHE
+    if _EMBEDDING_REGISTRY_CACHE is not None:
+        return dict(_EMBEDDING_REGISTRY_CACHE)
+    registry_path = Path(__file__).with_name("embedding_registry.json")
+    try:
+        data = json.loads(registry_path.read_text())
+    except Exception:
+        _EMBEDDING_REGISTRY_CACHE = {}
+        return {}
+    mapping: Dict[str, Tuple[str, str]] = {}
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if not isinstance(value, dict):
+                continue
+            module_name = value.get("module")
+            class_name = value.get("class")
+            if isinstance(module_name, str) and isinstance(class_name, str):
+                mapping[key] = (module_name, class_name)
+    _EMBEDDING_REGISTRY_CACHE = mapping
+    return dict(mapping)
+
 
 def _to_dict(value: Any) -> Dict[str, Any]:
     """Best-effort conversion to a dictionary for config-like objects."""
@@ -1081,6 +1108,7 @@ class ContextBuilder:
         self.errors_db = _normalise_db_path(errors_db)
         self.workflows_db = _normalise_db_path(workflows_db)
         self.information_db = _normalise_db_path(information_db)
+        self._retriever_dbs: Dict[str, Any] = {}
         self._db_paths = {
             "bots": self.bots_db,
             "enhancements": self.enhancements_db,
@@ -1181,10 +1209,11 @@ class ContextBuilder:
 
     def _retriever_db_specs(
         self,
-    ) -> tuple[tuple[str, tuple[str, ...], str, str, str], ...]:
+    ) -> tuple[tuple[str, str, tuple[str, ...], str, str, str], ...]:
         return (
             (
                 "bots",
+                "bot",
                 ("bot_database", "menace.bot_database", "menace_sandbox.bot_database"),
                 "BotDB",
                 "bots",
@@ -1192,6 +1221,7 @@ class ContextBuilder:
             ),
             (
                 "enhancements",
+                "enhancement",
                 (
                     "chatgpt_enhancement_bot",
                     "menace.chatgpt_enhancement_bot",
@@ -1203,6 +1233,7 @@ class ContextBuilder:
             ),
             (
                 "workflows",
+                "workflow",
                 (
                     "task_handoff_bot",
                     "menace.task_handoff_bot",
@@ -1214,12 +1245,14 @@ class ContextBuilder:
             ),
             (
                 "errors",
+                "error",
                 ("error_bot", "menace.error_bot", "menace_sandbox.error_bot"),
                 "ErrorDB",
                 "errors",
                 "error_db",
             ),
             (
+                "information",
                 "information",
                 (
                     "information_db",
@@ -1232,6 +1265,7 @@ class ContextBuilder:
             ),
             (
                 "information_fallback",
+                "research",
                 (
                     "research_storage",
                     "menace.research_storage",
@@ -1243,12 +1277,74 @@ class ContextBuilder:
             ),
             (
                 "code",
+                "code",
                 ("code_database", "menace.code_database", "menace_sandbox.code_database"),
                 "CodeDB",
                 "code",
                 "code_db",
             ),
         )
+
+    def _resolve_db_class(
+        self,
+        *,
+        label: str,
+        kind: str,
+        module_names: tuple[str, ...],
+        class_name: str,
+    ) -> tuple[Any | None, str | None]:
+        candidates: list[tuple[str, str]] = []
+        registry_error: Exception | None = None
+        try:
+            from . import registry as _registry
+
+            registry_mapping = _registry.get_db_registry()
+        except Exception as exc:
+            registry_error = exc
+            registry_mapping = {}
+        if kind and kind in registry_mapping:
+            candidates.append(registry_mapping[kind])
+
+        embedding_registry = _load_embedding_registry()
+        if kind and kind in embedding_registry:
+            candidates.append(embedding_registry[kind])
+
+        for module_name in module_names:
+            candidates.append((module_name, class_name))
+
+        deduped: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            deduped.append(candidate)
+
+        import_error: Exception | None = None
+        missing: list[str] = []
+        for module_name, db_class_name in deduped:
+            try:
+                module = importlib.import_module(module_name)
+            except Exception as exc:
+                import_error = exc
+                continue
+            db_class = getattr(module, db_class_name, None)
+            if db_class is not None:
+                return db_class, None
+            missing.append(f"{module_name}.{db_class_name}")
+            import_error = None
+
+        if import_error is not None:
+            detail = f"import failed: {import_error}"
+        elif missing:
+            detail = f"missing {', '.join(missing)}"
+        else:
+            detail = "missing db class"
+        if registry_error is not None:
+            logger.debug(
+                "retriever registry unavailable for %s: %s", label, registry_error
+            )
+        return None, detail
 
     def validate_retriever_config(self) -> Dict[str, str]:
         """Validate retriever DB configuration and return diagnostics."""
@@ -1257,7 +1353,7 @@ class ContextBuilder:
         successes = 0
         db_paths = dict(self._db_paths or {})
 
-        for label, module_names, class_name, path_key, _kwarg_name in self._retriever_db_specs():
+        for label, kind, module_names, class_name, path_key, _kwarg_name in self._retriever_db_specs():
             raw_path = db_paths.get(path_key)
             if not raw_path or not str(raw_path).strip():
                 diagnostics[label] = "error: missing path"
@@ -1280,24 +1376,13 @@ class ContextBuilder:
                 diagnostics[label] = f"error: unreadable ({exc})"
                 continue
 
-            db_class = None
-            import_error: Exception | None = None
-            for module_name in module_names:
-                try:
-                    module = importlib.import_module(module_name)
-                except Exception as exc:
-                    import_error = exc
-                    continue
-                db_class = getattr(module, class_name, None)
-                if db_class is not None:
-                    import_error = None
-                    break
+            db_class, detail = self._resolve_db_class(
+                label=label,
+                kind=kind,
+                module_names=module_names,
+                class_name=class_name,
+            )
             if db_class is None:
-                detail = (
-                    f"import failed: {import_error}"
-                    if import_error is not None
-                    else f"missing {class_name} in {module_names}"
-                )
                 diagnostics[label] = f"error: {detail}"
                 continue
             try:
@@ -1326,6 +1411,8 @@ class ContextBuilder:
         bootstrap_fast: bool | None = None,
         warmup: bool | None = None,
     ) -> Dict[str, Any]:
+        if self._retriever_dbs:
+            return dict(self._retriever_dbs)
         db_paths = dict(self._db_paths or {})
         if not any(db_paths.values()):
             return {}
@@ -1366,6 +1453,7 @@ class ContextBuilder:
         def _init_db(
             *,
             label: str,
+            kind: str,
             module_names: tuple[str, ...],
             class_name: str,
             path_key: str,
@@ -1373,28 +1461,20 @@ class ContextBuilder:
         ) -> None:
             if kwarg_name in retriever_kwargs:
                 return
+            if kwarg_name in self._retriever_dbs:
+                retriever_kwargs[kwarg_name] = self._retriever_dbs[kwarg_name]
+                return
             raw_path = db_paths.get(path_key)
             if not raw_path:
                 return
             resolved_path = self._resolve_db_path(raw_path)
-            db_class = None
-            import_error: Exception | None = None
-            for module_name in module_names:
-                try:
-                    module = importlib.import_module(module_name)
-                except Exception as exc:
-                    import_error = exc
-                    continue
-                db_class = getattr(module, class_name, None)
-                if db_class is not None:
-                    import_error = None
-                    break
+            db_class, detail = self._resolve_db_class(
+                label=label,
+                kind=kind,
+                module_names=module_names,
+                class_name=class_name,
+            )
             if db_class is None:
-                detail = (
-                    f"import failed: {import_error}"
-                    if import_error is not None
-                    else f"missing {class_name} in {module_names}"
-                )
                 failures[label] = detail
                 logger.error(
                     "failed to import %s for retriever: %s", class_name, detail
@@ -1409,9 +1489,10 @@ class ContextBuilder:
             except Exception as exc:
                 failures[label] = str(exc)
                 logger.exception("failed to initialise %s at %s", class_name, resolved_path)
-        for label, module_names, class_name, path_key, kwarg_name in self._retriever_db_specs():
+        for label, kind, module_names, class_name, path_key, kwarg_name in self._retriever_db_specs():
             _init_db(
                 label=label,
+                kind=kind,
                 module_names=module_names,
                 class_name=class_name,
                 path_key=path_key,
@@ -1424,13 +1505,12 @@ class ContextBuilder:
                 "Failed to initialise retriever databases. Tried: %s", detail
             )
 
-        return retriever_kwargs
+        if retriever_kwargs:
+            self._retriever_dbs.update(retriever_kwargs)
+        return dict(self._retriever_dbs)
 
     def _ensure_retriever_kwargs(self) -> None:
         if self._retriever_kwargs_ready:
-            return
-        if not self._owns_retriever:
-            self._retriever_kwargs_ready = True
             return
         if getattr(self.retriever, "retriever", None) is not None:
             self._retriever_kwargs_ready = True
@@ -1446,6 +1526,22 @@ class ContextBuilder:
             except Exception:
                 logger.exception("failed to set retriever kwargs")
         self._retriever_kwargs_ready = True
+
+    def teardown_retriever_dbs(self) -> None:
+        """Best-effort teardown for retriever DB instances."""
+
+        for name, db in list(self._retriever_dbs.items()):
+            if db is None:
+                continue
+            for attr in ("close", "shutdown", "teardown", "dispose", "disconnect"):
+                handler = getattr(db, attr, None)
+                if callable(handler):
+                    try:
+                        handler()
+                    except Exception:
+                        logger.exception("failed to close retriever db %s via %s", name, attr)
+                    break
+        self._retriever_dbs.clear()
 
     # ------------------------------------------------------------------
     # Stack configuration helpers

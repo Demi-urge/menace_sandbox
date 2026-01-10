@@ -73,12 +73,12 @@ def test_retriever_missing_db_inputs_reports_actionable_message():
 
         def _retriever_db_specs(self):
             return (
-                ("bots", (), "", "bots", "bot_db"),
-                ("enhancements", (), "", "enhancements", "enhancement_db"),
-                ("workflows", (), "", "workflows", "workflow_db"),
-                ("errors", (), "", "errors", "error_db"),
-                ("information", (), "", "information", "information_db"),
-                ("code", (), "", "code", "code_db"),
+                ("bots", "bot", (), "", "bots", "bot_db"),
+                ("enhancements", "enhancement", (), "", "enhancements", "enhancement_db"),
+                ("workflows", "workflow", (), "", "workflows", "workflow_db"),
+                ("errors", "error", (), "", "errors", "error_db"),
+                ("information", "information", (), "", "information", "information_db"),
+                ("code", "code", (), "", "code", "code_db"),
             )
 
     builder = DummyBuilder(

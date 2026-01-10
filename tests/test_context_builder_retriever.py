@@ -74,12 +74,12 @@ def test_missing_db_paths_raise_configuration_error(monkeypatch):
 
         def _retriever_db_specs(self):
             return (
-                ("bots", (), "", "bots", "bot_db"),
-                ("enhancements", (), "", "enhancements", "enhancement_db"),
-                ("workflows", (), "", "workflows", "workflow_db"),
-                ("errors", (), "", "errors", "error_db"),
-                ("information", (), "", "information", "information_db"),
-                ("code", (), "", "code", "code_db"),
+                ("bots", "bot", (), "", "bots", "bot_db"),
+                ("enhancements", "enhancement", (), "", "enhancements", "enhancement_db"),
+                ("workflows", "workflow", (), "", "workflows", "workflow_db"),
+                ("errors", "error", (), "", "errors", "error_db"),
+                ("information", "information", (), "", "information", "information_db"),
+                ("code", "code", (), "", "code", "code_db"),
             )
 
     class ExplodingUniversalRetriever:
@@ -112,3 +112,60 @@ def test_missing_db_paths_raise_configuration_error(monkeypatch):
     assert "Missing DBs" in message
     assert "ContextBuilder DB paths" in message
     assert "At least one database instance is required" not in message
+
+
+def test_context_builder_hydrates_standard_paths(tmp_path, monkeypatch):
+    _stub_retriever_modules(monkeypatch)
+    monkeypatch.setattr(context_builder, "ensure_bootstrapped", lambda: {})
+    monkeypatch.setattr(universal_retriever, "_vector_metrics", lambda **_kwargs: None)
+    monkeypatch.setattr(universal_retriever, "MetricsDB", None)
+    monkeypatch.chdir(tmp_path)
+
+    for filename in ("bots.db", "code.db", "errors.db", "workflows.db"):
+        (tmp_path / filename).write_text("")
+
+    builder = context_builder.ContextBuilder(
+        bots_db="bots.db",
+        code_db="code.db",
+        errors_db="errors.db",
+        workflows_db="workflows.db",
+        db_weights={"bot": 1.0},
+        ranking_model=object(),
+        patch_retriever=types.SimpleNamespace(roi_tag_weights={}, enhancement_weight=1.0),
+    )
+
+    retriever = builder.retriever._get_retriever()
+
+    assert builder._retriever_dbs
+    assert retriever._dbs
+
+
+def test_context_builder_retriever_cache(tmp_path, monkeypatch):
+    class CountingDB(_FakeDB):
+        init_count = 0
+
+        def __init__(self, path=None, **kwargs):
+            type(self).init_count += 1
+            super().__init__(path=path, **kwargs)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bot_database",
+        types.SimpleNamespace(BotDB=CountingDB),
+    )
+    monkeypatch.setattr(context_builder, "ensure_bootstrapped", lambda: {})
+    monkeypatch.setattr(universal_retriever, "_vector_metrics", lambda **_kwargs: None)
+    monkeypatch.setattr(universal_retriever, "MetricsDB", None)
+
+    db_path = tmp_path / "bots.db"
+    db_path.write_text("")
+    builder = context_builder.ContextBuilder(
+        bots_db=db_path,
+        db_weights={"bot": 1.0},
+        ranking_model=object(),
+        patch_retriever=types.SimpleNamespace(roi_tag_weights={}, enhancement_weight=1.0),
+    )
+
+    assert CountingDB.init_count == 1
+    builder._build_retriever_kwargs()
+    assert CountingDB.init_count == 1
