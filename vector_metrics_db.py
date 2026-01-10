@@ -70,11 +70,7 @@ _BOOTSTRAP_TIMER_ENVS = (
     "PREPARE_PIPELINE_ORCHESTRATOR_BUDGET_SECS",
     "PREPARE_PIPELINE_CONFIG_BUDGET_SECS",
 )
-_SQLITE_RETRY_MESSAGES = (
-    "database is locked",
-    "database schema is locked",
-    "cannot commit transaction - sql statements in progress",
-)
+_SQLITE_RETRY_MESSAGES = ("database is locked",)
 _SQLITE_SCHEMA_MAX_RETRIES = 7
 _SQLITE_SCHEMA_BASE_DELAY = 0.1
 _SQLITE_SCHEMA_MAX_DELAY = 2.0
@@ -3707,38 +3703,23 @@ class VectorMetricsDB:
                                 )
                                 if c not in mcols
                             ]
-                        else:
-                            self._schema_cache.update(self._default_columns)
-                    logger.info(
-                        "vector_metrics_db.schema.ensured",
-                        extra=_timestamp_payload(schema_start),
-                    )
-                    if not self.bootstrap_fast:
-                        logger.info(
-                            "vector_metrics_db.migrations.vector_metrics",
-                            extra=_timestamp_payload(
-                                migration_start, applied_columns=applied_columns
-                            ),
-                        )
-                        logger.info(
-                            "vector_metrics_db.migrations.patch_tables",
-                            extra=_timestamp_payload(
-                                migration_start,
-                                patch_ancestry_missing=patch_ancestry_missing,
-                                patch_metrics_missing=patch_metrics_missing,
-                            ),
-                        )
-                    else:
-                        logger.info(
-                            "vector_metrics_db.bootstrap.fast_path_enabled",
-                            extra=_timestamp_payload(migration_start),
-                        )
-                    break
                 except sqlite3.OperationalError as exc:
-                    if (
-                        not _should_retry_sqlite(exc)
-                        or attempt >= _SQLITE_SCHEMA_MAX_RETRIES - 1
-                    ):
+                    if not _should_retry_sqlite(exc):
+                        logger.exception(
+                            "vector_metrics_db.schema.migration_failed",
+                            extra=_timestamp_payload(schema_start, attempts=attempt + 1),
+                        )
+                        raise
+                    if attempt >= _SQLITE_SCHEMA_MAX_RETRIES - 1:
+                        logger.error(
+                            "vector_metrics_db.schema.retry_exhausted",
+                            extra=_timestamp_payload(
+                                schema_start,
+                                attempts=attempt + 1,
+                                max_attempts=_SQLITE_SCHEMA_MAX_RETRIES,
+                                reason=str(exc),
+                            ),
+                        )
                         logger.exception(
                             "vector_metrics_db.schema.migration_failed",
                             extra=_timestamp_payload(schema_start, attempts=attempt + 1),
@@ -3756,6 +3737,33 @@ class VectorMetricsDB:
                         ),
                     )
                     time.sleep(delay)
+                    continue
+                logger.info(
+                    "vector_metrics_db.schema.ensured",
+                    extra=_timestamp_payload(schema_start),
+                )
+                if not self.bootstrap_fast:
+                    logger.info(
+                        "vector_metrics_db.migrations.vector_metrics",
+                        extra=_timestamp_payload(
+                            migration_start, applied_columns=applied_columns
+                        ),
+                    )
+                    logger.info(
+                        "vector_metrics_db.migrations.patch_tables",
+                        extra=_timestamp_payload(
+                            migration_start,
+                            patch_ancestry_missing=patch_ancestry_missing,
+                            patch_metrics_missing=patch_metrics_missing,
+                        ),
+                    )
+                else:
+                    self._schema_cache.update(self._default_columns)
+                    logger.info(
+                        "vector_metrics_db.bootstrap.fast_path_enabled",
+                        extra=_timestamp_payload(migration_start),
+                    )
+                break
 
         self._lazy_primed = False
         self._lazy_mode = False
