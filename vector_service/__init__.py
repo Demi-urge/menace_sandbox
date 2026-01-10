@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
+from time import perf_counter
 from pathlib import Path
 from typing import Any, Dict
 
@@ -322,6 +323,62 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback when module mi
             self, *args: object, **kwargs: object
         ) -> list[object]:  # pragma: no cover - simple stub
             return []
+
+        def encode_text(self, text: str) -> list[float]:
+            """Return an embedding vector or a stable fallback."""
+
+            try:
+                real_module = load_internal("embeddable_db_mixin")
+                real_mixin = getattr(real_module, "EmbeddableDBMixin", None)
+                real_encode = getattr(real_mixin, "encode_text", None)
+                if callable(real_encode):
+                    return real_encode(self, text)
+            except Exception:
+                pass
+
+            try:
+                vectorizer_module = load_internal("vector_service.vectorizer")
+                vectorizer_cls = getattr(vectorizer_module, "Vectorizer", None)
+                if vectorizer_cls is None:
+                    vectorizer_cls = getattr(
+                        vectorizer_module, "SharedVectorService", None
+                    )
+                vectorizer_encode = getattr(vectorizer_cls, "_encode_text", None)
+                if callable(vectorizer_encode):
+                    vectorizer_instance = None
+                    for attr_name in (
+                        "vectorizer",
+                        "vector_service",
+                        "shared_vector_service",
+                    ):
+                        candidate = getattr(self, attr_name, None)
+                        if candidate is not None and hasattr(candidate, "_encode_text"):
+                            vectorizer_instance = candidate
+                            break
+                    if vectorizer_instance is None and vectorizer_cls is not None:
+                        try:
+                            vectorizer_instance = vectorizer_cls()
+                        except Exception:
+                            vectorizer_instance = None
+                    if vectorizer_instance is not None:
+                        start = perf_counter()
+                        vec = vectorizer_encode(vectorizer_instance, text)
+                        if hasattr(self, "_last_embedding_time"):
+                            self._last_embedding_time = perf_counter() - start
+                        if hasattr(self, "_last_embedding_tokens"):
+                            self._last_embedding_tokens = 0
+                        return vec or [0.0]
+            except Exception:
+                pass
+
+            if hasattr(self, "_last_embedding_time"):
+                self._last_embedding_time = 0.0
+            if hasattr(self, "_last_embedding_tokens"):
+                self._last_embedding_tokens = 0
+            _fallback_logger.warning(
+                "[vector-service] Falling back to placeholder embedding vector."
+            )
+            return [0.0]
 
     EmbeddableDBMixin = _FallbackEmbeddableDBMixin  # type: ignore
 
