@@ -324,7 +324,7 @@ class EmbeddingBackfill:
         *,
         batch_size: int,
         session_id: str = "",
-    ) -> List[tuple[str, str]]:
+    ) -> tuple[List[tuple[str, str]], bool, bool]:
         if not hasattr(db, "iter_records") or not hasattr(db, "needs_refresh"):
             try:
                 db.backfill_embeddings(batch_size=batch_size)  # type: ignore[call-arg]
@@ -333,9 +333,10 @@ class EmbeddingBackfill:
                     db.backfill_embeddings()  # type: ignore[call-arg]
                 except Exception:
                     pass
-            return []
+            return [], False, True
 
         processed = 0
+        updated = False
         skipped: List[tuple[str, str]] = []
         for record_id, record, kind in db.iter_records():
             if processed >= batch_size:
@@ -356,7 +357,8 @@ class EmbeddingBackfill:
             except Exception:  # pragma: no cover - best effort
                 continue
             processed += 1
-        return skipped
+            updated = True
+        return skipped, updated, True
 
     def check_out_of_sync(
         self,
@@ -426,6 +428,16 @@ class EmbeddingBackfill:
             subclasses = self._load_known_dbs(names=names)
             logger = logging.getLogger(__name__)
             total = len(subclasses)
+            timestamps = _load_timestamps()
+            updated_timestamps = False
+            registry = _load_registry()
+            name_map: dict[type, str] = {}
+            for name, (mod_name, cls_name) in registry.items():
+                try:
+                    mod = importlib.import_module(mod_name)
+                    name_map[getattr(mod, cls_name)] = name
+                except Exception:
+                    continue
             for idx, cls in enumerate(subclasses, 1):
                 try:
                     db = cls(vector_backend=be)  # type: ignore[call-arg]
@@ -441,8 +453,11 @@ class EmbeddingBackfill:
                     total,
                     extra={"session_id": session_id},
                 )
+                checked = False
                 try:
-                    skipped = self._process_db(db, batch_size=bs, session_id=session_id)
+                    skipped, _updated, checked = self._process_db(
+                        db, batch_size=bs, session_id=session_id
+                    )
                     if skipped:
                         for rid, lic in skipped:
                             logger.warning(
@@ -458,6 +473,12 @@ class EmbeddingBackfill:
                         db.save_index()
                     except Exception:
                         pass
+                if checked:
+                    db_name = name_map.get(cls, cls.__name__)
+                    timestamps[db_name] = time.time()
+                    updated_timestamps = True
+            if updated_timestamps:
+                _store_timestamps(timestamps)
         except Exception:
             status = "failure"
             _RUN_OUTCOME.labels(status, trigger).inc()

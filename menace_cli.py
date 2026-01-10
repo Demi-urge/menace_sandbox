@@ -566,6 +566,7 @@ def handle_embed(args: argparse.Namespace) -> int:
 
         def _process_db(self, db, *, batch_size, session_id=""):
             processed = 0
+            updated = False
             skipped: list[tuple[str, str]] = []
             for record_id, record, kind in tqdm(
                 db.iter_records(),
@@ -594,12 +595,13 @@ def handle_embed(args: argparse.Namespace) -> int:
                     )
                     continue
                 processed += 1
+                updated = True
                 if processed >= batch_size:
                     break
             self.skipped_records.extend(
                 (db.__class__.__name__, rid, lic) for rid, lic in skipped
             )
-            return skipped
+            return skipped, updated, True
 
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     backfill = _CLIBackfill(

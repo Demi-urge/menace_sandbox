@@ -907,24 +907,42 @@ class EmbeddableDBMixin:
         this method for custom behaviour.
         """
 
+        def _normalise_value(value: Any) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return value.isoformat()
+            try:
+                return str(value)
+            except Exception:  # pragma: no cover - defensive
+                return None
+
+        keys = (
+            "last_updated",
+            "last_modification_date",
+            "updated_at",
+            "updated",
+            "modified_at",
+            "modified",
+            "timestamp",
+            "ts",
+        )
+
         if isinstance(record, dict):
-            for key in (
-                "last_updated",
-                "last_modification_date",
-                "updated_at",
-                "updated",
-                "modified_at",
-                "modified",
-            ):
-                val = record.get(key)
-                if not val:
+            for key in keys:
+                if key not in record:
                     continue
-                if isinstance(val, datetime):
-                    return val.isoformat()
-                try:
-                    return str(val)
-                except Exception:  # pragma: no cover - defensive
-                    return None
+                value = _normalise_value(record.get(key))
+                if value:
+                    return value
+
+        for key in keys:
+            if not hasattr(record, key):
+                continue
+            value = _normalise_value(getattr(record, key))
+            if value:
+                return value
+
         return None
 
     # ------------------------------------------------------------------

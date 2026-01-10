@@ -937,6 +937,11 @@ class WorkflowDB(EmbeddableDBMixin):
             wid=row["id"],
         )
 
+    def _extract_last_updated(self, record: Any) -> str | None:
+        if isinstance(record, WorkflowRecord):
+            return str(record.timestamp) if record.timestamp else None
+        return super()._extract_last_updated(record)
+
     def _vector_text(self, rec: WorkflowRecord) -> str:
         """Build a descriptive, summarised text representation of ``rec``."""
 
