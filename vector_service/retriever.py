@@ -481,10 +481,28 @@ class Retriever:
         confidence = 0.0
         for attempt in range(attempts):
             try:
-                if dbs is None and hasattr(retriever, "retrieve_with_confidence"):
-                    hits, confidence, _ = retriever.retrieve_with_confidence(
-                        query, top_k=k
-                    )  # type: ignore[attr-defined]
+                if dbs is None:
+                    try:
+                        hits, confidence, _ = retriever.retrieve_with_confidence(
+                            query, top_k=k
+                        )  # type: ignore[attr-defined]
+                    except AttributeError as exc:  # pragma: no cover - compatibility fallback
+                        if not hasattr(retriever, "retrieve_with_confidence"):
+                            try:
+                                hits = retriever.search(query)[:k]  # type: ignore[assignment]
+                                confidence = (
+                                    max(getattr(h, "score", 0.0) for h in hits)
+                                    if hits
+                                    else 0.0
+                                )
+                            except Exception as search_exc:
+                                raise VectorServiceError(
+                                    "vector search failed in compatibility fallback"
+                                ) from search_exc
+                        else:
+                            raise VectorServiceError(
+                                "vector search failed during embedding generation"
+                            ) from exc
                 else:
                     hits, _, _ = retriever.retrieve(  # type: ignore[arg-type]
                         query, top_k=k, dbs=dbs
@@ -492,14 +510,6 @@ class Retriever:
                     confidence = (
                         max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
                     )
-            except AttributeError:  # pragma: no cover - compatibility fallback
-                try:
-                    hits = retriever.search(query)[:k]  # type: ignore[assignment]
-                    confidence = (
-                        max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
-                    )
-                except Exception as exc:
-                    raise VectorServiceError("vector search failed") from exc
             except Exception as exc:  # pragma: no cover - best effort
                 msg = str(exc).lower()
                 if ("rate" in msg and "limit" in msg) or "429" in msg:
