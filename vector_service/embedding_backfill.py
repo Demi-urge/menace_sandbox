@@ -930,9 +930,8 @@ def ensure_embeddings_fresh(
                     cls = None
 
             db_path = resolve_path(db_file)
-            meta_path = _resolve_metadata_path(name, db_path)
-            meta_exists = meta_path.exists()
-            meta_mtime = meta_path.stat().st_mtime if meta_exists else 0.0
+            candidates = _resolve_metadata_candidates(name, cls, db_path)
+            meta_path, meta_mtime, meta_exists = _select_metadata_path(candidates)
             try:
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
@@ -950,7 +949,8 @@ def ensure_embeddings_fresh(
                 pending[name] = info
                 continue
 
-            if last_vec < db_mtime and meta_mtime < db_mtime:
+            effective_meta_mtime = max(meta_mtime, last_vec)
+            if effective_meta_mtime < db_mtime:
                 info["reason"] = "db modified after last vectorisation"
                 pending[name] = info
                 continue
