@@ -41,6 +41,16 @@ class _WorkflowDBStub:
         pass
 
 
+class _ErrorDBStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class _InformationDBStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
 class _PatchHistoryDBStub:
     def __init__(self, *args, **kwargs):
         pass
@@ -81,11 +91,14 @@ code_db_mod.CodeRecord = _CodeRecord
 code_db_mod.PatchHistoryDB = _PatchHistoryDBStub
 code_db_mod.PatchRecord = _PatchRecordStub
 sys.modules["code_database"] = code_db_mod
-sys.modules.setdefault("menace.error_bot", types.SimpleNamespace(ErrorDB=object))
+sys.modules.setdefault("menace.error_bot", types.SimpleNamespace(ErrorDB=_ErrorDBStub))
 sys.modules.setdefault(
     "menace.bot_database", types.SimpleNamespace(BotDB=_BotDBStub, BotRecord=_BotRecord)
 )
 sys.modules.setdefault("menace.task_handoff_bot", types.SimpleNamespace(WorkflowDB=_WorkflowDBStub))
+sys.modules.setdefault(
+    "menace.information_db", types.SimpleNamespace(InformationDB=_InformationDBStub)
+)
 sys.modules.setdefault(
     "menace.db_router",
     types.SimpleNamespace(
@@ -199,11 +212,14 @@ for name in [
     "audit_trail",
     "access_control",
     "patch_suggestion_db",
+    "information_db",
 ]:
     sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 
 from menace.vector_service import ContextBuilder  # noqa: E402
 import menace.vector_service.context_builder as context_builder_module  # noqa: E402
+
+ContextBuilder = context_builder_module.ContextBuilder
 
 context_builder_module.PatchRetriever = _PatchRetrieverStub
 context_builder_module.ensure_embeddings_fresh = lambda dbs: None
@@ -302,6 +318,53 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
         "code": [201],
     }
     return builder, expected_ids
+
+
+def test_context_builder_populates_retriever_kwargs(monkeypatch, tmp_path):
+    monkeypatch.setattr(context_builder_module, "ensure_bootstrapped", lambda **_: {})
+    builder = ContextBuilder(
+        bots_db=str(tmp_path / "bots.db"),
+        workflows_db=str(tmp_path / "workflows.db"),
+        errors_db=str(tmp_path / "errors.db"),
+        code_db=str(tmp_path / "code.db"),
+        information_db=str(tmp_path / "info.db"),
+    )
+    assert builder.retriever.retriever_kwargs == {}
+    builder._ensure_retriever_kwargs()
+    assert "bot_db" in builder.retriever.retriever_kwargs
+    assert "information_db" in builder.retriever.retriever_kwargs
+
+
+def test_context_builder_initializes_retriever_with_db(monkeypatch, tmp_path):
+    monkeypatch.setattr(context_builder_module, "ensure_bootstrapped", lambda **_: {})
+    import vector_service.retriever as retriever_module
+
+    class UniversalRetrieverStub:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            has_db = any(
+                kwargs.get(name) is not None
+                for name in (
+                    "bot_db",
+                    "workflow_db",
+                    "error_db",
+                    "information_db",
+                    "code_db",
+                )
+            )
+            assert has_db
+
+    monkeypatch.setattr(retriever_module, "UniversalRetriever", UniversalRetrieverStub)
+    builder = ContextBuilder(
+        bots_db=str(tmp_path / "bots.db"),
+        workflows_db=str(tmp_path / "workflows.db"),
+        errors_db=str(tmp_path / "errors.db"),
+        code_db=str(tmp_path / "code.db"),
+        information_db=str(tmp_path / "info.db"),
+    )
+    builder._ensure_retriever_kwargs()
+    retriever = builder.retriever._get_retriever()
+    assert isinstance(retriever, UniversalRetrieverStub)
 
 
 def test_build_context_compact_json(monkeypatch):

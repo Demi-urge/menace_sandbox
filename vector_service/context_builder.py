@@ -948,6 +948,7 @@ class ContextBuilder:
         code_db: str | os.PathLike[str] | None = None,
         errors_db: str | os.PathLike[str] | None = None,
         workflows_db: str | os.PathLike[str] | None = None,
+        information_db: str | os.PathLike[str] | None = None,
         ) -> None:
         # Respect the centralized bootstrap readiness snapshot rather than
         # triggering bootstrap from context builder construction.
@@ -969,6 +970,7 @@ class ContextBuilder:
             ContextBuilder._shared_vector_metrics = _VEC_METRICS
         self.provenance_token = provenance_token or uuid.uuid4().hex
         self.roi_tag_penalties = roi_tag_penalties
+        self._owns_retriever = retriever is None
         self.retriever = retriever or Retriever(context_builder=self)
         if patch_retriever is None:
             self.patch_retriever = PatchRetriever(
@@ -1075,12 +1077,15 @@ class ContextBuilder:
         self.code_db = _normalise_db_path(code_db)
         self.errors_db = _normalise_db_path(errors_db)
         self.workflows_db = _normalise_db_path(workflows_db)
+        self.information_db = _normalise_db_path(information_db)
         self._db_paths = {
             "bots": self.bots_db,
             "code": self.code_db,
             "errors": self.errors_db,
             "workflows": self.workflows_db,
+            "information": self.information_db,
         }
+        self._retriever_kwargs_ready = False
         # Environment overrides allow runtime experimentation without config
         # reloads.  ``STACK_CONTEXT_ENABLED`` takes precedence over the value
         # in configuration, while ``STACK_CONTEXT_DISABLED`` always forces the
@@ -1155,6 +1160,131 @@ class ContextBuilder:
                 _ensure_stack_background()
             except Exception:
                 logger.exception("failed to start stack ingestion background task")
+
+    def _resolve_db_path(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return resolve_path(value)
+        except Exception:
+            return value
+
+    def _build_retriever_kwargs(self) -> Dict[str, Any]:
+        db_paths = dict(self._db_paths or {})
+        if not any(db_paths.values()):
+            return {}
+
+        failures: Dict[str, str] = {}
+        retriever_kwargs: Dict[str, Any] = {}
+
+        def _init_db(
+            *,
+            label: str,
+            module_names: tuple[str, ...],
+            class_name: str,
+            path_key: str,
+            kwarg_name: str,
+        ) -> None:
+            raw_path = db_paths.get(path_key)
+            if not raw_path:
+                return
+            resolved_path = self._resolve_db_path(raw_path)
+            db_class = None
+            import_error: Exception | None = None
+            for module_name in module_names:
+                try:
+                    module = importlib.import_module(module_name)
+                except Exception as exc:
+                    import_error = exc
+                    continue
+                db_class = getattr(module, class_name, None)
+                if db_class is not None:
+                    import_error = None
+                    break
+            if db_class is None:
+                detail = (
+                    f"import failed: {import_error}"
+                    if import_error is not None
+                    else f"missing {class_name} in {module_names}"
+                )
+                failures[label] = detail
+                logger.error(
+                    "failed to import %s for retriever: %s", class_name, detail
+                )
+                return
+            try:
+                retriever_kwargs[kwarg_name] = db_class(
+                    Path(resolved_path) if resolved_path is not None else None
+                )
+            except Exception as exc:
+                failures[label] = str(exc)
+                logger.exception("failed to initialise %s at %s", class_name, resolved_path)
+
+        _init_db(
+            label="bot_db",
+            module_names=("bot_database", "menace.bot_database", "menace_sandbox.bot_database"),
+            class_name="BotDB",
+            path_key="bots",
+            kwarg_name="bot_db",
+        )
+        _init_db(
+            label="workflow_db",
+            module_names=("task_handoff_bot", "menace.task_handoff_bot", "menace_sandbox.task_handoff_bot"),
+            class_name="WorkflowDB",
+            path_key="workflows",
+            kwarg_name="workflow_db",
+        )
+        _init_db(
+            label="error_db",
+            module_names=("error_bot", "menace.error_bot", "menace_sandbox.error_bot"),
+            class_name="ErrorDB",
+            path_key="errors",
+            kwarg_name="error_db",
+        )
+        _init_db(
+            label="information_db",
+            module_names=("information_db", "menace.information_db", "menace_sandbox.information_db"),
+            class_name="InformationDB",
+            path_key="information",
+            kwarg_name="information_db",
+        )
+        _init_db(
+            label="code_db",
+            module_names=("code_database", "menace.code_database", "menace_sandbox.code_database"),
+            class_name="CodeDB",
+            path_key="code",
+            kwarg_name="code_db",
+        )
+
+        if not retriever_kwargs and failures:
+            detail = ", ".join(f"{name}: {reason}" for name, reason in failures.items())
+            raise VectorServiceError(
+                "Failed to initialise retriever databases. "
+                f"Tried: {detail}"
+            )
+
+        return retriever_kwargs
+
+    def _ensure_retriever_kwargs(self) -> None:
+        if self._retriever_kwargs_ready:
+            return
+        if not self._owns_retriever:
+            self._retriever_kwargs_ready = True
+            return
+        if getattr(self.retriever, "retriever", None) is not None:
+            self._retriever_kwargs_ready = True
+            return
+        existing = getattr(self.retriever, "retriever_kwargs", None)
+        if existing:
+            self._retriever_kwargs_ready = True
+            return
+        retriever_kwargs = self._build_retriever_kwargs()
+        if retriever_kwargs:
+            try:
+                self.retriever.retriever_kwargs.update(retriever_kwargs)
+            except Exception:
+                logger.exception("failed to set retriever kwargs")
+        self._retriever_kwargs_ready = True
 
     # ------------------------------------------------------------------
     # Stack configuration helpers
@@ -2363,6 +2493,7 @@ class ContextBuilder:
         return self._stack_ingestor
 
     def _get_query_embedding(self, query: str) -> List[float] | None:
+        self._ensure_retriever_kwargs()
         embedder = getattr(self.retriever, "embed_query", None)
         if callable(embedder):
             try:
@@ -2770,6 +2901,7 @@ class ContextBuilder:
             session_id = session_id or uuid.uuid4().hex
             start = time.perf_counter()
             try:
+                self._ensure_retriever_kwargs()
                 hits = self.retriever.search(
                     query,
                     top_k=top_k * 5,
