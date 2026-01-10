@@ -880,17 +880,25 @@ class ErrorDB(EmbeddableDBMixin):
         """Yield error and telemetry rows for embedding backfill."""
         menace_id = self._menace_id(source_menace_id)
         clause, params = build_scope_clause("errors", Scope(scope), menace_id)
-        query = apply_scope("SELECT id, message FROM errors", clause)
+        query = apply_scope("SELECT id, message, ts FROM errors", clause)
         cur = self.conn.execute(query, params)
         for row in cur.fetchall():
-            yield row["id"], {"message": row["message"]}, "error"
+            yield (
+                row["id"],
+                {"message": row["message"], "last_updated": row["ts"]},
+                "error",
+            )
         t_clause, t_params = build_scope_clause("telemetry", Scope(scope), menace_id)
         t_query = apply_scope(
-            "SELECT id, cause, stack_trace FROM telemetry", t_clause
+            "SELECT id, cause, stack_trace, ts FROM telemetry", t_clause
         )
         cur = self.conn.execute(t_query, t_params)
         for row in cur.fetchall():
-            rec = {"message": row["cause"], "stack_trace": row["stack_trace"]}
+            rec = {
+                "message": row["cause"],
+                "stack_trace": row["stack_trace"],
+                "last_updated": row["ts"],
+            }
             yield row["id"], rec, "error"
 
     def link_model(self, err_id: int, model_id: int) -> None:
