@@ -186,45 +186,71 @@ class CognitionLayer:
         # Keep track of vectors by session so outcomes can be recorded later
         self._session_vectors: Dict[str, List[Tuple[str, str, float]]] = {}
         self._retrieval_meta: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        if self.vector_metrics is not None:
-            pending = None
-            delay_s = 0.1
-            max_attempts = 3
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    pending = self.vector_metrics.load_sessions()
-                    break
-                except sqlite3.OperationalError as exc:
-                    message = str(exc).lower()
-                    if "locked" in message or "busy" in message:
-                        if attempt < max_attempts:
-                            logger.warning(
-                                "vector_metrics.load_sessions.locked",
-                                extra={
-                                    "attempt": attempt,
-                                    "max_attempts": max_attempts,
-                                    "delay_s": delay_s,
-                                },
-                            )
-                            time.sleep(delay_s)
-                            delay_s *= 2
-                            continue
-                        logger.exception(
-                            "Failed to load pending sessions from metrics DB after retries"
+        self._pending_sessions_loaded = False
+        self._pending_sessions_deferred = False
+        self._load_pending_sessions()
+
+    def _load_pending_sessions(self) -> None:
+        """Load any pending sessions stored in the metrics database."""
+
+        if self._pending_sessions_loaded or self.vector_metrics is None:
+            return
+        if hasattr(self.vector_metrics, "persistence_probe"):
+            try:
+                if not self.vector_metrics.persistence_probe():
+                    if not self._pending_sessions_deferred:
+                        logger.info(
+                            "vector_metrics.load_sessions.deferred",
+                            extra={"reason": "persistence_not_ready"},
                         )
-                        pending = None
-                        break
+                        self._pending_sessions_deferred = True
+                    return
+            except Exception:
+                logger.exception(
+                    "Failed to probe metrics persistence readiness"
+                )
+                return
+
+        pending = None
+        delay_s = 0.1
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                pending = self.vector_metrics.load_sessions()
+                break
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                if "locked" in message or "busy" in message:
+                    if attempt < max_attempts:
+                        logger.warning(
+                            "vector_metrics.load_sessions.locked",
+                            extra={
+                                "attempt": attempt,
+                                "max_attempts": max_attempts,
+                                "delay_s": delay_s,
+                            },
+                        )
+                        time.sleep(delay_s)
+                        delay_s *= 2
+                        continue
                     logger.exception(
-                        "Failed to load pending sessions from metrics DB"
+                        "Failed to load pending sessions from metrics DB after retries"
                     )
                     pending = None
                     break
-                except Exception:
-                    logger.exception(
-                        "Failed to load pending sessions from metrics DB"
-                    )
-                    pending = None
-                    break
+                logger.exception(
+                    "Failed to load pending sessions from metrics DB"
+                )
+                pending = None
+                break
+            except Exception:
+                logger.exception(
+                    "Failed to load pending sessions from metrics DB"
+                )
+                pending = None
+                break
+        if pending is not None:
+            self._pending_sessions_loaded = True
             if pending:
                 for sid, (vecs, meta) in pending.items():
                     self._session_vectors[sid] = vecs
@@ -677,6 +703,7 @@ class CognitionLayer:
         if self.vector_metrics is not None:
             try:
                 self.vector_metrics.save_session(sid, vectors, meta_map)
+                self._load_pending_sessions()
             except Exception:
                 logger.exception("Failed to save retrieval session")
         return context, sid
@@ -788,6 +815,7 @@ class CognitionLayer:
         if self.vector_metrics is not None:
             try:
                 self.vector_metrics.save_session(sid, vectors, meta_map)
+                self._load_pending_sessions()
             except Exception:
                 logger.exception("Failed to save retrieval session")
         return context, sid
