@@ -122,21 +122,29 @@ except FileNotFoundError:
 _DB_FILE_MAP: Dict[str, str] = {}
 
 
-def _resolve_metadata_path(name: str, db_file: str | Path) -> Path:
+def _resolve_embedding_paths(
+    name: str, cls: type | None
+) -> tuple[Path | None, Path | None]:
+    if cls is None:
+        return None, None
+
+    default_resolver = getattr(cls, "default_embedding_paths", None)
+    if not callable(default_resolver):
+        return None, None
+
     try:
-        legacy_path = resolve_path(f"{name}_embeddings.json")
-    except FileNotFoundError:
-        legacy_path = Path(db_file).with_name(f"{name}_embeddings.json")
+        resolved = default_resolver()
+    except Exception:
+        return None, None
 
-    if legacy_path.exists():
-        return legacy_path
+    if not resolved:
+        return None, None
 
-    index_path = Path(db_file).with_suffix(".index")
-    metadata_path = index_path.with_suffix(".json")
-    if metadata_path.exists():
-        return metadata_path
+    index_path, metadata_path = resolved
+    if not index_path or not metadata_path:
+        return None, None
 
-    return legacy_path
+    return Path(index_path), Path(metadata_path)
 
 
 def _load_timestamps() -> dict[str, float]:
@@ -877,16 +885,13 @@ def ensure_embeddings_fresh(
     def _resolve_metadata_candidates(
         name: str, cls: type | None, db_path: Path
     ) -> list[Path]:
-        instance = _instantiate_metadata_reader(cls)
         candidates: list[Path] = []
-        if instance is not None:
-            meta_candidate = getattr(instance, "metadata_path", None)
-            if meta_candidate:
-                candidates.append(Path(meta_candidate))
-            index_candidate = getattr(instance, "index_path", None)
-            if index_candidate:
-                candidates.append(Path(index_candidate).with_suffix(".json"))
-        if not candidates:
+        index_path, metadata_path = _resolve_embedding_paths(name, cls)
+        if metadata_path is not None:
+            candidates.append(metadata_path)
+        elif index_path is not None:
+            candidates.append(Path(index_path).with_suffix(".json"))
+        else:
             candidates.append(db_path.with_suffix(".json"))
             try:
                 candidates.append(resolve_path(f"{name}_embeddings.json"))
@@ -1092,10 +1097,27 @@ def rebuild_all_embeddings(
 
     if force:
         timestamps = _load_timestamps()
+        registry = _load_registry()
         for name in targets:
             timestamps.pop(name, None)
             with contextlib.suppress(Exception):
-                meta_path = resolve_path(f"{name}_embeddings.json")
+                cls = None
+                mod_cls = registry.get(name)
+                if mod_cls:
+                    mod_name, cls_name = mod_cls
+                    try:
+                        mod = importlib.import_module(mod_name)
+                        cls = getattr(mod, cls_name)
+                    except Exception:
+                        cls = None
+                _, metadata_path = _resolve_embedding_paths(name, cls)
+                if metadata_path is None:
+                    try:
+                        meta_path = resolve_path(f"{name}_embeddings.json")
+                    except FileNotFoundError:
+                        meta_path = Path(f"{name}_embeddings.json")
+                else:
+                    meta_path = metadata_path
                 if meta_path.is_dir():
                     shutil.rmtree(meta_path)
                 elif meta_path.exists():

@@ -1,9 +1,17 @@
 import types
 import sys
+from pathlib import Path
 
 from vector_service.registry import register_vectorizer
 from vector_service.vectorizer import SharedVectorService
-from vector_service.embedding_backfill import EmbeddingBackfill, EmbeddableDBMixin
+from vector_service.embedding_backfill import (
+    EmbeddingBackfill,
+    EmbeddableDBMixin,
+    _resolve_embedding_paths,
+)
+from code_database import CodeDB
+from error_bot import ErrorDB
+from task_handoff_bot import WorkflowDB
 
 
 def test_registry_enables_vectorization_and_backfill(monkeypatch):
@@ -52,6 +60,31 @@ def test_registry_enables_vectorization_and_backfill(monkeypatch):
 
     eb.run(db="toy")
     assert calls["batch"] == 5
+
+
+def test_default_embedding_metadata_paths_match_db_filenames():
+    cases = [
+        (
+            "code",
+            CodeDB,
+            Path(CodeDB.DB_FILE).with_suffix(".index").with_suffix(".json").name,
+        ),
+        (
+            "error",
+            ErrorDB,
+            Path(ErrorDB.DEFAULT_VECTOR_INDEX_PATH).with_suffix(".json").name,
+        ),
+        (
+            "workflow",
+            WorkflowDB,
+            Path(WorkflowDB.DEFAULT_VECTOR_INDEX_PATH).with_suffix(".json").name,
+        ),
+    ]
+
+    for name, cls, expected in cases:
+        _, metadata_path = _resolve_embedding_paths(name, cls)
+        assert metadata_path is not None
+        assert metadata_path.name == expected
 
 
 def test_auto_discovered_vectorizer_scheduled(tmp_path, monkeypatch):

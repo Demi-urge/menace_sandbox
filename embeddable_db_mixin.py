@@ -659,6 +659,12 @@ def log_embedding_metrics(
 class EmbeddableDBMixin:
     """Add embedding storage and similarity search to a database class."""
 
+    @classmethod
+    def default_embedding_paths(cls) -> tuple[Path, Path] | None:
+        """Return default index and metadata paths without instantiating."""
+
+        return None
+
     def __init__(
         self,
         *super_args: Any,

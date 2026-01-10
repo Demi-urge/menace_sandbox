@@ -330,6 +330,11 @@ class CodeDB(EmbeddableDBMixin):
 
     DB_FILE = "code.db"
 
+    @classmethod
+    def default_embedding_paths(cls) -> tuple[Path, Path]:
+        index_path = Path(cls.DB_FILE).with_suffix(".index")
+        return index_path, index_path.with_suffix(".json")
+
     def __init__(
         self,
         path: Path | str | None = None,

@@ -809,6 +809,12 @@ class WorkflowDB(EmbeddableDBMixin):
     """SQLite storage for generated workflows with vector search."""
 
     DB_FILE = "workflows.db"
+    DEFAULT_VECTOR_INDEX_PATH = "workflow_embeddings.index"
+
+    @classmethod
+    def default_embedding_paths(cls) -> tuple[Path, Path]:
+        index_path = Path(cls.DEFAULT_VECTOR_INDEX_PATH)
+        return index_path, index_path.with_suffix(".json")
 
     def __init__(
         self,
