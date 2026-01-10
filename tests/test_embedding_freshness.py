@@ -238,3 +238,64 @@ def test_backfill_accepts_non_default_metadata_location(monkeypatch, tmp_path):
 
     eb.ensure_embeddings_fresh(["dummy"], retries=1, delay=0)
     assert alt_meta_path.exists()
+
+
+def test_ensure_embeddings_fresh_uses_index_metadata_path(monkeypatch, tmp_path):
+    trans_mod = types.ModuleType("transformers")
+    trans_mod.AutoModel = object
+    trans_mod.AutoTokenizer = object
+    sys.modules["transformers"] = trans_mod
+    monkeypatch.setattr("dynamic_path_router.resolve_path", lambda p: Path(tmp_path / p))
+
+    import vector_service.embedding_backfill as eb
+    eb = importlib.reload(eb)
+
+    monkeypatch.setattr(eb, "_TIMESTAMP_FILE", Path(tmp_path / "ts.json"))
+
+    class CodeDB:
+        DB_FILE = "code.db"
+        embedding_version = 1
+
+        def __init__(self, *args, **kwargs):
+            self._metadata = {"1": {"embedding_version": 1}}
+
+        def iter_records(self):
+            return iter([(1, "a", None)])
+
+    dummy_mod = types.ModuleType("dummy_code_mod")
+    dummy_mod.CodeDB = CodeDB
+    sys.modules["dummy_code_mod"] = dummy_mod
+
+    monkeypatch.setattr(eb, "_load_registry", lambda path=None: {"code": ("dummy_code_mod", "CodeDB")})
+
+    db_path = Path(tmp_path / "code.db")
+    db_path.write_text("x")
+    meta_path = Path(tmp_path / "code.json")
+    meta_path.write_text("{}")
+
+    now = time.time()
+    meta_time = now - 100
+    db_time = now
+    os.utime(meta_path, (meta_time, meta_time))
+    os.utime(db_path, (db_time, db_time))
+
+    eb._TIMESTAMP_FILE.write_text(json.dumps({"code": 0.0}))
+
+    async def fake_schedule_backfill(*, dbs=None):
+        refreshed = time.time() + 200
+        meta_path.write_text("{}")
+        os.utime(meta_path, (refreshed, refreshed))
+
+    monkeypatch.setattr(eb, "schedule_backfill", fake_schedule_backfill)
+
+    captured: list = []
+    result = eb.ensure_embeddings_fresh(
+        ["code"],
+        retries=1,
+        delay=0,
+        return_details=True,
+        log_hook=captured.append,
+    )
+
+    assert result["code"]["meta_path"] == str(meta_path)
+    assert captured[0]["code"]["meta_path"] == str(meta_path)
