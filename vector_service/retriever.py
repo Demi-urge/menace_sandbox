@@ -480,8 +480,10 @@ class Retriever:
         backoff = 1.0
         hits: List[Any] = []
         confidence = 0.0
-        has_retrieve_with_confidence = hasattr(retriever, "retrieve_with_confidence")
-        has_retrieve = hasattr(retriever, "retrieve")
+        retrieve_with_confidence = getattr(retriever, "retrieve_with_confidence", None)
+        retrieve = getattr(retriever, "retrieve", None)
+        has_retrieve_with_confidence = callable(retrieve_with_confidence)
+        has_retrieve = callable(retrieve)
         if not (has_retrieve_with_confidence or has_retrieve):
             methods = [
                 name
@@ -497,11 +499,11 @@ class Retriever:
         for attempt in range(attempts):
             try:
                 if has_retrieve_with_confidence:
-                    hits, confidence, _ = retriever.retrieve_with_confidence(
+                    hits, confidence, _ = retrieve_with_confidence(  # type: ignore[misc]
                         query, top_k=k
-                    )  # type: ignore[attr-defined]
+                    )
                 elif has_retrieve:
-                    hits, _, _ = retriever.retrieve(  # type: ignore[arg-type]
+                    hits, _, _ = retrieve(  # type: ignore[misc]
                         query, top_k=k, dbs=dbs
                     )
                     confidence = (
