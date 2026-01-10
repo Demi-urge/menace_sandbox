@@ -329,7 +329,8 @@ class CodeDB(EmbeddableDBMixin):
     """SQLite storage for code templates and relationships."""
 
     DB_FILE = "code.db"
-    EMBEDDINGS_INDEX_NAME = "code_embeddings.index"
+    DEFAULT_VECTOR_INDEX_PATH = "code_embeddings.index"
+    EMBEDDINGS_INDEX_NAME = DEFAULT_VECTOR_INDEX_PATH
     EMBEDDINGS_METADATA_NAME = "code_embeddings.json"
 
     @classmethod
@@ -338,8 +339,8 @@ class CodeDB(EmbeddableDBMixin):
             db_path = resolve_path(cls.DB_FILE, allow_missing_parents=True)
         except FileNotFoundError:
             db_path = Path(cls.DB_FILE)
-        index_path = db_path.with_name(cls.EMBEDDINGS_INDEX_NAME)
-        return index_path, index_path.with_name(cls.EMBEDDINGS_METADATA_NAME)
+        index_path = db_path.with_name(Path(cls.DEFAULT_VECTOR_INDEX_PATH).name)
+        return index_path, index_path.with_suffix(".json")
 
     def __init__(
         self,
@@ -410,8 +411,8 @@ class CodeDB(EmbeddableDBMixin):
                 self._ensure_schema(conn)
 
         if self.path and self.path.name:
-            index_path = self.path.with_name(self.EMBEDDINGS_INDEX_NAME)
-            meta_path = index_path.with_name(self.EMBEDDINGS_METADATA_NAME)
+            index_path = self.path.with_name(Path(self.DEFAULT_VECTOR_INDEX_PATH).name)
+            meta_path = index_path.with_suffix(".json")
         else:
             index_path, meta_path = self.default_embedding_paths()
         legacy_meta_path = index_path.with_name("code.json")

@@ -904,12 +904,13 @@ def ensure_embeddings_fresh(
 
         if fallback_needed:
             candidates.append(db_path.with_suffix(".json"))
-            if name == "code":
-                candidates.append(db_path.with_name("code.json"))
             try:
                 candidates.append(resolve_path(f"{name}_embeddings.json"))
             except FileNotFoundError:
                 candidates.append(db_path.with_name(f"{name}_embeddings.json"))
+        if name == "code":
+            candidates.append(db_path.with_name("code.json"))
+            candidates.append(db_path.with_name("code_embeddings.json"))
         for suffix in (".ann", f"{db_path.suffix}.ann"):
             index_candidate = db_path.with_suffix(suffix)
             if index_candidate.exists():
