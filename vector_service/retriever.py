@@ -196,7 +196,7 @@ class Retriever:
 
         specs = getattr(self.context_builder, "_retriever_db_specs", None)
         if callable(specs):
-            for label, _modules, _class, path_key, _kwarg in specs():
+            for label, _kind, _modules, _class, path_key, _kwarg in specs():
                 raw_path = None
                 if isinstance(db_paths, Mapping):
                     raw_path = db_paths.get(path_key)
