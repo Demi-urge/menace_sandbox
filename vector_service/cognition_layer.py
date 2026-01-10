@@ -31,6 +31,7 @@ retrieval ranker used by the context builder.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Tuple
+import sqlite3
 import time
 import asyncio
 import json
@@ -186,13 +187,48 @@ class CognitionLayer:
         self._session_vectors: Dict[str, List[Tuple[str, str, float]]] = {}
         self._retrieval_meta: Dict[str, Dict[str, Dict[str, Any]]] = {}
         if self.vector_metrics is not None:
-            try:
-                pending = self.vector_metrics.load_sessions()
+            pending = None
+            delay_s = 0.1
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    pending = self.vector_metrics.load_sessions()
+                    break
+                except sqlite3.OperationalError as exc:
+                    message = str(exc).lower()
+                    if "locked" in message or "busy" in message:
+                        if attempt < max_attempts:
+                            logger.warning(
+                                "vector_metrics.load_sessions.locked",
+                                extra={
+                                    "attempt": attempt,
+                                    "max_attempts": max_attempts,
+                                    "delay_s": delay_s,
+                                },
+                            )
+                            time.sleep(delay_s)
+                            delay_s *= 2
+                            continue
+                        logger.exception(
+                            "Failed to load pending sessions from metrics DB after retries"
+                        )
+                        pending = None
+                        break
+                    logger.exception(
+                        "Failed to load pending sessions from metrics DB"
+                    )
+                    pending = None
+                    break
+                except Exception:
+                    logger.exception(
+                        "Failed to load pending sessions from metrics DB"
+                    )
+                    pending = None
+                    break
+            if pending:
                 for sid, (vecs, meta) in pending.items():
                     self._session_vectors[sid] = vecs
                     self._retrieval_meta[sid] = meta
-            except Exception:
-                logger.exception("Failed to load pending sessions from metrics DB")
 
     # ------------------------------------------------------------------
     def reload_ranker_model(
