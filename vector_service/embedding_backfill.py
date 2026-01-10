@@ -453,6 +453,11 @@ class EmbeddingBackfill:
                             )
                 except Exception:  # pragma: no cover - best effort
                     continue
+                finally:
+                    try:
+                        db.save_index()
+                    except Exception:
+                        pass
         except Exception:
             status = "failure"
             _RUN_OUTCOME.labels(status, trigger).inc()
@@ -932,6 +937,24 @@ def ensure_embeddings_fresh(
         candidates = _resolve_metadata_candidates(name, cls, db_path)
         return _select_metadata_path(candidates)
 
+    def _read_metadata_last_vectorization(meta_path: Path) -> float:
+        try:  # pragma: no cover - best effort
+            data = json.loads(meta_path.read_text())
+        except Exception:
+            return 0.0
+        last_vec = data.get("last_vectorization")
+        if isinstance(last_vec, (int, float)):
+            return float(last_vec)
+        if isinstance(last_vec, str):
+            try:
+                return datetime.fromisoformat(last_vec).timestamp()
+            except ValueError:
+                try:
+                    return float(last_vec)
+                except ValueError:
+                    return 0.0
+        return 0.0
+
     def _needs_backfill(check: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         registry = _load_registry()
         pending: Dict[str, Dict[str, Any]] = {}
@@ -981,11 +1004,17 @@ def ensure_embeddings_fresh(
                     continue
 
                 last_vec = float(timestamps.get(name, 0.0))
-                effective_meta_mtime = max(meta_mtime, last_vec)
+                metadata_last_vectorization = (
+                    _read_metadata_last_vectorization(meta_path) if meta_exists else 0.0
+                )
+                effective_meta_mtime = max(
+                    meta_mtime, last_vec, metadata_last_vectorization
+                )
                 stale_by_mtime = effective_meta_mtime < db_mtime
                 info: Dict[str, Any] = {
                     "db_mtime": db_mtime,
                     "last_vectorization": last_vec,
+                    "metadata_last_vectorization": metadata_last_vectorization,
                     "meta_path": str(meta_path),
                 }
                 info["meta_mtime"] = meta_mtime

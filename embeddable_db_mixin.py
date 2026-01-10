@@ -989,20 +989,18 @@ class EmbeddableDBMixin:
 
     def save_index(self) -> None:
         """Persist vector index and metadata to disk."""
-        if self._index is None:
-            return
-        if self.backend == "annoy":
-            if not AnnoyIndex:
-                return
-            self._index.save(str(self.index_path))
-        elif self.backend == "faiss":
-            if not faiss:
-                return
-            faiss.write_index(self._index, str(self.index_path))
+        if self._index is not None:
+            if self.backend == "annoy":
+                if AnnoyIndex:
+                    self._index.save(str(self.index_path))
+            elif self.backend == "faiss":
+                if faiss:
+                    faiss.write_index(self._index, str(self.index_path))
         data = {
             "id_map": self._id_map,
             "metadata": self._metadata,
             "vector_dim": self._vector_dim,
+            "last_vectorization": datetime.utcnow().isoformat(),
         }
         self.metadata_path.write_text(json.dumps(data, indent=2))
 
