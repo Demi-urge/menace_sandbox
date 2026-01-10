@@ -213,6 +213,7 @@ from .embedding_backfill import (
     StaleEmbeddingsError,
     EmbeddingBackfill,
     schedule_backfill,
+    rebuild_all_embeddings,
 )
 from prompt_types import Prompt
 
@@ -248,6 +249,12 @@ _VECTOR_SERVICE_WARMUP = os.getenv("VECTOR_SERVICE_WARMUP", "").lower() in {
     "on",
 }
 _VECTOR_METRICS_DISABLED = os.getenv("VECTOR_METRICS_DISABLED", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_VECTOR_SERVICE_AUTO_REBUILD = os.getenv("VECTOR_SERVICE_AUTO_REBUILD", "").lower() in {
     "1",
     "true",
     "yes",
@@ -493,6 +500,28 @@ def _env_flag(name: str, default: bool) -> bool:
     if value is None:
         return default
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _format_embedding_diagnostics(
+    diagnostics: Dict[str, Dict[str, Any]],
+    stale_reasons: Dict[str, str] | None = None,
+) -> str:
+    if not diagnostics:
+        stale_reasons = stale_reasons or {}
+        if stale_reasons:
+            return ", ".join(f"{name} ({reason})" for name, reason in stale_reasons.items())
+        return "unknown"
+    formatted: List[str] = []
+    for name, info in sorted(diagnostics.items()):
+        reason = info.get("reason") or (stale_reasons or {}).get(name)
+        parts = []
+        if reason:
+            parts.append(f"reason={reason}")
+        parts.append(f"db_mtime={info.get('db_mtime')}")
+        parts.append(f"meta_mtime={info.get('meta_mtime')}")
+        parts.append(f"meta_path={info.get('meta_path')}")
+        formatted.append(f"{name} ({', '.join(parts)})")
+    return ", ".join(formatted)
 
 
 try:  # pragma: no cover - best effort
@@ -2668,12 +2697,49 @@ class ContextBuilder:
                 pass
             _ensure_vector_service()
             dbs_to_check = list(self.db_weights.keys()) or ["code", "bot", "error", "workflow"]
+            embedding_diagnostics: Dict[str, Dict[str, Any]] = {}
+
+            def _capture_embedding_diagnostics(
+                diagnostics: Dict[str, Dict[str, Any]]
+            ) -> None:
+                nonlocal embedding_diagnostics
+                embedding_diagnostics = diagnostics
+
             try:
-                ensure_embeddings_fresh(dbs_to_check)
+                ensure_embeddings_fresh(dbs_to_check, log_hook=_capture_embedding_diagnostics)
             except StaleEmbeddingsError as exc:
-                details = ", ".join(f"{n} ({r})" for n, r in exc.stale_dbs.items())
+                details = _format_embedding_diagnostics(
+                    embedding_diagnostics, exc.stale_dbs
+                )
                 logger.error("embeddings missing or stale: %s", details)
-                raise VectorServiceError(f"embeddings missing or stale: {details}") from exc
+                if not _env_flag("VECTOR_SERVICE_AUTO_REBUILD", _VECTOR_SERVICE_AUTO_REBUILD):
+                    raise VectorServiceError(f"embeddings missing or stale: {details}") from exc
+                logger.warning(
+                    "auto rebuild enabled for stale embeddings: %s", details
+                )
+                try:
+                    rebuild_all_embeddings(dbs=dbs_to_check, force=True, retries=1)
+                except Exception as rebuild_exc:
+                    logger.exception("auto rebuild failed for embeddings")
+                    raise VectorServiceError(
+                        f"embeddings missing or stale after auto rebuild: {details}"
+                    ) from rebuild_exc
+                embedding_diagnostics = {}
+                try:
+                    ensure_embeddings_fresh(
+                        dbs_to_check, log_hook=_capture_embedding_diagnostics
+                    )
+                except StaleEmbeddingsError as retry_exc:
+                    retry_details = _format_embedding_diagnostics(
+                        embedding_diagnostics, retry_exc.stale_dbs
+                    )
+                    logger.error(
+                        "embeddings still missing or stale after rebuild: %s",
+                        retry_details,
+                    )
+                    raise VectorServiceError(
+                        f"embeddings missing or stale: {retry_details}"
+                    ) from retry_exc
             try:
                 self.patch_safety.load_failures()
             except Exception:
