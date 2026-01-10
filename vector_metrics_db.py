@@ -58,6 +58,10 @@ _BOOTSTRAP_PERSISTENCE_OVERRIDE_ENV = "VECTOR_METRICS_ALLOW_BOOTSTRAP_PERSISTENC
 _WARMUP_DEFERRAL_EMITTED = False
 _VECTOR_METRICS_SCHEMA_TIMEOUT_ENV = "VECTOR_METRICS_SCHEMA_TIMEOUT_MS"
 _DEFAULT_VECTOR_METRICS_SCHEMA_TIMEOUT_MS = 15000
+_VECTOR_METRICS_SCHEMA_RETRY_ENV = "VECTOR_METRICS_SCHEMA_RETRY"
+_VECTOR_METRICS_SCHEMA_BACKOFF_MS_ENV = "VECTOR_METRICS_SCHEMA_BACKOFF_MS"
+_DEFAULT_VECTOR_METRICS_SCHEMA_RETRY = 5
+_DEFAULT_VECTOR_METRICS_SCHEMA_BACKOFF_MS = 100
 
 _BOOTSTRAP_TIMER_ENVS = (
     "MENACE_BOOTSTRAP_WAIT_SECS",
@@ -71,7 +75,6 @@ _BOOTSTRAP_TIMER_ENVS = (
     "PREPARE_PIPELINE_CONFIG_BUDGET_SECS",
 )
 _SQLITE_RETRY_MESSAGES = ("database is locked",)
-_SQLITE_SCHEMA_MAX_RETRIES = 7
 _SQLITE_SCHEMA_BASE_DELAY = 0.1
 _SQLITE_SCHEMA_MAX_DELAY = 2.0
 
@@ -81,10 +84,35 @@ def _should_retry_sqlite(exc: sqlite3.OperationalError) -> bool:
     return any(fragment in message for fragment in _SQLITE_RETRY_MESSAGES)
 
 
+def _vector_metrics_schema_retry_max() -> int:
+    raw = os.getenv(_VECTOR_METRICS_SCHEMA_RETRY_ENV)
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            return _DEFAULT_VECTOR_METRICS_SCHEMA_RETRY
+        return max(1, value)
+    return _DEFAULT_VECTOR_METRICS_SCHEMA_RETRY
+
+
+def _vector_metrics_schema_backoff_base() -> float:
+    raw = os.getenv(_VECTOR_METRICS_SCHEMA_BACKOFF_MS_ENV)
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            return _DEFAULT_VECTOR_METRICS_SCHEMA_BACKOFF_MS / 1000.0
+        if value <= 0:
+            return _DEFAULT_VECTOR_METRICS_SCHEMA_BACKOFF_MS / 1000.0
+        return value / 1000.0
+    return _DEFAULT_VECTOR_METRICS_SCHEMA_BACKOFF_MS / 1000.0
+
+
 def _sqlite_schema_backoff(attempt: int) -> float:
-    base = _SQLITE_SCHEMA_BASE_DELAY * (2**attempt)
+    base_delay = _vector_metrics_schema_backoff_base()
+    base = base_delay * (2**attempt)
     delay = min(_SQLITE_SCHEMA_MAX_DELAY, base)
-    return delay + random.uniform(0, _SQLITE_SCHEMA_BASE_DELAY)
+    return delay + random.uniform(0, base_delay)
 
 
 class _BootstrapVectorMetricsStub:
@@ -3515,7 +3543,8 @@ class VectorMetricsDB:
                     schema_timeout_ms=schema_timeout_ms,
                 ),
             )
-            for attempt in range(_SQLITE_SCHEMA_MAX_RETRIES):
+            max_attempts = _vector_metrics_schema_retry_max()
+            for attempt in range(max_attempts):
                 schema_start = time.perf_counter()
                 migration_start = schema_start
                 applied_columns: list[str] = []
@@ -3710,13 +3739,13 @@ class VectorMetricsDB:
                             extra=_timestamp_payload(schema_start, attempts=attempt + 1),
                         )
                         raise
-                    if attempt >= _SQLITE_SCHEMA_MAX_RETRIES - 1:
+                    if attempt >= max_attempts - 1:
                         logger.error(
                             "vector_metrics_db.schema.retry_exhausted",
                             extra=_timestamp_payload(
                                 schema_start,
                                 attempts=attempt + 1,
-                                max_attempts=_SQLITE_SCHEMA_MAX_RETRIES,
+                                max_attempts=max_attempts,
                                 reason=str(exc),
                             ),
                         )
@@ -3731,9 +3760,10 @@ class VectorMetricsDB:
                         extra=_timestamp_payload(
                             schema_start,
                             attempt=attempt + 1,
-                            max_attempts=_SQLITE_SCHEMA_MAX_RETRIES,
+                            max_attempts=max_attempts,
                             delay_seconds=delay,
-                            reason=str(exc),
+                            reason="schema_init_locked",
+                            error=str(exc),
                         ),
                     )
                     time.sleep(delay)
