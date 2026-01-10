@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+from pathlib import Path
 from dataclasses import dataclass
 from menace.coding_bot_interface import manager_generate_helper
 
@@ -393,6 +394,29 @@ def test_build_context_no_auto_rebuild_when_flag_disabled(monkeypatch):
     assert "db_mtime=" in str(excinfo.value)
     assert "meta_mtime=" in str(excinfo.value)
     assert "meta_path=" in str(excinfo.value)
+
+
+def test_ensure_embeddings_fresh_accepts_code_embeddings_json(monkeypatch, tmp_path):
+    db_path = tmp_path / "code.db"
+    db_path.write_text("stub")
+    metadata_path = tmp_path / "code_embeddings.json"
+    metadata_path.write_text("{}")
+
+    def _default_embedding_paths(cls):
+        return tmp_path / "code_embeddings.index", tmp_path / "code.json"
+
+    monkeypatch.setattr(
+        _CodeDBStub, "default_embedding_paths", classmethod(_default_embedding_paths)
+    )
+    import vector_service.embedding_backfill as embedding_backfill
+
+    monkeypatch.setattr(
+        embedding_backfill,
+        "resolve_path",
+        lambda name, *a, **k: tmp_path / Path(name),
+    )
+
+    embedding_backfill.ensure_embeddings_fresh(["code"])
 
 
 def test_self_coding_engine_includes_context(monkeypatch):
