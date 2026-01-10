@@ -34,7 +34,12 @@ except Exception:  # pragma: no cover - fallback when running as script
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
 from .decorators import log_and_measure
-from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
+from .exceptions import (
+    MalformedPromptError,
+    RateLimitError,
+    RetrieverConfigurationError,
+    VectorServiceError,
+)
 
 try:  # pragma: no cover - optional dependency
     from code_database import PatchHistoryDB  # type: ignore
@@ -134,8 +139,56 @@ class Retriever:
         if self.retriever is None:
             if UniversalRetriever is None:  # pragma: no cover - defensive
                 raise RuntimeError("UniversalRetriever unavailable")
+            self._validate_retriever_config()
             self.retriever = UniversalRetriever(**self.retriever_kwargs)
         return self.retriever
+
+    def _validate_retriever_config(self) -> None:
+        db_keys = (
+            "bot_db",
+            "workflow_db",
+            "error_db",
+            "enhancement_db",
+            "information_db",
+            "code_db",
+        )
+        has_db = any(self.retriever_kwargs.get(key) for key in db_keys)
+        if has_db:
+            return
+
+        db_paths = getattr(self.context_builder, "_db_paths", None)
+        missing: List[str] = []
+
+        specs = getattr(self.context_builder, "_retriever_db_specs", None)
+        if callable(specs):
+            for label, _modules, _class, path_key, _kwarg in specs():
+                raw_path = None
+                if isinstance(db_paths, Mapping):
+                    raw_path = db_paths.get(path_key)
+                if not raw_path or not str(raw_path).strip():
+                    missing.append(label)
+        elif isinstance(db_paths, Mapping):
+            for key, value in db_paths.items():
+                if not value or not str(value).strip():
+                    missing.append(str(key))
+        else:
+            missing.extend(
+                ["bots", "enhancements", "workflows", "errors", "information", "code"]
+            )
+
+        missing_list = ", ".join(sorted(set(missing))) if missing else "unknown"
+        if isinstance(db_paths, Mapping):
+            config_hint = (
+                "ContextBuilder DB paths (context_builder._db_paths): "
+                f"{dict(db_paths)!r}"
+            )
+        else:
+            config_hint = "ContextBuilder DB paths (context_builder._db_paths) are unavailable"
+
+        raise RetrieverConfigurationError(
+            "Retriever configuration missing database inputs. "
+            f"Missing DBs: {missing_list}. {config_hint}."
+        )
 
     # ------------------------------------------------------------------
     def reload_reliability_scores(self) -> None:

@@ -13,9 +13,13 @@ class MalformedPromptError(VectorServiceError, ValueError):
     """Raised when input prompts are malformed or empty."""
 
 
+class RetrieverConfigurationError(VectorServiceError):
+    """Raised when retriever configuration is missing required DB inputs."""
+
+
 __all__ = [
     "VectorServiceError",
+    "RetrieverConfigurationError",
     "RateLimitError",
     "MalformedPromptError",
 ]
-
