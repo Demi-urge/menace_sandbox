@@ -312,6 +312,89 @@ def test_build_context_compact_json(monkeypatch):
     assert ", " not in ctx
 
 
+def test_build_context_auto_rebuild_on_stale_embeddings(monkeypatch):
+    monkeypatch.setattr(
+        sys.modules[__name__], "ContextBuilder", context_builder_module.ContextBuilder
+    )
+    monkeypatch.setattr(context_builder_module, "ensure_bootstrapped", lambda **_: {})
+    builder, _ = make_builder(monkeypatch)
+    calls = {"ensure": 0, "rebuild": 0}
+    diagnostics = {
+        "code": {
+            "db_mtime": 10.0,
+            "meta_mtime": 5.0,
+            "meta_path": "/tmp/code_embeddings.json",
+            "reason": "db modified after last vectorisation",
+        }
+    }
+
+    def ensure_stub(dbs, **kwargs):
+        calls["ensure"] += 1
+        log_hook = kwargs.get("log_hook")
+        if log_hook:
+            log_hook(diagnostics)
+        if calls["ensure"] == 1:
+            raise context_builder_module.StaleEmbeddingsError(
+                {"code": "db modified after last vectorisation"}
+            )
+        return None
+
+    def rebuild_stub(*, dbs, force, retries, **kwargs):
+        calls["rebuild"] += 1
+        return diagnostics
+
+    monkeypatch.setenv("VECTOR_SERVICE_AUTO_REBUILD", "true")
+    monkeypatch.setattr(context_builder_module, "ensure_embeddings_fresh", ensure_stub)
+    monkeypatch.setattr(context_builder_module, "rebuild_all_embeddings", rebuild_stub)
+
+    builder.build_context("alpha issue", top_k=1)
+
+    assert calls["ensure"] == 2
+    assert calls["rebuild"] == 1
+
+
+def test_build_context_no_auto_rebuild_when_flag_disabled(monkeypatch):
+    monkeypatch.setattr(
+        sys.modules[__name__], "ContextBuilder", context_builder_module.ContextBuilder
+    )
+    monkeypatch.setattr(context_builder_module, "ensure_bootstrapped", lambda **_: {})
+    builder, _ = make_builder(monkeypatch)
+    diagnostics = {
+        "code": {
+            "db_mtime": 10.0,
+            "meta_mtime": 5.0,
+            "meta_path": "/tmp/code_embeddings.json",
+            "reason": "db modified after last vectorisation",
+        }
+    }
+
+    def ensure_stub(dbs, **kwargs):
+        log_hook = kwargs.get("log_hook")
+        if log_hook:
+            log_hook(diagnostics)
+        raise context_builder_module.StaleEmbeddingsError(
+            {"code": "db modified after last vectorisation"}
+        )
+
+    rebuild_calls = {"count": 0}
+
+    def rebuild_stub(*, dbs, force, retries, **kwargs):
+        rebuild_calls["count"] += 1
+        return diagnostics
+
+    monkeypatch.delenv("VECTOR_SERVICE_AUTO_REBUILD", raising=False)
+    monkeypatch.setattr(context_builder_module, "ensure_embeddings_fresh", ensure_stub)
+    monkeypatch.setattr(context_builder_module, "rebuild_all_embeddings", rebuild_stub)
+
+    with pytest.raises(context_builder_module.VectorServiceError) as excinfo:
+        builder.build_context("alpha issue", top_k=1)
+
+    assert rebuild_calls["count"] == 0
+    assert "db_mtime=" in str(excinfo.value)
+    assert "meta_mtime=" in str(excinfo.value)
+    assert "meta_path=" in str(excinfo.value)
+
+
 def test_self_coding_engine_includes_context(monkeypatch):
     builder, expected = make_builder(monkeypatch)
     # Pre-compute context for pretty representation
