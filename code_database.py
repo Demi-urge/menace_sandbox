@@ -334,7 +334,11 @@ class CodeDB(EmbeddableDBMixin):
 
     @classmethod
     def default_embedding_paths(cls) -> tuple[Path, Path]:
-        index_path = Path(cls.DB_FILE).with_name(cls.EMBEDDINGS_INDEX_NAME)
+        try:
+            db_path = resolve_path(cls.DB_FILE, allow_missing_parents=True)
+        except FileNotFoundError:
+            db_path = Path(cls.DB_FILE)
+        index_path = db_path.with_name(cls.EMBEDDINGS_INDEX_NAME)
         return index_path, index_path.with_name(cls.EMBEDDINGS_METADATA_NAME)
 
     def __init__(
