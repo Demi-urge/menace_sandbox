@@ -30,11 +30,18 @@ def test_embeddings_backfill_triggers(monkeypatch, tmp_path):
         DB_FILE = "code.db"
         embedding_version = 1
 
+        @classmethod
+        def default_embedding_paths(cls):
+            return tmp_path / "code_embeddings.index", tmp_path / "code_embeddings.json"
+
         def __init__(self, *args, **kwargs):
             self._metadata = getattr(DummyCodeDB, "_meta", {"1": {"embedding_version": 1}})
 
         def iter_records(self):
             return iter([(1, "a", None), (2, "b", None)])
+
+        def needs_refresh(self, record_id, record):
+            return False
 
     dummy_mod = types.ModuleType("dummy_mod")
     dummy_mod.DummyCodeDB = DummyCodeDB
@@ -44,7 +51,7 @@ def test_embeddings_backfill_triggers(monkeypatch, tmp_path):
     # Create temporary DB and metadata files
     db_path = tmp_path / "code.db"
     db_path.write_text("x")
-    meta_path = tmp_path / "code_embeddings.json"
+    meta_path = tmp_path / "code.json"
     meta_path.write_text("{}")
 
     # Seed timestamp so db appears up to date except for vector mismatch

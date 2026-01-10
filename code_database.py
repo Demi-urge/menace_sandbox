@@ -409,11 +409,11 @@ class CodeDB(EmbeddableDBMixin):
             with self._connect() as conn:
                 self._ensure_schema(conn)
 
-        if self.path:
+        if self.path and self.path.name:
             index_path = self.path.with_name(self.EMBEDDINGS_INDEX_NAME)
+            meta_path = index_path.with_name(self.EMBEDDINGS_METADATA_NAME)
         else:
-            index_path = resolve_path(".") / self.EMBEDDINGS_INDEX_NAME
-        meta_path = index_path.with_name(self.EMBEDDINGS_METADATA_NAME)
+            index_path, meta_path = self.default_embedding_paths()
         legacy_meta_path = index_path.with_name("code.json")
         if legacy_meta_path.exists() and not meta_path.exists():
             try:

@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -400,23 +401,43 @@ def test_ensure_embeddings_fresh_accepts_code_embeddings_json(monkeypatch, tmp_p
     db_path = tmp_path / "code.db"
     db_path.write_text("stub")
     metadata_path = tmp_path / "code_embeddings.json"
-    metadata_path.write_text("{}")
 
     def _default_embedding_paths(cls):
-        return tmp_path / "code_embeddings.index", tmp_path / "code.json"
+        return tmp_path / "code_embeddings.index", tmp_path / "code_embeddings.json"
 
     monkeypatch.setattr(
-        _CodeDBStub, "default_embedding_paths", classmethod(_default_embedding_paths)
+        _CodeDBStub,
+        "default_embedding_paths",
+        classmethod(_default_embedding_paths),
+        raising=False,
     )
     import vector_service.embedding_backfill as embedding_backfill
 
     monkeypatch.setattr(
         embedding_backfill,
+        "_load_registry",
+        lambda path=None: {"code": ("code_database", "CodeDB")},
+    )
+    monkeypatch.setattr(
+        embedding_backfill,
         "resolve_path",
         lambda name, *a, **k: tmp_path / Path(name),
     )
+    ts_file = tmp_path / "ts.json"
+    ts_file.write_text("{}")
+    monkeypatch.setattr(embedding_backfill, "_TIMESTAMP_FILE", ts_file)
 
-    embedding_backfill.ensure_embeddings_fresh(["code"])
+    def log_hook(info):
+        assert info["code"]["meta_path"] == str(metadata_path)
+
+    async def fake_schedule_backfill(*, dbs=None):
+        metadata_path.write_text("{}")
+        future_mtime = db_path.stat().st_mtime + 10
+        os.utime(metadata_path, (future_mtime, future_mtime))
+
+    monkeypatch.setattr(embedding_backfill, "schedule_backfill", fake_schedule_backfill)
+
+    embedding_backfill.ensure_embeddings_fresh(["code"], log_hook=log_hook, delay=0)
 
 
 def test_self_coding_engine_includes_context(monkeypatch):
