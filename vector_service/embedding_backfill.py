@@ -887,19 +887,24 @@ def ensure_embeddings_fresh(
     ) -> list[Path]:
         candidates: list[Path] = []
         index_path, metadata_path = _resolve_embedding_paths(name, cls)
+        fallback_needed = True
         if metadata_path is not None:
+            metadata_path = Path(metadata_path)
             candidates.append(metadata_path)
+            fallback_needed = not metadata_path.exists()
         elif index_path is not None:
-            candidates.append(Path(index_path).with_suffix(".json"))
-        else:
+            metadata_path = Path(index_path).with_suffix(".json")
+            candidates.append(metadata_path)
+            fallback_needed = not metadata_path.exists()
+
+        if fallback_needed:
             candidates.append(db_path.with_suffix(".json"))
-        candidates.append(db_path.with_suffix(".json"))
-        if name == "code":
-            candidates.append(db_path.with_name("code.json"))
-        try:
-            candidates.append(resolve_path(f"{name}_embeddings.json"))
-        except FileNotFoundError:
-            candidates.append(db_path.with_name(f"{name}_embeddings.json"))
+            if name == "code":
+                candidates.append(db_path.with_name("code.json"))
+            try:
+                candidates.append(resolve_path(f"{name}_embeddings.json"))
+            except FileNotFoundError:
+                candidates.append(db_path.with_name(f"{name}_embeddings.json"))
         for suffix in (".ann", f"{db_path.suffix}.ann"):
             index_candidate = db_path.with_suffix(suffix)
             if index_candidate.exists():
