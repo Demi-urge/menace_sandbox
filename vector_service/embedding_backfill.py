@@ -122,6 +122,23 @@ except FileNotFoundError:
 _DB_FILE_MAP: Dict[str, str] = {}
 
 
+def _resolve_metadata_path(name: str, db_file: str | Path) -> Path:
+    try:
+        legacy_path = resolve_path(f"{name}_embeddings.json")
+    except FileNotFoundError:
+        legacy_path = Path(db_file).with_name(f"{name}_embeddings.json")
+
+    if legacy_path.exists():
+        return legacy_path
+
+    index_path = Path(db_file).with_suffix(".index")
+    metadata_path = index_path.with_suffix(".json")
+    if metadata_path.exists():
+        return metadata_path
+
+    return legacy_path
+
+
 def _load_timestamps() -> dict[str, float]:
     if _TIMESTAMP_FILE.exists():
         try:  # pragma: no cover - best effort
@@ -913,8 +930,9 @@ def ensure_embeddings_fresh(
                     cls = None
 
             db_path = resolve_path(db_file)
-            meta_candidates = _resolve_metadata_candidates(name, cls, db_path)
-            meta_path, meta_mtime, meta_exists = _select_metadata_path(meta_candidates)
+            meta_path = _resolve_metadata_path(name, db_path)
+            meta_exists = meta_path.exists()
+            meta_mtime = meta_path.stat().st_mtime if meta_exists else 0.0
             try:
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
