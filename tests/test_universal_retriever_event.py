@@ -1,6 +1,11 @@
 import universal_retriever as ur_mod
 
 
+class DummyEncoder:
+    def encode_text(self, _text: str):
+        return [0.0]
+
+
 def test_retriever_reload_on_feedback(monkeypatch):
     monkeypatch.setattr(
         ur_mod.UniversalRetriever, "_load_reliability_stats", lambda self: None
@@ -22,7 +27,7 @@ def test_retriever_reload_on_feedback(monkeypatch):
         event_bus=bus,
         enable_model_ranking=False,
         enable_reliability_bias=False,
-        code_db=object(),
+        code_db=DummyEncoder(),
     )
 
     called = []
@@ -30,4 +35,3 @@ def test_retriever_reload_on_feedback(monkeypatch):
 
     bus.publish("retrieval:feedback", {"db": "x"})
     assert called
-

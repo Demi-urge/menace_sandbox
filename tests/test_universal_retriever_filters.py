@@ -1,9 +1,16 @@
+import pytest
+
 from universal_retriever import UniversalRetriever
 
 
 class DummyEncoder:
     def encode_text(self, text: str):
         return [0.0]
+
+
+class DummyLookupDB:
+    def get_vector(self, record_id):  # pragma: no cover - simple stub
+        return None
 
 
 class DummyRetriever(UniversalRetriever):
@@ -35,3 +42,24 @@ def test_retriever_attaches_semantic_alerts():
     hits, _, _ = r.retrieve("q", top_k=1)
     alerts = hits[0].metadata.get("semantic_alerts")
     assert alerts and any("eval" in a[1] for a in alerts)
+
+
+def test_register_db_without_encode_text_does_not_replace_encoder():
+    retriever = UniversalRetriever(
+        code_db=DummyEncoder(),
+        enable_model_ranking=False,
+        enable_reliability_bias=False,
+    )
+    original_encoder = retriever._encoder
+    retriever.register_db("lookup", DummyLookupDB(), ("id",))
+    assert retriever._encoder is original_encoder
+    assert "lookup" in retriever._non_encoder_dbs
+
+
+def test_missing_encoder_raises_clear_error():
+    with pytest.raises(ValueError, match="No registered db exposes encode_text"):
+        UniversalRetriever(
+            bot_db=DummyLookupDB(),
+            enable_model_ranking=False,
+            enable_reliability_bias=False,
+        )
