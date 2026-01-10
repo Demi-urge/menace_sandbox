@@ -4120,7 +4120,11 @@ class VectorMetricsDB:
     def load_sessions(
         self,
     ) -> Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]]:
-        """Return mapping of session_id to stored vectors and metadata."""
+        """Return mapping of session_id to stored vectors and metadata.
+
+        Pending sessions are best-effort during bootstrap and may be retried later
+        (for example after warmup completes or on the first write).
+        """
 
         rows: list[tuple[Any, Any, Any]] = []
         if self._lazy_mode or self._boot_stub_active:
@@ -4128,33 +4132,60 @@ class VectorMetricsDB:
             if not path.exists():
                 return {}
             try:
-                conn = sqlite3.connect(
-                    f"file:{path.as_posix()}?mode=ro", uri=True
-                )
+                conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
             except sqlite3.Error:
                 return {}
             try:
-                cur = conn.execute(
-                    """
-                    SELECT name
-                      FROM sqlite_master
-                     WHERE type='table' AND name='pending_sessions'
-                    """
-                )
-                if cur.fetchone() is None:
+                try:
+                    conn.execute("PRAGMA read_uncommitted=1")
+                except sqlite3.Error:
+                    pass
+                try:
+                    cur = conn.execute(
+                        """
+                        SELECT name
+                          FROM sqlite_master
+                         WHERE type='table' AND name='pending_sessions'
+                        """
+                    )
+                    if cur.fetchone() is None:
+                        return {}
+                    cur = conn.execute(
+                        "SELECT session_id, vectors, metadata FROM pending_sessions"
+                    )
+                    rows = cur.fetchall()
+                except sqlite3.OperationalError as exc:
+                    logger.warning(
+                        "vector_metrics_db.load_sessions.skipped",
+                        extra={
+                            "reason": "contention",
+                            "error": str(exc),
+                            "lazy_mode": self._lazy_mode,
+                            "boot_stub_active": self._boot_stub_active,
+                            "path": str(path),
+                        },
+                    )
                     return {}
+            finally:
+                conn.close()
+        else:
+            try:
+                conn = self._conn_for(reason="load_sessions", commit_required=False)
                 cur = conn.execute(
                     "SELECT session_id, vectors, metadata FROM pending_sessions"
                 )
                 rows = cur.fetchall()
-            finally:
-                conn.close()
-        else:
-            conn = self._conn_for(reason="load_sessions", commit_required=False)
-            cur = conn.execute(
-                "SELECT session_id, vectors, metadata FROM pending_sessions"
-            )
-            rows = cur.fetchall()
+            except sqlite3.OperationalError as exc:
+                logger.warning(
+                    "vector_metrics_db.load_sessions.skipped",
+                    extra={
+                        "reason": "contention",
+                        "error": str(exc),
+                        "lazy_mode": self._lazy_mode,
+                        "boot_stub_active": self._boot_stub_active,
+                    },
+                )
+                return {}
         sessions: Dict[str, Tuple[List[Tuple[str, str, float]], Dict[str, Dict[str, Any]]]] = {}
         for sid, vec_json, meta_json in rows:
             try:
