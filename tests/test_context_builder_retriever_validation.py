@@ -100,3 +100,26 @@ def test_retriever_missing_db_inputs_reports_actionable_message():
     assert "Missing DBs" in message
     assert "ContextBuilder DB paths" in message
     assert "retriever failure" not in message
+
+
+def test_context_builder_preflight_requires_opened_dbs(tmp_path):
+    builder = ContextBuilder.__new__(ContextBuilder)
+    builder._db_paths = {
+        "bots": str(tmp_path / "bots.db"),
+        "enhancements": None,
+        "workflows": None,
+        "errors": None,
+        "information": None,
+        "code": str(tmp_path / "code.db"),
+    }
+    builder._retriever_dbs = {}
+    builder.retriever = Retriever(context_builder=builder, retriever_kwargs={})
+
+    with pytest.raises(VectorServiceError) as excinfo:
+        builder._ensure_retriever_dbs_available()
+
+    message = str(excinfo.value)
+    assert "ContextBuilder DB paths" in message
+    assert str(tmp_path / "bots.db") in message
+    assert str(tmp_path / "code.db") in message
+    assert "opened=False" in message
