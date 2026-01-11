@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import math
 import os
 import sys
 import time
@@ -249,6 +250,33 @@ def test_run_with_timeout_emits_metadata(capsys):
     captured = capsys.readouterr().out
     assert "[bootstrap-timeout][metadata]" in captured
     assert "metadata-check" in captured
+
+
+@pytest.mark.parametrize(
+    "requested_timeout",
+    [float("nan"), float("inf"), 0.0, 1e-12],
+)
+def test_run_with_timeout_invalid_timeouts_fallback_to_floor(caplog, requested_timeout):
+    with caplog.at_level(logging.WARNING):
+        result = _run_with_timeout(
+            lambda: "ok",
+            timeout=requested_timeout,
+            bootstrap_deadline=time.monotonic() + 5.0,
+            description="invalid-timeout",
+        )
+
+    assert result == "ok"
+    warning = next(
+        record
+        for record in caplog.records
+        if "effective timeout invalid; using fallback floor" in record.getMessage()
+    )
+    original_timeout = warning.__dict__["original_timeout"]
+    if math.isnan(requested_timeout):
+        assert math.isnan(original_timeout)
+    else:
+        assert original_timeout == requested_timeout
+    assert warning.__dict__["timeout_floor"] == bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR
 
 
 def test_placeholder_propagation_halts_with_lazy_proxy_graph(caplog):
