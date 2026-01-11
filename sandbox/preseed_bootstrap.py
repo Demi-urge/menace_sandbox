@@ -131,6 +131,7 @@ _PREPARE_STANDARD_TIMEOUT_FLOOR = 720.0
 _PREPARE_VECTOR_TIMEOUT_FLOOR = 900.0
 _PREPARE_SAFE_TIMEOUT_FLOOR = _PREPARE_STANDARD_TIMEOUT_FLOOR
 _VECTOR_ENV_MINIMUM = _PREPARE_VECTOR_TIMEOUT_FLOOR
+_TIMEOUT_CEILING_SECS = 60.0 * 60.0 * 24.0
 _BOOTSTRAP_LOCK_PATH_ENV = "MENACE_BOOTSTRAP_LOCK_PATH"
 _EMBEDDER_STAGE_BUDGET_FALLBACK = 30.0
 _EMBEDDER_HEAVY_STAGE_CEILING = 30.0
@@ -1192,7 +1193,70 @@ def _resolve_step_timeout(
         except Exception:  # pragma: no cover - helper availability best effort
             LOGGER.debug("failed to resolve bootstrap wait timeout", exc_info=True)
 
-    resolved_timeout = fallback_timeout if resolved_timeout is None else resolved_timeout
+    def _sanitize_timeout(
+        candidate: object | None,
+        *,
+        fallback: float,
+        ceiling: float,
+        context: dict[str, object],
+    ) -> float:
+        if candidate is None:
+            LOGGER.warning(
+                "bootstrap wait timeout missing; using fallback",
+                extra={
+                    "requested_timeout": candidate,
+                    "effective_timeout": fallback,
+                    "timeout_ceiling": ceiling,
+                    **context,
+                },
+            )
+            return fallback
+        try:
+            parsed = float(candidate)
+        except (TypeError, ValueError):
+            LOGGER.warning(
+                "bootstrap wait timeout invalid; using fallback",
+                extra={
+                    "requested_timeout": candidate,
+                    "effective_timeout": fallback,
+                    "timeout_ceiling": ceiling,
+                    **context,
+                },
+            )
+            return fallback
+        if not math.isfinite(parsed):
+            LOGGER.warning(
+                "bootstrap wait timeout non-finite; using fallback",
+                extra={
+                    "requested_timeout": candidate,
+                    "effective_timeout": fallback,
+                    "timeout_ceiling": ceiling,
+                    **context,
+                },
+            )
+            return fallback
+        if parsed > ceiling:
+            LOGGER.warning(
+                "bootstrap wait timeout exceeds ceiling; using fallback",
+                extra={
+                    "requested_timeout": parsed,
+                    "effective_timeout": fallback,
+                    "timeout_ceiling": ceiling,
+                    **context,
+                },
+            )
+            return fallback
+        return parsed
+
+    resolved_timeout = _sanitize_timeout(
+        resolved_timeout,
+        fallback=fallback_timeout,
+        ceiling=_TIMEOUT_CEILING_SECS,
+        context={
+            "vector_heavy": vector_heavy,
+            "step_name": step_name,
+        },
+    )
 
     if resolved_timeout is not None and resolved_timeout < timeout_floor:
         LOGGER.warning(
