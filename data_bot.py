@@ -2405,6 +2405,8 @@ class DataBot:
         intervals are unavailable.
         """
 
+        if self.trend_predictor is None:
+            self._ensure_trend_predictor()
         prediction = None
         if self.trend_predictor is not None:
             try:
@@ -2426,6 +2428,17 @@ class DataBot:
                 max(pred_fail, tests_failed),
             ),
         }
+
+    def _ensure_trend_predictor(self) -> None:
+        if self.trend_predictor is not None:
+            return
+        if _bootstrap_active(self) or _env_flag("MENACE_BOOTSTRAP_LIGHT"):
+            return
+        try:  # pragma: no cover - optional dependency
+            _trend_predictor_module = load_internal("trend_predictor")
+            self.trend_predictor = _trend_predictor_module.TrendPredictor()
+        except Exception:
+            self.trend_predictor = None
 
     def check_degradation(
         self,
