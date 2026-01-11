@@ -5158,13 +5158,32 @@ def _iter_nested_bootstrap_values(value: Any) -> Iterator[Any]:
     yield value
 
 
+_MISSING = object()
+
+
+def _get_safe_static_attr(obj: Any, name: str) -> Any:
+    mapping = getattr(obj, "__dict__", None)
+    if isinstance(mapping, dict) and name in mapping:
+        return mapping[name]
+    try:
+        value = inspect.getattr_static(obj, name)
+    except Exception:
+        return _MISSING
+    if isinstance(value, property):
+        return _MISSING
+    if inspect.isdatadescriptor(value) or inspect.ismemberdescriptor(value):
+        return _MISSING
+    if inspect.isgetsetdescriptor(value):
+        return _MISSING
+    return value
+
+
 def _iter_bootstrap_helper_candidates(root: Any) -> Iterator[Any]:
     if root is None:
         return
     for attr in _BOOTSTRAP_HELPER_ATTR_HINTS:
-        try:
-            value = getattr(root, attr)
-        except Exception:
+        value = _get_safe_static_attr(root, attr)
+        if value is _MISSING:
             continue
         for candidate in _iter_nested_bootstrap_values(value):
             yield candidate
@@ -5183,16 +5202,9 @@ def _looks_like_helper_candidate(candidate: Any) -> bool:
     if isinstance(candidate, (list, tuple, set, frozenset, Mapping)):
         return False
     for attr in ("manager", "initial_manager", "bot_registry", "data_bot"):
-        try:
-            if hasattr(candidate, attr):
-                return True
-        except Exception:
-            continue
-    try:
-        getattr(candidate, "_self_coding_pending_manager")
-    except Exception:
-        return False
-    return True
+        if _get_safe_static_attr(candidate, attr) is not _MISSING:
+            return True
+    return _get_safe_static_attr(candidate, "_self_coding_pending_manager") is not _MISSING
 
 
 def _looks_like_pipeline_candidate(candidate: Any) -> bool:
