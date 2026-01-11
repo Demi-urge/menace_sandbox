@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,7 +32,7 @@ from .coding_bot_interface import (
     self_coding_managed,
     structural_bootstrap_owner_guard,
 )
-from .data_bot import MetricsDB, DataBot, persist_sc_thresholds
+from .data_bot import MetricsDB, DataBot, persist_sc_thresholds, _bootstrap_active as _data_bootstrap_active
 from .evolution_approval_policy import EvolutionApprovalPolicy
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .bot_registry import BotRegistry
@@ -71,6 +72,49 @@ data_bot: DataBot | None = None
 manager: SelfCodingManager | None = None
 
 
+def _env_flag(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _bootstrap_light_active() -> bool:
+    try:
+        if _data_bootstrap_active():
+            return True
+    except Exception:
+        pass
+    return _env_flag("MENACE_BOOTSTRAP_LIGHT")
+
+
+class _BootstrapDataBotStub(DataBot):
+    def __init__(self) -> None:
+        self.bootstrap = True
+
+    def average_errors(self, bot: str) -> float:
+        return 0.0
+
+    def log_eval(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def __getattr__(self, _name: str) -> object:
+        def _noop(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        return _noop
+
+
+class _BootstrapEngineStub:
+    bootstrap = True
+
+    def __getattr__(self, _name: str) -> object:
+        def _noop(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        return _noop
+
+
 def _get_registry() -> BotRegistry:
     global _registry
     if _registry is None:
@@ -81,6 +125,11 @@ def _get_registry() -> BotRegistry:
 def _get_data_bot() -> DataBot:
     global _data_bot
     if _data_bot is None:
+        if _bootstrap_light_active():
+            _data_bot = _BootstrapDataBotStub()
+        else:
+            _data_bot = DataBot(start_server=False)
+    elif isinstance(_data_bot, _BootstrapDataBotStub) and not _bootstrap_light_active():
         _data_bot = DataBot(start_server=False)
     return _data_bot
 
@@ -95,7 +144,20 @@ def _get_context_builder() -> ContextBuilder:
 def _get_engine() -> SelfCodingEngine:
     global _engine
     if _engine is None:
-        _engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_get_context_builder())
+        if _bootstrap_light_active():
+            _engine = _BootstrapEngineStub()  # type: ignore[assignment]
+        else:
+            _engine = SelfCodingEngine(
+                CodeDB(),
+                GPTMemoryManager(),
+                context_builder=_get_context_builder(),
+            )
+    elif isinstance(_engine, _BootstrapEngineStub) and not _bootstrap_light_active():
+        _engine = SelfCodingEngine(
+            CodeDB(),
+            GPTMemoryManager(),
+            context_builder=_get_context_builder(),
+        )
     return _engine
 
 

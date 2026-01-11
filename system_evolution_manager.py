@@ -44,9 +44,7 @@ class SystemEvolutionManager:
     ) -> None:
         self.bots = list(bots)
         self.ga_manager = GALearningManager(self.bots)
-        from .structural_evolution_bot import StructuralEvolutionBot
-
-        self.struct_bot = StructuralEvolutionBot()
+        self._struct_bot: "StructuralEvolutionBot | None" = None
         self.metrics_db = metrics_db or MetricsDB()
         self.last_error_rate = 0.0
         self.last_energy = 1.0
@@ -55,6 +53,13 @@ class SystemEvolutionManager:
             self.radar_service.start()
         except Exception:  # pragma: no cover - best effort
             logging.getLogger(__name__).exception("radar service start failed")
+
+    def _get_struct_bot(self) -> "StructuralEvolutionBot":
+        if self._struct_bot is None:
+            from .structural_evolution_bot import StructuralEvolutionBot
+
+            self._struct_bot = StructuralEvolutionBot()
+        return self._struct_bot
 
     def run_if_signals(
         self,
@@ -89,8 +94,9 @@ class SystemEvolutionManager:
         return proposals
 
     def run_cycle(self) -> EvolutionCycleResult:
-        snap: "SystemSnapshot" = self.struct_bot.take_snapshot()
-        preds = self.struct_bot.predict_changes(snap)
+        struct_bot = self._get_struct_bot()
+        snap: "SystemSnapshot" = struct_bot.take_snapshot()
+        preds = struct_bot.predict_changes(snap)
         ga_results = {}
         for b in self.bots:
             try:
