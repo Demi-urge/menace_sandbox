@@ -5205,6 +5205,22 @@ def _get_safe_static_attr(obj: Any, name: str) -> Any:
     return value
 
 
+def _safe_getattr_no_proxy(obj: Any, name: str) -> tuple[bool, Any]:
+    try:
+        mapping = inspect.getattr_static(obj, "__dict__", _MISSING)
+    except Exception:
+        mapping = _MISSING
+    if isinstance(mapping, dict) and name in mapping:
+        return True, mapping[name]
+    try:
+        value = inspect.getattr_static(obj, name, _MISSING)
+    except Exception:
+        return False, _MISSING
+    if value is _MISSING or _is_static_descriptor(value):
+        return False, _MISSING
+    return True, value
+
+
 def _is_lazy_proxy_value(value: Any) -> bool:
     if value is None:
         return False
@@ -5230,12 +5246,12 @@ def _iter_bootstrap_helper_candidates(root: Any) -> Iterator[Any]:
     if root is None:
         return
     for attr in _BOOTSTRAP_HELPER_ATTR_HINTS:
-        value = _get_static_attr(root, attr)
-        if value is _MISSING or _is_static_descriptor(value):
+        found, value = _safe_getattr_no_proxy(root, attr)
+        if not found:
             continue
         for candidate in _iter_nested_bootstrap_values(value):
             yield candidate
-    mapping = _get_static_attr(root, "__dict__")
+    found, mapping = _safe_getattr_no_proxy(root, "__dict__")
     if isinstance(mapping, dict):
         for value in mapping.values():
             if _is_lazy_proxy_value(value):
