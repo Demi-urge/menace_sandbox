@@ -201,6 +201,29 @@ def test_auto_instantiates_with_stubbed_builder(monkeypatch):
     assert getattr(bot.evolution_orchestrator, "context_builder_degraded", False)
 
 
+def test_helper_discovery_skips_lazy_proxy():
+    class LazyProxy:
+        __lazy_proxy__ = True
+
+        def __init__(self):
+            self.accessed = False
+
+        def __getattr__(self, name):
+            self.accessed = True
+            raise AssertionError("lazy proxy __getattr__ should not be invoked")
+
+    class Root:
+        def __init__(self):
+            self.helper = object()
+            self.lazy = LazyProxy()
+
+    root = Root()
+    candidates = list(cbi._iter_bootstrap_helper_candidates(root))
+
+    assert root.helper in candidates
+    assert root.lazy.accessed is False
+
+
 def test_orchestrator_autoinstantiation_failure(monkeypatch):
     class Broken(_StubOrchestrator):
         def __init__(self, *a, **k):  # pragma: no cover - simulate failure
@@ -1151,4 +1174,3 @@ def test_prepare_pipeline_enforces_minimum_timeout(monkeypatch, caplog):
     assert degraded_events, "watchdog should record degraded readiness when overruns occur"
     last_stage = degraded_events[-1]
     assert last_stage.get("resolved_timeout", 0) >= cbi._MIN_STAGE_TIMEOUT
-

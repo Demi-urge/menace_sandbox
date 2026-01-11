@@ -5161,6 +5161,28 @@ def _iter_nested_bootstrap_values(value: Any) -> Iterator[Any]:
 _MISSING = object()
 
 
+_LAZY_PROXY_MARKERS = (
+    "__lazy_proxy__",
+    "_lazy_proxy",
+    "__lazy__",
+    "_lazy",
+)
+
+_LAZY_PROXY_MODULE_HINTS = (
+    "lazy_object_proxy",
+    "lazy_loader",
+)
+
+
+def _is_static_descriptor(value: Any) -> bool:
+    return (
+        isinstance(value, property)
+        or inspect.isdatadescriptor(value)
+        or inspect.ismemberdescriptor(value)
+        or inspect.isgetsetdescriptor(value)
+    )
+
+
 def _get_safe_static_attr(obj: Any, name: str) -> Any:
     mapping = getattr(obj, "__dict__", None)
     if isinstance(mapping, dict) and name in mapping:
@@ -5169,27 +5191,46 @@ def _get_safe_static_attr(obj: Any, name: str) -> Any:
         value = inspect.getattr_static(obj, name)
     except Exception:
         return _MISSING
-    if isinstance(value, property):
-        return _MISSING
-    if inspect.isdatadescriptor(value) or inspect.ismemberdescriptor(value):
-        return _MISSING
-    if inspect.isgetsetdescriptor(value):
+    if _is_static_descriptor(value):
         return _MISSING
     return value
+
+
+def _is_lazy_proxy_value(value: Any) -> bool:
+    if value is None:
+        return False
+    for marker in _LAZY_PROXY_MARKERS:
+        try:
+            marker_value = inspect.getattr_static(value, marker, _MISSING)
+        except Exception:
+            marker_value = _MISSING
+        if marker_value is not _MISSING:
+            return True
+    cls = type(value)
+    module = getattr(cls, "__module__", "")
+    name = getattr(cls, "__name__", "")
+    module_hint = f"{module}.{name}".lower()
+    if any(hint in module_hint for hint in _LAZY_PROXY_MODULE_HINTS):
+        return True
+    if "lazy" in name.lower() and "proxy" in name.lower():
+        return True
+    return False
 
 
 def _iter_bootstrap_helper_candidates(root: Any) -> Iterator[Any]:
     if root is None:
         return
     for attr in _BOOTSTRAP_HELPER_ATTR_HINTS:
-        value = _get_safe_static_attr(root, attr)
-        if value is _MISSING:
+        value = inspect.getattr_static(root, attr, _MISSING)
+        if value is _MISSING or _is_static_descriptor(value):
             continue
         for candidate in _iter_nested_bootstrap_values(value):
             yield candidate
-    mapping = getattr(root, "__dict__", None)
+    mapping = inspect.getattr_static(root, "__dict__", None)
     if isinstance(mapping, dict):
         for value in mapping.values():
+            if _is_lazy_proxy_value(value):
+                continue
             for candidate in _iter_nested_bootstrap_values(value):
                 yield candidate
 
