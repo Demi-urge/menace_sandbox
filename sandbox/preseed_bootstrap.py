@@ -1433,6 +1433,10 @@ def _compute_adaptive_budget(
         "bootstrap_deadline": bootstrap_deadline,
         "reconciled_deadline": reconciled_deadline,
     }
+    if remaining_global is not None and remaining_global <= 0:
+        adaptive_context["deadline_expired"] = True
+        adaptive_context["adaptive_budget"] = 0.0
+        return 0.0, adaptive_context
 
     predicted_budget = _BOOTSTRAP_SCHEDULER.allocate_timeout(
         step_name,
@@ -1719,6 +1723,10 @@ def _run_with_timeout(
         contention_scale=contention_scale,
     )
     timeout_context = {**timeout_context, "adaptive": adaptive_context}
+    if adaptive_context.get("deadline_expired"):
+        raise TimeoutError(
+            f"{description} aborted: bootstrap deadline already expired"
+        )
     effective_timeout = _sanitize_effective_timeout(
         adaptive_timeout,
         timeout_floor=timeout_floor,
@@ -1783,6 +1791,7 @@ def _run_with_timeout(
                 ),
                 "remaining_global_window": adaptive_context.get("remaining_global_window"),
                 "adaptive_budget": adaptive_context.get("adaptive_budget", effective_timeout),
+                "deadline_expired": adaptive_context.get("deadline_expired"),
             },
         )
 
