@@ -5255,13 +5255,25 @@ def _propagate_placeholder_to_helpers(
     placeholder: Any,
     visited: set[int],
 ) -> None:
-    pending: deque[Any] = deque()
+    max_depth = 10
+    max_nodes = 2000
+    root_type = type(root).__name__
+    nodes_seen = 0
+    pending: deque[tuple[Any, int]] = deque()
     for candidate in _iter_bootstrap_helper_candidates(root):
-        pending.append(candidate)
+        pending.append((candidate, 1))
     while pending:
-        candidate = pending.popleft()
+        candidate, depth = pending.popleft()
         if candidate is None:
             continue
+        nodes_seen += 1
+        if nodes_seen > max_nodes:
+            logger.warning(
+                "placeholder propagation aborted after %s nodes from root %s",
+                max_nodes,
+                root_type,
+            )
+            return
         key = id(candidate)
         if key in visited:
             continue
@@ -5290,8 +5302,16 @@ def _propagate_placeholder_to_helpers(
             else:
                 updated = True
         if updated:
+            next_depth = depth + 1
+            if next_depth > max_depth or nodes_seen >= max_nodes:
+                logger.warning(
+                    "placeholder propagation aborted at depth %s for root %s",
+                    max_depth,
+                    root_type,
+                )
+                return
             for nested in _iter_bootstrap_helper_candidates(candidate):
-                pending.append(nested)
+                pending.append((nested, next_depth))
 
 
 def _seed_placeholder_bootstrap_fields(target: Any, placeholder: Any) -> bool:
