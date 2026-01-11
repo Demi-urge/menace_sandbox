@@ -224,7 +224,11 @@ VECTOR_STEP_BUDGET_FLOOR = max(360.0, _BOOTSTRAP_TIMEOUT_MINIMUMS["BOOTSTRAP_VEC
 
 
 def _derive_step_budget(
-    *, env_var: str | None, default: float, vector_heavy: bool = False
+    *,
+    step: str,
+    env_var: str | None,
+    default: float,
+    vector_heavy: bool = False,
 ) -> float:
     """Return a step budget respecting shared timeout minimums."""
 
@@ -235,8 +239,17 @@ def _derive_step_budget(
         parsed = None
 
     floor = VECTOR_STEP_BUDGET_FLOOR if vector_heavy else STEP_BUDGET_FLOOR
-    candidate = parsed if parsed is not None else default
-    return max(candidate, floor)
+    requested = parsed if parsed is not None else default
+    effective = max(requested, floor)
+    logging.getLogger(__name__).info(
+        "Bootstrap step budget resolved for %s: requested=%.2fs floor=%.2fs effective=%.2fs env=%s",
+        step,
+        requested,
+        floor,
+        effective,
+        env_var or "default",
+    )
+    return effective
 
 
 BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
@@ -338,37 +351,62 @@ VECTOR_HEAVY_STEPS: set[str] = {
 }
 
 DEFAULT_STEP_BUDGET = _derive_step_budget(
-    env_var="BOOTSTRAP_STEP_BUDGET", default=STEP_BUDGET_FLOOR
+    step="default",
+    env_var="BOOTSTRAP_STEP_BUDGET",
+    default=STEP_BUDGET_FLOOR,
 )
 BOOTSTRAP_STEP_BUDGETS: Mapping[str, float] = {
     "embedder_preload": _derive_step_budget(
+        step="embedder_preload",
         env_var="BOOTSTRAP_EMBEDDER_BUDGET",
         default=VECTOR_STEP_BUDGET_FLOOR,
         vector_heavy=True,
     ),
-    "context_builder": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
-    "bot_registry": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
-    "data_bot": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
-    "self_coding_engine": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
+    "context_builder": _derive_step_budget(
+        step="context_builder", env_var=None, default=STEP_BUDGET_FLOOR
+    ),
+    "bot_registry": _derive_step_budget(
+        step="bot_registry", env_var=None, default=STEP_BUDGET_FLOOR
+    ),
+    "data_bot": _derive_step_budget(
+        step="data_bot", env_var=None, default=STEP_BUDGET_FLOOR
+    ),
+    "self_coding_engine": _derive_step_budget(
+        step="self_coding_engine", env_var=None, default=STEP_BUDGET_FLOOR
+    ),
     "prepare_pipeline": _derive_step_budget(
-        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+        step="prepare_pipeline",
+        env_var=None,
+        default=VECTOR_STEP_BUDGET_FLOOR,
+        vector_heavy=True,
     ),
     "threshold_persistence": _derive_step_budget(
-        env_var=None, default=STEP_BUDGET_FLOOR
+        step="threshold_persistence", env_var=None, default=STEP_BUDGET_FLOOR
     ),
     "internalize_coding_bot": _derive_step_budget(
-        env_var=None, default=STEP_BUDGET_FLOOR
+        step="internalize_coding_bot", env_var=None, default=STEP_BUDGET_FLOOR
     ),
     "promote_pipeline": _derive_step_budget(
-        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+        step="promote_pipeline",
+        env_var="BOOTSTRAP_PROMOTE_PIPELINE_BUDGET",
+        default=VECTOR_STEP_BUDGET_FLOOR,
+        vector_heavy=True,
     ),
     "seed_final_context": _derive_step_budget(
-        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+        step="seed_final_context",
+        env_var=None,
+        default=VECTOR_STEP_BUDGET_FLOOR,
+        vector_heavy=True,
     ),
     "push_final_context": _derive_step_budget(
-        env_var=None, default=VECTOR_STEP_BUDGET_FLOOR, vector_heavy=True
+        step="push_final_context",
+        env_var=None,
+        default=VECTOR_STEP_BUDGET_FLOOR,
+        vector_heavy=True,
     ),
-    "bootstrap_complete": _derive_step_budget(env_var=None, default=STEP_BUDGET_FLOOR),
+    "bootstrap_complete": _derive_step_budget(
+        step="bootstrap_complete", env_var=None, default=STEP_BUDGET_FLOOR
+    ),
 }
 ADAPTIVE_LONG_STAGE_GRACE: Mapping[str, tuple[float, int]] = {
     "internalize_coding_bot": (30.0, 3),
