@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Forecast ROI and error rate trends."""
 
+import os
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -22,6 +23,15 @@ class TrendPrediction:
     errors: float
 
 
+def _env_flag(name: str) -> bool:
+    """Return ``True`` when environment variable *name* is truthy."""
+
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class TrendPredictor:
     """Train simple time series models on ROI and error history."""
 
@@ -31,11 +41,24 @@ class TrendPredictor:
         metrics_db: MetricsDB | None = None,
     ) -> None:
         self.history = history_db or EvolutionHistoryDB()
-        self.metrics = metrics_db or MetricsDB()
+        self._metrics = metrics_db
+        self._lazy_metrics_db = metrics_db is None and _env_flag("MENACE_BOOTSTRAP_LIGHT")
+        if self._metrics is None and not self._lazy_metrics_db:
+            self._metrics = MetricsDB()
         self._roi_model: object | None = None
         self._roi_len = 0
         self._err_model: object | None = None
         self._err_len = 0
+
+    @property
+    def metrics(self) -> MetricsDB:
+        if self._metrics is None:
+            self._metrics = MetricsDB()
+        return self._metrics
+
+    @metrics.setter
+    def metrics(self, value: MetricsDB | None) -> None:
+        self._metrics = value
 
     # ------------------------------------------------------------------
     def _fit_model(self, series: List[float]) -> Tuple[object | None, int]:
