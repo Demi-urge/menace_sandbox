@@ -1689,7 +1689,14 @@ class DataBot:
             else getattr(self.settings, "smoothing_factor", 0.1)
         )
         self.trend_predictor = trend_predictor
-        if self.trend_predictor is None:
+        defer_trend_predictor = self.bootstrap or _env_flag("MENACE_BOOTSTRAP_LIGHT")
+        if self.trend_predictor is None and defer_trend_predictor:
+            self.logger.info(
+                "TrendPredictor deferred (bootstrap=%s, MENACE_BOOTSTRAP_LIGHT=%s)",
+                self.bootstrap,
+                _env_flag("MENACE_BOOTSTRAP_LIGHT"),
+            )
+        if self.trend_predictor is None and not defer_trend_predictor:
             try:  # pragma: no cover - optional dependency
                 _trend_predictor_module = load_internal("trend_predictor")
                 self.trend_predictor = _trend_predictor_module.TrendPredictor()
