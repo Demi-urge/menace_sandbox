@@ -5350,7 +5350,7 @@ def _propagate_placeholder_to_helpers(
     depth: int = 0,
     *,
     max_depth: int = 8,
-    max_nodes: int = 800,
+    max_nodes: int = 5000,
 ) -> None:
     nodes_seen = 0
     pending: deque[tuple[Any, int]] = deque()
@@ -5361,20 +5361,6 @@ def _propagate_placeholder_to_helpers(
         candidate, depth = pending.popleft()
         if candidate is None:
             continue
-        nodes_seen += 1
-        if nodes_seen > max_nodes:
-            logger.warning(
-                "placeholder propagation aborted for root %s with placeholder %s "
-                "at depth %s after %s nodes (limit %s, max_depth %s, pending %s)",
-                root,
-                placeholder,
-                depth,
-                nodes_seen,
-                max_nodes,
-                max_depth,
-                len(pending),
-            )
-            return
         if depth > max_depth:
             logger.warning(
                 "placeholder propagation aborted for root %s with placeholder %s "
@@ -5390,6 +5376,22 @@ def _propagate_placeholder_to_helpers(
         if key in visited:
             continue
         visited.add(key)
+        nodes_seen += 1
+        if nodes_seen > max_nodes:
+            logger.warning(
+                "placeholder propagation aborted for root %s with placeholder %s "
+                "at depth %s after %s nodes (limit %s, max_depth %s, pending %s, "
+                "reason %s)",
+                root,
+                placeholder,
+                depth,
+                nodes_seen,
+                max_nodes,
+                max_depth,
+                len(pending),
+                "bootstrap_placeholder_propagation_limit",
+            )
+            return
         if not _looks_like_helper_candidate(candidate):
             continue
         updated = False
