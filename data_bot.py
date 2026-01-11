@@ -1643,7 +1643,10 @@ class DataBot:
         logger: logging.Logger | None = None,
         bootstrap: bool | None = None,
     ) -> None:
-        self.db = db or MetricsDB()
+        self._db = db
+        self._lazy_metrics_db = db is None and _env_flag("MENACE_BOOTSTRAP_LIGHT")
+        if self._db is None and not self._lazy_metrics_db:
+            self._db = MetricsDB()
         self.capital_bot = capital_bot
         self.patch_db = patch_db
         # Use shared event bus when none provided so all components share
@@ -1872,6 +1875,16 @@ class DataBot:
                     "monitoring disabled via MENACE_DISABLE_MONITORING; "
                     "skipping background refresh",
                 )
+
+    @property
+    def db(self) -> MetricsDB:
+        if self._db is None:
+            self._db = MetricsDB()
+        return self._db
+
+    @db.setter
+    def db(self, value: MetricsDB | None) -> None:
+        self._db = value
 
     @classmethod
     def _register_primary_instance(cls, bus_id: int, instance: "DataBot") -> None:
