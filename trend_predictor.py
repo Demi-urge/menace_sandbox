@@ -40,7 +40,10 @@ class TrendPredictor:
         history_db: EvolutionHistoryDB | None = None,
         metrics_db: MetricsDB | None = None,
     ) -> None:
-        self.history = history_db or EvolutionHistoryDB()
+        self._history = history_db
+        self._lazy_history_db = history_db is None and _env_flag("MENACE_BOOTSTRAP_LIGHT")
+        if self._history is None and not self._lazy_history_db:
+            self._history = EvolutionHistoryDB()
         self._metrics = metrics_db
         self._lazy_metrics_db = metrics_db is None and _env_flag("MENACE_BOOTSTRAP_LIGHT")
         if self._metrics is None and not self._lazy_metrics_db:
@@ -59,6 +62,16 @@ class TrendPredictor:
     @metrics.setter
     def metrics(self, value: MetricsDB | None) -> None:
         self._metrics = value
+
+    @property
+    def history(self) -> EvolutionHistoryDB:
+        if self._history is None:
+            self._history = EvolutionHistoryDB()
+        return self._history
+
+    @history.setter
+    def history(self, value: EvolutionHistoryDB | None) -> None:
+        self._history = value
 
     # ------------------------------------------------------------------
     def _fit_model(self, series: List[float]) -> Tuple[object | None, int]:
