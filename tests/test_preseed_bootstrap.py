@@ -159,6 +159,7 @@ def _install_menace_sandbox_stub() -> None:
 
 _install_menace_sandbox_stub()
 
+from coding_bot_interface import _propagate_placeholder_to_helpers
 import sandbox.preseed_bootstrap as bootstrap
 from sandbox.preseed_bootstrap import _run_with_timeout
 
@@ -248,6 +249,51 @@ def test_run_with_timeout_emits_metadata(capsys):
     captured = capsys.readouterr().out
     assert "[bootstrap-timeout][metadata]" in captured
     assert "metadata-check" in captured
+
+
+def test_placeholder_propagation_halts_with_lazy_proxy_graph(caplog):
+    class Helper:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.manager = None
+            self.initial_manager = None
+            self.helpers = []
+
+        def __repr__(self) -> str:
+            return f"Helper({self.name})"
+
+    class LazyProxy:
+        __lazy_proxy__ = True
+
+        def __init__(self) -> None:
+            self._delegate = None
+            self._bot_name = "lazy"
+
+        def __getattr__(self, name: str) -> None:
+            raise AttributeError(name)
+
+    root = Helper("root")
+    child = Helper("child")
+    grandchild = Helper("grandchild")
+    root.helpers = [child, LazyProxy()]
+    child.helpers = [grandchild]
+    grandchild.helpers = [child]
+
+    placeholder = "placeholder-sentinel"
+
+    with caplog.at_level(logging.WARNING):
+        _propagate_placeholder_to_helpers(
+            root,
+            placeholder,
+            set(),
+            max_depth=1,
+            max_nodes=10,
+        )
+
+    warning_messages = [record.getMessage() for record in caplog.records]
+    assert any("placeholder propagation aborted" in message for message in warning_messages)
+    assert any("Helper(root)" in message for message in warning_messages)
+    assert any("placeholder-sentinel" in message for message in warning_messages)
 
 
 def test_start_embedder_warmup_deferred(monkeypatch):
