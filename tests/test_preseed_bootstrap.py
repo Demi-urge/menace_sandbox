@@ -512,6 +512,29 @@ def test_resolve_step_timeout_clamps_low_values(monkeypatch, caplog):
     assert timeout >= bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR
 
 
+def test_resolve_step_timeout_clamps_non_finite(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING)
+    monkeypatch.setattr(
+        bootstrap._coding_bot_interface,
+        "_resolve_bootstrap_wait_timeout",
+        lambda vector_heavy=False: float("inf"),
+    )
+    monkeypatch.setattr(
+        bootstrap._BOOTSTRAP_SCHEDULER,
+        "allocate_timeout",
+        lambda _step_name, timeout, **_kwargs: timeout,
+    )
+
+    timeout = bootstrap._resolve_step_timeout(vector_heavy=False)
+
+    fallback_timeout = max(
+        bootstrap._PREPARE_STANDARD_TIMEOUT_FLOOR,
+        bootstrap._DEFAULT_BOOTSTRAP_STEP_TIMEOUT,
+    )
+    assert timeout == fallback_timeout
+    assert any("non-finite" in record.message for record in caplog.records)
+
+
 def test_prepare_timeout_uses_clamped_value(monkeypatch, caplog):
     caplog.set_level(logging.WARNING)
     timeouts: dict[str, tuple[float | None, float | None]] = {}

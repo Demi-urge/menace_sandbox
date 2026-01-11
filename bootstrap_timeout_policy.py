@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import socket
 import threading
@@ -88,6 +89,7 @@ _DEFAULT_GUARD_MAX_DELAY = 90.0
 _DEFAULT_GUARD_INTERVAL = 5.0
 _DEFAULT_GUARD_BACKOFF = 3.0
 _DEFAULT_MAX_CONCURRENT_ATTEMPTS = 3
+_TIMEOUT_CEILING_SECS = 60.0 * 60.0 * 24.0
 _COMPONENT_FLOOR_MAX_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_FLOOR_MAX_SCALE"
 _COMPONENT_STALENESS_PAD_ENV = "MENACE_BOOTSTRAP_HEARTBEAT_STALENESS_PAD"
 _COMPONENT_WINDOW_SCALE_ENV = "MENACE_BOOTSTRAP_COMPONENT_WINDOW_SCALE"
@@ -3161,8 +3163,69 @@ def _derive_timeout_setting(
     """Select an enforced timeout value with metadata and safety guards."""
 
     logger = logger or LOGGER
-    parsed_value = _parse_float(str(value)) if value is not None else None
-    parsed_state = _parse_float(str(state_value)) if state_value is not None else None
+
+    def _normalize_timeout_value(
+        candidate: object | None,
+        *,
+        fallback: float,
+        ceiling: float,
+        label: str,
+        log_none: bool,
+    ) -> float | None:
+        parsed = _parse_float(str(candidate)) if candidate is not None else None
+        if parsed is None:
+            if candidate is not None or log_none:
+                logger.warning(
+                    "timeout value missing or invalid; using fallback",
+                    extra={
+                        "env": env_name,
+                        "label": label,
+                        "original": candidate,
+                        "applied_timeout": fallback,
+                        "timeout_ceiling": ceiling,
+                    },
+                )
+            return None
+        if not math.isfinite(parsed):
+            logger.warning(
+                "timeout value non-finite; using fallback",
+                extra={
+                    "env": env_name,
+                    "label": label,
+                    "original": candidate,
+                    "applied_timeout": fallback,
+                    "timeout_ceiling": ceiling,
+                },
+            )
+            return None
+        if parsed > ceiling:
+            logger.warning(
+                "timeout value exceeds ceiling; using fallback",
+                extra={
+                    "env": env_name,
+                    "label": label,
+                    "original": parsed,
+                    "applied_timeout": fallback,
+                    "timeout_ceiling": ceiling,
+                },
+            )
+            return None
+        return parsed
+
+    parsed_value = _normalize_timeout_value(
+        value,
+        fallback=effective_minimum,
+        ceiling=_TIMEOUT_CEILING_SECS,
+        label="telemetry",
+        log_none=True,
+    )
+    parsed_state = _normalize_timeout_value(
+        state_value,
+        fallback=effective_minimum,
+        ceiling=_TIMEOUT_CEILING_SECS,
+        label="state",
+        log_none=False,
+    )
 
     resolved = effective_minimum
     source = "minimum"
