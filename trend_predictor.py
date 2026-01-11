@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Forecast ROI and error rate trends."""
 
-import os
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -23,15 +22,6 @@ class TrendPrediction:
     errors: float
 
 
-def _env_flag(name: str) -> bool:
-    """Return ``True`` when environment variable *name* is truthy."""
-
-    value = os.getenv(name)
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 class TrendPredictor:
     """Train simple time series models on ROI and error history."""
 
@@ -41,13 +31,7 @@ class TrendPredictor:
         metrics_db: MetricsDB | None = None,
     ) -> None:
         self._history = history_db
-        self._lazy_history_db = history_db is None and _env_flag("MENACE_BOOTSTRAP_LIGHT")
-        if self._history is None and not self._lazy_history_db:
-            self._history = EvolutionHistoryDB()
         self._metrics = metrics_db
-        self._lazy_metrics_db = metrics_db is None and _env_flag("MENACE_BOOTSTRAP_LIGHT")
-        if self._metrics is None and not self._lazy_metrics_db:
-            self._metrics = MetricsDB()
         self._roi_model: object | None = None
         self._roi_len = 0
         self._err_model: object | None = None
