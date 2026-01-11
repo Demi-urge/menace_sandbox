@@ -5183,13 +5183,22 @@ def _is_static_descriptor(value: Any) -> bool:
     )
 
 
+def _get_static_attr(obj: Any, name: str) -> Any:
+    try:
+        return inspect.getattr_static(obj, name)
+    except Exception:
+        try:
+            return object.__getattribute__(obj, name)
+        except Exception:
+            return _MISSING
+
+
 def _get_safe_static_attr(obj: Any, name: str) -> Any:
-    mapping = getattr(obj, "__dict__", None)
+    mapping = _get_static_attr(obj, "__dict__")
     if isinstance(mapping, dict) and name in mapping:
         return mapping[name]
-    try:
-        value = inspect.getattr_static(obj, name)
-    except Exception:
+    value = _get_static_attr(obj, name)
+    if value is _MISSING:
         return _MISSING
     if _is_static_descriptor(value):
         return _MISSING
@@ -5221,12 +5230,12 @@ def _iter_bootstrap_helper_candidates(root: Any) -> Iterator[Any]:
     if root is None:
         return
     for attr in _BOOTSTRAP_HELPER_ATTR_HINTS:
-        value = inspect.getattr_static(root, attr, _MISSING)
+        value = _get_static_attr(root, attr)
         if value is _MISSING or _is_static_descriptor(value):
             continue
         for candidate in _iter_nested_bootstrap_values(value):
             yield candidate
-    mapping = inspect.getattr_static(root, "__dict__", None)
+    mapping = _get_static_attr(root, "__dict__")
     if isinstance(mapping, dict):
         for value in mapping.values():
             if _is_lazy_proxy_value(value):
@@ -5235,12 +5244,39 @@ def _iter_bootstrap_helper_candidates(root: Any) -> Iterator[Any]:
                 yield candidate
 
 
+def _looks_like_lazy_helper_proxy(candidate: Any) -> bool:
+    if candidate is None:
+        return False
+    cls = type(candidate)
+    custom_getattr = inspect.getattr_static(cls, "__getattr__", _MISSING)
+    custom_getattribute = inspect.getattr_static(cls, "__getattribute__", _MISSING)
+    has_custom_getattr = custom_getattr is not _MISSING
+    has_custom_getattribute = (
+        custom_getattribute is not _MISSING
+        and custom_getattribute is not object.__getattribute__
+    )
+    if not (has_custom_getattr or has_custom_getattribute):
+        return False
+    delegate = _get_safe_static_attr(candidate, "_delegate")
+    bot_name = _get_safe_static_attr(candidate, "_bot_name")
+    if delegate is _MISSING and bot_name is _MISSING:
+        return False
+    if delegate is not _MISSING and delegate is not None:
+        return False
+    concrete_manager = _get_safe_static_attr(candidate, "manager")
+    if concrete_manager is not _MISSING and concrete_manager is not None:
+        return False
+    return True
+
+
 def _looks_like_helper_candidate(candidate: Any) -> bool:
     if candidate is None:
         return False
     if isinstance(candidate, (str, bytes, bytearray, int, float, complex, bool)):
         return False
     if isinstance(candidate, (list, tuple, set, frozenset, Mapping)):
+        return False
+    if _looks_like_lazy_helper_proxy(candidate):
         return False
     for attr in ("manager", "initial_manager", "bot_registry", "data_bot"):
         if _get_safe_static_attr(candidate, attr) is not _MISSING:
@@ -5326,9 +5362,8 @@ def _propagate_placeholder_to_helpers(
             continue
         updated = False
         for attr in ("manager", "initial_manager"):
-            try:
-                current = getattr(candidate, attr)
-            except Exception:
+            current = _get_safe_static_attr(candidate, attr)
+            if current is _MISSING:
                 current = None
             if current is placeholder:
                 continue
