@@ -1491,6 +1491,61 @@ def _compute_adaptive_budget(
     return adaptive_budget, adaptive_context
 
 
+def _effective_timeout_floor(
+    *,
+    vector_heavy: bool,
+    timeout_context: dict[str, Any],
+) -> float:
+    context_floor = timeout_context.get("timeout_floor_applied")
+    if isinstance(context_floor, (int, float)) and math.isfinite(context_floor) and context_floor > 0:
+        return float(context_floor)
+    return _PREPARE_VECTOR_TIMEOUT_FLOOR if vector_heavy else _PREPARE_STANDARD_TIMEOUT_FLOOR
+
+
+def _sanitize_effective_timeout(
+    effective_timeout: float | None,
+    *,
+    timeout_floor: float,
+    description: str,
+    timeout_context: dict[str, Any],
+    stage: str,
+    min_effective_timeout: float = 0.001,
+) -> float | None:
+    if effective_timeout is None:
+        return effective_timeout
+
+    reason = None
+    if not math.isfinite(effective_timeout):
+        reason = "non-finite"
+    elif effective_timeout <= 0:
+        reason = "non-positive"
+    elif effective_timeout < min_effective_timeout:
+        reason = "below-minimum-threshold"
+
+    if reason is None:
+        return effective_timeout
+
+    timeout_context["timeout_effective_override"] = {
+        "previous_timeout": effective_timeout,
+        "override_timeout": timeout_floor,
+        "reason": reason,
+        "stage": stage,
+    }
+    LOGGER.warning(
+        "effective timeout invalid; using fallback floor (requested=%s fallback=%s)",
+        effective_timeout,
+        timeout_floor,
+        extra={
+            "description": description,
+            "timeout_context": timeout_context,
+            "timeout_floor": timeout_floor,
+            "original_timeout": effective_timeout,
+            "validation_stage": stage,
+        },
+    )
+    return timeout_floor
+
+
 def _clamp_prepare_timeout_floor(
     resolved_timeout: tuple[float | None, dict[str, Any]],
     *,
@@ -1529,6 +1584,14 @@ def _clamp_prepare_timeout_floor(
     )
     updated_context["adaptive_prepare"] = adaptive_context
     timeout_context = updated_context
+
+    adaptive_timeout = _sanitize_effective_timeout(
+        adaptive_timeout,
+        timeout_floor=timeout_floor,
+        description="prepare_pipeline_for_bootstrap",
+        timeout_context=updated_context,
+        stage="adaptive_prepare",
+    )
 
     if adaptive_timeout is None:
         return adaptive_timeout, updated_context
@@ -1634,6 +1697,18 @@ def _run_with_timeout(
         effective_timeout, timeout_context = resolved_timeout
         requested_timeout = effective_timeout
 
+    timeout_floor = _effective_timeout_floor(
+        vector_heavy=heavy_bootstrap,
+        timeout_context=timeout_context,
+    )
+    effective_timeout = _sanitize_effective_timeout(
+        effective_timeout,
+        timeout_floor=timeout_floor,
+        description=description,
+        timeout_context=timeout_context,
+        stage="resolved",
+    )
+
     adaptive_timeout, adaptive_context = _compute_adaptive_budget(
         description,
         effective_timeout,
@@ -1644,7 +1719,13 @@ def _run_with_timeout(
         contention_scale=contention_scale,
     )
     timeout_context = {**timeout_context, "adaptive": adaptive_context}
-    effective_timeout = adaptive_timeout
+    effective_timeout = _sanitize_effective_timeout(
+        adaptive_timeout,
+        timeout_floor=timeout_floor,
+        description=description,
+        timeout_context=timeout_context,
+        stage="adaptive",
+    )
 
     budget_context = (
         budget.consume(
@@ -1679,22 +1760,13 @@ def _run_with_timeout(
             effective_timeout = timeout_max
 
         # Guard against pathological timeout collapse that would skip execution entirely.
-        min_effective_timeout = 0.001
-        if effective_timeout is not None and effective_timeout < min_effective_timeout:
-            override_timeout = 30.0
-            timeout_context["timeout_effective_override"] = {
-                "previous_timeout": effective_timeout,
-                "override_timeout": override_timeout,
-                "reason": "effective timeout below minimum threshold",
-            }
-            LOGGER.warning(
-                "effective timeout below minimum threshold; overriding",
-                extra={
-                    "description": description,
-                    "timeout_context": timeout_context,
-                },
-            )
-            effective_timeout = override_timeout
+        effective_timeout = _sanitize_effective_timeout(
+            effective_timeout,
+            timeout_floor=timeout_floor,
+            description=description,
+            timeout_context=timeout_context,
+            stage="post-budget",
+        )
 
         LOGGER.info(
             "%s starting with timeout (requested=%s effective=%s heavy=%s deadline=%s)",
