@@ -5331,14 +5331,16 @@ def _propagate_placeholder_to_helpers(
     root: Any,
     placeholder: Any,
     visited: set[int],
+    depth: int = 0,
+    *,
+    max_depth: int = 8,
+    max_nodes: int = 800,
 ) -> None:
-    max_depth = 8
-    max_nodes = 800
-    root_type = type(root).__name__
     nodes_seen = 0
     pending: deque[tuple[Any, int]] = deque()
+    start_depth = depth + 1
     for candidate in _iter_bootstrap_helper_candidates(root):
-        pending.append((candidate, 1))
+        pending.append((candidate, start_depth))
     while pending:
         candidate, depth = pending.popleft()
         if candidate is None:
@@ -5346,12 +5348,26 @@ def _propagate_placeholder_to_helpers(
         nodes_seen += 1
         if nodes_seen > max_nodes:
             logger.warning(
-                "placeholder propagation aborted for root %s after %s nodes "
-                "(limit %s, pending %s)",
-                root_type,
+                "placeholder propagation aborted for root %s with placeholder %s "
+                "at depth %s after %s nodes (limit %s, max_depth %s, pending %s)",
+                root,
+                placeholder,
+                depth,
                 nodes_seen,
                 max_nodes,
+                max_depth,
                 len(pending),
+            )
+            return
+        if depth > max_depth:
+            logger.warning(
+                "placeholder propagation aborted for root %s with placeholder %s "
+                "at depth %s after %s nodes (max_depth %s)",
+                root,
+                placeholder,
+                depth,
+                nodes_seen,
+                max_depth,
             )
             return
         key = id(candidate)
@@ -5383,7 +5399,16 @@ def _propagate_placeholder_to_helpers(
         if updated:
             next_depth = depth + 1
             if next_depth > max_depth:
-                continue
+                logger.warning(
+                    "placeholder propagation aborted for root %s with placeholder %s "
+                    "at depth %s after %s nodes (max_depth %s)",
+                    root,
+                    placeholder,
+                    next_depth,
+                    nodes_seen,
+                    max_depth,
+                )
+                return
             for nested in _iter_bootstrap_helper_candidates(candidate):
                 pending.append((nested, next_depth))
 
