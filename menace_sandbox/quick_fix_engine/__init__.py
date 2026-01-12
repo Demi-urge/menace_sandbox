@@ -1443,7 +1443,9 @@ def generate_patch(
         )
         if not resolved:
             logger.warning(
-                "context enrichment skipped after %.3fs (timeout)", elapsed
+                "context builder skipped (timeout) after %.3fs (session_id=%s)",
+                elapsed,
+                cb_session,
             )
             ctx_res = None
         if isinstance(ctx_res, tuple):
@@ -2429,13 +2431,29 @@ class QuickFixEngine:
         context_meta["context_session_id"] = cb_session
         try:
             query = f"{etype} in {prompt_path}"
-            ctx_res = builder.build(
-                query, session_id=cb_session, include_vectors=True
+            context_timeout_s = float(
+                os.getenv("QUICK_FIX_CONTEXT_TIMEOUT_SECS", "2.0")
             )
+
+            def _build_context() -> Any:
+                return builder.build(
+                    query, session_id=cb_session, include_vectors=True
+                )
+
+            resolved, ctx_res, elapsed = _call_with_timeout(
+                _build_context, context_timeout_s
+            )
+            if not resolved:
+                self.logger.warning(
+                    "context builder skipped (timeout) after %.3fs (session_id=%s)",
+                    elapsed,
+                    cb_session,
+                )
+                ctx_res = None
             if isinstance(ctx_res, tuple):
                 ctx_block, _sid, cb_vectors = ctx_res
             else:
-                ctx_block = ctx_res
+                ctx_block = ctx_res or ""
             fallback_cls, error_cls = _get_vector_service_results()
             if isinstance(ctx_block, (fallback_cls, error_cls)):
                 ctx_block = ""
@@ -2690,13 +2708,29 @@ class QuickFixEngine:
             cb_session = uuid.uuid4().hex
             try:
                 query = f"preemptive patch {prompt_path}"
-                ctx_res = builder.build(
-                    query, session_id=cb_session, include_vectors=True
+                context_timeout_s = float(
+                    os.getenv("QUICK_FIX_CONTEXT_TIMEOUT_SECS", "2.0")
                 )
+
+                def _build_context() -> Any:
+                    return builder.build(
+                        query, session_id=cb_session, include_vectors=True
+                    )
+
+                resolved, ctx_res, elapsed = _call_with_timeout(
+                    _build_context, context_timeout_s
+                )
+                if not resolved:
+                    self.logger.warning(
+                        "context builder skipped (timeout) after %.3fs (session_id=%s)",
+                        elapsed,
+                        cb_session,
+                    )
+                    ctx_res = None
                 if isinstance(ctx_res, tuple):
                     ctx, cb_session, cb_vectors = ctx_res
                 else:
-                    ctx, cb_session = ctx_res, cb_session
+                    ctx, cb_session = ctx_res or "", cb_session
                 fallback_cls, error_cls = _get_vector_service_results()
                 if isinstance(ctx, (fallback_cls, error_cls)):
                     ctx = ""
