@@ -8,7 +8,10 @@ The expected training data is a JSONL file where each row contains
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 try:  # pragma: no cover - optional heavy dependencies
     from datasets import load_dataset

@@ -16,6 +16,8 @@ import sys
 from typing import Iterable, List
 import uuid
 
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from db_router import init_db_router
 from dynamic_path_router import get_project_root, resolve_path
 
