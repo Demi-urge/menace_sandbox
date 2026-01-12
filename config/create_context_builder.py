@@ -112,8 +112,23 @@ def create_context_builder() -> ContextBuilder:
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
                 self.provenance_token = kwargs.get("provenance_token") or uuid.uuid4().hex
+                logger.warning(
+                    "create_context_builder: using stub ContextBuilder; context will be empty"
+                )
 
             def build(self, *args: object, **kwargs: object) -> dict:
                 return {"context": [], "metadata": {}}
+
+            def build_context(
+                self,
+                query: str,
+                *,
+                return_metadata: bool = False,
+                **kwargs: object,
+            ) -> object:
+                context = "{}"
+                if return_metadata:
+                    return context, {}
+                return context
 
         return _StubContextBuilder(**builder_kwargs)
