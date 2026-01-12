@@ -40,7 +40,7 @@ def test_governed_embed_redacts_and_embeds(monkeypatch, caplog):
 
     monkeypatch.setattr(governed_embeddings, "redact", fake_redact)
     monkeypatch.setattr(governed_embeddings, "license_check", fake_check)
-    monkeypatch.setattr(governed_embeddings, "get_embedder", lambda: DummyEmbedder())
+    monkeypatch.setattr(governed_embeddings, "get_embedder", lambda *_, **__: DummyEmbedder())
     with caplog.at_level(logging.WARNING):
         vec = governed_embed("secret token")
     assert vec == [0.1, 0.2]

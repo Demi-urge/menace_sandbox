@@ -117,7 +117,7 @@ def sample_embeddings(tmp_path, monkeypatch):
         "wf3": [{"roi_gain": 5.0}, {"roi_gain": 5.0}],
     }
 
-    def fake_embed(text, embedder=None):
+    def fake_embed(text, embedder=None, **_):
         return [1.0, 0.0]
 
     class DummyEmbedder:
@@ -125,7 +125,7 @@ def sample_embeddings(tmp_path, monkeypatch):
             return 2
 
     monkeypatch.setattr(mwp, "governed_embed", fake_embed)
-    monkeypatch.setattr(mwp, "get_embedder", lambda: DummyEmbedder())
+    monkeypatch.setattr(mwp, "get_embedder", lambda *_, **__: DummyEmbedder())
 
     planner = MetaWorkflowPlanner(
         context_builder=DummyBuilder(),

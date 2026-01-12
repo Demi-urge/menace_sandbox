@@ -5,7 +5,7 @@ from meta_workflow_planner import MetaWorkflowPlanner
 def test_embeddings_persist_without_indices(monkeypatch):
     tokens = []
 
-    def fake_embed(text, embedder=None):
+    def fake_embed(text, embedder=None, **_):
         tokens.append(text)
         return [3.0, 4.0]
 
@@ -21,7 +21,7 @@ def test_embeddings_persist_without_indices(monkeypatch):
         persisted['vec'] = list(vec)
 
     monkeypatch.setattr(mwp, 'governed_embed', fake_embed)
-    monkeypatch.setattr(mwp, 'get_embedder', lambda: DummyEmbedder())
+    monkeypatch.setattr(mwp, 'get_embedder', lambda *_, **__: DummyEmbedder())
     monkeypatch.setattr(mwp, 'persist_embedding', fake_persist)
 
     planner = MetaWorkflowPlanner()
