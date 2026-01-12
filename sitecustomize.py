@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import sys
 import threading
 import traceback
 import types
 from pathlib import Path
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 _REPO_ROOT = Path(__file__).resolve().parent
 _PARENT = _REPO_ROOT.parent
@@ -196,4 +199,3 @@ def _patch_threading_excepthook() -> None:
 
 
 _patch_threading_excepthook()
-
