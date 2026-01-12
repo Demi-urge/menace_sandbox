@@ -472,7 +472,6 @@ def _call_with_timeout(func: Callable[[], str | None], timeout: float) -> str | 
     return None
 
 
-_TRANSFORMER_SUMMARIZER: Optional[Callable[[str], list]] = None
 _BENCHMARK_ORDER: List[str] = []
 _SBERT_MODEL: Optional[object] = None
 
@@ -486,27 +485,24 @@ def _get_sbert_model() -> object | None:
 
 
 def _get_transformer_summarizer() -> Callable[[str], list] | None:
-    global _TRANSFORMER_SUMMARIZER
-    if _TRANSFORMER_SUMMARIZER is None:
-        pipeline_loader = _deps.load(
-            "transformers_pipeline",
-            lambda: __import__("transformers", fromlist=["pipeline"]).pipeline,
-        )
-        if pipeline_loader:
-            try:
-                _TRANSFORMER_SUMMARIZER = pipeline_loader("summarization")
-            except Exception as exc:  # pragma: no cover - optional
-                logger.warning("failed to initialise transformer pipeline: %s", exc)
-                _TRANSFORMER_SUMMARIZER = None
-    return _TRANSFORMER_SUMMARIZER
+    pipeline_loader = _deps.load(
+        "transformers_pipeline",
+        lambda: __import__("transformers", fromlist=["pipeline"]).pipeline,
+    )
+    if pipeline_loader:
+        try:
+            return pipeline_loader("summarization")
+        except Exception as exc:  # pragma: no cover - optional
+            logger.warning("failed to initialise transformer pipeline: %s", exc)
+    return None
 
 
 def _summarise_transformer(text: str, sentences: List[str], ratio: float, config: SummaryConfig) -> str | None:
-    summarizer = _get_transformer_summarizer()
-    if not summarizer:
-        return None
-
     def _run() -> str | None:
+        # HF tokenizers should not be initialized prior to fork; build inside the child process.
+        summarizer = _get_transformer_summarizer()
+        if not summarizer:
+            return None
         max_input = getattr(getattr(summarizer, "tokenizer", None), "model_max_length", 1024)
         tokens = text.split()
         if len(tokens) > max_input:
