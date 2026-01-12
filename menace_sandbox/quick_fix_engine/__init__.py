@@ -1300,8 +1300,10 @@ def generate_patch(
     print(f"[QFE] prompt path resolved: {prompt_path}", flush=True)
     description = description or f"preemptive fix for {prompt_path}"
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
+    workflow_id = None
     if context:
         context_meta.update(context)
+        workflow_id = context.get("workflow_id") or context.get("workflow")
     graph_lines: list[str] = []
     if graph is not None:
         print("[QFE] graph context requested", flush=True)
@@ -1328,7 +1330,12 @@ def generate_patch(
             if resolved:
                 logger.info("graph context resolved in %.3fs", elapsed)
             else:
-                logger.info("graph context skipped (timeout) after %.3fs", elapsed)
+                logger.warning(
+                    "graph context skipped (timeout) after %.3fs (module=%s, workflow_id=%s)",
+                    elapsed,
+                    prompt_path,
+                    workflow_id,
+                )
                 related_nodes = []
         except Exception:
             elapsed = time.monotonic() - graph_start
