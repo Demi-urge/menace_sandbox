@@ -1387,14 +1387,26 @@ def generate_patch(
     cb_session = uuid.uuid4().hex
     context_meta["context_session_id"] = cb_session
     vectors: List[Tuple[str, str, float]] = []
-    try:
-        ctx_res = builder.build(
+    context_timeout_s = float(os.getenv("QUICK_FIX_CONTEXT_TIMEOUT_SECS", "2.0"))
+
+    def _build_context() -> Any:
+        return builder.build(
             description, session_id=cb_session, include_vectors=True
         )
+
+    try:
+        resolved, ctx_res, elapsed = _call_with_timeout(
+            _build_context, context_timeout_s
+        )
+        if not resolved:
+            logger.warning(
+                "context enrichment skipped after %.3fs (timeout)", elapsed
+            )
+            ctx_res = None
         if isinstance(ctx_res, tuple):
             context_block, _, vectors = ctx_res
         else:
-            context_block = ctx_res
+            context_block = ctx_res or ""
         fallback_cls, error_cls = _get_vector_service_results()
         if isinstance(context_block, (fallback_cls, error_cls)):
             context_block = ""
