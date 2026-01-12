@@ -1233,6 +1233,19 @@ def generate_patch(
     print(f"[QFE] generate_patch entered for module={module}", flush=True)
 
     logger = logging.getLogger("QuickFixEngine")
+
+    def _log_step_start(step: str, *, extra: dict[str, Any] | None = None) -> float:
+        logger.info("%s started", step, extra=extra or {})
+        return time.monotonic()
+
+    def _log_step_end(
+        step: str, start: float, *, extra: dict[str, Any] | None = None
+    ) -> None:
+        elapsed = time.monotonic() - start
+        payload = dict(extra or {})
+        payload["elapsed_s"] = elapsed
+        logger.info("%s completed in %.3fs", step, elapsed, extra=payload)
+
     helper = helper_fn or manager_generate_helper
     risk_flags: list[str] = []
     if test_command is None:
@@ -1294,6 +1307,10 @@ def generate_patch(
         print("[QFE] graph context requested", flush=True)
 
         graph_timeout_s = float(os.getenv("QFE_GRAPH_TIMEOUT", "2.0"))
+        graph_step_start = _log_step_start(
+            "graph lookup",
+            extra={"module_path": prompt_path},
+        )
 
         def _fetch() -> list[str]:
             return graph.related(f"code:{prompt_path}")
@@ -1317,6 +1334,12 @@ def generate_patch(
             elapsed = time.monotonic() - graph_start
             logger.info("graph context skipped (error) after %.3fs", elapsed)
             related_nodes = []
+        finally:
+            _log_step_end(
+                "graph lookup",
+                graph_step_start,
+                extra={"module_path": prompt_path},
+            )
         if related_nodes is None:
             related_nodes = []
         modules = [n.split(":", 1)[1] for n in related_nodes if n.startswith("code:")]
@@ -1356,7 +1379,16 @@ def generate_patch(
                         target_region = region
         except Exception:
             logger.exception("failed to incorporate cluster trace")
+    static_step_start = _log_step_start(
+        "static analysis",
+        extra={"module_path": prompt_path},
+    )
     analysis = _collect_static_analysis(path)
+    _log_step_end(
+        "static analysis",
+        static_step_start,
+        extra={"module_path": prompt_path},
+    )
     static_summary = _summarize_static_analysis(analysis)
     static_meta = {
         "summary": static_summary,
@@ -1394,6 +1426,10 @@ def generate_patch(
             description, session_id=cb_session, include_vectors=True
         )
 
+    context_step_start = _log_step_start(
+        "context build",
+        extra={"module_path": prompt_path},
+    )
     try:
         resolved, ctx_res, elapsed = _call_with_timeout(
             _build_context, context_timeout_s
@@ -1413,8 +1449,23 @@ def generate_patch(
     except Exception:
         context_block = ""
         vectors = []
+    finally:
+        _log_step_end(
+            "context build",
+            context_step_start,
+            extra={"module_path": prompt_path},
+        )
     if context_block:
+        compression_step_start = _log_step_start(
+            "embedding/compression",
+            extra={"module_path": prompt_path},
+        )
         compressed = compress_snippets({"snippet": context_block}).get("snippet", "")
+        _log_step_end(
+            "embedding/compression",
+            compression_step_start,
+            extra={"module_path": prompt_path},
+        )
         if compressed:
             description += "\n\n" + compressed
     if strategy is not None:
@@ -1577,6 +1628,14 @@ def generate_patch(
                     except AttributeError:
                         apply = getattr(engine, "apply_patch")
                     helper = _gen(chunk_desc)
+                    pid: int | None = None
+                    patch_step_start = _log_step_start(
+                        "patch application",
+                        extra={
+                            "module_path": prompt_path,
+                            "chunk_summary": summary,
+                        },
+                    )
                     try:
                         pid, _, _ = apply(
                             path,
@@ -1613,6 +1672,16 @@ def generate_patch(
                             target_region=target_region,
                         )
                         pid = None
+                    finally:
+                        _log_step_end(
+                            "patch application",
+                            patch_step_start,
+                            extra={
+                                "module_path": prompt_path,
+                                "chunk_summary": summary,
+                                "patch_id": pid,
+                            },
+                        )
                     patch_ids.append(pid)
                 patch_id = patch_ids[-1] if patch_ids else None
             else:
@@ -1621,6 +1690,11 @@ def generate_patch(
                 except AttributeError:
                     apply = getattr(engine, "apply_patch")
                 helper = _gen(base_description)
+                patch_id: int | None = None
+                patch_step_start = _log_step_start(
+                    "patch application",
+                    extra={"module_path": prompt_path},
+                )
                 try:
                     patch_id, _, _ = apply(
                         path,
@@ -1657,6 +1731,12 @@ def generate_patch(
                         target_region=target_region,
                     )
                     patch_id = None
+                finally:
+                    _log_step_end(
+                        "patch application",
+                        patch_step_start,
+                        extra={"module_path": prompt_path, "patch_id": patch_id},
+                    )
         else:
             patch_id = None
             after_target = Path(after_dir) / rel
