@@ -1342,7 +1342,6 @@ def generate_patch(
                 _fetch, attempts=2, delay=0.1, logger=logger
             )
 
-        graph_start = time.monotonic()
         try:
             resolved, related_nodes, elapsed = _call_with_timeout(
                 _fetch_with_retry, graph_timeout_s
@@ -1356,20 +1355,17 @@ def generate_patch(
                 )
             else:
                 logger.warning(
-                    "graph context skipped (timeout) after %.3fs for module=%s (workflow_id=%s)",
+                    "graph enrichment skipped after %.3fs for module=%s (timeout)",
                     elapsed,
                     prompt_path,
-                    workflow_id,
                     extra={"module_path": prompt_path, "elapsed_s": elapsed},
                 )
                 related_nodes = []
         except Exception:
-            elapsed = time.monotonic() - graph_start
             logger.info(
-                "graph context skipped (error) after %.3fs for module=%s",
-                elapsed,
+                "graph context skipped (error) for module=%s",
                 prompt_path,
-                extra={"module_path": prompt_path, "elapsed_s": elapsed},
+                extra={"module_path": prompt_path},
             )
             related_nodes = []
         finally:
