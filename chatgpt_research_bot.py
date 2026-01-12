@@ -170,8 +170,6 @@ def _load_sklearn() -> tuple[object | None, object | None]:
 
 TfidfVectorizer, TruncatedSVD = _load_sklearn()
 
-pipeline = _deps.load("transformers_pipeline", lambda: __import__("transformers", fromlist=["pipeline"]).pipeline)
-
 NLP_OFFLINE_MODE = os.getenv("NLP_OFFLINE_MODE") == "1"
 
 
@@ -488,12 +486,17 @@ def _get_sbert_model() -> object | None:
 
 def _get_transformer_summarizer() -> Callable[[str], list] | None:
     global _TRANSFORMER_SUMMARIZER
-    if _TRANSFORMER_SUMMARIZER is None and pipeline:
-        try:
-            _TRANSFORMER_SUMMARIZER = pipeline("summarization")
-        except Exception as exc:  # pragma: no cover - optional
-            logger.warning("failed to initialise transformer pipeline: %s", exc)
-            _TRANSFORMER_SUMMARIZER = None
+    if _TRANSFORMER_SUMMARIZER is None:
+        pipeline_loader = _deps.load(
+            "transformers_pipeline",
+            lambda: __import__("transformers", fromlist=["pipeline"]).pipeline,
+        )
+        if pipeline_loader:
+            try:
+                _TRANSFORMER_SUMMARIZER = pipeline_loader("summarization")
+            except Exception as exc:  # pragma: no cover - optional
+                logger.warning("failed to initialise transformer pipeline: %s", exc)
+                _TRANSFORMER_SUMMARIZER = None
     return _TRANSFORMER_SUMMARIZER
 
 
