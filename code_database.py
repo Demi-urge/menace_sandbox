@@ -125,6 +125,27 @@ logger = logging.getLogger(__name__)
 _WATCH_THREAD: threading.Thread | None = None
 
 
+def _code_db_lock_timeout_secs() -> float:
+    raw_timeout = os.getenv("CODE_DB_LOCK_TIMEOUT_SECS", "").strip()
+    if not raw_timeout:
+        return 1.0
+    try:
+        timeout = float(raw_timeout)
+    except ValueError:
+        logger.warning(
+            "Invalid CODE_DB_LOCK_TIMEOUT_SECS=%r; using default timeout.",
+            raw_timeout,
+        )
+        return 1.0
+    if timeout < 0:
+        logger.warning(
+            "Negative CODE_DB_LOCK_TIMEOUT_SECS=%r; using default timeout.",
+            raw_timeout,
+        )
+        return 1.0
+    return timeout
+
+
 def _ensure_backfill_watcher(bus: "UnifiedEventBus" | None) -> None:
     """Start ``EmbeddingBackfill.watch_events`` once for this module."""
 
@@ -388,7 +409,7 @@ class CodeDB(EmbeddableDBMixin):
             raise ValueError("router must be provided when engine is None")
         self.event_bus = event_bus
         _ensure_backfill_watcher(self.event_bus)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.has_fts = False
         self.fts_retry_limit = 3
         self._fts_failures = 0
@@ -459,7 +480,17 @@ class CodeDB(EmbeddableDBMixin):
 
     @contextmanager
     def _connect(self) -> Iterator[Any]:
-        with self._lock:
+        timeout = _code_db_lock_timeout_secs()
+        acquired = self._lock.acquire(timeout=timeout)
+        if not acquired:
+            logger.warning(
+                "code_db.lock.acquire.timeout",
+                extra={"timeout_s": timeout},
+            )
+            raise TimeoutError(
+                f"Timed out after {timeout:.3f}s waiting for code DB lock."
+            )
+        try:
             if self.engine is not None:
                 with self.engine.begin() as conn:
                     yield conn
@@ -474,6 +505,8 @@ class CodeDB(EmbeddableDBMixin):
                 except Exception:
                     conn.rollback()
                     raise
+        finally:
+            self._lock.release()
 
     def _execute(self, conn: Any, sql: str, params: Iterable[Any] | None = None) -> Any:
         if hasattr(conn, "exec_driver_sql"):
@@ -1343,7 +1376,7 @@ class PatchHistoryDB:
             extra={"path": str(self.path)},
         )
         self.code_db = code_db
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.keyword_counts: Counter[str] = Counter()
         self.keyword_recent: Dict[str, float] = {}
         self._vec_db: VectorMetricsDB | None = None
