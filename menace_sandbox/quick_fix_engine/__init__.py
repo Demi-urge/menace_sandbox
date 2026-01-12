@@ -1474,9 +1474,11 @@ def generate_patch(
         )
         if not resolved:
             logger.warning(
-                "context builder skipped (timeout) after %.3fs (session_id=%s)",
+                "context builder skipped (timeout) after %.3fs for %s (session_id=%s)",
                 elapsed,
+                prompt_path,
                 cb_session,
+                extra={"module_path": prompt_path},
             )
             ctx_res = None
         if isinstance(ctx_res, tuple):
@@ -2476,9 +2478,11 @@ class QuickFixEngine:
             )
             if not resolved:
                 self.logger.warning(
-                    "context builder skipped (timeout) after %.3fs (session_id=%s)",
+                    "context builder skipped (timeout) after %.3fs for %s (session_id=%s)",
                     elapsed,
+                    prompt_path,
                     cb_session,
+                    extra={"module_path": prompt_path},
                 )
                 ctx_res = None
             if isinstance(ctx_res, tuple):
@@ -2753,9 +2757,11 @@ class QuickFixEngine:
                 )
                 if not resolved:
                     self.logger.warning(
-                        "context builder skipped (timeout) after %.3fs (session_id=%s)",
+                        "context builder skipped (timeout) after %.3fs for %s (session_id=%s)",
                         elapsed,
+                        prompt_path,
                         cb_session,
+                        extra={"module_path": prompt_path},
                     )
                     ctx_res = None
                 if isinstance(ctx_res, tuple):
