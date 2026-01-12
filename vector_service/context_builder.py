@@ -3354,6 +3354,49 @@ class ContextBuilder:
             overhead = total_tokens - sum_tokens
             total_tokens = sum_tokens + overhead
 
+            if total_tokens <= self.max_tokens or not candidates:
+                result: Dict[str, List[Dict[str, Any]]] = {}
+                meta: Dict[str, List[Dict[str, Any]]] = {}
+                vectors: List[Tuple[str, str, float]] = []
+                for key in bucket_order:
+                    for c in candidates:
+                        if c["bucket"] == key:
+                            result.setdefault(key, []).append(c["summary"])
+                            if return_metadata:
+                                meta.setdefault(key, []).append(c["meta"])
+                            vectors.append((c["origin"], c["vector_id"], c["score"]))
+
+                context = json.dumps(result, separators=(",", ":"))
+                total_tokens = self._count_tokens(context)
+                if not include_vectors and not return_metadata:
+                    self._cache[cache_key] = context
+                stats = {
+                    "tokens": total_tokens,
+                    "wall_time_ms": elapsed_ms,
+                    "prompt_tokens": prompt_tokens,
+                    "patch_confidence": patch_confidence,
+                }
+                if self.stack_config.enabled:
+                    selected = [c for c in candidates if c["bucket"] == "stack"]
+                    stack_stats["selected"] = len(selected)
+                    stack_stats["tokens"] = sum(c["tokens"] for c in selected)
+                    stats["stack"] = stack_stats
+                if include_vectors and return_metadata:
+                    if return_stats:
+                        return context, session_id, vectors, meta, stats
+                    return context, session_id, vectors, meta
+                if include_vectors:
+                    if return_stats:
+                        return context, session_id, vectors, stats
+                    return context, session_id, vectors
+                if return_metadata:
+                    if return_stats:
+                        return context, meta, stats
+                    return context, meta
+                if return_stats:
+                    return context, stats
+                return context
+
             if total_tokens > self.max_tokens and candidates:
                 if prioritise == "newest":
                     candidates.sort(
@@ -3409,48 +3452,6 @@ class ContextBuilder:
                             cand["tokens"] = new_tokens
                             total_tokens = sum_tokens + overhead
 
-                result: Dict[str, List[Dict[str, Any]]] = {}
-                meta: Dict[str, List[Dict[str, Any]]] = {}
-                vectors: List[Tuple[str, str, float]] = []
-                for key in bucket_order:
-                    for c in candidates:
-                        if c["bucket"] == key:
-                            result.setdefault(key, []).append(c["summary"])
-                            if return_metadata:
-                                meta.setdefault(key, []).append(c["meta"])
-                            vectors.append((c["origin"], c["vector_id"], c["score"]))
-
-                context = json.dumps(result, separators=(",", ":"))
-                total_tokens = self._count_tokens(context)
-                if not include_vectors and not return_metadata:
-                    self._cache[cache_key] = context
-                stats = {
-                    "tokens": total_tokens,
-                    "wall_time_ms": elapsed_ms,
-                    "prompt_tokens": prompt_tokens,
-                    "patch_confidence": patch_confidence,
-                }
-                if self.stack_config.enabled:
-                    selected = [c for c in candidates if c["bucket"] == "stack"]
-                    stack_stats["selected"] = len(selected)
-                    stack_stats["tokens"] = sum(c["tokens"] for c in selected)
-                    stats["stack"] = stack_stats
-                if include_vectors and return_metadata:
-                    if return_stats:
-                        return context, session_id, vectors, meta, stats
-                    return context, session_id, vectors, meta
-                if include_vectors:
-                    if return_stats:
-                        return context, session_id, vectors, stats
-                    return context, session_id, vectors
-                if return_metadata:
-                    if return_stats:
-                        return context, meta, stats
-                    return context, meta
-                if return_stats:
-                    return context, stats
-                return context
-            else:
                 result: Dict[str, List[Dict[str, Any]]] = {}
                 meta: Dict[str, List[Dict[str, Any]]] = {}
                 vectors: List[Tuple[str, str, float]] = []
