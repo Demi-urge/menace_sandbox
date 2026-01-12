@@ -1235,7 +1235,17 @@ def generate_patch(
     logger = logging.getLogger("QuickFixEngine")
 
     def _log_step_start(step: str, *, extra: dict[str, Any] | None = None) -> float:
-        logger.info("%s started", step, extra=extra or {})
+        payload = extra or {}
+        module_path = payload.get("module_path")
+        if module_path:
+            logger.info(
+                "%s started for module=%s",
+                step,
+                module_path,
+                extra=payload,
+            )
+        else:
+            logger.info("%s started", step, extra=payload)
         return time.monotonic()
 
     def _log_step_end(
@@ -1244,7 +1254,17 @@ def generate_patch(
         elapsed = time.monotonic() - start
         payload = dict(extra or {})
         payload["elapsed_s"] = elapsed
-        logger.info("%s completed in %.3fs", step, elapsed, extra=payload)
+        module_path = payload.get("module_path")
+        if module_path:
+            logger.info(
+                "%s completed in %.3fs for module=%s",
+                step,
+                elapsed,
+                module_path,
+                extra=payload,
+            )
+        else:
+            logger.info("%s completed in %.3fs", step, elapsed, extra=payload)
 
     helper = helper_fn or manager_generate_helper
     risk_flags: list[str] = []
