@@ -13,6 +13,10 @@ import sys
 import uuid
 from pathlib import Path
 import importlib
+import multiprocessing
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+multiprocessing.set_start_method("spawn", force=True)
 
 from coding_bot_interface import (
     _bootstrap_dependency_broker,

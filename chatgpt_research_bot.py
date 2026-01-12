@@ -448,7 +448,8 @@ def _summarise_svd(text: str, sentences: List[str], ratio: float, config: Summar
 
 
 def _call_with_timeout(func: Callable[[], str | None], timeout: float) -> str | None:
-    result_queue: multiprocessing.Queue = multiprocessing.Queue()
+    ctx = multiprocessing.get_context("spawn")
+    result_queue: multiprocessing.Queue = ctx.Queue()
 
     def runner(q: multiprocessing.Queue) -> None:
         try:
@@ -456,7 +457,7 @@ def _call_with_timeout(func: Callable[[], str | None], timeout: float) -> str | 
         except BaseException as e:  # pragma: no cover - defensive
             q.put(e)
 
-    p = multiprocessing.Process(target=runner, args=(result_queue,))
+    p = ctx.Process(target=runner, args=(result_queue,))
     p.daemon = True
     p.start()
     p.join(timeout)
