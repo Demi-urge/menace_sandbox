@@ -9,8 +9,12 @@ without requiring any manual post-launch edits.
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
+
+# Must be set before HF/tokenizers imports and before multiprocessing forks.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+import sys
 
 # Resolve the repository root from this file's location instead of assuming a
 # hard-coded home directory. The sandbox may live outside ``~/menace_sandbox``
