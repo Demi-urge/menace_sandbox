@@ -125,6 +125,24 @@ def _call_with_timeout(
     return True, result.get("value"), elapsed
 
 
+def _get_context_timeout(
+    logger: logging.Logger, default: float = 2.0
+) -> float:
+    raw_timeout = os.getenv("QUICK_FIX_CONTEXT_TIMEOUT_SECS")
+    if raw_timeout is None:
+        return default
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError):
+        logger.warning(
+            "invalid QUICK_FIX_CONTEXT_TIMEOUT_SECS value %r; using %.1fs default",
+            raw_timeout,
+            default,
+        )
+        return default
+    return timeout
+
+
 def _format_target_region(target_region: Any) -> str:
     """Return a stable string representation of a ``TargetRegion``."""
 
@@ -1455,7 +1473,7 @@ def generate_patch(
     cb_session = uuid.uuid4().hex
     context_meta["context_session_id"] = cb_session
     vectors: List[Tuple[str, str, float]] = []
-    context_timeout_s = float(os.getenv("QUICK_FIX_CONTEXT_TIMEOUT_SECS", "2.0"))
+    context_timeout_s = _get_context_timeout(logger)
 
     def _build_context() -> Any:
         return builder.build(
@@ -2467,9 +2485,7 @@ class QuickFixEngine:
         context_meta["context_session_id"] = cb_session
         try:
             query = f"{etype} in {prompt_path}"
-            context_timeout_s = float(
-                os.getenv("QUICK_FIX_CONTEXT_TIMEOUT_SECS", "2.0")
-            )
+            context_timeout_s = _get_context_timeout(self.logger)
 
             def _build_context() -> Any:
                 return builder.build(
@@ -2746,9 +2762,7 @@ class QuickFixEngine:
             cb_session = uuid.uuid4().hex
             try:
                 query = f"preemptive patch {prompt_path}"
-                context_timeout_s = float(
-                    os.getenv("QUICK_FIX_CONTEXT_TIMEOUT_SECS", "2.0")
-                )
+                context_timeout_s = _get_context_timeout(self.logger)
 
                 def _build_context() -> Any:
                     return builder.build(
