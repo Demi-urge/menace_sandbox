@@ -1421,12 +1421,14 @@ def generate_patch(
         "static analysis",
         extra={"module_path": prompt_path},
     )
-    analysis = _collect_static_analysis(path)
-    _log_step_end(
-        "static analysis",
-        static_step_start,
-        extra={"module_path": prompt_path},
-    )
+    try:
+        analysis = _collect_static_analysis(path)
+    finally:
+        _log_step_end(
+            "static analysis",
+            static_step_start,
+            extra={"module_path": prompt_path},
+        )
     static_summary = _summarize_static_analysis(analysis)
     static_meta = {
         "summary": static_summary,
@@ -1502,12 +1504,17 @@ def generate_patch(
             "embedding/compression",
             extra={"module_path": prompt_path},
         )
-        compressed = compress_snippets({"snippet": context_block}).get("snippet", "")
-        _log_step_end(
-            "embedding/compression",
-            compression_step_start,
-            extra={"module_path": prompt_path},
-        )
+        compressed = ""
+        try:
+            compressed = compress_snippets({"snippet": context_block}).get(
+                "snippet", ""
+            )
+        finally:
+            _log_step_end(
+                "embedding/compression",
+                compression_step_start,
+                extra={"module_path": prompt_path},
+            )
         if compressed:
             description += "\n\n" + compressed
     if strategy is not None:
