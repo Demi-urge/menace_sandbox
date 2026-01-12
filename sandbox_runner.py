@@ -74,7 +74,6 @@ from bootstrap_timeout_policy import (
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
-from vector_service.embedding_backfill import rebuild_all_embeddings
 from dependency_hints import format_system_package_instructions
 
 
@@ -517,6 +516,22 @@ except ImportError as exc:  # pragma: no cover - meta logger missing
     get_logger(__name__).warning(
         "sandbox meta logging unavailable: %s", exc
     )
+
+
+def _configure_multiprocessing_start_method() -> None:
+    """Prefer spawn start method to avoid forking after heavy imports."""
+    try:
+        current_method = multiprocessing.get_start_method(allow_none=True)
+    except Exception:
+        current_method = None
+    if current_method == "spawn":
+        return
+    try:
+        multiprocessing.set_start_method("spawn")
+    except RuntimeError:
+        logging.getLogger(__name__).debug(
+            "multiprocessing start method already configured"
+        )
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -1431,6 +1446,7 @@ def _sandbox_init(
     sandbox.error_forecaster = forecaster
     sandbox.quick_fix_engine = quick_fix_engine
     sandbox.graph = graph
+    from vector_service.embedding_backfill import rebuild_all_embeddings
     from menace_sandbox.vector_service.embedding_backfill import EMBEDDING_DB_ROOT
     import menace_sandbox.vector_service.embedding_backfill as embedding_backfill
     import menace_sandbox.vector_service.context_builder as context_builder_module
@@ -2330,6 +2346,7 @@ __all__ = [
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     setup_logging()
+    _configure_multiprocessing_start_method()
     _announce_staged_readiness(logging.getLogger(__name__))
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
