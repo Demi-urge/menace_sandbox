@@ -23,6 +23,8 @@ import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Mapping
 
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,

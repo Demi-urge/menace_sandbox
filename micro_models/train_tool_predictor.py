@@ -8,7 +8,10 @@ The training data should be a JSONL file where each line contains the fields
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 try:  # pragma: no cover - optional heavy dependency
     from datasets import load_dataset
@@ -83,4 +86,3 @@ def main() -> None:  # pragma: no cover - CLI utility
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

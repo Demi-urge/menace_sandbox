@@ -31,6 +31,8 @@ _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
 LOGGER = logging.getLogger(__name__)
 
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 try:  # pragma: no cover - prefer package import when installed
     from menace_sandbox import import_compat  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - support flat execution
