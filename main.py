@@ -6,18 +6,21 @@ importing modules so that all database access goes through :data:`GLOBAL_ROUTER`
 
 from __future__ import annotations
 
+import os
+
+# Must be set before HF/tokenizers imports and before multiprocessing forks.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import argparse
 import importlib
 import inspect
 import logging
-import os
 import pkgutil
 import sys
 import multiprocessing
 from typing import Iterable, List
 import uuid
 
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 multiprocessing.set_start_method("spawn", force=True)
 
 from db_router import init_db_router

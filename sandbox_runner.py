@@ -1,6 +1,3 @@
-# flake8: noqa
-from __future__ import annotations
-
 """Execute Menace patches in a controlled sandbox environment.
 
 The module initialises :data:`GLOBAL_ROUTER` early via :func:`init_db_router`
@@ -10,6 +7,14 @@ which reads ``SANDBOX_REPO_URL`` and ``SANDBOX_REPO_PATH`` from environment
 variables or a ``SandboxSettings`` instance.
 """
 
+# flake8: noqa
+from __future__ import annotations
+
+import os
+
+# Must be set before HF/tokenizers imports and before multiprocessing forks.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import signal
 import sys
 import threading
@@ -17,13 +22,10 @@ import threading
 import importlib
 import importlib.util
 import logging
-import os
 import shutil
 import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Mapping
-
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 from coding_bot_interface import (
     _bootstrap_dependency_broker,

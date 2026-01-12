@@ -4,10 +4,14 @@ The CLI initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router` before
 performing any database work.
 """
 
+import os
+
+# Must be set before HF/tokenizers imports and before multiprocessing forks.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import argparse
 import json
 import ast
-import os
 import subprocess
 import sys
 import uuid
@@ -15,7 +19,6 @@ from pathlib import Path
 import importlib
 import multiprocessing
 
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 multiprocessing.set_start_method("spawn", force=True)
 
 from coding_bot_interface import (
