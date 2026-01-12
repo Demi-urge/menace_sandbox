@@ -2136,12 +2136,26 @@ class SelfTestService:
     # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
         try:
-            ctx, *meta = self.context_builder.build_context(
+            result = self.context_builder.build_context(
                 "self-test execution", return_metadata=True
             )
-            metadata = meta[-1] if meta and isinstance(meta[-1], dict) else {}
-            self._prompt_context = ctx
-            self._prompt_snippets = compress_snippets(metadata)
+            if result is None:
+                self.logger.warning(
+                    "context builder %s returned None",
+                    self.context_builder.__class__.__name__,
+                )
+                self._prompt_context = ""
+                self._prompt_snippets = {}
+            else:
+                if isinstance(result, (tuple, list)):
+                    ctx = result[0] if result else ""
+                    meta = list(result[1:])
+                    metadata = meta[-1] if meta and isinstance(meta[-1], dict) else {}
+                else:
+                    ctx = result
+                    metadata = {}
+                self._prompt_context = ctx
+                self._prompt_snippets = compress_snippets(metadata)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("context retrieval failed")
             self._prompt_context = ""
