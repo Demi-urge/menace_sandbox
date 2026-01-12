@@ -21,6 +21,7 @@ import tempfile
 import os
 import uuid
 import time
+import threading
 import py_compile
 import shlex
 import importlib
@@ -30,7 +31,7 @@ import symtable
 import warnings
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
+from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable, TypeVar
 
 _FETCH_PATCH_DELEGATE = None
 _existing_qfe = sys.modules.get("quick_fix_engine")
@@ -96,6 +97,32 @@ _TARGET_REGION_EXTRACTOR_LOADED = False
 _TARGET_REGION_EXTRACTOR: Callable[..., Any] | None = None
 _PROMPT_STRATEGIES: tuple[type, Callable[..., Any]] | None = None
 _VECTOR_SERVICE_RESULTS: tuple[type, type] | None = None
+
+_T = TypeVar("_T")
+
+
+def _call_with_timeout(
+    func: Callable[[], _T], timeout_s: float
+) -> tuple[bool, _T | None, float]:
+    start = time.monotonic()
+    result: dict[str, _T] = {}
+    error: dict[str, Exception] = {}
+
+    def _target() -> None:
+        try:
+            result["value"] = func()
+        except Exception as exc:
+            error["exc"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    elapsed = time.monotonic() - start
+    if thread.is_alive():
+        return False, None, elapsed
+    if "exc" in error:
+        raise error["exc"]
+    return True, result.get("value"), elapsed
 
 
 def _format_target_region(target_region: Any) -> str:
@@ -1265,13 +1292,32 @@ def generate_patch(
     graph_lines: list[str] = []
     if graph is not None:
         print("[QFE] graph context requested", flush=True)
+
+        graph_timeout_s = float(os.getenv("QFE_GRAPH_TIMEOUT", "2.0"))
+
         def _fetch() -> list[str]:
             return graph.related(f"code:{prompt_path}")
-        try:
-            related_nodes = _get_retry_with_backoff()(
+
+        def _fetch_with_retry() -> list[str]:
+            return _get_retry_with_backoff()(
                 _fetch, attempts=2, delay=0.1, logger=logger
             )
+
+        graph_start = time.monotonic()
+        try:
+            resolved, related_nodes, elapsed = _call_with_timeout(
+                _fetch_with_retry, graph_timeout_s
+            )
+            if resolved:
+                logger.info("graph context resolved in %.3fs", elapsed)
+            else:
+                logger.info("graph context skipped (timeout) after %.3fs", elapsed)
+                related_nodes = []
         except Exception:
+            elapsed = time.monotonic() - graph_start
+            logger.info("graph context skipped (error) after %.3fs", elapsed)
+            related_nodes = []
+        if related_nodes is None:
             related_nodes = []
         modules = [n.split(":", 1)[1] for n in related_nodes if n.startswith("code:")]
         errors = [n.split(":", 1)[1] for n in related_nodes if n.startswith("error:")]
