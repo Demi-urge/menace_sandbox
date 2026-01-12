@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import math
+import os
 import random
 import time
 from collections import defaultdict
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
 import sys
 from statistics import fmean, pvariance
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from governed_embeddings import governed_embed, get_embedder
 
@@ -234,6 +235,86 @@ class MetaWorkflowPlanner:
         )
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _stage_timeout_secs() -> float | None:
+        """Return timeout guard for encode stages, if configured."""
+
+        raw_timeout = os.getenv("META_PLANNER_STAGE_TIMEOUT_SECS")
+        if not raw_timeout:
+            return None
+        try:
+            timeout = float(raw_timeout)
+        except ValueError:
+            logger.warning(
+                "invalid META_PLANNER_STAGE_TIMEOUT_SECS value: %s", raw_timeout
+            )
+            return None
+        if timeout <= 0:
+            return None
+        return timeout
+
+    def _run_stage(
+        self,
+        stage: str,
+        workflow_id: str,
+        func: Callable[..., Any],
+        fallback: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a stage with trace logging and optional timeout guard."""
+
+        timeout = self._stage_timeout_secs()
+        _dense_trace(
+            "meta planner stage start",
+            stage=stage,
+            workflow_id=workflow_id,
+            timeout_secs=timeout,
+        )
+        start = time.monotonic()
+        timed_out = False
+        if timeout:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(func, *args, **kwargs)
+                try:
+                    result = future.result(timeout=timeout)
+                except TimeoutError:
+                    timed_out = True
+                    future.cancel()
+                    result = fallback
+        else:
+            result = func(*args, **kwargs)
+        elapsed = time.monotonic() - start
+        _dense_trace(
+            "meta planner stage end",
+            stage=stage,
+            workflow_id=workflow_id,
+            elapsed_secs=elapsed,
+            timed_out=timed_out,
+        )
+        if timed_out:
+            logger.warning(
+                "meta planner stage timed out",
+                extra=log_record(
+                    event="meta-planner-stage-timeout",
+                    stage=stage,
+                    workflow_id=workflow_id,
+                    elapsed_secs=elapsed,
+                    timeout_secs=timeout,
+                ),
+            )
+        return result
+
+    def _empty_embed_vector(self) -> List[float]:
+        """Return an empty embed vector based on the current embedder."""
+
+        embedder = get_embedder()
+        if embedder is None:
+            return []
+        dim = getattr(embedder, "get_sentence_embedding_dimension", lambda: 0)()
+        return [0.0] * dim
+
+    # ------------------------------------------------------------------
     def begin_run(self, workflow_id: str, run_id: str) -> None:
         """Configure trackers for a new sandbox run.
 
@@ -266,8 +347,20 @@ class MetaWorkflowPlanner:
         _dense_trace(
             "encoding workflow", workflow_id=workflow_id, max_functions=self.max_functions
         )
-        depth, branching = self._graph_features(workflow_id)
-        roi_curve = self._roi_curve(workflow_id)
+        depth, branching = self._run_stage(
+            "graph_features",
+            workflow_id,
+            self._graph_features,
+            (0.0, 0.0),
+            workflow_id,
+        )
+        roi_curve = self._run_stage(
+            "roi_curve",
+            workflow_id,
+            self._roi_curve,
+            [0.0] * self.roi_window,
+            workflow_id,
+        )
         (
             funcs,
             mods,
@@ -278,9 +371,21 @@ class MetaWorkflowPlanner:
             curves,
             rois,
             failures,
-        ) = self._semantic_tokens(workflow, workflow_id)
-        d_indices, d_labels = self._workflow_domain(
-            workflow_id, {workflow_id: workflow}
+        ) = self._run_stage(
+            "semantic_tokens",
+            workflow_id,
+            self._semantic_tokens,
+            ([], [], [], [], [], [], [], [], []),
+            workflow,
+            workflow_id,
+        )
+        d_indices, d_labels = self._run_stage(
+            "workflow_domain",
+            workflow_id,
+            self._workflow_domain,
+            ([], []),
+            workflow_id,
+            {workflow_id: workflow},
         )
         if d_labels:
             tags.extend(d_labels)
@@ -307,9 +412,27 @@ class MetaWorkflowPlanner:
         vec.extend(roi_curve)
         vec.extend([code_depth, code_branching])
         vec.extend(code_curve)
-        func_vec = self._embed_tokens(norm_funcs)
-        mod_vec = self._embed_tokens(norm_mods)
-        tag_vec = self._embed_tokens(norm_tags)
+        func_vec = self._run_stage(
+            "embed_tokens.functions",
+            workflow_id,
+            self._embed_tokens,
+            self._empty_embed_vector(),
+            norm_funcs,
+        )
+        mod_vec = self._run_stage(
+            "embed_tokens.modules",
+            workflow_id,
+            self._embed_tokens,
+            self._empty_embed_vector(),
+            norm_mods,
+        )
+        tag_vec = self._run_stage(
+            "embed_tokens.tags",
+            workflow_id,
+            self._embed_tokens,
+            self._empty_embed_vector(),
+            norm_tags,
+        )
         vec.extend(func_vec)
         vec.extend(mod_vec)
         vec.extend(tag_vec)
@@ -329,35 +452,43 @@ class MetaWorkflowPlanner:
         code_tags = norm_tags
         embed_dim = len(func_vec)
 
-        try:
-            persist_embedding(
-                "workflow_meta",
-                workflow_id,
-                vec,
-                origin_db="workflow",
-                metadata={
-                    "roi_curve": roi_curve,
-                    "code_tags": code_tags,
-                    "dependency_depth": depth,
-                    "branching_factor": branching,
-                    "domains": d_labels,
-                    "domain_indices": d_indices,
-                    "domain_transitions": trans_vec,
-                    "vector_schema": {
-                        "graph": 2,
-                        "roi_curve": self.roi_window,
-                        "code_graph": 2,
-                        "code_roi_curve": self.roi_window,
-                        "function_embedding": embed_dim,
-                        "module_embedding": embed_dim,
-                        "tag_embedding": embed_dim,
-                        "domain": self.max_domains,
-                        "domain_transition": self.max_domains,
+        def _persist() -> None:
+            try:
+                persist_embedding(
+                    "workflow_meta",
+                    workflow_id,
+                    vec,
+                    origin_db="workflow",
+                    metadata={
+                        "roi_curve": roi_curve,
+                        "code_tags": code_tags,
+                        "dependency_depth": depth,
+                        "branching_factor": branching,
+                        "domains": d_labels,
+                        "domain_indices": d_indices,
+                        "domain_transitions": trans_vec,
+                        "vector_schema": {
+                            "graph": 2,
+                            "roi_curve": self.roi_window,
+                            "code_graph": 2,
+                            "code_roi_curve": self.roi_window,
+                            "function_embedding": embed_dim,
+                            "module_embedding": embed_dim,
+                            "tag_embedding": embed_dim,
+                            "domain": self.max_domains,
+                            "domain_transition": self.max_domains,
+                        },
                     },
-                },
-            )
-        except TypeError:  # pragma: no cover - compatibility shim
-            persist_embedding("workflow_meta", workflow_id, vec)
+                )
+            except TypeError:  # pragma: no cover - compatibility shim
+                persist_embedding("workflow_meta", workflow_id, vec)
+
+        self._run_stage(
+            "persist_embedding",
+            workflow_id,
+            _persist,
+            None,
+        )
         return vec
 
     # ------------------------------------------------------------------
