@@ -2144,18 +2144,31 @@ class SelfTestService:
                     "context builder %s returned None",
                     self.context_builder.__class__.__name__,
                 )
-                self._prompt_context = ""
-                self._prompt_snippets = {}
-            else:
-                if isinstance(result, (tuple, list)):
-                    ctx = result[0] if result else ""
-                    meta = list(result[1:])
-                    metadata = meta[-1] if meta and isinstance(meta[-1], dict) else {}
-                else:
-                    ctx = result
+                raise ValueError("context builder returned None for self-test")
+            if isinstance(result, (tuple, list)):
+                ctx = result[0] if result else ""
+                meta = list(result[1:])
+                metadata = meta[-1] if meta else {}
+                if not isinstance(metadata, dict):
+                    self.logger.warning(
+                        "context builder %s returned non-dict metadata: %s",
+                        self.context_builder.__class__.__name__,
+                        type(metadata).__name__,
+                    )
                     metadata = {}
                 self._prompt_context = ctx
                 self._prompt_snippets = compress_snippets(metadata)
+            elif isinstance(result, str):
+                self._prompt_context = result
+                self._prompt_snippets = {}
+            else:
+                self.logger.warning(
+                    "context builder %s returned unexpected type: %s",
+                    self.context_builder.__class__.__name__,
+                    type(result).__name__,
+                )
+                self._prompt_context = str(result)
+                self._prompt_snippets = {}
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("context retrieval failed")
             self._prompt_context = ""
