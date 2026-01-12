@@ -2136,18 +2136,19 @@ class SelfTestService:
     # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
         try:
-            result = self.context_builder.build_context(
+            ctx_result = self.context_builder.build_context(
                 "self-test execution", return_metadata=True
             )
-            if result is None:
+            if ctx_result is None:
                 self.logger.warning(
                     "context builder %s returned None",
                     self.context_builder.__class__.__name__,
                 )
-                raise ValueError("context builder returned None for self-test")
-            if isinstance(result, (tuple, list)):
-                ctx = result[0] if result else ""
-                meta = list(result[1:])
+                self._prompt_context = ""
+                self._prompt_snippets = {}
+            elif isinstance(ctx_result, (tuple, list)):
+                ctx = ctx_result[0] if ctx_result else ""
+                meta = list(ctx_result[1:])
                 metadata = meta[-1] if meta else {}
                 if not isinstance(metadata, dict):
                     self.logger.warning(
@@ -2158,16 +2159,16 @@ class SelfTestService:
                     metadata = {}
                 self._prompt_context = ctx
                 self._prompt_snippets = compress_snippets(metadata)
-            elif isinstance(result, str):
-                self._prompt_context = result
+            elif isinstance(ctx_result, str):
+                self._prompt_context = ctx_result
                 self._prompt_snippets = {}
             else:
-                self.logger.warning(
-                    "context builder %s returned unexpected type: %s",
+                self.logger.error(
+                    "context builder %s returned unsupported type: %s",
                     self.context_builder.__class__.__name__,
-                    type(result).__name__,
+                    type(ctx_result).__name__,
                 )
-                self._prompt_context = str(result)
+                self._prompt_context = ""
                 self._prompt_snippets = {}
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("context retrieval failed")
