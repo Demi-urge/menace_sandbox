@@ -468,8 +468,7 @@ def _call_with_timeout(
 ) -> str | None:
     """Run ``func`` in a subprocess, requiring picklable callables/arguments."""
     ctx = multiprocessing.get_context("spawn")
-    result_queue: multiprocessing.Queue = ctx.Queue()
-
+    result_queue = ctx.Queue()
     p = ctx.Process(target=_timeout_runner, args=(result_queue, func, args, kwargs))
     p.daemon = True
     p.start()
