@@ -51,6 +51,7 @@ import signal
 import threading
 import _thread
 import logging
+# Spawn start method is required when HF tokenizers are in use; ensure entrypoint sets it.
 import multiprocessing
 import pickle
 import traceback

@@ -17,11 +17,14 @@ import inspect
 import logging
 import pkgutil
 import sys
-import multiprocessing
+import multiprocessing as mp
 from typing import Iterable, List
 import uuid
 
-multiprocessing.set_start_method("spawn", force=True)
+try:
+    mp.set_start_method("spawn")
+except RuntimeError:
+    pass
 
 from db_router import init_db_router
 from dynamic_path_router import get_project_root, resolve_path
