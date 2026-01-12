@@ -13,10 +13,12 @@ import logging
 import os
 import pkgutil
 import sys
+import multiprocessing
 from typing import Iterable, List
 import uuid
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+multiprocessing.set_start_method("spawn", force=True)
 
 from db_router import init_db_router
 from dynamic_path_router import get_project_root, resolve_path
