@@ -2917,13 +2917,14 @@ class MetaWorkflowPlanner:
         the model's dimensionality is returned.
         """
 
+        bootstrap_timeout = 8.0
         vectors: List[List[float]] = []
         for tok in tokens:
-            vec = governed_embed(tok)
+            vec = governed_embed(tok, timeout=bootstrap_timeout)
             if vec:
                 vectors.append(list(vec))
         if not vectors:
-            embedder = get_embedder()
+            embedder = get_embedder(timeout=bootstrap_timeout)
             if embedder is None:
                 return []
             dim = getattr(embedder, "get_sentence_embedding_dimension", lambda: 0)()

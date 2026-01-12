@@ -2613,7 +2613,11 @@ def get_embedder(
     return _EMBEDDER if _EMBEDDER is not None else placeholder_embedder
 
 
-def governed_embed(text: str, embedder: SentenceTransformer | None = None) -> Optional[List[float]]:
+def governed_embed(
+    text: str,
+    embedder: SentenceTransformer | None = None,
+    timeout: float | None = None,
+) -> Optional[List[float]]:
     """Return an embedding vector for ``text`` with safety checks.
 
     The input text is first scanned for disallowed licences.  If any are
@@ -2643,7 +2647,7 @@ def governed_embed(text: str, embedder: SentenceTransformer | None = None) -> Op
     cleaned = redact(text)
     if cleaned != text:
         logger.warning("redacted secrets prior to embedding")
-    model = embedder or get_embedder()
+    model = embedder or get_embedder(timeout=timeout)
     if model is None:
         return None
     try:  # pragma: no cover - external model may fail at runtime
