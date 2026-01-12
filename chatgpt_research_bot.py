@@ -330,6 +330,7 @@ class SummaryConfig:
                 raise ValueError(f"invalid summarization strategy {strat}")
 
 from functools import lru_cache
+# Spawn start method is required when HF tokenizers are in use; ensure entrypoint sets it.
 import multiprocessing
 
 
@@ -447,17 +448,29 @@ def _summarise_svd(text: str, sentences: List[str], ratio: float, config: Summar
     return None
 
 
-def _call_with_timeout(func: Callable[[], str | None], timeout: float) -> str | None:
+def _timeout_runner(
+    q: multiprocessing.Queue,
+    func: Callable[..., str | None],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> None:
+    try:
+        q.put(func(*args, **kwargs))
+    except BaseException as e:  # pragma: no cover - defensive
+        q.put(e)
+
+
+def _call_with_timeout(
+    func: Callable[..., str | None],
+    timeout: float,
+    *args: Any,
+    **kwargs: Any,
+) -> str | None:
+    """Run ``func`` in a subprocess, requiring picklable callables/arguments."""
     ctx = multiprocessing.get_context("spawn")
     result_queue: multiprocessing.Queue = ctx.Queue()
 
-    def runner(q: multiprocessing.Queue) -> None:
-        try:
-            q.put(func())
-        except BaseException as e:  # pragma: no cover - defensive
-            q.put(e)
-
-    p = ctx.Process(target=runner, args=(result_queue,))
+    p = ctx.Process(target=_timeout_runner, args=(result_queue, func, args, kwargs))
     p.daemon = True
     p.start()
     p.join(timeout)
@@ -497,32 +510,39 @@ def _get_transformer_summarizer() -> Callable[[str], list] | None:
     return None
 
 
-def _summarise_transformer(text: str, sentences: List[str], ratio: float, config: SummaryConfig) -> str | None:
-    def _run() -> str | None:
-        # HF tokenizers should not be initialized prior to fork; build inside the child process.
-        summarizer = _get_transformer_summarizer()
-        if not summarizer:
-            return None
-        max_input = getattr(getattr(summarizer, "tokenizer", None), "model_max_length", 1024)
-        tokens = text.split()
-        if len(tokens) > max_input:
-            trimmed = " ".join(tokens[:max_input])
-        else:
-            trimmed = text
-        length_est = int(len(text.split()) * ratio * config.transformer_len_mult)
-        if config.transformer_max_len:
-            length_est = min(length_est, config.transformer_max_len)
-        max_length = max(20, min(length_est, max_input))
-        min_length = max(10, int(max_length * config.transformer_min_ratio))
-        result = summarizer(trimmed, max_length=max_length, min_length=min_length)
-        if result and isinstance(result, list):
-            summary_text = result[0].get("summary_text")
-            if summary_text:
-                return _filter_redundant_sentences(summary_text, config.filter_threshold)
+def _run_transformer_summary(text: str, ratio: float, config: SummaryConfig) -> str | None:
+    # HF tokenizers should not be initialized prior to fork; build inside the child process.
+    summarizer = _get_transformer_summarizer()
+    if not summarizer:
         return None
+    max_input = getattr(getattr(summarizer, "tokenizer", None), "model_max_length", 1024)
+    tokens = text.split()
+    if len(tokens) > max_input:
+        trimmed = " ".join(tokens[:max_input])
+    else:
+        trimmed = text
+    length_est = int(len(text.split()) * ratio * config.transformer_len_mult)
+    if config.transformer_max_len:
+        length_est = min(length_est, config.transformer_max_len)
+    max_length = max(20, min(length_est, max_input))
+    min_length = max(10, int(max_length * config.transformer_min_ratio))
+    result = summarizer(trimmed, max_length=max_length, min_length=min_length)
+    if result and isinstance(result, list):
+        summary_text = result[0].get("summary_text")
+        if summary_text:
+            return _filter_redundant_sentences(summary_text, config.filter_threshold)
+    return None
 
+
+def _summarise_transformer(text: str, sentences: List[str], ratio: float, config: SummaryConfig) -> str | None:
     try:
-        summary = _call_with_timeout(_run, config.transformer_timeout)
+        summary = _call_with_timeout(
+            _run_transformer_summary,
+            config.transformer_timeout,
+            text,
+            ratio,
+            config,
+        )
         if summary is None:
             logger.warning("transformer summarization timed out")
         return summary
