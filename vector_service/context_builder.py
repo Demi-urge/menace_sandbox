@@ -3247,7 +3247,25 @@ class ContextBuilder:
             elapsed_ms = (time.perf_counter() - start) * 1000.0
 
             if isinstance(hits, ErrorResult):
-                return "{}"
+                context = "{}"
+                empty_meta: Dict[str, List[Dict[str, Any]]] = {}
+                empty_vectors: List[Tuple[str, str, float]] = []
+                empty_stats: Dict[str, Any] = {}
+                if include_vectors and return_metadata:
+                    if return_stats:
+                        return context, session_id, empty_vectors, empty_meta, empty_stats
+                    return context, session_id, empty_vectors, empty_meta
+                if include_vectors:
+                    if return_stats:
+                        return context, session_id, empty_vectors, empty_stats
+                    return context, session_id, empty_vectors
+                if return_metadata:
+                    if return_stats:
+                        return context, empty_meta, empty_stats
+                    return context, empty_meta
+                if return_stats:
+                    return context, empty_stats
+                return context
             if isinstance(hits, FallbackResult):
                 logger.debug(
                     "retriever returned fallback for %s: %s",
