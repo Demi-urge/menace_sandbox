@@ -29,6 +29,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import unicodedata
 
 try:  # pragma: no cover - optional heavy dependency
     import torch
@@ -51,6 +52,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run as ``python 
 import governed_embeddings
 from governed_embeddings import governed_embed, get_embedder
 import metrics_exporter as _metrics
+from redaction_utils import redact_text
 
 try:  # pragma: no cover - prefer package-relative imports
     from .registry import (
@@ -128,6 +130,13 @@ def _timestamp_payload(start: float | None = None, **extra: Any) -> Dict[str, An
     if start is not None:
         payload["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 3)
     return payload
+
+
+def _normalize_redacted_text(text: str) -> str:
+    redacted = redact_text(text)
+    normalized = unicodedata.normalize("NFKC", redacted)
+    normalized = normalized.replace("\x00", "")
+    return normalized.strip()
 
 
 def _remote_timeout() -> float | None:
@@ -1170,7 +1179,35 @@ class SharedVectorService:
         _trace("shared_vector_service.embedder.resolve.success")
         return embedder
 
-    def _encode_text(self, text: str) -> List[float]:
+    def _encode_text(
+        self,
+        text: str,
+        *,
+        kind: str | None = None,
+        original_text: str | None = None,
+    ) -> List[float]:
+        raw_text = text if original_text is None else original_text
+        normalized = _normalize_redacted_text(text)
+        if not normalized:
+            short_hash = hashlib.sha256(
+                str(raw_text).encode("utf-8", "ignore")
+            ).hexdigest()[:8]
+            logger.warning(
+                "empty input after redaction; returning zero vector",
+                extra={"kind": kind, "text_hash": short_hash},
+            )
+            embedder = self.text_embedder
+            if embedder is None and SentenceTransformer is not None:
+                embedder = self._ensure_text_embedder(force=False)
+            dimension = 0
+            if embedder is not None:
+                dimension = getattr(
+                    embedder, "get_sentence_embedding_dimension", lambda: 0
+                )()
+            if dimension <= 0:
+                return []
+            return [0.0] * int(dimension)
+        text = normalized
         embedder = self._ensure_text_embedder(force=True)
         embedder_available = embedder is not None
         placeholder_reason = getattr(embedder, "_placeholder_reason", None)
@@ -1276,10 +1313,12 @@ class SharedVectorService:
             return handler(record)
         if kind in {"text", "prompt"}:
             _trace("shared_vector_service.vectorise.text", kind=kind)
-            return self._encode_text(str(record.get("text", "")))
+            raw_text = str(record.get("text", ""))
+            return self._encode_text(raw_text, kind=kind, original_text=raw_text)
         if kind in {"stack"}:
             _trace("shared_vector_service.vectorise.stack", kind=kind)
-            return self._encode_text(str(record.get("text", "")))
+            raw_text = str(record.get("text", ""))
+            return self._encode_text(raw_text, kind=kind, original_text=raw_text)
         raise ValueError(f"unknown record type: {kind}")
 
     def vectorise_and_store(
