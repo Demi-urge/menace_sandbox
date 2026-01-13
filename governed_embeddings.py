@@ -2679,8 +2679,43 @@ def governed_embed(
     model = embedder or get_embedder(timeout=timeout)
     if model is None:
         return None
+
+    def _encode_supports_truncation(model_obj: Any) -> tuple[bool, bool]:
+        try:
+            signature = inspect.signature(model_obj.encode)
+        except (TypeError, ValueError):
+            return False, False
+        params = signature.parameters
+        return "max_length" in params, "truncation" in params
+
+    def _truncate_text_for_embedding(raw: str, model_obj: Any) -> str:
+        max_tokens = 512
+        tokenizer = getattr(model_obj, "tokenizer", None)
+        if tokenizer is not None:
+            try:
+                token_ids = tokenizer.encode(raw, add_special_tokens=False)
+                if len(token_ids) > max_tokens:
+                    token_ids = token_ids[:max_tokens]
+                    if hasattr(tokenizer, "decode"):
+                        return tokenizer.decode(token_ids, skip_special_tokens=True)
+            except Exception:
+                pass
+        words = raw.split()
+        if len(words) > max_tokens:
+            return " ".join(words[:max_tokens])
+        return raw
+
+    supports_max_length, supports_truncation = _encode_supports_truncation(model)
+    encode_kwargs: dict[str, Any] = {}
+    if supports_max_length:
+        encode_kwargs["max_length"] = 512
+    if supports_truncation:
+        encode_kwargs["truncation"] = True
+    cleaned_for_embedding = cleaned
+    if not (supports_max_length and supports_truncation):
+        cleaned_for_embedding = _truncate_text_for_embedding(cleaned, model)
     try:  # pragma: no cover - external model may fail at runtime
-        return model.encode([cleaned])[0].tolist()
+        return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
     except Exception:
         logger.exception(
             "embedding failed during model.encode (redacted=%s cleaned_empty=%s)",
