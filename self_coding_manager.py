@@ -3537,18 +3537,22 @@ def internalize_coding_bot(
     )
     module_resolution_timer = _start_step("module path resolution")
     module_path: Path | None = None
+    module_hint: str | None = None
     try:
         node = bot_registry.graph.nodes.get(bot_name) if bot_registry else None
         if node:
             module_str = node.get("module")
             if module_str:
                 module_path = Path(module_str)
+                module_hint = str(module_str)
     except Exception:
         module_path = None
     if (module_path is None or not module_path.exists()) and bot_name in getattr(bot_registry, "modules", {}):
         try:
             module_entry = bot_registry.modules.get(bot_name)
             if module_entry:
+                if module_hint is None:
+                    module_hint = str(module_entry)
                 dotted_module_path: Path | None = None
                 if isinstance(module_entry, (str, os.PathLike)):
                     dotted_module_path = Path(module_entry)
@@ -3585,6 +3589,11 @@ def internalize_coding_bot(
                     module_path = candidate
     if module_path is not None and module_path.exists():
         module_path = module_path.resolve()
+        if bot_registry is not None and hasattr(bot_registry, "clear_module_path_failures"):
+            try:
+                bot_registry.clear_module_path_failures(bot_name)
+            except Exception:  # pragma: no cover - best effort
+                pass
     _end_step("module path resolution", module_resolution_timer)
     provenance_timer = _start_step("provenance token acquisition")
     provenance_token = getattr(manager, "_bootstrap_provenance_token", None)
@@ -3633,7 +3642,50 @@ def internalize_coding_bot(
         print(
             f"[debug] Bootstrap failed at module_path resolution due to missing path for: {bot_name}"
         )
+        if hasattr(manager, "logger"):
+            try:
+                manager.logger.error(
+                    "module_path resolution failed for %s; missing module path: %s",
+                    bot_name,
+                    module_hint,
+                    extra={"bot": bot_name, "module_path": module_hint},
+                )
+            except Exception:
+                print(
+                    f"[debug] failed to log module_path resolution error for {bot_name}",
+                    file=sys.stderr,
+                )
         _emit_failure("module_path_missing")
+        if bot_registry is not None and hasattr(bot_registry, "register_module_path_failure"):
+            try:
+                _attempts, delay, disabled = bot_registry.register_module_path_failure(
+                    bot_name,
+                    module_hint=module_hint,
+                    resolved_path=str(module_path) if module_path else None,
+                )
+            except Exception:
+                manager.logger.exception(
+                    "failed to register module_path resolution failure for %s",
+                    bot_name,
+                )
+            else:
+                if disabled:
+                    try:
+                        manager.logger.error(
+                            "self-coding disabled for %s after repeated module_path resolution failures",
+                            bot_name,
+                        )
+                    except Exception:
+                        pass
+                elif delay is not None:
+                    try:
+                        manager.logger.warning(
+                            "retrying module_path resolution for %s in %.1fs",
+                            bot_name,
+                            delay,
+                        )
+                    except Exception:
+                        pass
         if hasattr(manager, "logger"):
             try:
                 manager.logger.warning(
