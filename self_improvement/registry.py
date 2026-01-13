@@ -72,6 +72,7 @@ class ImprovementEngineRegistry:
         """Start schedules for all engines and return the created tasks."""
         tasks: list[asyncio.Task] = []
         for eng in self.engines.values():
+            eng.start()
             tasks.append(eng.schedule(energy=energy, loop=loop))
         return tasks
 
@@ -79,7 +80,7 @@ class ImprovementEngineRegistry:
         """Gracefully stop all running schedules."""
         for eng in self.engines.values():
             await eng.shutdown_schedule()
-            eng.close()
+            eng.stop()
 
     def autoscale(
         self,
