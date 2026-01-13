@@ -1548,6 +1548,10 @@ The deployment helpers use the following variables:
 - `METRICS_PORT` – start the internal metrics exporter on this port (same as `--metrics-port`).
 - `AUTO_DASHBOARD_PORT` – start the metrics dashboard automatically on this port.
 - `SANDBOX_RESOURCE_DB` – path to a `ROIHistoryDB` for resource-aware forecasts.
+- `MENACE_ENGINE_HEARTBEAT_ENABLED` – enable debug-only self-improvement engine
+  heartbeat logging (defaults to off).
+- `MENACE_ENGINE_HEARTBEAT_INTERVAL` – seconds between heartbeat logs when
+  enabled (defaults to 300).
  - `SANDBOX_BRAINSTORM_INTERVAL` – request brainstorming ideas from local models
    every N cycles.
  - `SANDBOX_BRAINSTORM_RETRIES` – consecutive low-ROI cycles before brainstorming.
@@ -1594,6 +1598,8 @@ missing. Notable defaults include:
 - `RUN_UNTIL=`
  - `METRICS_PORT=8001`  # same as `--metrics-port`
 - `AUTO_DASHBOARD_PORT=`
+- `MENACE_ENGINE_HEARTBEAT_ENABLED=0`
+- `MENACE_ENGINE_HEARTBEAT_INTERVAL=300`
 - `SANDBOX_BRAINSTORM_INTERVAL=0`
 - `SANDBOX_BRAINSTORM_RETRIES=3`
 - `SANDBOX_OFFLINE_SUGGESTIONS=0`

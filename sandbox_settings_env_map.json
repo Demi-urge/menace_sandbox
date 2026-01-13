@@ -78,6 +78,7 @@
     "MENACE_ENGINE_HEARTBEAT",
     "MENACE_ENGINE_HEARTBEAT_ENABLED"
   ],
+  "engine_heartbeat_interval": "MENACE_ENGINE_HEARTBEAT_INTERVAL",
   "energy_deviation": "ENERGY_DEVIATION",
   "entropy_ceiling_consecutive": "ENTROPY_CEILING_CONSECUTIVE",
   "entropy_ceiling_threshold": "ENTROPY_CEILING_THRESHOLD",

@@ -91,7 +91,7 @@ _AUTONOMOUS_SANDBOX_LAUNCH_ENV = "MENACE_AUTONOMOUS_SANDBOX_LAUNCH_ON_IMPORT"
 _HEARTBEAT_ENABLED_ENV = "MENACE_ENGINE_HEARTBEAT"
 _HEARTBEAT_ENABLED_ENV_LEGACY = "MENACE_ENGINE_HEARTBEAT_ENABLED"
 _HEARTBEAT_INTERVAL_ENV = "MENACE_ENGINE_HEARTBEAT_INTERVAL"
-_DEFAULT_HEARTBEAT_INTERVAL = 5.0
+_DEFAULT_HEARTBEAT_INTERVAL = 300.0
 _ENGINE_HEARTBEAT_STOP = threading.Event()
 _ENGINE_HEARTBEAT_THREAD: threading.Thread | None = None
 _HEARTBEAT_STARTED = False
@@ -104,7 +104,10 @@ def _parse_env_bool(value: str | None) -> bool:
 
 
 def _get_heartbeat_interval() -> float:
-    raw_value = os.getenv(_HEARTBEAT_INTERVAL_ENV, str(_DEFAULT_HEARTBEAT_INTERVAL))
+    raw_setting = getattr(settings, "engine_heartbeat_interval", None)
+    raw_value = raw_setting
+    if raw_setting is None:
+        raw_value = os.getenv(_HEARTBEAT_INTERVAL_ENV, str(_DEFAULT_HEARTBEAT_INTERVAL))
     try:
         interval = float(raw_value)
     except (TypeError, ValueError):

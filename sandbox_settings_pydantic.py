@@ -1025,6 +1025,11 @@ class SandboxSettings(BaseSettings):
         env=("MENACE_ENGINE_HEARTBEAT", "MENACE_ENGINE_HEARTBEAT_ENABLED"),
         description="Enable heartbeat emission from the self-improvement engine.",
     )
+    engine_heartbeat_interval: float = Field(
+        300.0,
+        env="MENACE_ENGINE_HEARTBEAT_INTERVAL",
+        description="Seconds between self-improvement engine heartbeat messages.",
+    )
     dependency_mode: str = Field(
         "strict",
         env="SANDBOX_DEPENDENCY_MODE",
