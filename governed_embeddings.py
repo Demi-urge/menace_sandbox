@@ -2629,30 +2629,64 @@ def governed_embed(
 
     if not text:
         return None
+
+    cleaned = redact(text)
+    redacted = cleaned != text
+    cleaned_empty = not cleaned.strip()
+
     lic = license_check(text)
     if lic:
         try:  # pragma: no cover - best effort logging
             logger.warning(
                 "skipping embedding due to license %s", lic,
-                extra={"fingerprint": license_fingerprint(text)},
+                extra={
+                    "fingerprint": license_fingerprint(text),
+                    "redacted": redacted,
+                    "cleaned_empty": cleaned_empty,
+                },
             )
         except Exception:
-            logger.warning("skipping embedding due to license %s", lic)
+            logger.warning(
+                "skipping embedding due to license %s (redacted=%s cleaned_empty=%s)",
+                lic,
+                redacted,
+                cleaned_empty,
+            )
         return None
 
     risks = find_semantic_risks(text.splitlines())
     if risks:
-        logger.warning("skipping embedding due to semantic risks: %s", [r[1] for r in risks])
+        logger.warning(
+            "skipping embedding due to semantic risks: %s (redacted=%s cleaned_empty=%s)",
+            [r[1] for r in risks],
+            redacted,
+            cleaned_empty,
+        )
         return None
-    cleaned = redact(text)
-    if cleaned != text:
-        logger.warning("redacted secrets prior to embedding")
+    if cleaned_empty:
+        logger.warning(
+            "skipping embedding because cleaned text is empty (redacted=%s cleaned_empty=%s)",
+            redacted,
+            cleaned_empty,
+        )
+        return None
+    if redacted:
+        logger.warning(
+            "redacted secrets prior to embedding (redacted=%s cleaned_empty=%s)",
+            redacted,
+            cleaned_empty,
+        )
     model = embedder or get_embedder(timeout=timeout)
     if model is None:
         return None
     try:  # pragma: no cover - external model may fail at runtime
         return model.encode([cleaned])[0].tolist()
     except Exception:
+        logger.exception(
+            "embedding failed during model.encode (redacted=%s cleaned_empty=%s)",
+            redacted,
+            cleaned_empty,
+        )
         return None
 
 
