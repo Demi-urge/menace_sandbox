@@ -12,6 +12,7 @@ from importlib import import_module
 from statistics import fmean
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -121,6 +122,52 @@ def get_telemetry_event():
 
 _cycle_thread: Any | None = None
 _stop_event: threading.Event | None = None
+_cycle_watchdog_stop: threading.Event | None = None
+
+
+class _CycleTickState:
+    """Thread-safe tracking of cycle ticks for watchdog monitoring."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.started_at = time.time()
+        self.last_tick: float | None = None
+        self.tick_count = 0
+        self.last_tick_thread_name: str | None = None
+        self.last_tick_thread_ident: int | None = None
+
+    def tick(self) -> dict[str, Any]:
+        now = time.time()
+        current_thread = threading.current_thread()
+        with self._lock:
+            self.last_tick = now
+            self.tick_count += 1
+            self.last_tick_thread_name = current_thread.name
+            self.last_tick_thread_ident = current_thread.ident
+            return {
+                "last_tick": self.last_tick,
+                "tick_count": self.tick_count,
+                "last_tick_thread_name": self.last_tick_thread_name,
+                "last_tick_thread_ident": self.last_tick_thread_ident,
+            }
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "started_at": self.started_at,
+                "last_tick": self.last_tick,
+                "tick_count": self.tick_count,
+                "last_tick_thread_name": self.last_tick_thread_name,
+                "last_tick_thread_ident": self.last_tick_thread_ident,
+            }
+
+    def reset(self) -> None:
+        with self._lock:
+            self.started_at = time.time()
+            self.last_tick = None
+            self.tick_count = 0
+            self.last_tick_thread_name = None
+            self.last_tick_thread_ident = None
 
 
 class _WorkflowROICycleController:
@@ -1303,6 +1350,7 @@ async def self_improvement_cycle(
     event_bus: UnifiedEventBus | None = None,
     error_log: Any | None = None,
     stop_event: threading.Event | None = None,
+    tick_state: _CycleTickState | None = None,
     should_encode: Callable[[Mapping[str, Any], "BaselineTracker", float], tuple[bool, str]]
     | None = None,
     evaluate_cycle: Callable[["BaselineTracker", Any | None], tuple[str, Mapping[str, Any]]]
@@ -1545,6 +1593,17 @@ async def self_improvement_cycle(
         if stop_event is not None and stop_event.is_set():
             _debug_cycle("skipped", reason="stop_event")
             break
+        if tick_state is not None:
+            tick_snapshot = tick_state.tick()
+            logger.info(
+                "cycle tick",
+                extra=log_record(
+                    tick_timestamp=tick_snapshot["last_tick"],
+                    tick_count=tick_snapshot["tick_count"],
+                    tick_thread_name=tick_snapshot["last_tick_thread_name"],
+                    tick_thread_ident=tick_snapshot["last_tick_thread_ident"],
+                ),
+            )
         try:
             decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
             if info.get("reason") == "missing_metrics":
@@ -1974,10 +2033,10 @@ def start_self_improvement_cycle(
         )
 
     print("💡 SI-7: preparing self-improvement cycle thread scaffold")
-    stop_event = threading.Event()
+    tick_state = _CycleTickState()
 
     class _CycleThread:
-        def __init__(self) -> None:
+        def __init__(self, stop_event: threading.Event) -> None:
             self._loop = asyncio.new_event_loop()
             self._task: asyncio.Task[None] | None = None
             self._exc: queue.Queue[BaseException] = queue.Queue()
@@ -2001,6 +2060,8 @@ def start_self_improvement_cycle(
                 kwargs["stop_event"] = self._stop_event
             if "error_log" in signature(self_improvement_cycle).parameters:
                 kwargs["error_log"] = self._error_log
+            if "tick_state" in signature(self_improvement_cycle).parameters:
+                kwargs["tick_state"] = tick_state
             if "should_encode" in signature(self_improvement_cycle).parameters:
                 kwargs["should_encode"] = self._should_encode
             if "evaluate_cycle" in signature(self_improvement_cycle).parameters:
@@ -2061,6 +2122,68 @@ def start_self_improvement_cycle(
             )
             self.join()
 
+        def state(self) -> dict[str, Any]:
+            task = self._task
+            try:
+                loop_running = self._loop.is_running()
+            except Exception:
+                loop_running = False
+            return {
+                "thread_alive": self._thread.is_alive(),
+                "thread_name": self._thread.name,
+                "thread_ident": self._thread.ident,
+                "loop_running": loop_running,
+                "task_done": task.done() if task else None,
+                "task_cancelled": task.cancelled() if task else None,
+            }
+
+    def _env_float(name: str, default: float) -> float:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def _env_bool(name: str, default: bool = False) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.lower() in {"1", "true", "yes", "on"}
+
+    watchdog_threshold = _env_float(
+        "SELF_IMPROVEMENT_CYCLE_WATCHDOG_SECONDS", max(120.0, interval * 3)
+    )
+    watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", False)
+    watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
+
+    monitor_state: dict[str, Any] = {"thread": None, "stop_event": None}
+
+    def _create_cycle_thread() -> tuple[_CycleThread, threading.Event]:
+        local_stop_event = threading.Event()
+        thread = _CycleThread(local_stop_event)
+        return thread, local_stop_event
+
+    def _restart_cycle_thread(logger: logging.Logger, reason: str) -> None:
+        current_thread = monitor_state.get("thread")
+        if current_thread is not None:
+            try:
+                current_thread.stop()
+            except Exception:
+                logger.exception(
+                    "cycle stop failed during restart",
+                    extra=log_record(reason=reason),
+                )
+        tick_state.reset()
+        new_thread, new_stop_event = _create_cycle_thread()
+        monitor_state["thread"] = new_thread
+        monitor_state["stop_event"] = new_stop_event
+        global _cycle_thread, _stop_event
+        _cycle_thread = new_thread
+        _stop_event = new_stop_event
+        new_thread.start()
+
     _ = _init.settings
     logger_fn = globals().get("get_logger")
     log_record_fn = globals().get("log_record")
@@ -2088,16 +2211,74 @@ def start_self_improvement_cycle(
             )
         raise RuntimeError("WorkflowStabilityDB initialisation failed") from exc
 
-    thread = _CycleThread()
-    global _cycle_thread, _stop_event
+    thread, stop_event = _create_cycle_thread()
+    monitor_state["thread"] = thread
+    monitor_state["stop_event"] = stop_event
+    global _cycle_thread, _stop_event, _cycle_watchdog_stop
     _cycle_thread = thread
     _stop_event = stop_event
+    _cycle_watchdog_stop = threading.Event()
+
+    def _watchdog() -> None:
+        watchdog_logger = get_logger("SelfImprovementCycleWatchdog")
+        while True:
+            if _cycle_watchdog_stop is not None and _cycle_watchdog_stop.is_set():
+                break
+            current_stop = monitor_state.get("stop_event")
+            if current_stop is not None and current_stop.is_set():
+                break
+            time.sleep(watchdog_interval)
+            if _cycle_watchdog_stop is not None and _cycle_watchdog_stop.is_set():
+                break
+            current_thread = monitor_state.get("thread")
+            if current_thread is None:
+                continue
+            snapshot = tick_state.snapshot()
+            now = time.time()
+            last_tick = snapshot.get("last_tick")
+            started_at = snapshot.get("started_at", now)
+            last_tick_age = (now - last_tick) if last_tick is not None else None
+            idle_since_start = now - started_at
+            stalled = (
+                last_tick_age is not None and last_tick_age > watchdog_threshold
+            ) or (last_tick is None and idle_since_start > watchdog_threshold)
+            if not stalled:
+                continue
+            thread_state = current_thread.state()
+            watchdog_logger.warning(
+                "self improvement cycle stalled",
+                extra=log_record(
+                    last_tick_timestamp=last_tick,
+                    last_tick_age_seconds=last_tick_age,
+                    tick_count=snapshot.get("tick_count"),
+                    tick_thread_name=snapshot.get("last_tick_thread_name"),
+                    tick_thread_ident=snapshot.get("last_tick_thread_ident"),
+                    watchdog_threshold_seconds=watchdog_threshold,
+                    thread_state=thread_state,
+                ),
+            )
+            if watchdog_restart:
+                watchdog_logger.warning(
+                    "restarting self improvement cycle after stall",
+                    extra=log_record(
+                        reason="watchdog_restart",
+                        last_tick_timestamp=last_tick,
+                        last_tick_age_seconds=last_tick_age,
+                        thread_state=thread_state,
+                    ),
+                )
+                _restart_cycle_thread(watchdog_logger, "watchdog_restart")
+
+    watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
+    watchdog_thread.start()
     return thread
 
 
 def stop_self_improvement_cycle() -> None:
     """Signal the background self improvement cycle to stop and wait for it."""
-    global _cycle_thread, _stop_event
+    global _cycle_thread, _stop_event, _cycle_watchdog_stop
+    if _cycle_watchdog_stop is not None:
+        _cycle_watchdog_stop.set()
     if _cycle_thread is None:
         return
     if _stop_event is not None:
