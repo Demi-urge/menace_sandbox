@@ -139,6 +139,8 @@ else:  # pragma: no cover - at runtime we either have the real class or ``Any``
 model: "SentenceTransformer | None"
 
 DEFAULT_SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_CHAR_TRUNCATION_THRESHOLD = 8000
+EMBEDDING_CHARS_PER_TOKEN = 4
 
 
 def canonical_model_id(model_name: str | None) -> str:
@@ -2712,8 +2714,23 @@ def governed_embed(
     if supports_truncation:
         encode_kwargs["truncation"] = True
     cleaned_for_embedding = cleaned
+    if len(cleaned_for_embedding) > EMBEDDING_CHAR_TRUNCATION_THRESHOLD:
+        approx_tokens = max(1, len(cleaned_for_embedding) // EMBEDDING_CHARS_PER_TOKEN)
+        logger.warning(
+            "embedding input too long; truncating (chars=%s approx_tokens=%s threshold=%s)",
+            len(cleaned_for_embedding),
+            approx_tokens,
+            EMBEDDING_CHAR_TRUNCATION_THRESHOLD,
+        )
+        cleaned_for_embedding = cleaned_for_embedding[:EMBEDDING_CHAR_TRUNCATION_THRESHOLD]
     if not (supports_max_length and supports_truncation):
-        cleaned_for_embedding = _truncate_text_for_embedding(cleaned, model)
+        cleaned_for_embedding = _truncate_text_for_embedding(cleaned_for_embedding, model)
+    approx_tokens = max(1, len(cleaned_for_embedding) // EMBEDDING_CHARS_PER_TOKEN)
+    logger.debug(
+        "encoding embedding input (chars=%s approx_tokens=%s)",
+        len(cleaned_for_embedding),
+        approx_tokens,
+    )
     try:  # pragma: no cover - external model may fail at runtime
         return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
     except Exception:
