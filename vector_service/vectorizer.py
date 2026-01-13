@@ -241,6 +241,17 @@ def _wait_for_remote_ready() -> bool:
     return False
 
 
+def _wait_for_remote_ready_cold_start() -> bool:
+    attempts = 3
+    delay = 2.0
+    for attempt in range(attempts):
+        if _probe_remote_ready():
+            return True
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return False
+
+
 def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     """Load the bundled fallback embedding model."""
 
@@ -1308,6 +1319,25 @@ class SharedVectorService:
                 return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
             if _wait_for_remote_ready():
+                try:
+                    with urllib.request.urlopen(
+                        req, timeout=_REMOTE_TIMEOUT or None
+                    ) as resp:  # pragma: no cover - network
+                        return json.loads(resp.read().decode("utf-8"))
+                except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
+                    exc = retry_exc
+                except json.JSONDecodeError as retry_exc:
+                    logger.warning(
+                        "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                        extra={
+                            "endpoint": _REMOTE_ENDPOINT,
+                            "path": path,
+                            "error": str(retry_exc),
+                        },
+                    )
+                    _REMOTE_DISABLED = True
+                    return None
+            if _wait_for_remote_ready_cold_start():
                 try:
                     with urllib.request.urlopen(
                         req, timeout=_REMOTE_TIMEOUT or None
