@@ -14,6 +14,7 @@ using a configurable :class:`~vector_service.vector_store.VectorStore`.
 from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 import hashlib
+import random
 import shutil
 import threading
 from datetime import datetime
@@ -238,6 +239,16 @@ def _wait_for_remote_ready() -> bool:
             return True
         time.sleep(wait)
         wait *= backoff
+    return False
+
+
+def _wait_for_remote_ready_short() -> bool:
+    attempts = 5
+    for attempt in range(attempts):
+        if _probe_remote_ready():
+            return True
+        if attempt < attempts - 1:
+            time.sleep(random.uniform(2.0, 5.0))
     return False
 
 
@@ -1318,6 +1329,25 @@ class SharedVectorService:
             ) as resp:  # pragma: no cover - network
                 return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            if _wait_for_remote_ready_short():
+                try:
+                    with urllib.request.urlopen(
+                        req, timeout=_REMOTE_TIMEOUT or None
+                    ) as resp:  # pragma: no cover - network
+                        return json.loads(resp.read().decode("utf-8"))
+                except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
+                    exc = retry_exc
+                except json.JSONDecodeError as retry_exc:
+                    logger.warning(
+                        "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                        extra={
+                            "endpoint": _REMOTE_ENDPOINT,
+                            "path": path,
+                            "error": str(retry_exc),
+                        },
+                    )
+                    _REMOTE_DISABLED = True
+                    return None
             if _wait_for_remote_ready():
                 try:
                     with urllib.request.urlopen(
