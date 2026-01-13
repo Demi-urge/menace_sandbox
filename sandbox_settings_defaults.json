@@ -95,6 +95,7 @@
   "enable_relevancy_radar": true,
   "enable_snapshot_tracker": true,
   "enable_truth_calibration": true,
+  "engine_heartbeat_enabled": false,
   "energy_deviation": 1.0,
   "entropy_ceiling_consecutive": null,
   "entropy_ceiling_threshold": null,

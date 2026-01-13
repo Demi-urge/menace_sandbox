@@ -88,7 +88,8 @@ _qfe_log("importlib imported")
 _MANUAL_LAUNCH_TRIGGERED = False
 _AUTONOMOUS_SANDBOX_LAUNCH_ENV = "MENACE_AUTONOMOUS_SANDBOX_LAUNCH_ON_IMPORT"
 
-_HEARTBEAT_ENABLED_ENV = "MENACE_ENGINE_HEARTBEAT_ENABLED"
+_HEARTBEAT_ENABLED_ENV = "MENACE_ENGINE_HEARTBEAT"
+_HEARTBEAT_ENABLED_ENV_LEGACY = "MENACE_ENGINE_HEARTBEAT_ENABLED"
 _HEARTBEAT_INTERVAL_ENV = "MENACE_ENGINE_HEARTBEAT_INTERVAL"
 _DEFAULT_HEARTBEAT_INTERVAL = 5.0
 _HEARTBEAT_STOP = threading.Event()
@@ -132,7 +133,7 @@ def _start_engine_heartbeat(interval: float, stop_event: threading.Event) -> Non
 
     def _log_heartbeat() -> None:
         while not stop_event.wait(interval):
-            logger.info(
+            logger.debug(
                 "engine heartbeat",
                 extra=log_record(timestamp=time.time()),
             )
@@ -165,12 +166,21 @@ def _ensure_engine_heartbeat() -> None:
 
     if _HEARTBEAT_THREAD and _HEARTBEAT_THREAD.is_alive():
         return
-    enabled = _parse_env_bool(os.getenv(_HEARTBEAT_ENABLED_ENV, "false"))
+    enabled_setting = getattr(settings, "engine_heartbeat_enabled", None)
+    if enabled_setting is None:
+        enabled = _parse_env_bool(os.getenv(_HEARTBEAT_ENABLED_ENV, "false")) or _parse_env_bool(
+            os.getenv(_HEARTBEAT_ENABLED_ENV_LEGACY, "false")
+        )
+    else:
+        enabled = bool(enabled_setting)
     if not enabled:
         if not _HEARTBEAT_STARTED:
-            logger.info(
+            logger.debug(
                 "engine heartbeat disabled",
-                extra=log_record(flag=_HEARTBEAT_ENABLED_ENV),
+                extra=log_record(
+                    flag=_HEARTBEAT_ENABLED_ENV,
+                    legacy_flag=_HEARTBEAT_ENABLED_ENV_LEGACY,
+                ),
             )
         _HEARTBEAT_STARTED = True
         return
