@@ -2735,11 +2735,12 @@ def governed_embed(
         return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
     except Exception:
         logger.exception(
-            "embedding failed during model.encode (redacted=%s cleaned_empty=%s)",
+            "embedding failed during model.encode (redacted=%s cleaned_empty=%s text_len=%s)",
             redacted,
             cleaned_empty,
+            len(cleaned_for_embedding),
         )
-        return None
+        return [0.0] * _STUB_EMBEDDER_DIMENSION
 
 
 def embedder_diagnostics() -> dict[str, Any]:
