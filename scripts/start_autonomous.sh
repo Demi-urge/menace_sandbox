@@ -9,7 +9,8 @@ PY
 export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 export REPO_ROOT="$repo_root"
 
-# Ensure bootstrap timeouts are exported before any Python entry point executes
+# Ensure bootstrap timeouts are exported before any Python entry point executes.
+# EMBEDDER_INIT_SOFT_WAIT defaults to 120s to allow the vector service to warm up.
 # Policy floors: 720s for standard bootstrap, 900s for vector paths
 : "${MENACE_BOOTSTRAP_WAIT_SECS:=720}"
 : "${MENACE_BOOTSTRAP_VECTOR_WAIT_SECS:=900}"
@@ -17,12 +18,14 @@ export REPO_ROOT="$repo_root"
 : "${BOOTSTRAP_VECTOR_STEP_TIMEOUT:=900}"
 : "${MENACE_BOOTSTRAP_STAGGER_SECS:=30}"
 : "${MENACE_BOOTSTRAP_STAGGER_JITTER_SECS:=30}"
+: "${EMBEDDER_INIT_SOFT_WAIT:=120}"
 export MENACE_BOOTSTRAP_WAIT_SECS
 export MENACE_BOOTSTRAP_VECTOR_WAIT_SECS
 export BOOTSTRAP_STEP_TIMEOUT
 export BOOTSTRAP_VECTOR_STEP_TIMEOUT
 export MENACE_BOOTSTRAP_STAGGER_SECS
 export MENACE_BOOTSTRAP_STAGGER_JITTER_SECS
+export EMBEDDER_INIT_SOFT_WAIT
 
 # Execute run_autonomous after ensuring the environment is configured
 python - <<'PYCODE'
