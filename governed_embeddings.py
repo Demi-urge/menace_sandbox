@@ -2690,6 +2690,15 @@ def governed_embed(
         params = signature.parameters
         return "max_length" in params, "truncation" in params
 
+    def _count_tokens(text: str, model_obj: Any) -> int:
+        tokenizer = getattr(model_obj, "tokenizer", None)
+        if tokenizer is not None:
+            try:
+                return len(tokenizer.encode(text, add_special_tokens=False))
+            except Exception:
+                pass
+        return max(1, len(text) // EMBEDDING_CHARS_PER_TOKEN)
+
     def _truncate_text_for_embedding(raw: str, model_obj: Any) -> str:
         max_tokens = 200
         tokenizer = getattr(model_obj, "tokenizer", None)
@@ -2723,7 +2732,27 @@ def governed_embed(
             EMBEDDING_CHAR_TRUNCATION_THRESHOLD,
         )
         cleaned_for_embedding = cleaned_for_embedding[:EMBEDDING_CHAR_TRUNCATION_THRESHOLD]
+    hard_max_tokens = 200
+    original_token_count = _count_tokens(cleaned_for_embedding, model)
     cleaned_for_embedding = _truncate_text_for_embedding(cleaned_for_embedding, model)
+    truncated_token_count = _count_tokens(cleaned_for_embedding, model)
+    if truncated_token_count > hard_max_tokens:
+        logger.warning(
+            "embedding input exceeds hard max tokens; returning zero vector "
+            "(tokens=%s hard_max=%s truncation_supported=%s)",
+            truncated_token_count,
+            hard_max_tokens,
+            supports_truncation,
+        )
+        return [0.0] * _STUB_EMBEDDER_DIMENSION
+    if original_token_count > hard_max_tokens and not supports_truncation:
+        logger.warning(
+            "embedding input exceeds hard max tokens and truncation disabled; "
+            "returning zero vector (tokens=%s hard_max=%s)",
+            original_token_count,
+            hard_max_tokens,
+        )
+        return [0.0] * _STUB_EMBEDDER_DIMENSION
     approx_tokens = max(1, len(cleaned_for_embedding) // EMBEDDING_CHARS_PER_TOKEN)
     logger.debug(
         "encoding embedding input (chars=%s approx_tokens=%s)",
