@@ -122,30 +122,22 @@ def _get_heartbeat_interval() -> float:
     return interval
 
 
-def _start_engine_heartbeat(interval: float) -> None:
+def _start_engine_heartbeat(interval: float, stop_event: threading.Event) -> threading.Thread:
     """Emit periodic heartbeats to confirm module-level progress."""
-    global _ENGINE_HEARTBEAT_THREAD
-
-    if _ENGINE_HEARTBEAT_THREAD and _ENGINE_HEARTBEAT_THREAD.is_alive():
-        return
-
-    _ENGINE_HEARTBEAT_STOP.clear()
-
     def _log_heartbeat() -> None:
-        while not _ENGINE_HEARTBEAT_STOP.is_set():
-            if _ENGINE_HEARTBEAT_STOP.wait(interval):
-                break
+        while not stop_event.wait(timeout=interval):
             logger.debug(
                 "engine heartbeat",
                 extra=log_record(timestamp=time.time()),
             )
 
-    _ENGINE_HEARTBEAT_THREAD = threading.Thread(
+    thread = threading.Thread(
         target=_log_heartbeat,
         daemon=True,
         name="engine-heartbeat",
     )
-    _ENGINE_HEARTBEAT_THREAD.start()
+    thread.start()
+    return thread
 
 
 def stop_engine_heartbeat(timeout: float = 1.0) -> None:
@@ -162,12 +154,15 @@ def stop_engine_heartbeat(timeout: float = 1.0) -> None:
         _ENGINE_HEARTBEAT_THREAD = None
 
 
-def _ensure_engine_heartbeat() -> None:
+def _ensure_engine_heartbeat(
+    stop_event: threading.Event,
+    thread: threading.Thread | None,
+) -> threading.Thread | None:
     """Start the lightweight heartbeat thread on first use."""
     global _HEARTBEAT_STARTED
 
-    if _ENGINE_HEARTBEAT_THREAD and _ENGINE_HEARTBEAT_THREAD.is_alive():
-        return
+    if thread and thread.is_alive():
+        return thread
     enabled_setting = getattr(settings, "engine_heartbeat_enabled", None)
     if enabled_setting is None:
         enabled = _parse_env_bool(os.getenv(_HEARTBEAT_ENABLED_ENV, "false")) or _parse_env_bool(
@@ -185,10 +180,11 @@ def _ensure_engine_heartbeat() -> None:
                 ),
             )
         _HEARTBEAT_STARTED = True
-        return
+        return None
     try:
         interval = _get_heartbeat_interval()
-        _start_engine_heartbeat(interval)
+        stop_event.clear()
+        thread = _start_engine_heartbeat(interval, stop_event)
         logger.info(
             "heartbeat thread started",
             extra=log_record(interval=interval),
@@ -197,6 +193,7 @@ def _ensure_engine_heartbeat() -> None:
         logger.warning("heartbeat thread failed", exc_info=exc)
     finally:
         _HEARTBEAT_STARTED = True
+    return thread
 
 
 atexit.register(stop_engine_heartbeat)
@@ -1890,6 +1887,8 @@ class SelfImprovementEngine:
         self._stop_event: asyncio.Event | None = None
         self._trainer_stop: threading.Event | None = None
         self._trainer_thread: threading.Thread | None = None
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
         self._cycle_count = 0
         self._last_mutation_id: int | None = None
         self._last_patch_id: int | None = None
@@ -1952,6 +1951,22 @@ class SelfImprovementEngine:
             self._start_meta_planning_loop(
                 float(PLANNER_INTERVAL), float(META_IMPROVEMENT_THRESHOLD)
             )
+
+    def _ensure_heartbeat(self) -> None:
+        self._heartbeat_thread = _ensure_engine_heartbeat(
+            self._heartbeat_stop,
+            self._heartbeat_thread,
+        )
+
+    def _stop_heartbeat(self, timeout: float = 1.0) -> None:
+        thread = self._heartbeat_thread
+        if not thread:
+            return
+        self._heartbeat_stop.set()
+        if thread.is_alive():
+            thread.join(timeout=timeout)
+        self._heartbeat_thread = None
+        self._heartbeat_stop = threading.Event()
 
     def promote_pipeline_manager(self, manager: Any) -> None:
         """Promote bootstrap helpers to the real *manager* when available."""
@@ -8109,6 +8124,7 @@ class SelfImprovementEngine:
         The ``workflow_id`` used for foresight tracking is derived from the
         current sandbox workflow context.
         """
+        self._ensure_heartbeat()
         self._cycle_running = True
         self._cycle_count += 1
         cid = f"cycle-{self._cycle_count}"
@@ -9779,18 +9795,17 @@ class SelfImprovementEngine:
             self.stop()
 
     def start(self) -> None:
-        """Mark the engine as running and start the heartbeat thread."""
+        """Mark the engine as running."""
         if self._running:
             return
         self._running = True
-        _ensure_engine_heartbeat()
 
     def stop(self) -> None:
         """Stop the engine heartbeat and clear the running state."""
         if not self._running:
             return
         self._running = False
-        stop_engine_heartbeat()
+        self._stop_heartbeat()
 
     def __enter__(self) -> "SelfImprovementEngine":
         self.start()
@@ -9810,6 +9825,7 @@ class SelfImprovementEngine:
         """Start the scheduling loop in the background."""
         if self._schedule_task and not self._schedule_task.done():
             return self._schedule_task
+        self._ensure_heartbeat()
         self.start()
         self.logger.info(
             "scheduling started",
@@ -9831,6 +9847,7 @@ class SelfImprovementEngine:
                 self.logger.info("schedule task finished")
             finally:
                 self._schedule_task = None
+                self._stop_heartbeat(timeout=1.0)
                 self.stop()
 
     def close(self) -> None:
