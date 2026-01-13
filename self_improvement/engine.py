@@ -92,8 +92,8 @@ _HEARTBEAT_ENABLED_ENV = "MENACE_ENGINE_HEARTBEAT"
 _HEARTBEAT_ENABLED_ENV_LEGACY = "MENACE_ENGINE_HEARTBEAT_ENABLED"
 _HEARTBEAT_INTERVAL_ENV = "MENACE_ENGINE_HEARTBEAT_INTERVAL"
 _DEFAULT_HEARTBEAT_INTERVAL = 5.0
-_HEARTBEAT_STOP = threading.Event()
-_HEARTBEAT_THREAD: threading.Thread | None = None
+_ENGINE_HEARTBEAT_STOP = threading.Event()
+_ENGINE_HEARTBEAT_THREAD: threading.Thread | None = None
 _HEARTBEAT_STARTED = False
 
 
@@ -122,49 +122,51 @@ def _get_heartbeat_interval() -> float:
     return interval
 
 
-def _start_engine_heartbeat(interval: float, stop_event: threading.Event) -> None:
+def _start_engine_heartbeat(interval: float) -> None:
     """Emit periodic heartbeats to confirm module-level progress."""
-    global _HEARTBEAT_THREAD
+    global _ENGINE_HEARTBEAT_THREAD
 
-    if _HEARTBEAT_THREAD and _HEARTBEAT_THREAD.is_alive():
+    if _ENGINE_HEARTBEAT_THREAD and _ENGINE_HEARTBEAT_THREAD.is_alive():
         return
 
-    stop_event.clear()
+    _ENGINE_HEARTBEAT_STOP.clear()
 
     def _log_heartbeat() -> None:
-        while not stop_event.wait(interval):
+        while not _ENGINE_HEARTBEAT_STOP.is_set():
+            if _ENGINE_HEARTBEAT_STOP.wait(interval):
+                break
             logger.debug(
                 "engine heartbeat",
                 extra=log_record(timestamp=time.time()),
             )
 
-    _HEARTBEAT_THREAD = threading.Thread(
+    _ENGINE_HEARTBEAT_THREAD = threading.Thread(
         target=_log_heartbeat,
         daemon=True,
         name="engine-heartbeat",
     )
-    _HEARTBEAT_THREAD.start()
+    _ENGINE_HEARTBEAT_THREAD.start()
 
 
 def stop_engine_heartbeat(timeout: float = 1.0) -> None:
     """Signal the heartbeat thread to stop and optionally wait for it."""
-    global _HEARTBEAT_THREAD
+    global _ENGINE_HEARTBEAT_THREAD
 
-    thread = _HEARTBEAT_THREAD
+    thread = _ENGINE_HEARTBEAT_THREAD
     if not thread:
         return
-    _HEARTBEAT_STOP.set()
+    _ENGINE_HEARTBEAT_STOP.set()
     if thread.is_alive():
         thread.join(timeout=timeout)
     if not thread.is_alive():
-        _HEARTBEAT_THREAD = None
+        _ENGINE_HEARTBEAT_THREAD = None
 
 
 def _ensure_engine_heartbeat() -> None:
     """Start the lightweight heartbeat thread on first use."""
     global _HEARTBEAT_STARTED
 
-    if _HEARTBEAT_THREAD and _HEARTBEAT_THREAD.is_alive():
+    if _ENGINE_HEARTBEAT_THREAD and _ENGINE_HEARTBEAT_THREAD.is_alive():
         return
     enabled_setting = getattr(settings, "engine_heartbeat_enabled", None)
     if enabled_setting is None:
@@ -186,7 +188,7 @@ def _ensure_engine_heartbeat() -> None:
         return
     try:
         interval = _get_heartbeat_interval()
-        _start_engine_heartbeat(interval, _HEARTBEAT_STOP)
+        _start_engine_heartbeat(interval)
         logger.info(
             "heartbeat thread started",
             extra=log_record(interval=interval),
@@ -9598,7 +9600,7 @@ class SelfImprovementEngine:
             self.logger.info(
                 "cycle shutdown", extra=log_record(event="shutdown")
             )
-            stop_engine_heartbeat()
+            self.close()
 
     async def _schedule_loop(self, energy: int = 1) -> None:
         while not self._stop_event.is_set():
@@ -9794,7 +9796,15 @@ class SelfImprovementEngine:
                 self.logger.info("schedule task finished")
             finally:
                 self._schedule_task = None
-                stop_engine_heartbeat()
+                self.close()
+
+    def close(self) -> None:
+        """Stop the engine heartbeat and release lightweight resources."""
+        stop_engine_heartbeat()
+
+    def shutdown(self) -> None:
+        """Backwards-compatible alias for ``close``."""
+        self.close()
 
     def status(self) -> dict[str, object]:
         """Expose the latest workflow risk evaluation."""
@@ -9918,7 +9928,10 @@ def cli(argv: list[str] | None = None) -> None:
         X = np.vstack([live["X"], shadow["X"]])
         y = np.concatenate([live["y"], shadow["y"]])
         engine = SelfImprovementEngine(context_builder=create_context_builder())
-        engine.fit_truth_adapter(X, y)
+        try:
+            engine.fit_truth_adapter(X, y)
+        finally:
+            engine.close()
         return
 
     if args.cmd == "update-truth-adapter":
@@ -9927,12 +9940,15 @@ def cli(argv: list[str] | None = None) -> None:
         X = np.vstack([live["X"], shadow["X"]])
         y = np.concatenate([live["y"], shadow["y"]])
         engine = SelfImprovementEngine(context_builder=create_context_builder())
-        adapter = engine.truth_adapter
-        if adapter.metadata.get("retraining_required"):
-            adapter.reset()
-            engine.fit_truth_adapter(X, y)
-        else:
-            adapter.partial_fit(X, y)
+        try:
+            adapter = engine.truth_adapter
+            if adapter.metadata.get("retraining_required"):
+                adapter.reset()
+                engine.fit_truth_adapter(X, y)
+            else:
+                adapter.partial_fit(X, y)
+        finally:
+            engine.close()
         return
 
     parser.error("unknown command")

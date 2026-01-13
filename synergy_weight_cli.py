@@ -186,52 +186,54 @@ def cli(argv: list[str] | None = None) -> int:
 
     engine = _load_engine(args.path)
     learner = engine.synergy_learner
-
-    if args.cmd == "show":
-        data = json.dumps(learner.weights, indent=2)
-        sys.stdout.write(data)
-        return 0
-
-    if args.cmd == "export":
-        data = json.dumps(learner.weights, indent=2)
-        if args.out == "-":
+    try:
+        if args.cmd == "show":
+            data = json.dumps(learner.weights, indent=2)
             sys.stdout.write(data)
-        else:
-            with open(args.out, "w", encoding="utf-8") as fh:
-                fh.write(data)
-        return 0
+            return 0
 
-    if args.cmd == "import":
-        with open(args.file, encoding="utf-8") as fh:
-            data = json.load(fh)
-        for key in learner.weights:
-            if key in data:
-                learner.weights[key] = float(data[key])
-        learner.save()
-        _log_weights(LOG_PATH, learner.weights)
-        return 0
+        if args.cmd == "export":
+            data = json.dumps(learner.weights, indent=2)
+            if args.out == "-":
+                sys.stdout.write(data)
+            else:
+                with open(args.out, "w", encoding="utf-8") as fh:
+                    fh.write(data)
+            return 0
 
-    if args.cmd == "train":
-        with open(args.history, encoding="utf-8") as fh:
-            hist = json.load(fh)
-        train_from_history(hist, args.path)
-        return 0
+        if args.cmd == "import":
+            with open(args.file, encoding="utf-8") as fh:
+                data = json.load(fh)
+            for key in learner.weights:
+                if key in data:
+                    learner.weights[key] = float(data[key])
+            learner.save()
+            _log_weights(LOG_PATH, learner.weights)
+            return 0
 
-    if args.cmd == "reset":
-        for key in list(learner.weights):
-            learner.weights[key] = 1.0
-        learner.save()
-        _log_weights(LOG_PATH, learner.weights)
-        return 0
+        if args.cmd == "train":
+            with open(args.history, encoding="utf-8") as fh:
+                hist = json.load(fh)
+            train_from_history(hist, args.path)
+            return 0
 
-    if args.cmd == "history":
-        log = Path(args.log)
-        if args.plot:
-            _plot_history(log)
-        else:
-            if log.exists():
-                sys.stdout.write(log.read_text())
-        return 0
+        if args.cmd == "reset":
+            for key in list(learner.weights):
+                learner.weights[key] = 1.0
+            learner.save()
+            _log_weights(LOG_PATH, learner.weights)
+            return 0
+
+        if args.cmd == "history":
+            log = Path(args.log)
+            if args.plot:
+                _plot_history(log)
+            else:
+                if log.exists():
+                    sys.stdout.write(log.read_text())
+            return 0
+    finally:
+        engine.close()
 
     parser.error("unknown command")
     return 1

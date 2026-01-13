@@ -79,6 +79,7 @@ class ImprovementEngineRegistry:
         """Gracefully stop all running schedules."""
         for eng in self.engines.values():
             await eng.shutdown_schedule()
+            eng.close()
 
     def autoscale(
         self,
