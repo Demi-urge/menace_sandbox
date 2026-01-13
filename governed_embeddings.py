@@ -2706,22 +2706,44 @@ def governed_embed(
                 pass
         return max(1, len(text) // EMBEDDING_CHARS_PER_TOKEN)
 
-    def _truncate_text_for_embedding(raw: str, model_obj: Any) -> str:
+    def _is_minilm_model(model_obj: Any) -> bool:
+        name_candidates = [
+            getattr(model_obj, "model_name", None),
+            getattr(model_obj, "model_name_or_path", None),
+            getattr(model_obj, "name", None),
+            _MODEL_NAME,
+        ]
+        for name in name_candidates:
+            if isinstance(name, str) and "minilm" in name.lower():
+                return True
+        return False
+
+    def _truncate_text_for_embedding(raw: str, model_obj: Any) -> tuple[str, bool, int, int]:
         max_tokens = 200
         tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
             try:
                 token_ids = tokenizer.encode(raw, add_special_tokens=False)
-                if len(token_ids) > max_tokens:
+                original_tokens = len(token_ids)
+                if original_tokens > max_tokens:
                     token_ids = token_ids[:max_tokens]
-                    if hasattr(tokenizer, "decode"):
-                        return tokenizer.decode(token_ids, skip_special_tokens=True)
+                    truncated_text = (
+                        tokenizer.decode(token_ids, skip_special_tokens=True)
+                        if hasattr(tokenizer, "decode")
+                        else raw
+                    )
+                    return truncated_text, True, original_tokens, len(token_ids)
+                return raw, False, original_tokens, original_tokens
             except Exception:
-                pass
+                if _is_minilm_model(model_obj):
+                    logger.warning(
+                        "failed to tokenize MiniLM input for truncation; falling back to word cap"
+                    )
         words = raw.split()
-        if len(words) > max_tokens:
-            return " ".join(words[:max_tokens])
-        return raw
+        original_tokens = len(words)
+        if original_tokens > max_tokens:
+            return " ".join(words[:max_tokens]), True, original_tokens, max_tokens
+        return raw, False, original_tokens, original_tokens
 
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     encode_kwargs: dict[str, Any] = {}
@@ -2741,8 +2763,20 @@ def governed_embed(
         cleaned_for_embedding = cleaned_for_embedding[:EMBEDDING_CHAR_TRUNCATION_THRESHOLD]
     hard_max_tokens = 200
     original_token_count = _count_tokens(cleaned_for_embedding, model)
-    cleaned_for_embedding = _truncate_text_for_embedding(cleaned_for_embedding, model)
+    (
+        cleaned_for_embedding,
+        token_truncated,
+        pre_trunc_tokens,
+        post_trunc_tokens,
+    ) = _truncate_text_for_embedding(cleaned_for_embedding, model)
     truncated_token_count = _count_tokens(cleaned_for_embedding, model)
+    if token_truncated:
+        logger.warning(
+            "embedding input token-truncated (tokens=%s truncated_tokens=%s hard_max=%s)",
+            pre_trunc_tokens,
+            post_trunc_tokens,
+            hard_max_tokens,
+        )
     if truncated_token_count > hard_max_tokens:
         logger.warning(
             "embedding input exceeds hard max tokens; returning zero vector "
