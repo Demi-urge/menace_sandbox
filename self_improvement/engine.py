@@ -34,7 +34,7 @@ import logging
 _qfe_log("logging imported")
 
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 _qfe_log("pathlib.Path imported")
 
 try:
@@ -1348,7 +1348,6 @@ class SelfImprovementEngine:
         runner_config: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        _ensure_engine_heartbeat()
         try:
             print(
                 "\U0001F4E6 SI-2f.local importing menace_sandbox.local_knowledge_module",
@@ -1885,6 +1884,7 @@ class SelfImprovementEngine:
                     self._score_backend = backend_from_url(backend_url)
                 except Exception:
                     self.logger.exception("patch score backend init failed")
+        self._running = False
         self._cycle_running = False
         self._schedule_task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -9600,175 +9600,209 @@ class SelfImprovementEngine:
             self.logger.info(
                 "cycle shutdown", extra=log_record(event="shutdown")
             )
-            self.close()
+            self.stop()
 
     async def _schedule_loop(self, energy: int = 1) -> None:
-        while not self._stop_event.is_set():
-            current_energy = energy
-            if self.capital_bot:
-                try:
-                    current_energy = self.capital_bot.energy_score(
-                        load=0.0,
-                        success_rate=1.0,
-                        deploy_eff=1.0,
-                        failure_rate=0.0,
-                    )
-                except Exception as exc:
-                    self.logger.exception("energy check failed: %s", exc)
-                    current_energy = energy
-            if self.roi_predictor and self.use_adaptive_roi:
-                features = self._collect_action_features()
-                try:
+        try:
+            while not self._stop_event.is_set():
+                current_energy = energy
+                if self.capital_bot:
                     try:
-                        seq, growth_type, _, _ = self.roi_predictor.predict(
-                            features, horizon=len(features)
+                        current_energy = self.capital_bot.energy_score(
+                            load=0.0,
+                            success_rate=1.0,
+                            deploy_eff=1.0,
+                            failure_rate=0.0,
                         )
-                    except TypeError:
-                        val, growth_type, _, _ = self.roi_predictor.predict(features)
-                        seq = [float(val)]
-                    roi_estimate = float(seq[-1]) if seq else 0.0
-                except Exception:
-                    roi_estimate, growth_type = 0.0, "unknown"
-                self.logger.info(
-                    "growth prediction",
-                    extra=log_record(
-                        growth_type=growth_type,
-                        roi_estimate=roi_estimate,
-                        features=features,
-                    ),
-                )
-                self._last_growth_type = growth_type
-                if growth_type == "exponential":
-                    current_energy *= 1.2
-                elif growth_type == "marginal":
-                    current_energy *= 0.8
-            else:
-                self._last_growth_type = None
-            momentum = self.baseline_tracker.momentum
-            if momentum != self._last_momentum:
-                self.logger.info(
-                    "momentum update",
-                    extra=log_record(value=momentum, previous=self._last_momentum),
-                )
-                self._last_momentum = momentum
-            current_energy *= 1 + momentum
-            # Fetch recent error telemetry and recent entropy change.  The error
-            # count is used as a proxy for overall system health while the
-            # entropy delta is examined for potential overfitting.
-            (
-                traces,
-                recent_entropy_delta,
-                error_count,
-                _entropy_mean,
-                _entropy_std,
-            ) = meta_planning._recent_error_entropy(
-                self.error_bot,
-                self.baseline_tracker,
-                getattr(SandboxSettings(), "error_window", 5),
-            )
-            error_count = float(error_count)
-            critical_errors = any(
-                getattr(getattr(ev, "error_type", None), "severity", None) == "critical"
-                for ev in traces
-            )
-            moving_avg = self.baseline_tracker.get("energy")
-            std = self.baseline_tracker.std("energy")
-            self.baseline_tracker.update(energy=current_energy, error_count=error_count)
-            self._save_state()
-            scale = 1.0 + (0.5 - momentum)
-            threshold = moving_avg - self.energy_threshold * scale * std
-            # Combine weighted deltas from multiple metrics to assess overall
-            # system movement.  Entropy increases and momentum drops will
-            # reduce the score while ROI and pass rate gains increase it.
-            delta_score, components = self._compute_delta_score()
-            error_deltas = self.baseline_tracker.delta_history("error_count")
-            error_count_delta = error_deltas[-1] if error_deltas else 0.0
-            components["error_count_delta"] = error_count_delta
-            roi_delta = components.get("roi_delta", 0.0)
-            pass_rate_delta = components.get("pass_rate_delta", 0.0)
-            momentum_delta = components.get("momentum_delta", 0.0)
-            entropy_delta = components.get("entropy_delta", 0.0)
-            entropy_std = self.baseline_tracker.std("entropy")
-            entropy_threshold = self.entropy_dev_multiplier * entropy_std
-            entropy_spike = abs(recent_entropy_delta) > entropy_threshold
-            within_baseline = current_energy >= threshold
-            metric_values = {
-                "roi": self.baseline_tracker.current("roi"),
-                "pass_rate": self.baseline_tracker.current("pass_rate"),
-                "momentum": self.baseline_tracker.momentum,
-                "error_count": error_count,
-            }
-            error_traces = traces
-            overfit_signal = False
-            if WorkflowSynergyComparator and hasattr(
-                WorkflowSynergyComparator, "analyze_overfitting"
-            ):
-                spec = getattr(self, "last_workflow_spec", None)
-                if spec is not None:
+                    except Exception as exc:
+                        self.logger.exception("energy check failed: %s", exc)
+                        current_energy = energy
+                if self.roi_predictor and self.use_adaptive_roi:
+                    features = self._collect_action_features()
                     try:
-                        report = WorkflowSynergyComparator.analyze_overfitting(spec)
-                        overfit_signal = getattr(report, "is_overfitting", lambda: False)()
-                    except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.debug("overfitting analysis failed: %s", exc)
-            signals: dict[str, object] = {}
-            if error_traces:
-                signals["errors"] = len(error_traces)
-            if entropy_spike:
-                signals["entropy_delta"] = recent_entropy_delta
-            if overfit_signal:
-                signals["overfitting"] = True
-            decision = "escalate"
-            run_energy: int | None = None
-            log_fields: dict[str, object] = {
-                "energy": current_energy,
-                "baseline": threshold,
-                **metric_values,
-                **components,
-                "delta_score": delta_score,
-            }
-            if signals:
-                log_fields.update(signals)
-
-            if signals and not self._cycle_running:
-                decision = "fallback"
-                run_energy = int(round(current_energy * 5))
-                msg = "forcing run_cycle due to fallback signals"
-            elif (
-                roi_delta > 0
-                and pass_rate_delta > 0
-                and momentum_delta > 0
-                and error_count_delta <= 0
-                and within_baseline
-                and not critical_errors
-            ):
-                decision = "skip"
-                msg = "positive deltas - skipping cycle"
-            elif not within_baseline and not self._cycle_running:
-                decision = "cycle"
-                run_energy = int(round(current_energy * 5))
-                msg = "triggering run_cycle due to low energy"
-            else:
-                self.urgency_tier += 1
-                log_fields["tier"] = self.urgency_tier
-                msg = "non-positive deltas - escalating urgency"
-
-            log_fields["decision"] = decision
-            record = log_record(**log_fields)
-            if decision == "escalate":
-                self.logger.warning(msg, extra=record)
-            else:
-                self.logger.info(msg, extra=record)
-
-            if run_energy is not None:
-                try:
-                    await asyncio.to_thread(self.run_cycle, energy=run_energy)
-                except Exception as exc:
-                    self.logger.exception(
-                        "self improvement run_cycle failed with energy %s: %s",
-                        run_energy,
-                        exc,
+                        try:
+                            seq, growth_type, _, _ = self.roi_predictor.predict(
+                                features, horizon=len(features)
+                            )
+                        except TypeError:
+                            val, growth_type, _, _ = self.roi_predictor.predict(features)
+                            seq = [float(val)]
+                        roi_estimate = float(seq[-1]) if seq else 0.0
+                    except Exception:
+                        roi_estimate, growth_type = 0.0, "unknown"
+                    self.logger.info(
+                        "growth prediction",
+                        extra=log_record(
+                            growth_type=growth_type,
+                            roi_estimate=roi_estimate,
+                            features=features,
+                        ),
                     )
-            await asyncio.sleep(self.interval)
+                    self._last_growth_type = growth_type
+                    if growth_type == "exponential":
+                        current_energy *= 1.2
+                    elif growth_type == "marginal":
+                        current_energy *= 0.8
+                else:
+                    self._last_growth_type = None
+                momentum = self.baseline_tracker.momentum
+                if momentum != self._last_momentum:
+                    self.logger.info(
+                        "momentum update",
+                        extra=log_record(value=momentum, previous=self._last_momentum),
+                    )
+                    self._last_momentum = momentum
+                current_energy *= 1 + momentum
+                # Fetch recent error telemetry and recent entropy change.  The error
+                # count is used as a proxy for overall system health while the
+                # entropy delta is examined for potential overfitting.
+                (
+                    traces,
+                    recent_entropy_delta,
+                    error_count,
+                    _entropy_mean,
+                    _entropy_std,
+                ) = meta_planning._recent_error_entropy(
+                    self.error_bot,
+                    self.baseline_tracker,
+                    getattr(SandboxSettings(), "error_window", 5),
+                )
+                error_count = float(error_count)
+                critical_errors = any(
+                    getattr(getattr(ev, "error_type", None), "severity", None)
+                    == "critical"
+                    for ev in traces
+                )
+                moving_avg = self.baseline_tracker.get("energy")
+                std = self.baseline_tracker.std("energy")
+                self.baseline_tracker.update(
+                    energy=current_energy, error_count=error_count
+                )
+                self._save_state()
+                scale = 1.0 + (0.5 - momentum)
+                threshold = moving_avg - self.energy_threshold * scale * std
+                # Combine weighted deltas from multiple metrics to assess overall
+                # system movement.  Entropy increases and momentum drops will
+                # reduce the score while ROI and pass rate gains increase it.
+                delta_score, components = self._compute_delta_score()
+                error_deltas = self.baseline_tracker.delta_history("error_count")
+                error_count_delta = error_deltas[-1] if error_deltas else 0.0
+                components["error_count_delta"] = error_count_delta
+                roi_delta = components.get("roi_delta", 0.0)
+                pass_rate_delta = components.get("pass_rate_delta", 0.0)
+                momentum_delta = components.get("momentum_delta", 0.0)
+                entropy_delta = components.get("entropy_delta", 0.0)
+                entropy_std = self.baseline_tracker.std("entropy")
+                entropy_threshold = self.entropy_dev_multiplier * entropy_std
+                entropy_spike = abs(recent_entropy_delta) > entropy_threshold
+                within_baseline = current_energy >= threshold
+                metric_values = {
+                    "roi": self.baseline_tracker.current("roi"),
+                    "pass_rate": self.baseline_tracker.current("pass_rate"),
+                    "momentum": self.baseline_tracker.momentum,
+                    "error_count": error_count,
+                }
+                error_traces = traces
+                overfit_signal = False
+                if WorkflowSynergyComparator and hasattr(
+                    WorkflowSynergyComparator, "analyze_overfitting"
+                ):
+                    spec = getattr(self, "last_workflow_spec", None)
+                    if spec is not None:
+                        try:
+                            report = WorkflowSynergyComparator.analyze_overfitting(spec)
+                            overfit_signal = getattr(
+                                report, "is_overfitting", lambda: False
+                            )()
+                        except Exception as exc:  # pragma: no cover - best effort
+                            self.logger.debug("overfitting analysis failed: %s", exc)
+                signals: dict[str, object] = {}
+                if error_traces:
+                    signals["errors"] = len(error_traces)
+                if entropy_spike:
+                    signals["entropy_delta"] = recent_entropy_delta
+                if overfit_signal:
+                    signals["overfitting"] = True
+                decision = "escalate"
+                run_energy: int | None = None
+                log_fields: dict[str, object] = {
+                    "energy": current_energy,
+                    "baseline": threshold,
+                    **metric_values,
+                    **components,
+                    "delta_score": delta_score,
+                }
+                if signals:
+                    log_fields.update(signals)
+
+                if signals and not self._cycle_running:
+                    decision = "fallback"
+                    run_energy = int(round(current_energy * 5))
+                    msg = "forcing run_cycle due to fallback signals"
+                elif (
+                    roi_delta > 0
+                    and pass_rate_delta > 0
+                    and momentum_delta > 0
+                    and error_count_delta <= 0
+                    and within_baseline
+                    and not critical_errors
+                ):
+                    decision = "skip"
+                    msg = "positive deltas - skipping cycle"
+                elif not within_baseline and not self._cycle_running:
+                    decision = "cycle"
+                    run_energy = int(round(current_energy * 5))
+                    msg = "triggering run_cycle due to low energy"
+                else:
+                    self.urgency_tier += 1
+                    log_fields["tier"] = self.urgency_tier
+                    msg = "non-positive deltas - escalating urgency"
+
+                log_fields["decision"] = decision
+                record = log_record(**log_fields)
+                if decision == "escalate":
+                    self.logger.warning(msg, extra=record)
+                else:
+                    self.logger.info(msg, extra=record)
+
+                if run_energy is not None:
+                    try:
+                        await asyncio.to_thread(self.run_cycle, energy=run_energy)
+                    except Exception as exc:
+                        self.logger.exception(
+                            "self improvement run_cycle failed with energy %s: %s",
+                            run_energy,
+                            exc,
+                        )
+                await asyncio.sleep(self.interval)
+        finally:
+            self.stop()
+
+    def start(self) -> None:
+        """Mark the engine as running and start the heartbeat thread."""
+        if self._running:
+            return
+        self._running = True
+        _ensure_engine_heartbeat()
+
+    def stop(self) -> None:
+        """Stop the engine heartbeat and clear the running state."""
+        if not self._running:
+            return
+        self._running = False
+        stop_engine_heartbeat()
+
+    def __enter__(self) -> "SelfImprovementEngine":
+        self.start()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.stop()
 
     def schedule(
         self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None
@@ -9776,6 +9810,7 @@ class SelfImprovementEngine:
         """Start the scheduling loop in the background."""
         if self._schedule_task and not self._schedule_task.done():
             return self._schedule_task
+        self.start()
         self.logger.info(
             "scheduling started",
             extra=log_record(energy=energy),
@@ -9796,11 +9831,11 @@ class SelfImprovementEngine:
                 self.logger.info("schedule task finished")
             finally:
                 self._schedule_task = None
-                self.close()
+                self.stop()
 
     def close(self) -> None:
         """Stop the engine heartbeat and release lightweight resources."""
-        stop_engine_heartbeat()
+        self.stop()
 
     def shutdown(self) -> None:
         """Backwards-compatible alias for ``close``."""
