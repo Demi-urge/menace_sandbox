@@ -734,6 +734,26 @@ class _TransientErrorState:
         return False
 
 
+@dataclass(slots=True)
+class _ModulePathResolutionState:
+    """Track repeated module path resolution failures for a bot."""
+
+    count: int = 0
+    first_seen: float = field(default_factory=time.monotonic)
+    last_seen: float = field(default_factory=time.monotonic)
+    last_module_hint: str | None = None
+    last_resolved_path: str | None = None
+
+    def increment(self, module_hint: str | None, resolved_path: str | None) -> int:
+        if self.count == 0:
+            self.first_seen = time.monotonic()
+        self.count += 1
+        self.last_seen = time.monotonic()
+        self.last_module_hint = module_hint
+        self.last_resolved_path = resolved_path
+        return self.count
+
+
 def _normalise_exception_message(exc: BaseException) -> str:
     """Return ``exc``'s message with volatile runtime details stripped."""
 
@@ -1597,6 +1617,7 @@ class BotRegistry:
         self._internalization_retry_attempts: Dict[str, int] = {}
         self._internalization_retry_handles: Dict[str, threading.Timer] = {}
         self._transient_error_state: Dict[str, _TransientErrorState] = {}
+        self._module_path_failures: Dict[str, _ModulePathResolutionState] = {}
         self._max_internalization_retries = 5
         self._max_transient_error_signature_repeats = 3
         # Import failures on Windows often alternate between several different
@@ -1611,6 +1632,9 @@ class BotRegistry:
         # Starting retries after a short, configurable delay gives the module
         # graph time to settle without blocking the caller thread.
         self._initial_internalization_delay = 0.75
+        self._module_path_failure_backoff_base = 1.5
+        self._module_path_failure_backoff_max = 30.0
+        self._module_path_failure_retry_cap = 3
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load(self.persist_path)
@@ -1830,6 +1854,57 @@ class BotRegistry:
 
         with self._lock:
             self._transient_error_state.pop(name, None)
+
+    def register_module_path_failure(
+        self,
+        name: str,
+        *,
+        module_hint: str | None,
+        resolved_path: str | None,
+    ) -> tuple[int, float | None, bool]:
+        """Record a module path resolution failure.
+
+        Returns ``(attempt_count, retry_delay, should_disable)``.
+        """
+
+        with self._lock:
+            state = self._module_path_failures.get(name)
+            if state is None:
+                state = _ModulePathResolutionState()
+                self._module_path_failures[name] = state
+            attempt = state.increment(module_hint, resolved_path)
+
+            if attempt >= self._module_path_failure_retry_cap:
+                node = self.graph.nodes.get(name)
+                if node is not None:
+                    node["pending_internalization"] = False
+                    node["self_coding_disabled"] = {
+                        "reason": (
+                            "self-coding disabled after repeated module_path resolution failures"
+                        ),
+                        "module_hint": module_hint,
+                        "module_path": resolved_path,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "failure_count": attempt,
+                        "source": "module_path_resolution",
+                    }
+                self._module_path_failures.pop(name, None)
+                self._internalization_retry_attempts.pop(name, None)
+                self._cancel_internalization_retry(name)
+                return attempt, None, True
+
+            retry_delay = min(
+                self._module_path_failure_backoff_max,
+                self._module_path_failure_backoff_base * (2 ** (attempt - 1)),
+            )
+            self._schedule_internalization_retry(name, delay=retry_delay, force=True)
+            return attempt, retry_delay, False
+
+    def clear_module_path_failures(self, name: str) -> None:
+        """Reset module path failure tracking for ``name``."""
+
+        with self._lock:
+            self._module_path_failures.pop(name, None)
 
     def _disable_self_coding_due_to_transient_errors(
         self, name: str, exc: Exception, state: _TransientErrorState
@@ -2181,6 +2256,14 @@ class BotRegistry:
             self.graph.add_node(name)
 
         node = self.graph.nodes[name]
+        existing_disabled = node.get("self_coding_disabled")
+        if isinstance(existing_disabled, dict) and existing_disabled.get("source") == "module_path_resolution":
+            node["pending_internalization"] = False
+            logger.warning(
+                "Skipping internalization for %s because module_path resolution is disabled",
+                name,
+            )
+            return
 
         components = _load_self_coding_components()
         ctx = components.context_builder_factory()
@@ -2515,6 +2598,14 @@ class BotRegistry:
                 missing: list[str] = []
                 mgr = manager or existing_mgr
                 db = data_bot or existing_data
+                existing_disabled = node.get("self_coding_disabled")
+                if isinstance(existing_disabled, dict) and existing_disabled.get("source") == "module_path_resolution":
+                    node["pending_internalization"] = False
+                    logger.warning(
+                        "Skipping internalization for %s because module_path resolution is disabled",
+                        name,
+                    )
+                    return
                 if mgr is None:
                     missing.append("manager")
                 if db is None:
@@ -3998,4 +4089,3 @@ def _load_self_coding_components() -> _SelfCodingComponents:
         components["memory_manager_cls"],
         components["context_builder_factory"],
     )
-
