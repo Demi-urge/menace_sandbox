@@ -1513,24 +1513,29 @@ def generate_patch(
             context_step_start,
             extra={"module_path": prompt_path},
         )
-    if context_block:
-        compression_step_start = _log_step_start(
-            "embedding/compression",
-            extra={"module_path": prompt_path},
-        )
-        compressed = ""
-        try:
+    compression_step_start = _log_step_start(
+        "embedding/compression",
+        extra={"module_path": prompt_path},
+    )
+    compressed = ""
+    try:
+        if context_block:
             compressed = compress_snippets({"snippet": context_block}).get(
                 "snippet", ""
             )
-        finally:
-            _log_step_end(
-                "embedding/compression",
-                compression_step_start,
+        else:
+            logger.info(
+                "embedding/compression skipped (empty context)",
                 extra={"module_path": prompt_path},
             )
-        if compressed:
-            description += "\n\n" + compressed
+    finally:
+        _log_step_end(
+            "embedding/compression",
+            compression_step_start,
+            extra={"module_path": prompt_path},
+        )
+    if compressed:
+        description += "\n\n" + compressed
     if strategy is not None:
         try:
             _, render_prompt = _get_prompt_strategies()
@@ -1598,7 +1603,7 @@ def generate_patch(
                 target_region,
                 "pending_hints",
                 hint_flags,
-        )
+            )
 
         needs_helper = _requires_helper(analysis.hints)
 
@@ -1802,86 +1807,32 @@ def generate_patch(
                     )
         else:
             patch_id = None
-            after_target = Path(after_dir) / rel
-            after_target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, after_target)
-            diff_struct = generate_code_diff(before_dir, after_dir)
-            risk_flags = flag_risky_changes(diff_struct)
-            _log_validation_flags(
-                logger,
-                path.as_posix(),
-                target_region,
-                "diff_risk_assessment",
-                risk_flags,
+            patch_step_start = _log_step_start(
+                "patch application",
+                extra={"module_path": prompt_path},
             )
-            risk_score = min(1.0, len(risk_flags) / 10.0) if risk_flags else 0.0
-            settings_cls = _get_sandbox_settings_cls()
-            settings = settings_cls()
-            threshold = float(getattr(settings, "diff_risk_threshold", 1.0))
-            event_bus = getattr(manager, "event_bus", None)
-            if event_bus and risk_flags:
-                try:
-                    event_bus.publish(
-                        "quick_fix:risk_flags",
-                        {
-                            "module": path.as_posix(),
-                            "risk_flags": risk_flags,
-                            "risk_score": risk_score,
-                        },
-                    )
-                except Exception:
-                    logger.exception("failed to publish risk flags event")
-            high_risk = risk_score > threshold
-            if patch_logger is not None:
-                for attempt in range(2):
-                    try:
-                        patch_logger.track_contributors(
-                            [(f"{o}:{vid}", score) for o, vid, score in vectors],
-                            patch_id is not None and not high_risk,
-                            patch_id=str(patch_id) if patch_id is not None else "",
-                            session_id=cb_session,
-                            effort_estimate=effort_estimate,
-                            risk_flags=risk_flags,
-                            diff_risk_score=risk_score,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "patch_logger.track_contributors failed",
-                            exc_info=True,
-                            extra={"attempt": attempt + 1},
-                        )
-                        if attempt == 0:
-                            time.sleep(0.5)
-                        else:
-                            break
-                    else:  # run embedding backfill on success
-                        try:
-                            _, _, _, embedding_backfill_cls = _get_context_builder_types()
-                            embedding_backfill_cls().run(
-                                db="code",
-                                backend=os.getenv("VECTOR_BACKEND", "annoy"),
-                            )
-                        except BaseException:  # pragma: no cover - best effort
-                            logger.debug(
-                                "embedding backfill failed", exc_info=True
-                            )
-                        break
-            if high_risk:
-                shutil.copy2(before_target, path)
+            try:
+                after_target = Path(after_dir) / rel
+                after_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, after_target)
+                diff_struct = generate_code_diff(before_dir, after_dir)
+                risk_flags = flag_risky_changes(diff_struct)
                 _log_validation_flags(
                     logger,
                     path.as_posix(),
                     target_region,
-                    "high_risk_abort",
+                    "diff_risk_assessment",
                     risk_flags,
                 )
-                logger.warning(
-                    "patch aborted due to high diff risk %.2f > %.2f", risk_score, threshold
-                )
-                if event_bus:
+                risk_score = min(1.0, len(risk_flags) / 10.0) if risk_flags else 0.0
+                settings_cls = _get_sandbox_settings_cls()
+                settings = settings_cls()
+                threshold = float(getattr(settings, "diff_risk_threshold", 1.0))
+                event_bus = getattr(manager, "event_bus", None)
+                if event_bus and risk_flags:
                     try:
                         event_bus.publish(
-                            "quick_fix:risk_aborted",
+                            "quick_fix:risk_flags",
                             {
                                 "module": path.as_posix(),
                                 "risk_flags": risk_flags,
@@ -1889,126 +1840,191 @@ def generate_patch(
                             },
                         )
                     except Exception:
-                        logger.exception(
-                            "failed to publish risk aborted event"
-                        )
-                return (None, risk_flags) if return_flags else None
-            if risk_flags:
-                logger.warning("risky changes detected: %s", risk_flags)
-            diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
-            workflow_changes = [
-                {"file": path_for_prompt(f), "code": "\n".join(d["added"])}
-                for f, d in diff_data.items()
-                if d["added"]
-            ]
-            if workflow_changes and HumanAlignmentAgent is not None:
-                try:
-                    agent = HumanAlignmentAgent()
-                    warnings = agent.evaluate_changes(workflow_changes, None, [])
-                except Exception:
-                    logger.debug(
-                        "alignment agent unavailable; skipping workflow evaluation",
-                        exc_info=True,
+                        logger.exception("failed to publish risk flags event")
+                high_risk = risk_score > threshold
+                if patch_logger is not None:
+                    for attempt in range(2):
+                        try:
+                            patch_logger.track_contributors(
+                                [(f"{o}:{vid}", score) for o, vid, score in vectors],
+                                patch_id is not None and not high_risk,
+                                patch_id=str(patch_id) if patch_id is not None else "",
+                                session_id=cb_session,
+                                effort_estimate=effort_estimate,
+                                risk_flags=risk_flags,
+                                diff_risk_score=risk_score,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "patch_logger.track_contributors failed",
+                                exc_info=True,
+                                extra={"attempt": attempt + 1},
+                            )
+                            if attempt == 0:
+                                time.sleep(0.5)
+                            else:
+                                break
+                        else:  # run embedding backfill on success
+                            try:
+                                _, _, _, embedding_backfill_cls = _get_context_builder_types()
+                                embedding_backfill_cls().run(
+                                    db="code",
+                                    backend=os.getenv("VECTOR_BACKEND", "annoy"),
+                                )
+                            except BaseException:  # pragma: no cover - best effort
+                                logger.debug(
+                                    "embedding backfill failed", exc_info=True
+                                )
+                            break
+                if high_risk:
+                    shutil.copy2(before_target, path)
+                    _log_validation_flags(
+                        logger,
+                        path.as_posix(),
+                        target_region,
+                        "high_risk_abort",
+                        risk_flags,
                     )
-                else:
-                    if any(warnings.values()):
-                        log_violation(
-                            str(patch_id) if patch_id is not None else str(path),
-                            "alignment_warning",
-                            1,
-                            {"warnings": warnings},
-                            alignment_warning=True,
+                    logger.warning(
+                        "patch aborted due to high diff risk %.2f > %.2f", risk_score, threshold
+                    )
+                    if event_bus:
+                        try:
+                            event_bus.publish(
+                                "quick_fix:risk_aborted",
+                                {
+                                    "module": path.as_posix(),
+                                    "risk_flags": risk_flags,
+                                    "risk_score": risk_score,
+                                },
+                            )
+                        except Exception:
+                            logger.exception(
+                                "failed to publish risk aborted event"
+                            )
+                    return (None, risk_flags) if return_flags else None
+                if risk_flags:
+                    logger.warning("risky changes detected: %s", risk_flags)
+                diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                workflow_changes = [
+                    {"file": path_for_prompt(f), "code": "\n".join(d["added"])}
+                    for f, d in diff_data.items()
+                    if d["added"]
+                ]
+                if workflow_changes and HumanAlignmentAgent is not None:
+                    try:
+                        agent = HumanAlignmentAgent()
+                        warnings = agent.evaluate_changes(workflow_changes, None, [])
+                    except Exception:
+                        logger.debug(
+                            "alignment agent unavailable; skipping workflow evaluation",
+                            exc_info=True,
                         )
-            try:
-                py_compile.compile(str(path), doraise=True)
-            except Exception as exc:
-                shutil.copy2(before_target, path)
-                logger.error("patch compilation failed: %s", exc)
-                raise RuntimeError("patch compilation failed") from exc
-            if test_command:
+                    else:
+                        if any(warnings.values()):
+                            log_violation(
+                                str(patch_id) if patch_id is not None else str(path),
+                                "alignment_warning",
+                                1,
+                                {"warnings": warnings},
+                                alignment_warning=True,
+                            )
                 try:
-                    subprocess.run(test_command, check=True)
+                    py_compile.compile(str(path), doraise=True)
                 except Exception as exc:
                     shutil.copy2(before_target, path)
-                    logger.error("patch tests failed: %s", exc)
-                    raise RuntimeError("patch tests failed") from exc
-            if patch_id is not None:
-                registry = getattr(manager, "bot_registry", None)
-                if registry is not None:
-                    commit_hash: str | None = None
+                    logger.error("patch compilation failed: %s", exc)
+                    raise RuntimeError("patch compilation failed") from exc
+                if test_command:
                     try:
-                        commit_hash = (
-                            subprocess.check_output(["git", "rev-parse", "HEAD"])
-                            .decode()
-                            .strip()
-                        )
-                    except Exception:
-                        logger.debug("failed to capture commit hash", exc_info=True)
-                    approved = True
-                    ap = getattr(manager, "approval_policy", None)
-                    if ap is not None:
+                        subprocess.run(test_command, check=True)
+                    except Exception as exc:
+                        shutil.copy2(before_target, path)
+                        logger.error("patch tests failed: %s", exc)
+                        raise RuntimeError("patch tests failed") from exc
+                if patch_id is not None:
+                    registry = getattr(manager, "bot_registry", None)
+                    if registry is not None:
+                        commit_hash: str | None = None
                         try:
-                            approved = bool(ap.approve(path))
+                            commit_hash = (
+                                subprocess.check_output(["git", "rev-parse", "HEAD"])
+                                .decode()
+                                .strip()
+                            )
                         except Exception:
-                            logger.exception("approval policy execution failed")
-                            approved = False
-                    if not approved:
-                        rbm = getattr(ap, "rollback_mgr", None)
-                        if rbm is None:
-                            arm_cls = _resolve_automated_rollback_manager()
+                            logger.debug("failed to capture commit hash", exc_info=True)
+                        approved = True
+                        ap = getattr(manager, "approval_policy", None)
+                        if ap is not None:
                             try:
-                                rbm = arm_cls() if arm_cls is not None else None
+                                approved = bool(ap.approve(path))
                             except Exception:
-                                rbm = None
-                        if rbm is not None:
-                            try:
-                                rbm.rollback(str(patch_id))
-                            except Exception:
-                                logger.exception("failed to rollback invalid patch")
-                        if PatchHistoryDB is not None:
-                            try:
-                                PatchHistoryDB().record_vector_metrics(
-                                    "",
-                                    [],
-                                    patch_id=patch_id,
-                                    contribution=0.0,
-                                    win=False,
-                                    regret=True,
-                                )
-                            except Exception:
-                                logger.exception("failed to log patch outcome")
-                        event_bus = getattr(manager, "event_bus", None)
-                        if event_bus:
-                            try:
-                                event_bus.publish(
-                                    "quick_fix:approval_failed",
-                                    {
-                                        "bot": getattr(manager, "bot_name", ""),
-                                        "module": path.as_posix(),
-                                        "patch_id": patch_id,
-                                    },
-                                )
-                            except Exception:
-                                logger.exception("failed to publish approval_failed event")
-                        return (None, risk_flags) if return_flags else None
-                    try:
-                        registry.update_bot(
-                            getattr(manager, "bot_name", ""),
-                            path.as_posix(),
-                            patch_id=patch_id,
-                            commit=commit_hash,
-                        )
-                    except Exception:
-                        logger.exception("failed to update bot registry")
-            try:
-                from sandbox_runner import post_round_orphan_scan
+                                logger.exception("approval policy execution failed")
+                                approved = False
+                        if not approved:
+                            rbm = getattr(ap, "rollback_mgr", None)
+                            if rbm is None:
+                                arm_cls = _resolve_automated_rollback_manager()
+                                try:
+                                    rbm = arm_cls() if arm_cls is not None else None
+                                except Exception:
+                                    rbm = None
+                            if rbm is not None:
+                                try:
+                                    rbm.rollback(str(patch_id))
+                                except Exception:
+                                    logger.exception("failed to rollback invalid patch")
+                            if PatchHistoryDB is not None:
+                                try:
+                                    PatchHistoryDB().record_vector_metrics(
+                                        "",
+                                        [],
+                                        patch_id=patch_id,
+                                        contribution=0.0,
+                                        win=False,
+                                        regret=True,
+                                    )
+                                except Exception:
+                                    logger.exception("failed to log patch outcome")
+                            event_bus = getattr(manager, "event_bus", None)
+                            if event_bus:
+                                try:
+                                    event_bus.publish(
+                                        "quick_fix:approval_failed",
+                                        {
+                                            "bot": getattr(manager, "bot_name", ""),
+                                            "module": path.as_posix(),
+                                            "patch_id": patch_id,
+                                        },
+                                    )
+                                except Exception:
+                                    logger.exception("failed to publish approval_failed event")
+                            return (None, risk_flags) if return_flags else None
+                        try:
+                            registry.update_bot(
+                                getattr(manager, "bot_name", ""),
+                                path.as_posix(),
+                                patch_id=patch_id,
+                                commit=commit_hash,
+                            )
+                        except Exception:
+                            logger.exception("failed to update bot registry")
+                try:
+                    from sandbox_runner import post_round_orphan_scan
 
-                post_round_orphan_scan(Path.cwd(), context_builder=builder)
-            except Exception:
-                logger.exception(
-                    "post_round_orphan_scan after preemptive patch failed"
+                    post_round_orphan_scan(Path.cwd(), context_builder=builder)
+                except Exception:
+                    logger.exception(
+                        "post_round_orphan_scan after preemptive patch failed"
+                    )
+                return (patch_id, risk_flags) if return_flags else patch_id
+            finally:
+                _log_step_end(
+                    "patch application",
+                    patch_step_start,
+                    extra={"module_path": prompt_path, "patch_id": patch_id},
                 )
-            return (patch_id, risk_flags) if return_flags else patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", prompt_path, exc)
         failure_flags = [str(exc)]
