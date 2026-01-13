@@ -2691,7 +2691,7 @@ def governed_embed(
         return "max_length" in params, "truncation" in params
 
     def _truncate_text_for_embedding(raw: str, model_obj: Any) -> str:
-        max_tokens = 512
+        max_tokens = 200
         tokenizer = getattr(model_obj, "tokenizer", None)
         if tokenizer is not None:
             try:
@@ -2710,7 +2710,7 @@ def governed_embed(
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     encode_kwargs: dict[str, Any] = {}
     if supports_max_length:
-        encode_kwargs["max_length"] = 512
+        encode_kwargs["max_length"] = 200
     if supports_truncation:
         encode_kwargs["truncation"] = True
     cleaned_for_embedding = cleaned
