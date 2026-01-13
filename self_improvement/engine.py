@@ -70,6 +70,9 @@ else:
 import time
 _qfe_log("time imported")
 
+import atexit
+_qfe_log("atexit imported")
+
 import threading
 _qfe_log("threading imported")
 
@@ -85,36 +88,102 @@ _qfe_log("importlib imported")
 _MANUAL_LAUNCH_TRIGGERED = False
 _AUTONOMOUS_SANDBOX_LAUNCH_ENV = "MENACE_AUTONOMOUS_SANDBOX_LAUNCH_ON_IMPORT"
 
+_HEARTBEAT_ENABLED_ENV = "MENACE_ENGINE_HEARTBEAT_ENABLED"
+_HEARTBEAT_INTERVAL_ENV = "MENACE_ENGINE_HEARTBEAT_INTERVAL"
+_DEFAULT_HEARTBEAT_INTERVAL = 5.0
+_HEARTBEAT_STOP = threading.Event()
+_HEARTBEAT_THREAD: threading.Thread | None = None
+_HEARTBEAT_STARTED = False
 
-def _start_engine_heartbeat(interval: float = 5.0) -> None:
+
+def _parse_env_bool(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_heartbeat_interval() -> float:
+    raw_value = os.getenv(_HEARTBEAT_INTERVAL_ENV, str(_DEFAULT_HEARTBEAT_INTERVAL))
+    try:
+        interval = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "invalid heartbeat interval; using default",
+            extra=log_record(value=raw_value, default=_DEFAULT_HEARTBEAT_INTERVAL),
+        )
+        return _DEFAULT_HEARTBEAT_INTERVAL
+    if interval <= 0:
+        logger.warning(
+            "heartbeat interval must be positive; using default",
+            extra=log_record(value=interval, default=_DEFAULT_HEARTBEAT_INTERVAL),
+        )
+        return _DEFAULT_HEARTBEAT_INTERVAL
+    return interval
+
+
+def _start_engine_heartbeat(interval: float) -> None:
     """Emit periodic heartbeats to confirm module-level progress."""
+    global _HEARTBEAT_THREAD
+
+    if _HEARTBEAT_THREAD and _HEARTBEAT_THREAD.is_alive():
+        return
+
+    _HEARTBEAT_STOP.clear()
 
     def _log_heartbeat() -> None:
-        while True:
-            print(
-                f"[HEARTBEAT] engine alive at {time.time()}",
-                flush=True,
+        while not _HEARTBEAT_STOP.is_set():
+            logger.info(
+                "engine heartbeat",
+                extra=log_record(timestamp=time.time()),
             )
-            time.sleep(interval)
+            if _HEARTBEAT_STOP.wait(interval):
+                break
 
-    thread = threading.Thread(target=_log_heartbeat, daemon=True)
-    thread.start()
+    _HEARTBEAT_THREAD = threading.Thread(
+        target=_log_heartbeat,
+        daemon=True,
+        name="engine-heartbeat",
+    )
+    _HEARTBEAT_THREAD.start()
 
 
-_HEARTBEAT_STARTED = False
+def stop_engine_heartbeat(timeout: float = 1.0) -> None:
+    """Signal the heartbeat thread to stop and optionally wait for it."""
+    global _HEARTBEAT_THREAD
+
+    thread = _HEARTBEAT_THREAD
+    if not thread:
+        return
+    _HEARTBEAT_STOP.set()
+    if thread.is_alive():
+        thread.join(timeout=timeout)
+    if not thread.is_alive():
+        _HEARTBEAT_THREAD = None
 
 
 def _ensure_engine_heartbeat() -> None:
     """Start the lightweight heartbeat thread on first use."""
-
     global _HEARTBEAT_STARTED
+
     if _HEARTBEAT_STARTED:
         return
+    enabled = _parse_env_bool(os.getenv(_HEARTBEAT_ENABLED_ENV, "false"))
+    if not enabled:
+        logger.info(
+            "engine heartbeat disabled",
+            extra=log_record(flag=_HEARTBEAT_ENABLED_ENV),
+        )
+        _HEARTBEAT_STARTED = True
+        return
     try:
-        _start_engine_heartbeat()
-        print("[QFE:engine] heartbeat thread started", flush=True)
+        interval = _get_heartbeat_interval()
+        _start_engine_heartbeat(interval)
+        logger.info(
+            "heartbeat thread started",
+            extra=log_record(interval=interval),
+        )
     except Exception as exc:  # pragma: no cover - best effort diagnostics
-        print(f"[QFE:engine] heartbeat thread failed: {exc}", flush=True)
+        logger.warning("heartbeat thread failed", exc_info=exc)
     finally:
         _HEARTBEAT_STARTED = True
 
@@ -372,6 +441,7 @@ except ImportError as exc:  # pragma: no cover - record for later use
     _qfe_log("neurosales import failed")
 
 logger = get_logger(__name__)
+atexit.register(stop_engine_heartbeat)
 
 if _NEUROSALES_ERROR is not None:
     logger.warning(  # noqa: TRY300
@@ -9711,6 +9781,7 @@ class SelfImprovementEngine:
                 self.logger.info("schedule task finished")
             finally:
                 self._schedule_task = None
+                stop_engine_heartbeat()
 
     def status(self) -> dict[str, object]:
         """Expose the latest workflow risk evaluation."""
