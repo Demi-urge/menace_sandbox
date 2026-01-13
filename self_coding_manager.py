@@ -38,6 +38,9 @@ from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
 _INTERNALIZE_THROTTLE_SECONDS = 1.5
 _INTERNALIZE_THROTTLE_LOCK = threading.Lock()
 _LAST_INTERNALIZE_AT = 0.0
+_INTERNALIZE_REUSE_WINDOW_SECONDS = float(
+    os.getenv("SELF_CODING_INTERNALIZE_REUSE_WINDOW_SECONDS", "90")
+)
 _INTERNALIZE_FAILURE_THRESHOLD = int(
     os.getenv("SELF_CODING_INTERNALIZE_FAILURE_THRESHOLD", "3")
 )
@@ -3516,12 +3519,64 @@ def internalize_coding_bot(
     manager: SelfCodingManager | None = None
     failure_recorded = False
     logger_ref = logging.getLogger(__name__)
+    node: dict[str, Any] | None = None
+
+    def _mark_last_internalized() -> None:
+        if node is None:
+            return
+        node["last_internalized"] = time.monotonic()
+
+    def _recent_internalization() -> bool:
+        if node is None or _INTERNALIZE_REUSE_WINDOW_SECONDS <= 0:
+            return False
+        last_value = node.get("last_internalized")
+        if not isinstance(last_value, (int, float)):
+            return False
+        if node.get("internalization_errors"):
+            return False
+        state = _INTERNALIZE_FAILURE_STATE.get(bot_name)
+        if state:
+            if int(state.get("count", 0) or 0) > 0:
+                return False
+            if float(state.get("cooldown_until", 0.0) or 0.0) > 0.0:
+                return False
+        elapsed = time.monotonic() - float(last_value)
+        return elapsed < _INTERNALIZE_REUSE_WINDOW_SECONDS
+
+    def _manager_healthy(candidate: Any) -> bool:
+        if candidate is None:
+            return False
+        if getattr(candidate, "quick_fix", None) is None:
+            return False
+        if getattr(candidate, "event_bus", None) is None:
+            return False
+        return True
 
     if _internalize_in_cooldown(bot_name):
         return _cooldown_disabled_manager(bot_registry, data_bot)
 
     if _current_self_coding_import_depth() > 0:
         print("Forcing manager despite depth lock")
+
+    if bot_registry is not None:
+        node = bot_registry.graph.nodes.get(bot_name)
+    existing_manager = None
+    if node is not None:
+        existing_manager = node.get("selfcoding_manager") or node.get("manager")
+    if existing_manager is not None and _manager_healthy(existing_manager):
+        _mark_last_internalized()
+        logger_ref.info(
+            "internalize_coding_bot reusing existing manager for %s", bot_name
+        )
+        return existing_manager
+    if existing_manager is not None and _recent_internalization():
+        _mark_last_internalized()
+        logger_ref.info(
+            "internalize_coding_bot skipping reinternalization for %s; "
+            "recent internalization detected",
+            bot_name,
+        )
+        return existing_manager
 
     delay = 0.0
     if _INTERNALIZE_THROTTLE_SECONDS > 0:
@@ -3891,6 +3946,7 @@ def internalize_coding_bot(
         finally:
             _end_step("run_post_patch_cycle", post_cycle_timer)
         _record_internalize_success(bot_name)
+        _mark_last_internalized()
         print(f"[debug] internalize_coding_bot returning manager for bot: {bot_name}")
         return manager
     except Exception as exc:
