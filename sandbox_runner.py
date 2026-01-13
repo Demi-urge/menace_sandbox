@@ -1789,6 +1789,12 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
             close()
     except Exception:
         logger.exception("context builder close failed")
+    improver = getattr(ctx, "improver", None)
+    if improver is not None:
+        try:
+            improver.close()
+        except Exception:
+            logger.exception("engine shutdown failed")
     ctx.event_bus.close()
     shutil.rmtree(ctx.tmp)
     logger.info(
