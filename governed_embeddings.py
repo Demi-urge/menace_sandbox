@@ -2723,8 +2723,7 @@ def governed_embed(
             EMBEDDING_CHAR_TRUNCATION_THRESHOLD,
         )
         cleaned_for_embedding = cleaned_for_embedding[:EMBEDDING_CHAR_TRUNCATION_THRESHOLD]
-    if not (supports_max_length and supports_truncation):
-        cleaned_for_embedding = _truncate_text_for_embedding(cleaned_for_embedding, model)
+    cleaned_for_embedding = _truncate_text_for_embedding(cleaned_for_embedding, model)
     approx_tokens = max(1, len(cleaned_for_embedding) // EMBEDDING_CHARS_PER_TOKEN)
     logger.debug(
         "encoding embedding input (chars=%s approx_tokens=%s)",
