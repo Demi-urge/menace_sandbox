@@ -186,6 +186,61 @@ _REMOTE_DISABLED = False
 _EMBEDDER_WAIT_CEILING = _embedder_ceiling()
 
 
+def _remote_ready_retry_config() -> tuple[int, float, float]:
+    raw_retries = os.getenv("VECTOR_SERVICE_READY_RETRIES", "6").strip()
+    raw_delay = os.getenv("VECTOR_SERVICE_READY_DELAY", "0.25").strip()
+    raw_backoff = os.getenv("VECTOR_SERVICE_READY_BACKOFF", "1.5").strip()
+    try:
+        retries = max(1, int(raw_retries))
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_READY_RETRIES=%r; defaulting to 6",
+            raw_retries,
+        )
+        retries = 6
+    try:
+        delay = max(0.05, float(raw_delay))
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_READY_DELAY=%r; defaulting to 0.25",
+            raw_delay,
+        )
+        delay = 0.25
+    try:
+        backoff = max(1.0, float(raw_backoff))
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_READY_BACKOFF=%r; defaulting to 1.5",
+            raw_backoff,
+        )
+        backoff = 1.5
+    return retries, delay, backoff
+
+
+def _probe_remote_ready() -> bool:
+    if _REMOTE_ENDPOINT is None:
+        return False
+    ready_url = f"{_REMOTE_ENDPOINT}/health/ready"
+    timeout = min(_REMOTE_TIMEOUT or 2.0, 2.0)
+    try:
+        with urllib.request.urlopen(ready_url, timeout=timeout):
+            return True
+    except Exception as exc:
+        logger.debug("remote vector service readiness probe failed: %s", exc)
+        return False
+
+
+def _wait_for_remote_ready() -> bool:
+    retries, delay, backoff = _remote_ready_retry_config()
+    wait = delay
+    for _ in range(retries):
+        if _probe_remote_ready():
+            return True
+        time.sleep(wait)
+        wait *= backoff
+    return False
+
+
 def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
     """Load the bundled fallback embedding model."""
 
@@ -1252,6 +1307,25 @@ class SharedVectorService:
             ) as resp:  # pragma: no cover - network
                 return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            if _wait_for_remote_ready():
+                try:
+                    with urllib.request.urlopen(
+                        req, timeout=_REMOTE_TIMEOUT or None
+                    ) as resp:  # pragma: no cover - network
+                        return json.loads(resp.read().decode("utf-8"))
+                except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
+                    exc = retry_exc
+                except json.JSONDecodeError as retry_exc:
+                    logger.warning(
+                        "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                        extra={
+                            "endpoint": _REMOTE_ENDPOINT,
+                            "path": path,
+                            "error": str(retry_exc),
+                        },
+                    )
+                    _REMOTE_DISABLED = True
+                    return None
             logger.warning(
                 "remote vector service unavailable; falling back to local handling",  # pragma: no cover - diagnostics
                 extra={"endpoint": _REMOTE_ENDPOINT, "path": path, "error": str(exc)},
