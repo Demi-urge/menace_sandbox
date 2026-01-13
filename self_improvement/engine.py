@@ -121,23 +121,21 @@ def _get_heartbeat_interval() -> float:
     return interval
 
 
-def _start_engine_heartbeat(interval: float) -> None:
+def _start_engine_heartbeat(interval: float, stop_event: threading.Event) -> None:
     """Emit periodic heartbeats to confirm module-level progress."""
     global _HEARTBEAT_THREAD
 
     if _HEARTBEAT_THREAD and _HEARTBEAT_THREAD.is_alive():
         return
 
-    _HEARTBEAT_STOP.clear()
+    stop_event.clear()
 
     def _log_heartbeat() -> None:
-        while not _HEARTBEAT_STOP.is_set():
+        while not stop_event.wait(interval):
             logger.info(
                 "engine heartbeat",
                 extra=log_record(timestamp=time.time()),
             )
-            if _HEARTBEAT_STOP.wait(interval):
-                break
 
     _HEARTBEAT_THREAD = threading.Thread(
         target=_log_heartbeat,
@@ -165,19 +163,20 @@ def _ensure_engine_heartbeat() -> None:
     """Start the lightweight heartbeat thread on first use."""
     global _HEARTBEAT_STARTED
 
-    if _HEARTBEAT_STARTED:
+    if _HEARTBEAT_THREAD and _HEARTBEAT_THREAD.is_alive():
         return
     enabled = _parse_env_bool(os.getenv(_HEARTBEAT_ENABLED_ENV, "false"))
     if not enabled:
-        logger.info(
-            "engine heartbeat disabled",
-            extra=log_record(flag=_HEARTBEAT_ENABLED_ENV),
-        )
+        if not _HEARTBEAT_STARTED:
+            logger.info(
+                "engine heartbeat disabled",
+                extra=log_record(flag=_HEARTBEAT_ENABLED_ENV),
+            )
         _HEARTBEAT_STARTED = True
         return
     try:
         interval = _get_heartbeat_interval()
-        _start_engine_heartbeat(interval)
+        _start_engine_heartbeat(interval, _HEARTBEAT_STOP)
         logger.info(
             "heartbeat thread started",
             extra=log_record(interval=interval),
@@ -186,6 +185,9 @@ def _ensure_engine_heartbeat() -> None:
         logger.warning("heartbeat thread failed", exc_info=exc)
     finally:
         _HEARTBEAT_STARTED = True
+
+
+atexit.register(stop_engine_heartbeat)
 
 from db_router import GLOBAL_ROUTER, init_db_router
 _qfe_log("db_router imported")
@@ -9586,6 +9588,7 @@ class SelfImprovementEngine:
             self.logger.info(
                 "cycle shutdown", extra=log_record(event="shutdown")
             )
+            stop_engine_heartbeat()
 
     async def _schedule_loop(self, energy: int = 1) -> None:
         while not self._stop_event.is_set():
