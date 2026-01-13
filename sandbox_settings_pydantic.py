@@ -1020,6 +1020,11 @@ class SandboxSettings(BaseSettings):
     menace_offline_install: bool = Field(False, env="MENACE_OFFLINE_INSTALL")
     menace_wheel_dir: str | None = Field(None, env="MENACE_WHEEL_DIR")
     menace_light_imports: bool = Field(False, env="MENACE_LIGHT_IMPORTS")
+    engine_heartbeat_enabled: bool = Field(
+        False,
+        env=("MENACE_ENGINE_HEARTBEAT", "MENACE_ENGINE_HEARTBEAT_ENABLED"),
+        description="Enable heartbeat emission from the self-improvement engine.",
+    )
     dependency_mode: str = Field(
         "strict",
         env="SANDBOX_DEPENDENCY_MODE",

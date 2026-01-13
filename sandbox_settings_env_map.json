@@ -74,6 +74,10 @@
   "enable_relevancy_radar": "ENABLE_RELEVANCY_RADAR",
   "enable_snapshot_tracker": "ENABLE_SNAPSHOT_TRACKER",
   "enable_truth_calibration": "ENABLE_TRUTH_CALIBRATION",
+  "engine_heartbeat_enabled": [
+    "MENACE_ENGINE_HEARTBEAT",
+    "MENACE_ENGINE_HEARTBEAT_ENABLED"
+  ],
   "energy_deviation": "ENERGY_DEVIATION",
   "entropy_ceiling_consecutive": "ENTROPY_CEILING_CONSECUTIVE",
   "entropy_ceiling_threshold": "ENTROPY_CEILING_THRESHOLD",
