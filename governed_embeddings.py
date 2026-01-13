@@ -810,6 +810,7 @@ def _load_bundled_embedder() -> Any | None:
 
             def __init__(self, tok, mdl) -> None:
                 self._tokenizer = tok
+                self.tokenizer = tok
                 self._model = mdl
 
             def encode(self, sentences: Any, **kwargs: Any) -> List[List[float]]:
@@ -2690,8 +2691,14 @@ def governed_embed(
         params = signature.parameters
         return "max_length" in params, "truncation" in params
 
-    def _count_tokens(text: str, model_obj: Any) -> int:
+    def _resolve_tokenizer(model_obj: Any) -> Any | None:
         tokenizer = getattr(model_obj, "tokenizer", None)
+        if tokenizer is None:
+            tokenizer = getattr(model_obj, "_tokenizer", None)
+        return tokenizer
+
+    def _count_tokens(text: str, model_obj: Any) -> int:
+        tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
             try:
                 return len(tokenizer.encode(text, add_special_tokens=False))
@@ -2701,7 +2708,7 @@ def governed_embed(
 
     def _truncate_text_for_embedding(raw: str, model_obj: Any) -> str:
         max_tokens = 200
-        tokenizer = getattr(model_obj, "tokenizer", None)
+        tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
             try:
                 token_ids = tokenizer.encode(raw, add_special_tokens=False)
