@@ -36,6 +36,9 @@ following environment variables control connection behavior:
   (default `0.25`).
 - `VECTOR_SERVICE_REMOTE_BACKOFF` – multiplier applied to the delay between
   retry attempts (default `1.0`).
+- `VECTOR_SERVICE_REMOTE_BOOT_GRACE_SECS` – grace window in seconds to skip
+  remote calls during early process boot, forcing the local embedding fallback
+  until the window expires (default `0`).
 
 ## Retriever
 

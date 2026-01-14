@@ -239,37 +239,36 @@ _REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
 _REMOTE_ENDPOINT = _REMOTE_URL.rstrip("/") if _REMOTE_URL else None
 _REMOTE_TIMEOUT = _remote_timeout()
 _REMOTE_DISABLED = False
-_EMBEDDER_WAIT_CEILING = _embedder_ceiling()
-_VECTOR_SERVICE_BOOT_TS = time.monotonic()
+_REMOTE_BOOT_TS = time.time()
 _REMOTE_BOOT_GRACE_LOGGED = False
+_EMBEDDER_WAIT_CEILING = _embedder_ceiling()
 
 
 def _remote_boot_grace_secs() -> float:
-    raw = os.getenv("VECTOR_SERVICE_REMOTE_BOOT_GRACE")
-    if raw is None:
-        raw = os.getenv("VECTOR_SERVICE_REMOTE_BOOT_SKIP_SECS", "60")
-    raw = raw.strip()
+    raw = os.getenv("VECTOR_SERVICE_REMOTE_BOOT_GRACE_SECS", "0").strip()
     if raw == "":
         return 0.0
     try:
         value = float(raw)
     except Exception:
         logger.warning(
-            "invalid VECTOR_SERVICE_REMOTE_BOOT_GRACE=%r; defaulting to 60s",
+            "invalid VECTOR_SERVICE_REMOTE_BOOT_GRACE_SECS=%r; defaulting to 0s",
             raw,
         )
-        return 60.0
+        return 0.0
     if value <= 0:
         return 0.0
     return value
 
 
+_REMOTE_BOOT_GRACE_SECS = _remote_boot_grace_secs()
+
+
 def _should_skip_remote_on_boot() -> bool:
-    grace_secs = _remote_boot_grace_secs()
-    if grace_secs <= 0:
+    if _REMOTE_BOOT_GRACE_SECS <= 0:
         return False
-    elapsed = time.monotonic() - _VECTOR_SERVICE_BOOT_TS
-    return elapsed < grace_secs
+    elapsed = time.time() - _REMOTE_BOOT_TS
+    return elapsed < _REMOTE_BOOT_GRACE_SECS
 
 
 def _remote_ready_retry_config() -> tuple[int, float, float]:
@@ -1408,14 +1407,17 @@ class SharedVectorService:
         global _REMOTE_DISABLED, _REMOTE_BOOT_GRACE_LOGGED
         if _REMOTE_DISABLED or _REMOTE_ENDPOINT is None:
             return None
-        if _should_skip_remote_on_boot():
+        if (
+            _REMOTE_BOOT_GRACE_SECS > 0
+            and time.time() - _REMOTE_BOOT_TS < _REMOTE_BOOT_GRACE_SECS
+        ):
             if not _REMOTE_BOOT_GRACE_LOGGED:
-                elapsed = time.monotonic() - _VECTOR_SERVICE_BOOT_TS
+                elapsed = time.time() - _REMOTE_BOOT_TS
                 logger.info(
-                    "remote vector service skipped during boot grace period",
+                    "skipping remote during early boot; using local fallback",
                     extra={
                         "elapsed_secs": round(elapsed, 3),
-                        "skip_secs": _remote_boot_grace_secs(),
+                        "grace_secs": _REMOTE_BOOT_GRACE_SECS,
                     },
                 )
                 _REMOTE_BOOT_GRACE_LOGGED = True
