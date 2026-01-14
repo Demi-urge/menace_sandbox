@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
+import urllib.request
 import uuid
 from typing import Iterable
 
@@ -35,6 +38,39 @@ def _seed_direct(store: VectorStore, *, logger: logging.Logger) -> None:
     logger.info("vector store seeded", extra={"count": 3, "dimension": dimension})
 
 
+def _wait_for_vector_service_ready(*, logger: logging.Logger) -> bool:
+    base = os.environ.get("VECTOR_SERVICE_URL")
+    if not base:
+        return True
+
+    try:
+        timeout = max(1.0, float(os.environ.get("VECTOR_SERVICE_READY_TIMEOUT", "150")))
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_READY_TIMEOUT=%r; defaulting to 150s",
+            os.environ.get("VECTOR_SERVICE_READY_TIMEOUT"),
+        )
+        timeout = 150.0
+
+    ready_url = f"{base.rstrip('/')}/health/ready"
+    deadline = time.monotonic() + timeout
+    delay = 1.0
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(ready_url, timeout=2.0):
+                return True
+        except Exception as exc:
+            logger.debug("vector service readiness probe failed: %s", exc)
+        time.sleep(delay)
+        delay = min(delay * 1.5, 5.0)
+
+    logger.warning(
+        "vector service readiness timed out after %.1fs; falling back to local seeding",
+        timeout,
+    )
+    return False
+
+
 def seed_initial_vectors(service: SharedVectorService | None, *, logger: logging.Logger) -> None:
     """Warm baseline embeddings for the configured vector store."""
 
@@ -52,6 +88,10 @@ def seed_initial_vectors(service: SharedVectorService | None, *, logger: logging
         _seed_direct(store, logger=logger)
         return
 
+    if not _wait_for_vector_service_ready(logger=logger):
+        _seed_direct(store, logger=logger)
+        return
+
     try:
         text = "menace bootstrap seed vector"
         for _ in range(3):
@@ -66,4 +106,3 @@ def seed_initial_vectors(service: SharedVectorService | None, *, logger: logging
 
 
 __all__ = ["seed_initial_vectors"]
-
