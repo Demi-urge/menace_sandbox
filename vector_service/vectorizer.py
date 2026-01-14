@@ -185,6 +185,25 @@ _REMOTE_ENDPOINT = _REMOTE_URL.rstrip("/") if _REMOTE_URL else None
 _REMOTE_TIMEOUT = _remote_timeout()
 _REMOTE_DISABLED = False
 _EMBEDDER_WAIT_CEILING = _embedder_ceiling()
+_VECTOR_SERVICE_BOOT_TS = time.monotonic()
+_REMOTE_BOOT_SKIP_LOGGED = False
+
+
+def _remote_boot_skip_secs() -> float:
+    raw = os.getenv("VECTOR_SERVICE_REMOTE_BOOT_SKIP_SECS", "0").strip()
+    if raw == "":
+        return 0.0
+    try:
+        value = float(raw)
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_REMOTE_BOOT_SKIP_SECS=%r; disabling boot skip",
+            raw,
+        )
+        return 0.0
+    if value <= 0:
+        return 0.0
+    return value
 
 
 def _remote_ready_retry_config() -> tuple[int, float, float]:
@@ -1314,9 +1333,23 @@ class SharedVectorService:
         raise RuntimeError("text embedder unavailable")
 
     def _call_remote(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any] | None:
-        global _REMOTE_DISABLED
+        global _REMOTE_DISABLED, _REMOTE_BOOT_SKIP_LOGGED
         if _REMOTE_DISABLED or _REMOTE_ENDPOINT is None:
             return None
+        skip_secs = _remote_boot_skip_secs()
+        if skip_secs:
+            elapsed = time.monotonic() - _VECTOR_SERVICE_BOOT_TS
+            if elapsed < skip_secs:
+                if not _REMOTE_BOOT_SKIP_LOGGED:
+                    logger.info(
+                        "remote vector service skipped during boot grace period",
+                        extra={
+                            "elapsed_secs": round(elapsed, 3),
+                            "skip_secs": skip_secs,
+                        },
+                    )
+                    _REMOTE_BOOT_SKIP_LOGGED = True
+                return None
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             f"{_REMOTE_ENDPOINT}{path}",
