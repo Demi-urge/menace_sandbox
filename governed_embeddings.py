@@ -2907,15 +2907,19 @@ def governed_embed(
                 max_position_candidates.append(candidate)
         return min(max_position_candidates) if max_position_candidates else None
 
-    def _count_tokens(text: str, model_obj: Any, max_tokens: int) -> int:
+    def _count_tokens(
+        text: str,
+        model_obj: Any,
+        max_tokens: int,
+        *,
+        add_special_tokens: bool = False,
+    ) -> int:
         tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
             try:
                 token_ids = tokenizer.encode(
                     text,
-                    add_special_tokens=False,
-                    max_length=max_tokens,
-                    truncation=True,
+                    add_special_tokens=add_special_tokens,
                 )
                 return len(token_ids)
             except Exception:
@@ -2967,6 +2971,7 @@ def governed_embed(
                         "failed to tokenize MiniLM input for truncation; falling back to word cap"
                     )
         max_chars = max_tokens * EMBEDDING_CHARS_PER_TOKEN
+        token_truncated = False
         if len(raw) > max_chars:
             original_tokens_estimate = max(1, len(raw) // EMBEDDING_CHARS_PER_TOKEN)
             logger.debug(
@@ -2975,17 +2980,53 @@ def governed_embed(
                 max_chars,
                 max_tokens,
             )
-            return raw[:max_chars], True, original_tokens_estimate, max_tokens
-        words = raw.split()
-        original_tokens = len(words)
-        if original_tokens > max_tokens:
+            truncated = raw[:max_chars]
+            token_truncated = True
+        else:
+            words = raw.split()
+            original_tokens_estimate = len(words)
+            truncated = raw
+        if not token_truncated and original_tokens_estimate > max_tokens:
             logger.debug(
                 "tokenizer unavailable for embedding truncation; applying word cap "
                 "(max_tokens=%s)",
                 max_tokens,
             )
-            return " ".join(words[:max_tokens]), True, original_tokens, max_tokens
-        return raw, False, original_tokens, original_tokens
+            truncated = " ".join(raw.split()[:max_tokens])
+            token_truncated = True
+        if tokenizer is not None:
+            try:
+                max_input_tokens = max_tokens + max(0, special_overhead)
+                token_ids = tokenizer.encode(
+                    truncated,
+                    add_special_tokens=True,
+                    max_length=max_input_tokens,
+                    truncation=True,
+                )
+                post_trunc_tokens = len(token_ids)
+                if post_trunc_tokens > max_input_tokens:
+                    token_ids = token_ids[:max_input_tokens]
+                    truncated_text = (
+                        tokenizer.decode(token_ids, skip_special_tokens=True)
+                        if hasattr(tokenizer, "decode")
+                        else truncated
+                    )
+                    return (
+                        truncated_text,
+                        True,
+                        original_tokens_estimate,
+                        len(token_ids),
+                    )
+                if post_trunc_tokens != original_tokens_estimate or truncated != raw:
+                    return (
+                        truncated,
+                        truncated != raw,
+                        original_tokens_estimate,
+                        post_trunc_tokens,
+                    )
+            except Exception:
+                pass
+        return truncated, token_truncated, original_tokens_estimate, original_tokens_estimate
 
     def _resolve_effective_max_tokens(
         model_obj: Any,
@@ -3112,7 +3153,12 @@ def governed_embed(
         )
         cleaned_for_embedding = cleaned_for_embedding[:EMBEDDING_CHAR_TRUNCATION_THRESHOLD]
     hard_max_tokens = effective_max_tokens
-    original_token_count = _count_tokens(cleaned_for_embedding, model, hard_max_tokens)
+    original_token_count = _count_tokens(
+        cleaned_for_embedding,
+        model,
+        hard_max_tokens,
+        add_special_tokens=True,
+    )
     (
         cleaned_for_embedding,
         token_truncated,
@@ -3131,7 +3177,12 @@ def governed_embed(
         pre_trunc_tokens,
         post_trunc_tokens,
     )
-    truncated_token_count = _count_tokens(cleaned_for_embedding, model, hard_max_tokens)
+    truncated_token_count = _count_tokens(
+        cleaned_for_embedding,
+        model,
+        hard_max_tokens,
+        add_special_tokens=True,
+    )
     if token_truncated:
         logger.warning(
             "embedding input token-truncated (tokens=%s truncated_tokens=%s hard_max=%s)",
@@ -3139,21 +3190,24 @@ def governed_embed(
             post_trunc_tokens,
             hard_max_tokens,
         )
-    if truncated_token_count > hard_max_tokens:
+    token_limit = (
+        max_positions if isinstance(max_positions, int) else hard_max_tokens + special_overhead
+    )
+    if truncated_token_count > token_limit:
         logger.warning(
             "embedding input exceeds hard max tokens; returning zero vector "
             "(tokens=%s hard_max=%s truncation_supported=%s)",
             truncated_token_count,
-            hard_max_tokens,
+            token_limit,
             supports_truncation,
         )
         return [0.0] * _STUB_EMBEDDER_DIMENSION
-    if original_token_count > hard_max_tokens and not supports_truncation:
+    if original_token_count > token_limit and not supports_truncation:
         logger.warning(
             "embedding input exceeds hard max tokens and truncation disabled; "
             "returning zero vector (tokens=%s hard_max=%s)",
             original_token_count,
-            hard_max_tokens,
+            token_limit,
         )
         return [0.0] * _STUB_EMBEDDER_DIMENSION
     approx_tokens = max(1, len(cleaned_for_embedding) // EMBEDDING_CHARS_PER_TOKEN)
