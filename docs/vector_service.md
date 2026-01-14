@@ -34,6 +34,9 @@ following environment variables control connection behavior:
   back to local handling (default `6`).
 - `VECTOR_SERVICE_REMOTE_RETRY_DELAY` – delay in seconds between retry attempts
   (default `0.25`).
+- `VECTOR_SERVICE_REMOTE_BOOT_GRACE` – grace window in seconds after process
+  start during which remote calls are skipped in favor of local handling
+  (default `60`, set to `0` to disable).
 
 ## Retriever
 

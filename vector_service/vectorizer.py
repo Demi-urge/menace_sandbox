@@ -227,15 +227,12 @@ _REMOTE_ATTEMPTS = _remote_attempts()
 _REMOTE_RETRY_DELAY = _remote_retry_delay()
 _REMOTE_DISABLED = False
 _EMBEDDER_WAIT_CEILING = _embedder_ceiling()
-_VECTOR_SERVICE_BOOT_TS = time.monotonic()
+_BOOT_TIME = time.time()
 _REMOTE_BOOT_GRACE_LOGGED = False
 
 
-def _remote_boot_grace_secs() -> float:
-    raw = os.getenv("VECTOR_SERVICE_REMOTE_BOOT_GRACE")
-    if raw is None:
-        raw = os.getenv("VECTOR_SERVICE_REMOTE_BOOT_SKIP_SECS", "60")
-    raw = raw.strip()
+def _remote_boot_grace_seconds() -> float:
+    raw = os.getenv("VECTOR_SERVICE_REMOTE_BOOT_GRACE", "60").strip()
     if raw == "":
         return 0.0
     try:
@@ -252,10 +249,10 @@ def _remote_boot_grace_secs() -> float:
 
 
 def _should_skip_remote_on_boot() -> bool:
-    grace_secs = _remote_boot_grace_secs()
+    grace_secs = _remote_boot_grace_seconds()
     if grace_secs <= 0:
         return False
-    elapsed = time.monotonic() - _VECTOR_SERVICE_BOOT_TS
+    elapsed = time.time() - _BOOT_TIME
     return elapsed < grace_secs
 
 
@@ -1395,14 +1392,15 @@ class SharedVectorService:
         global _REMOTE_DISABLED, _REMOTE_BOOT_GRACE_LOGGED
         if _REMOTE_DISABLED or _REMOTE_ENDPOINT is None:
             return None
-        if _should_skip_remote_on_boot():
+        grace_seconds = _remote_boot_grace_seconds()
+        if grace_seconds > 0 and time.time() - _BOOT_TIME < grace_seconds:
             if not _REMOTE_BOOT_GRACE_LOGGED:
-                elapsed = time.monotonic() - _VECTOR_SERVICE_BOOT_TS
+                elapsed = time.time() - _BOOT_TIME
                 logger.info(
-                    "remote vector service skipped during boot grace period",
+                    "skipping remote vector service during early boot; using local fallback",
                     extra={
                         "elapsed_secs": round(elapsed, 3),
-                        "skip_secs": _remote_boot_grace_secs(),
+                        "skip_secs": grace_seconds,
                     },
                 )
                 _REMOTE_BOOT_GRACE_LOGGED = True
