@@ -140,6 +140,7 @@ model: "SentenceTransformer | None"
 
 DEFAULT_SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_CHAR_TRUNCATION_THRESHOLD = 8000
+MAX_SAFE_CHARS = 4000
 EMBEDDING_CHARS_PER_TOKEN = 4
 
 
@@ -2752,6 +2753,18 @@ def governed_embed(
     if supports_truncation:
         encode_kwargs["truncation"] = True
     cleaned_for_embedding = cleaned
+    safe_char_cap = MAX_SAFE_CHARS
+    tokenizer = _resolve_tokenizer(model)
+    model_max_length = getattr(tokenizer, "model_max_length", None) if tokenizer is not None else None
+    if isinstance(model_max_length, int) and 0 < model_max_length < 1_000_000:
+        safe_char_cap = min(MAX_SAFE_CHARS, model_max_length * EMBEDDING_CHARS_PER_TOKEN)
+    if len(cleaned_for_embedding) > safe_char_cap:
+        logger.warning(
+            "embedding input hard-capped before tokenization (chars=%s cap=%s)",
+            len(cleaned_for_embedding),
+            safe_char_cap,
+        )
+        cleaned_for_embedding = cleaned_for_embedding[:safe_char_cap]
     if len(cleaned_for_embedding) > EMBEDDING_CHAR_TRUNCATION_THRESHOLD:
         approx_tokens = max(1, len(cleaned_for_embedding) // EMBEDDING_CHARS_PER_TOKEN)
         logger.warning(
