@@ -49,6 +49,41 @@ def test_governed_embed_redacts_and_embeds(monkeypatch, caplog):
     assert any("redacted" in r.msg for r in caplog.records)
 
 
+def test_governed_embed_hard_caps_before_tokenization(caplog):
+    class DummyTokenizer:
+        model_max_length = 512
+
+        def __init__(self) -> None:
+            self.seen_lengths: list[int] = []
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            self.seen_lengths.append(len(text))
+            token_count = max(1, len(text) // governed_embeddings.EMBEDDING_CHARS_PER_TOKEN)
+            if token_count > 512:
+                raise AssertionError("attempted to encode >512 positions")
+            return list(range(token_count))
+
+        def decode(self, token_ids: list[int], skip_special_tokens: bool = True) -> str:
+            return "x" * (len(token_ids) * governed_embeddings.EMBEDDING_CHARS_PER_TOKEN)
+
+    tokenizer = DummyTokenizer()
+
+    class DummyEmbedder:
+        model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        tokenizer = tokenizer
+
+        def encode(self, arr, max_length=None, truncation=None):
+            return [types.SimpleNamespace(tolist=lambda: [0.0])]
+
+    oversized = "x" * 10000
+    expected_cap = tokenizer.model_max_length * governed_embeddings.EMBEDDING_CHARS_PER_TOKEN
+    with caplog.at_level(logging.WARNING):
+        vec = governed_embed(oversized, embedder=DummyEmbedder())
+    assert vec == [0.0]
+    assert max(tokenizer.seen_lengths) == expected_cap
+    assert any("hard-capped" in r.msg for r in caplog.records)
+
+
 def test_memory_manager_uses_governed_embed(monkeypatch):
     called = {}
 
