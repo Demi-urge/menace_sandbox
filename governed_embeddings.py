@@ -2769,15 +2769,17 @@ def governed_embed(
         return None
 
     def _encode_supports_truncation(model_obj: Any) -> tuple[bool, bool]:
-        if hasattr(model_obj, "get_model_kwargs"):
+        model_kwargs_fn = getattr(model_obj, "get_model_kwargs", None)
+        if callable(model_kwargs_fn):
             try:
-                model_kwargs = model_obj.get_model_kwargs()
+                model_kwargs = model_kwargs_fn()
             except Exception:  # pragma: no cover - defensive against model-specific failures
-                model_kwargs = None
-            if isinstance(model_kwargs, dict):
-                supports_max_length = "max_length" in model_kwargs
-                supports_truncation = "truncation" in model_kwargs
-                return supports_max_length, supports_truncation
+                return False, False
+            if not isinstance(model_kwargs, dict) or not model_kwargs:
+                return False, False
+            supports_max_length = "max_length" in model_kwargs
+            supports_truncation = "truncation" in model_kwargs
+            return supports_max_length, supports_truncation
         try:
             signature = inspect.signature(model_obj.encode)
         except (TypeError, ValueError):
