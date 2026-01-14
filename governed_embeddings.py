@@ -3178,6 +3178,28 @@ def governed_embed(
             retry_cap = min(retry_cap, max(1, max_positions - special_overhead))
         if isinstance(max_seq_length, int):
             retry_cap = min(retry_cap, max_seq_length)
+        num_embeddings = None
+        auto_model = getattr(model, "auto_model", None)
+        embeddings = getattr(auto_model, "embeddings", None)
+        position_embeddings = getattr(embeddings, "position_embeddings", None)
+        candidate = getattr(position_embeddings, "num_embeddings", None)
+        if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+            num_embeddings = candidate
+        first_module = None
+        if num_embeddings is None and hasattr(model, "_first_module"):
+            try:
+                first_module = model._first_module()
+            except Exception:
+                first_module = None
+        if num_embeddings is None and first_module is not None:
+            auto_model = getattr(first_module, "auto_model", None)
+            embeddings = getattr(auto_model, "embeddings", None)
+            position_embeddings = getattr(embeddings, "position_embeddings", None)
+            candidate = getattr(position_embeddings, "num_embeddings", None)
+            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+                num_embeddings = candidate
+        if num_embeddings is not None:
+            retry_cap = min(retry_cap, max(1, num_embeddings - special_overhead))
         retry_cap = max(1, retry_cap)
         logger.warning(
             "embedding retry after IndexError (retry_cap=%s hard_max=%s max_positions=%s "
