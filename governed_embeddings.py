@@ -2698,6 +2698,24 @@ def governed_embed(
             tokenizer = getattr(model_obj, "_tokenizer", None)
         return tokenizer
 
+    def _resolve_model_max_length(model_obj: Any) -> int | None:
+        tokenizer = _resolve_tokenizer(model_obj)
+        if tokenizer is not None:
+            model_max_length = getattr(tokenizer, "model_max_length", None)
+            if isinstance(model_max_length, int) and 0 < model_max_length < 1_000_000:
+                return model_max_length
+        config_sources = [model_obj]
+        for attr in ("model", "auto_model", "_model", "transformer"):
+            candidate = getattr(model_obj, attr, None)
+            if candidate is not None:
+                config_sources.append(candidate)
+        for source in config_sources:
+            config = getattr(source, "config", None)
+            max_positions = getattr(config, "max_position_embeddings", None) if config is not None else None
+            if isinstance(max_positions, int) and 0 < max_positions < 1_000_000:
+                return max_positions
+        return None
+
     def _count_tokens(text: str, model_obj: Any) -> int:
         tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
@@ -2753,11 +2771,11 @@ def governed_embed(
     if supports_truncation:
         encode_kwargs["truncation"] = True
     cleaned_for_embedding = cleaned
-    safe_char_cap = MAX_SAFE_CHARS
-    tokenizer = _resolve_tokenizer(model)
-    model_max_length = getattr(tokenizer, "model_max_length", None) if tokenizer is not None else None
-    if isinstance(model_max_length, int) and 0 < model_max_length < 1_000_000:
-        safe_char_cap = min(MAX_SAFE_CHARS, model_max_length * EMBEDDING_CHARS_PER_TOKEN)
+    model_max_length = _resolve_model_max_length(model)
+    if isinstance(model_max_length, int):
+        safe_char_cap = model_max_length * EMBEDDING_CHARS_PER_TOKEN
+    else:
+        safe_char_cap = MAX_SAFE_CHARS
     if len(cleaned_for_embedding) > safe_char_cap:
         logger.warning(
             "embedding input hard-capped before tokenization (chars=%s cap=%s)",
