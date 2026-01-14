@@ -2863,9 +2863,24 @@ def governed_embed(
                     logger.warning(
                         "failed to tokenize MiniLM input for truncation; falling back to word cap"
                     )
+        max_chars = max_tokens * EMBEDDING_CHARS_PER_TOKEN
+        if len(raw) > max_chars:
+            original_tokens_estimate = max(1, len(raw) // EMBEDDING_CHARS_PER_TOKEN)
+            logger.debug(
+                "tokenizer unavailable for embedding truncation; applying char cap "
+                "(max_chars=%s max_tokens=%s)",
+                max_chars,
+                max_tokens,
+            )
+            return raw[:max_chars], True, original_tokens_estimate, max_tokens
         words = raw.split()
         original_tokens = len(words)
         if original_tokens > max_tokens:
+            logger.debug(
+                "tokenizer unavailable for embedding truncation; applying word cap "
+                "(max_tokens=%s)",
+                max_tokens,
+            )
             return " ".join(words[:max_tokens]), True, original_tokens, max_tokens
         return raw, False, original_tokens, original_tokens
 
