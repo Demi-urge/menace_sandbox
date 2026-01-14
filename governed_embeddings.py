@@ -235,7 +235,14 @@ _MODEL_NAME = _MODEL_ID
 SENTENCE_TRANSFORMER_DEVICE = _resolve_sentence_transformer_device()
 _EMBEDDER_INIT_TIMEOUT = float(os.getenv("EMBEDDER_INIT_TIMEOUT", "180"))
 _MAX_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_MAX_WAIT", "180"))
-_SOFT_EMBEDDER_WAIT = float(os.getenv("EMBEDDER_INIT_SOFT_WAIT", "120"))
+_soft_embedder_wait_raw = os.getenv(
+    "EMBEDDER_INIT_SOFT_WAIT_COLD_BOOT", ""
+).strip()
+if not _soft_embedder_wait_raw:
+    _soft_embedder_wait_raw = os.getenv(
+        "EMBEDDER_INIT_SOFT_WAIT", "120"
+    ).strip()
+_SOFT_EMBEDDER_WAIT = float(_soft_embedder_wait_raw)
 _EMBEDDER_INIT_EVENT = threading.Event()
 _EMBEDDER_INIT_THREAD: threading.Thread | None = None
 _EMBEDDER_STOP_EVENT: threading.Event | None = None
