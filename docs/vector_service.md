@@ -32,8 +32,10 @@ following environment variables control connection behavior:
 - `VECTOR_SERVICE_TIMEOUT` – request timeout in seconds (default `10`).
 - `VECTOR_SERVICE_REMOTE_ATTEMPTS` – number of retry attempts before falling
   back to local handling (default `6`).
-- `VECTOR_SERVICE_REMOTE_RETRY_DELAY` – delay in seconds between retry attempts
+- `VECTOR_SERVICE_REMOTE_DELAY` – delay in seconds between retry attempts
   (default `0.25`).
+- `VECTOR_SERVICE_REMOTE_BACKOFF` – multiplier applied to the delay between
+  retry attempts (default `1.0`).
 
 ## Retriever
 
