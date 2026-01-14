@@ -1323,78 +1323,96 @@ class SharedVectorService:
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        try:
-            with urllib.request.urlopen(
-                req, timeout=_REMOTE_TIMEOUT or None
-            ) as resp:  # pragma: no cover - network
-                return json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
-            if _wait_for_remote_ready_short():
-                try:
-                    with urllib.request.urlopen(
-                        req, timeout=_REMOTE_TIMEOUT or None
-                    ) as resp:  # pragma: no cover - network
-                        return json.loads(resp.read().decode("utf-8"))
-                except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
-                    exc = retry_exc
-                except json.JSONDecodeError as retry_exc:
-                    logger.warning(
-                        "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
-                        extra={
-                            "endpoint": _REMOTE_ENDPOINT,
-                            "path": path,
-                            "error": str(retry_exc),
-                        },
-                    )
-                    _REMOTE_DISABLED = True
-                    return None
-            if _wait_for_remote_ready():
-                try:
-                    with urllib.request.urlopen(
-                        req, timeout=_REMOTE_TIMEOUT or None
-                    ) as resp:  # pragma: no cover - network
-                        return json.loads(resp.read().decode("utf-8"))
-                except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
-                    exc = retry_exc
-                except json.JSONDecodeError as retry_exc:
-                    logger.warning(
-                        "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
-                        extra={
-                            "endpoint": _REMOTE_ENDPOINT,
-                            "path": path,
-                            "error": str(retry_exc),
-                        },
-                    )
-                    _REMOTE_DISABLED = True
-                    return None
-            if _wait_for_remote_ready_cold_start():
-                try:
-                    with urllib.request.urlopen(
-                        req, timeout=_REMOTE_TIMEOUT or None
-                    ) as resp:  # pragma: no cover - network
-                        return json.loads(resp.read().decode("utf-8"))
-                except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
-                    exc = retry_exc
-                except json.JSONDecodeError as retry_exc:
-                    logger.warning(
-                        "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
-                        extra={
-                            "endpoint": _REMOTE_ENDPOINT,
-                            "path": path,
-                            "error": str(retry_exc),
-                        },
-                    )
-                    _REMOTE_DISABLED = True
-                    return None
-            logger.warning(
-                "remote vector service unavailable; falling back to local handling",  # pragma: no cover - diagnostics
-                extra={"endpoint": _REMOTE_ENDPOINT, "path": path, "error": str(exc)},
-            )
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
-                extra={"endpoint": _REMOTE_ENDPOINT, "path": path, "error": str(exc)},
-            )
+        attempts = 6
+        delay = 0.25
+        last_exc: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                with urllib.request.urlopen(
+                    req, timeout=_REMOTE_TIMEOUT or None
+                ) as resp:  # pragma: no cover - network
+                    return json.loads(resp.read().decode("utf-8"))
+            except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+                last_exc = exc
+                logger.debug(
+                    "remote vector service attempt %s/%s failed: %s",
+                    attempt,
+                    attempts,
+                    exc,
+                )
+                if attempt < attempts:
+                    time.sleep(delay)
+                    continue
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                    extra={"endpoint": _REMOTE_ENDPOINT, "path": path, "error": str(exc)},
+                )
+                _REMOTE_DISABLED = True
+                return None
+
+        exc = last_exc or RuntimeError("remote vector service unavailable")
+        if _wait_for_remote_ready_short():
+            try:
+                with urllib.request.urlopen(
+                    req, timeout=_REMOTE_TIMEOUT or None
+                ) as resp:  # pragma: no cover - network
+                    return json.loads(resp.read().decode("utf-8"))
+            except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
+                exc = retry_exc
+            except json.JSONDecodeError as retry_exc:
+                logger.warning(
+                    "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                    extra={
+                        "endpoint": _REMOTE_ENDPOINT,
+                        "path": path,
+                        "error": str(retry_exc),
+                    },
+                )
+                _REMOTE_DISABLED = True
+                return None
+        if _wait_for_remote_ready():
+            try:
+                with urllib.request.urlopen(
+                    req, timeout=_REMOTE_TIMEOUT or None
+                ) as resp:  # pragma: no cover - network
+                    return json.loads(resp.read().decode("utf-8"))
+            except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
+                exc = retry_exc
+            except json.JSONDecodeError as retry_exc:
+                logger.warning(
+                    "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                    extra={
+                        "endpoint": _REMOTE_ENDPOINT,
+                        "path": path,
+                        "error": str(retry_exc),
+                    },
+                )
+                _REMOTE_DISABLED = True
+                return None
+        if _wait_for_remote_ready_cold_start():
+            try:
+                with urllib.request.urlopen(
+                    req, timeout=_REMOTE_TIMEOUT or None
+                ) as resp:  # pragma: no cover - network
+                    return json.loads(resp.read().decode("utf-8"))
+            except (urllib.error.URLError, TimeoutError, socket.timeout) as retry_exc:
+                exc = retry_exc
+            except json.JSONDecodeError as retry_exc:
+                logger.warning(
+                    "remote vector service returned invalid JSON; falling back to local handling",  # pragma: no cover - diagnostics
+                    extra={
+                        "endpoint": _REMOTE_ENDPOINT,
+                        "path": path,
+                        "error": str(retry_exc),
+                    },
+                )
+                _REMOTE_DISABLED = True
+                return None
+        logger.warning(
+            "remote vector service unavailable; falling back to local handling",  # pragma: no cover - diagnostics
+            extra={"endpoint": _REMOTE_ENDPOINT, "path": path, "error": str(exc)},
+        )
         _REMOTE_DISABLED = True
         return None
 
