@@ -2782,9 +2782,15 @@ def governed_embed(
         return supports_max_length, supports_truncation
 
     def _resolve_tokenizer(model_obj: Any) -> Any | None:
-        tokenizer = getattr(model_obj, "tokenizer", None)
-        if tokenizer is None:
-            tokenizer = getattr(model_obj, "_tokenizer", None)
+        def _tokenizer_from(source: Any) -> Any | None:
+            if source is None:
+                return None
+            tokenizer_candidate = getattr(source, "tokenizer", None)
+            if tokenizer_candidate is None:
+                tokenizer_candidate = getattr(source, "_tokenizer", None)
+            return tokenizer_candidate
+
+        tokenizer = _tokenizer_from(model_obj)
         if tokenizer is not None:
             return tokenizer
         first_module = None
@@ -2795,34 +2801,23 @@ def governed_embed(
                 first_module = None
         if first_module is not None:
             logger.debug("tokenizer resolution falling back to _first_module()")
-            tokenizer = getattr(first_module, "tokenizer", None)
-            if tokenizer is None:
-                tokenizer = getattr(first_module, "_tokenizer", None)
+            tokenizer = _tokenizer_from(first_module)
             if tokenizer is not None:
                 return tokenizer
             auto_model = getattr(first_module, "auto_model", None)
-            tokenizer = getattr(auto_model, "tokenizer", None)
-            if tokenizer is None:
-                tokenizer = getattr(auto_model, "_tokenizer", None)
+            tokenizer = _tokenizer_from(auto_model)
             if tokenizer is not None:
                 return tokenizer
             config = getattr(auto_model, "config", None) if auto_model is not None else None
-            tokenizer = getattr(config, "tokenizer", None)
-            if tokenizer is None:
-                tokenizer = getattr(config, "_tokenizer", None)
+            tokenizer = _tokenizer_from(config)
             if tokenizer is not None:
                 return tokenizer
         auto_model = getattr(model_obj, "auto_model", None)
-        tokenizer = getattr(auto_model, "tokenizer", None)
-        if tokenizer is None:
-            tokenizer = getattr(auto_model, "_tokenizer", None)
+        tokenizer = _tokenizer_from(auto_model)
         if tokenizer is not None:
             return tokenizer
         config = getattr(auto_model, "config", None) if auto_model is not None else None
-        tokenizer = getattr(config, "tokenizer", None)
-        if tokenizer is None:
-            tokenizer = getattr(config, "_tokenizer", None)
-        return tokenizer
+        return _tokenizer_from(config)
 
     def _resolve_max_position_embeddings(model_obj: Any) -> int | None:
         max_position_candidates: list[int] = []
@@ -3110,8 +3105,13 @@ def governed_embed(
     try:  # pragma: no cover - external model may fail at runtime
         return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
     except IndexError as exc:
-        retry_base = max_positions or max_seq_length
-        retry_cap = min(retry_base, hard_max_tokens) - 2 if isinstance(retry_base, int) else hard_max_tokens - 2
+        retry_cap = effective_max_tokens
+        if tokenizer is None:
+            retry_cap = min(retry_cap, 128)
+        if isinstance(max_positions, int):
+            retry_cap = min(retry_cap, max(1, max_positions - special_overhead))
+        if isinstance(max_seq_length, int):
+            retry_cap = min(retry_cap, max_seq_length)
         retry_cap = max(1, retry_cap)
         logger.warning(
             "embedding retry after IndexError (retry_cap=%s hard_max=%s max_positions=%s "
