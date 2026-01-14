@@ -2819,7 +2819,10 @@ def governed_embed(
             return " ".join(words[:max_tokens]), True, original_tokens, max_tokens
         return raw, False, original_tokens, original_tokens
 
-    def _resolve_effective_max_tokens(model_obj: Any) -> tuple[int, int | None, int | None]:
+    def _resolve_effective_max_tokens(
+        model_obj: Any,
+        special_overhead: int,
+    ) -> tuple[int, int | None, int | None, int | None]:
         hard_cap = 200
         tokenizer_max = None
         tokenizer = _resolve_tokenizer(model_obj)
@@ -2828,19 +2831,40 @@ def governed_embed(
             if isinstance(candidate, int) and 0 < candidate < 1_000_000:
                 tokenizer_max = candidate
         max_positions = _resolve_max_position_embeddings(model_obj)
-        cap_sources = [value for value in (tokenizer_max, max_positions) if value is not None]
+        safe_max_tokens = (
+            max(1, max_positions - special_overhead) if isinstance(max_positions, int) else None
+        )
+        cap_sources = [value for value in (tokenizer_max, safe_max_tokens) if value is not None]
         if cap_sources:
-            return min([hard_cap, *cap_sources]), tokenizer_max, max_positions
-        return hard_cap, tokenizer_max, max_positions
+            return min([hard_cap, *cap_sources]), tokenizer_max, max_positions, safe_max_tokens
+        return hard_cap, tokenizer_max, max_positions, safe_max_tokens
 
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
-    effective_max_tokens, tokenizer_max, max_positions = _resolve_effective_max_tokens(model)
+    tokenizer = _resolve_tokenizer(model)
+    if tokenizer is None:
+        special_overhead = 2
+    else:
+        special_overhead = 2
+        if hasattr(tokenizer, "num_special_tokens_to_add"):
+            try:
+                special_overhead = tokenizer.num_special_tokens_to_add(pair=False)
+            except Exception:
+                special_overhead = 2
+    (
+        effective_max_tokens,
+        tokenizer_max,
+        max_positions,
+        safe_max_tokens,
+    ) = _resolve_effective_max_tokens(model, special_overhead)
     logger.info(
-        "embedding token cap configured (effective=%s hard_cap=%s tokenizer_max=%s max_positions=%s)",
+        "embedding token cap configured "
+        "(effective=%s hard_cap=%s tokenizer_max=%s max_positions=%s safe_max=%s special_overhead=%s)",
         effective_max_tokens,
         200,
         tokenizer_max,
         max_positions,
+        safe_max_tokens,
+        special_overhead,
     )
     encode_kwargs: dict[str, Any] = {}
     if supports_max_length:
