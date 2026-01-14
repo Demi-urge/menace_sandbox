@@ -2774,7 +2774,12 @@ def governed_embed(
         except (TypeError, ValueError):
             return False, False
         params = signature.parameters
-        return "max_length" in params, "truncation" in params
+        has_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
+        )
+        supports_max_length = "max_length" in params or has_kwargs
+        supports_truncation = "truncation" in params or has_kwargs
+        return supports_max_length, supports_truncation
 
     def _resolve_tokenizer(model_obj: Any) -> Any | None:
         tokenizer = getattr(model_obj, "tokenizer", None)
