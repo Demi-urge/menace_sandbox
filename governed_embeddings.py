@@ -2781,6 +2781,17 @@ def governed_embed(
         supports_truncation = "truncation" in params or has_kwargs
         return supports_max_length, supports_truncation
 
+    def _resolve_allowed_encode_keys(model_obj: Any) -> set[str] | None:
+        if not hasattr(model_obj, "get_model_kwargs"):
+            return None
+        try:
+            model_kwargs = model_obj.get_model_kwargs()
+        except Exception:  # pragma: no cover - defensive against model-specific failures
+            return None
+        if not isinstance(model_kwargs, dict):
+            return None
+        return set(model_kwargs.keys())
+
     def _resolve_tokenizer(model_obj: Any) -> Any | None:
         def _tokenizer_from(source: Any) -> Any | None:
             if source is None:
@@ -3000,14 +3011,7 @@ def governed_embed(
         return hard_cap, tokenizer_max, max_positions, safe_max_tokens, max_seq_length
 
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
-    allowed_encode_keys: set[str] | None = None
-    if hasattr(model, "get_model_kwargs"):
-        try:
-            model_kwargs = model.get_model_kwargs()
-        except Exception:  # pragma: no cover - defensive against model-specific failures
-            model_kwargs = None
-        if isinstance(model_kwargs, dict):
-            allowed_encode_keys = set(model_kwargs.keys())
+    allowed_encode_keys = _resolve_allowed_encode_keys(model)
     tokenizer = _resolve_tokenizer(model)
     if tokenizer is None:
         special_overhead = 2
@@ -3038,14 +3042,14 @@ def governed_embed(
         special_overhead,
     )
     encode_kwargs: dict[str, Any] = {}
-    if supports_max_length:
+    if supports_max_length and (
+        allowed_encode_keys is None or "max_length" in allowed_encode_keys
+    ):
         encode_kwargs["max_length"] = effective_max_tokens
-    if supports_truncation:
+    if supports_truncation and (
+        allowed_encode_keys is None or "truncation" in allowed_encode_keys
+    ):
         encode_kwargs["truncation"] = True
-    if allowed_encode_keys is not None:
-        encode_kwargs = {
-            key: value for key, value in encode_kwargs.items() if key in allowed_encode_keys
-        }
     cleaned_for_embedding = cleaned
     if isinstance(max_positions, int):
         safe_chars = max_positions * EMBEDDING_CHARS_PER_TOKEN
