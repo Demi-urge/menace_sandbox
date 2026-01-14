@@ -2895,16 +2895,31 @@ def governed_embed(
     ) -> tuple[int, int | None, int | None, int | None]:
         hard_cap = 200
         tokenizer_max = None
+        model_seq_length = None
         tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
             candidate = getattr(tokenizer, "model_max_length", None)
             if isinstance(candidate, int) and 0 < candidate < 1_000_000:
                 tokenizer_max = candidate
+        candidate = getattr(model_obj, "max_seq_length", None)
+        if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+            model_seq_length = candidate
+        if hasattr(model_obj, "get_max_seq_length"):
+            try:
+                candidate = model_obj.get_max_seq_length()
+            except Exception:
+                candidate = None
+            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+                model_seq_length = candidate
         max_positions = _resolve_max_position_embeddings(model_obj)
         safe_max_tokens = (
             max(1, max_positions - special_overhead) if isinstance(max_positions, int) else None
         )
-        cap_sources = [value for value in (tokenizer_max, safe_max_tokens) if value is not None]
+        cap_sources = [
+            value
+            for value in (tokenizer_max, safe_max_tokens, model_seq_length)
+            if value is not None
+        ]
         if cap_sources:
             return min([hard_cap, *cap_sources]), tokenizer_max, max_positions, safe_max_tokens
         return hard_cap, tokenizer_max, max_positions, safe_max_tokens
