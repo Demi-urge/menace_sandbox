@@ -2825,10 +2825,22 @@ def governed_embed(
         return tokenizer
 
     def _resolve_max_position_embeddings(model_obj: Any) -> int | None:
+        max_position_candidates: list[int] = []
         config = getattr(model_obj, "config", None)
         max_positions = getattr(config, "max_position_embeddings", None) if config is not None else None
         if isinstance(max_positions, int) and 0 < max_positions < 1_000_000:
-            return max_positions
+            max_position_candidates.append(max_positions)
+        candidate = getattr(model_obj, "max_seq_length", None)
+        if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+            max_position_candidates.append(candidate)
+        candidate = getattr(model_obj, "get_max_seq_length", None)
+        if callable(candidate):
+            try:
+                candidate = candidate()
+            except Exception:
+                candidate = None
+        if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+            max_position_candidates.append(candidate)
         first_module = None
         if hasattr(model_obj, "_first_module"):
             try:
@@ -2845,11 +2857,19 @@ def governed_embed(
                     getattr(config, "max_position_embeddings", None) if config is not None else None
                 )
                 if isinstance(max_positions, int) and 0 < max_positions < 1_000_000:
-                    return max_positions
+                    max_position_candidates.append(max_positions)
             candidate = getattr(first_module, "max_seq_length", None)
             if isinstance(candidate, int) and 0 < candidate < 1_000_000:
-                return candidate
-        return None
+                max_position_candidates.append(candidate)
+            candidate = getattr(first_module, "get_max_seq_length", None)
+            if callable(candidate):
+                try:
+                    candidate = candidate()
+                except Exception:
+                    candidate = None
+            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+                max_position_candidates.append(candidate)
+        return min(max_position_candidates) if max_position_candidates else None
 
     def _count_tokens(text: str, model_obj: Any, max_tokens: int) -> int:
         tokenizer = _resolve_tokenizer(model_obj)
