@@ -144,6 +144,7 @@ DEFAULT_SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_CHAR_TRUNCATION_THRESHOLD = 8000
 DEFAULT_MAX_SAFE_CHARS = 4000
 EMBEDDING_CHARS_PER_TOKEN = 4
+DEFAULT_FALLBACK_RETRY_CAP = 128
 
 
 def _read_positive_int_env(var_name: str, default: int) -> int:
@@ -3178,8 +3179,27 @@ def governed_embed(
         return [0.0] * _STUB_EMBEDDER_DIMENSION
     except IndexError as exc:
         retry_cap = effective_max_tokens
-        if tokenizer is None:
-            retry_cap = min(retry_cap, 128)
+        fallback_cap_applied = False
+        fallback_cap = None
+        fallback_model_max_length = None
+        if max_positions is None and max_seq_length is None:
+            fallback_tokenizer = _resolve_tokenizer(model)
+            fallback_model_max_length = (
+                getattr(fallback_tokenizer, "model_max_length", None)
+                if fallback_tokenizer is not None
+                else None
+            )
+            if (
+                isinstance(fallback_model_max_length, int)
+                and 0 < fallback_model_max_length < 10_000
+            ):
+                fallback_cap = fallback_model_max_length
+            else:
+                fallback_cap = DEFAULT_FALLBACK_RETRY_CAP
+            retry_cap = min(retry_cap, fallback_cap)
+            fallback_cap_applied = True
+        if tokenizer is None and not fallback_cap_applied:
+            retry_cap = min(retry_cap, DEFAULT_FALLBACK_RETRY_CAP)
         if isinstance(max_positions, int):
             retry_cap = min(retry_cap, max(1, max_positions - special_overhead))
         if isinstance(max_seq_length, int):
@@ -3207,6 +3227,15 @@ def governed_embed(
         if derived_caps:
             retry_cap = min(retry_cap, *derived_caps)
         retry_cap = max(1, retry_cap)
+        if fallback_cap_applied:
+            logger.warning(
+                "embedding retry fallback cap applied due to missing max positions "
+                "(fallback_cap=%s tokenizer_max_length=%s model_name=%s model_path=%s)",
+                fallback_cap,
+                fallback_model_max_length,
+                getattr(model, "model_name", None),
+                getattr(model, "model_name_or_path", None),
+            )
         logger.warning(
             "embedding retry after IndexError (retry_cap=%s hard_max=%s max_positions=%s "
             "max_seq_length=%s model_name=%s model_path=%s)",
