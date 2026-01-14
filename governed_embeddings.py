@@ -3132,48 +3132,27 @@ def governed_embed(
     try:  # pragma: no cover - external model may fail at runtime
         return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
     except ValueError as exc:
-        message = str(exc)
-        lowered = message.lower()
-        reduced_kwargs: dict[str, Any] | None = None
-        dropped_keys: list[str] = []
-        should_strip_kwargs = (
-            "additional keyword arguments" in lowered
-            or "does not accept any additional keyword arguments" in lowered
-            or "unexpected keyword argument" in lowered
-        )
-        if should_strip_kwargs and encode_kwargs:
-            if allowed_encode_keys is not None:
-                filtered = {
-                    key: value for key, value in encode_kwargs.items() if key in allowed_encode_keys
-                }
-                if filtered != encode_kwargs:
-                    reduced_kwargs = filtered
-            if reduced_kwargs is None:
-                reduced_kwargs = {}
-        if reduced_kwargs is not None:
-            dropped_keys = sorted(set(encode_kwargs) - set(reduced_kwargs))
+        lowered = str(exc).lower()
+        if "additional keyword arguments" in lowered:
             logger.warning(
-                "embedding retry after ValueError with stripped kwargs (model_name=%s model_path=%s "
-                "dropped_keys=%s)",
+                "embedding retry after ValueError with unsupported kwargs "
+                "(model_name=%s model_path=%s)",
                 getattr(model, "model_name", None),
                 getattr(model, "model_name_or_path", None),
-                dropped_keys,
                 exc_info=exc,
             )
             try:  # pragma: no cover - external model may fail at runtime
-                return model.encode([cleaned_for_embedding], **reduced_kwargs)[0].tolist()
+                return model.encode([cleaned_for_embedding])[0].tolist()
             except Exception:
                 logger.exception(
-                    "embedding failed during model.encode retry after ValueError "
-                    "(redacted=%s cleaned_empty=%s text_len=%s)",
+                    "embedding failed during model.encode (redacted=%s cleaned_empty=%s text_len=%s)",
                     redacted,
                     cleaned_empty,
                     len(cleaned_for_embedding),
                 )
                 return [0.0] * _STUB_EMBEDDER_DIMENSION
         logger.exception(
-            "embedding failed during model.encode after ValueError "
-            "(redacted=%s cleaned_empty=%s text_len=%s)",
+            "embedding failed during model.encode (redacted=%s cleaned_empty=%s text_len=%s)",
             redacted,
             cleaned_empty,
             len(cleaned_for_embedding),
@@ -3214,6 +3193,34 @@ def governed_embed(
             }
         try:  # pragma: no cover - external model may fail at runtime
             return model.encode([cleaned_retry], **retry_kwargs)[0].tolist()
+        except ValueError as exc:
+            lowered = str(exc).lower()
+            if "additional keyword arguments" in lowered:
+                logger.warning(
+                    "embedding retry after ValueError with unsupported kwargs "
+                    "(model_name=%s model_path=%s)",
+                    getattr(model, "model_name", None),
+                    getattr(model, "model_name_or_path", None),
+                    exc_info=exc,
+                )
+                try:  # pragma: no cover - external model may fail at runtime
+                    return model.encode([cleaned_retry])[0].tolist()
+                except Exception:
+                    logger.exception(
+                        "embedding failed during model.encode retry "
+                        "(redacted=%s cleaned_empty=%s text_len=%s)",
+                        redacted,
+                        cleaned_empty,
+                        len(cleaned_retry),
+                    )
+                    return [0.0] * _STUB_EMBEDDER_DIMENSION
+            logger.exception(
+                "embedding failed during model.encode retry (redacted=%s cleaned_empty=%s text_len=%s)",
+                redacted,
+                cleaned_empty,
+                len(cleaned_retry),
+            )
+            return [0.0] * _STUB_EMBEDDER_DIMENSION
         except Exception:
             logger.exception(
                 "embedding failed during model.encode retry (redacted=%s cleaned_empty=%s text_len=%s)",
