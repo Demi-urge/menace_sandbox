@@ -2846,6 +2846,9 @@ def governed_embed(
                 )
                 if isinstance(max_positions, int) and 0 < max_positions < 1_000_000:
                     return max_positions
+            candidate = getattr(first_module, "max_seq_length", None)
+            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+                return candidate
         return None
 
     def _count_tokens(text: str, model_obj: Any, max_tokens: int) -> int:
@@ -2929,7 +2932,7 @@ def governed_embed(
     def _resolve_effective_max_tokens(
         model_obj: Any,
         special_overhead: int,
-    ) -> tuple[int, int | None, int | None, int | None]:
+    ) -> tuple[int, int | None, int | None, int | None, int | None]:
         hard_cap = 200
         tokenizer_max = None
         model_seq_length = None
@@ -2948,18 +2951,38 @@ def governed_embed(
                 candidate = None
             if isinstance(candidate, int) and 0 < candidate < 1_000_000:
                 model_seq_length = candidate
+        first_module_seq_length = None
+        if hasattr(model_obj, "_first_module"):
+            try:
+                first_module = model_obj._first_module()
+            except Exception:
+                first_module = None
+            if first_module is not None:
+                candidate = getattr(first_module, "max_seq_length", None)
+                if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+                    first_module_seq_length = candidate
+        seq_length_candidates = [
+            value for value in (model_seq_length, first_module_seq_length) if value is not None
+        ]
+        max_seq_length = min(seq_length_candidates) if seq_length_candidates else None
         max_positions = _resolve_max_position_embeddings(model_obj)
         safe_max_tokens = (
             max(1, max_positions - special_overhead) if isinstance(max_positions, int) else None
         )
         cap_sources = [
             value
-            for value in (tokenizer_max, safe_max_tokens, model_seq_length)
+            for value in (tokenizer_max, safe_max_tokens, max_seq_length)
             if value is not None
         ]
         if cap_sources:
-            return min([hard_cap, *cap_sources]), tokenizer_max, max_positions, safe_max_tokens
-        return hard_cap, tokenizer_max, max_positions, safe_max_tokens
+            return (
+                min([hard_cap, *cap_sources]),
+                tokenizer_max,
+                max_positions,
+                safe_max_tokens,
+                max_seq_length,
+            )
+        return hard_cap, tokenizer_max, max_positions, safe_max_tokens, max_seq_length
 
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     tokenizer = _resolve_tokenizer(model)
@@ -2977,14 +3000,17 @@ def governed_embed(
         tokenizer_max,
         max_positions,
         safe_max_tokens,
+        max_seq_length,
     ) = _resolve_effective_max_tokens(model, special_overhead)
     logger.info(
         "embedding token cap configured "
-        "(effective=%s hard_cap=%s tokenizer_max=%s max_positions=%s safe_max=%s special_overhead=%s)",
+        "(effective=%s hard_cap=%s tokenizer_max=%s max_positions=%s max_seq_length=%s "
+        "safe_max=%s special_overhead=%s)",
         effective_max_tokens,
         200,
         tokenizer_max,
         max_positions,
+        max_seq_length,
         safe_max_tokens,
         special_overhead,
     )
@@ -3063,6 +3089,40 @@ def governed_embed(
     )
     try:  # pragma: no cover - external model may fail at runtime
         return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
+    except IndexError as exc:
+        retry_base = max_positions or max_seq_length
+        retry_cap = min(retry_base, hard_max_tokens) - 2 if isinstance(retry_base, int) else hard_max_tokens - 2
+        retry_cap = max(1, retry_cap)
+        logger.warning(
+            "embedding retry after IndexError (retry_cap=%s hard_max=%s max_positions=%s "
+            "max_seq_length=%s model_name=%s model_path=%s)",
+            retry_cap,
+            hard_max_tokens,
+            max_positions,
+            max_seq_length,
+            getattr(model, "model_name", None),
+            getattr(model, "model_name_or_path", None),
+            exc_info=exc,
+        )
+        (
+            cleaned_retry,
+            _,
+            _,
+            _,
+        ) = _truncate_text_for_embedding(cleaned_for_embedding, model, retry_cap)
+        retry_kwargs = dict(encode_kwargs)
+        if supports_max_length:
+            retry_kwargs["max_length"] = retry_cap
+        try:  # pragma: no cover - external model may fail at runtime
+            return model.encode([cleaned_retry], **retry_kwargs)[0].tolist()
+        except Exception:
+            logger.exception(
+                "embedding failed during model.encode retry (redacted=%s cleaned_empty=%s text_len=%s)",
+                redacted,
+                cleaned_empty,
+                len(cleaned_retry),
+            )
+            return [0.0] * _STUB_EMBEDDER_DIMENSION
     except Exception:
         logger.exception(
             "embedding failed during model.encode (redacted=%s cleaned_empty=%s text_len=%s)",
