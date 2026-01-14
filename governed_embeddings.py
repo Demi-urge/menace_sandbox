@@ -3000,6 +3000,14 @@ def governed_embed(
         return hard_cap, tokenizer_max, max_positions, safe_max_tokens, max_seq_length
 
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
+    allowed_encode_keys: set[str] | None = None
+    if hasattr(model, "get_model_kwargs"):
+        try:
+            model_kwargs = model.get_model_kwargs()
+        except Exception:  # pragma: no cover - defensive against model-specific failures
+            model_kwargs = None
+        if isinstance(model_kwargs, dict):
+            allowed_encode_keys = set(model_kwargs.keys())
     tokenizer = _resolve_tokenizer(model)
     if tokenizer is None:
         special_overhead = 2
@@ -3034,6 +3042,10 @@ def governed_embed(
         encode_kwargs["max_length"] = effective_max_tokens
     if supports_truncation:
         encode_kwargs["truncation"] = True
+    if allowed_encode_keys is not None:
+        encode_kwargs = {
+            key: value for key, value in encode_kwargs.items() if key in allowed_encode_keys
+        }
     cleaned_for_embedding = cleaned
     if isinstance(max_positions, int):
         safe_chars = max_positions * EMBEDDING_CHARS_PER_TOKEN
@@ -3133,6 +3145,10 @@ def governed_embed(
         retry_kwargs = dict(encode_kwargs)
         if supports_max_length:
             retry_kwargs["max_length"] = retry_cap
+        if allowed_encode_keys is not None:
+            retry_kwargs = {
+                key: value for key, value in retry_kwargs.items() if key in allowed_encode_keys
+            }
         try:  # pragma: no cover - external model may fail at runtime
             return model.encode([cleaned_retry], **retry_kwargs)[0].tolist()
         except Exception:
