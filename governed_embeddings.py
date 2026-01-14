@@ -2938,20 +2938,22 @@ def governed_embed(
         raw: str,
         model_obj: Any,
         max_tokens: int,
+        special_overhead: int,
     ) -> tuple[str, bool, int, int]:
         tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
             try:
-                probe_max = max_tokens + 1
+                max_input_tokens = max_tokens + max(0, special_overhead)
+                probe_max = max_input_tokens + 1
                 token_ids = tokenizer.encode(
                     raw,
-                    add_special_tokens=False,
+                    add_special_tokens=True,
                     max_length=probe_max,
                     truncation=True,
                 )
                 original_tokens = len(token_ids)
-                if original_tokens > max_tokens:
-                    token_ids = token_ids[:max_tokens]
+                if original_tokens > max_input_tokens:
+                    token_ids = token_ids[:max_input_tokens]
                     truncated_text = (
                         tokenizer.decode(token_ids, skip_special_tokens=True)
                         if hasattr(tokenizer, "decode")
@@ -3116,7 +3118,19 @@ def governed_embed(
         token_truncated,
         pre_trunc_tokens,
         post_trunc_tokens,
-    ) = _truncate_text_for_embedding(cleaned_for_embedding, model, hard_max_tokens)
+    ) = _truncate_text_for_embedding(
+        cleaned_for_embedding,
+        model,
+        hard_max_tokens,
+        special_overhead,
+    )
+    logger.debug(
+        "embedding truncation details "
+        "(special_overhead=%s pre_trunc_tokens=%s post_trunc_tokens=%s)",
+        special_overhead,
+        pre_trunc_tokens,
+        post_trunc_tokens,
+    )
     truncated_token_count = _count_tokens(cleaned_for_embedding, model, hard_max_tokens)
     if token_truncated:
         logger.warning(
@@ -3252,7 +3266,12 @@ def governed_embed(
             _,
             _,
             _,
-        ) = _truncate_text_for_embedding(cleaned_for_embedding, model, retry_cap)
+        ) = _truncate_text_for_embedding(
+            cleaned_for_embedding,
+            model,
+            retry_cap,
+            special_overhead,
+        )
         retry_kwargs = dict(encode_kwargs)
         if supports_max_length:
             retry_kwargs["max_length"] = retry_cap
