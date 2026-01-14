@@ -11,6 +11,7 @@ The function :func:`get_text_embeddings` accepts optional ``model`` and
 """
 
 from typing import List
+import logging
 import json
 import os
 import urllib.request
@@ -37,6 +38,9 @@ EMBED_DIM = 384
 
 _SERVICE: "SharedVectorService | None" = None
 _REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
+_LOCAL_FALLBACK_LOGGED = False
+
+logger = logging.getLogger(__name__)
 
 
 def _remote_embed(url: str, text: str) -> List[float]:
@@ -121,7 +125,30 @@ def get_text_embeddings(
         except Exception:
             pass
 
-    raise RuntimeError("No embedding backend available")
+    return _local_fallback_embeddings(texts)
+
+
+def _local_fallback_embeddings(texts: List[str]) -> List[List[float]]:
+    """Return local fallback embeddings without raising."""
+
+    global _LOCAL_FALLBACK_LOGGED
+    if not _LOCAL_FALLBACK_LOGGED:
+        logger.warning(
+            "embedding backends unavailable; using local fallback embeddings"
+        )
+        _LOCAL_FALLBACK_LOGGED = True
+    fallback_vectors: List[List[float]] = []
+    for text in texts:
+        vector = None
+        try:
+            vector = governed_embeddings.governed_embed(text)
+        except Exception:
+            logger.exception("local fallback embedding failed; returning zero vector")
+            vector = None
+        if not vector:
+            vector = [0.0] * EMBED_DIM
+        fallback_vectors.append(list(map(float, vector)))
+    return fallback_vectors
 
 
 __all__ = ["get_text_embeddings", "EMBED_DIM"]
