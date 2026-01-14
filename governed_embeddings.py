@@ -3122,13 +3122,23 @@ def governed_embed(
         return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
     except ValueError as exc:
         message = str(exc)
-        if (
-            "does not accept any additional keyword arguments" in message
-            or "not use" in message
+        lowered = message.lower()
+        reduced_kwargs: dict[str, Any] | None = None
+        dropped_keys: list[str] = []
+        if encode_kwargs and allowed_encode_keys is not None:
+            filtered = {key: value for key, value in encode_kwargs.items() if key in allowed_encode_keys}
+            if filtered != encode_kwargs:
+                reduced_kwargs = filtered
+        if reduced_kwargs is None and encode_kwargs and (
+            "additional keyword arguments" in lowered
+            or "unexpected keyword argument" in lowered
+            or "does not accept" in lowered
         ):
-            dropped_keys = sorted(encode_kwargs)
+            reduced_kwargs = {}
+        if reduced_kwargs is not None:
+            dropped_keys = sorted(set(encode_kwargs) - set(reduced_kwargs))
             logger.warning(
-                "embedding retry without kwargs after ValueError (model_name=%s model_path=%s "
+                "embedding retry after ValueError with stripped kwargs (model_name=%s model_path=%s "
                 "dropped_keys=%s)",
                 getattr(model, "model_name", None),
                 getattr(model, "model_name_or_path", None),
@@ -3136,7 +3146,7 @@ def governed_embed(
                 exc_info=exc,
             )
             try:  # pragma: no cover - external model may fail at runtime
-                return model.encode([cleaned_for_embedding])[0].tolist()
+                return model.encode([cleaned_for_embedding], **reduced_kwargs)[0].tolist()
             except Exception:
                 logger.exception(
                     "embedding failed during model.encode retry after ValueError "
