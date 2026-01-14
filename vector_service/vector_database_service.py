@@ -22,7 +22,7 @@ attempts when vector dependencies touch the automation pipeline.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 import asyncio
 import os
 import threading
@@ -57,6 +57,30 @@ from .embedding_backfill import (
 from .embedding_scheduler import start_scheduler_from_env
 
 logger = logging.getLogger(__name__)
+
+
+def _embedding_all_zero(vec: Iterable[Any]) -> bool:
+    seen_value = False
+    for value in vec:
+        seen_value = True
+        try:
+            if float(value) != 0.0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return seen_value
+
+
+def _record_truncated(record: Dict[str, Any]) -> bool:
+    if record.get("truncated") is True:
+        return True
+    meta = record.get("meta")
+    if isinstance(meta, dict) and meta.get("truncated") is True:
+        return True
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("truncated") is True:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +217,17 @@ async def search(req: SearchRequest) -> Dict[str, Any]:
     """Vectorise ``req.record`` and query the vector store."""
 
     vec = await asyncio.to_thread(_svc.vectorise, req.kind, req.record)
+    if (
+        not isinstance(vec, list)
+        or not vec
+        or _embedding_all_zero(vec)
+        or _record_truncated(req.record)
+    ):
+        return {
+            "status": "ok",
+            "data": [],
+            "warning": "Input truncated; results may be partial",
+        }
     if _svc.vector_store is None:
         raise HTTPException(status_code=500, detail="Vector store not configured")
     results = await asyncio.to_thread(_svc.vector_store.query, vec, top_k=req.top_k)
