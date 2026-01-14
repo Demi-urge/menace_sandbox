@@ -23,6 +23,18 @@ python scripts/bootstrap_env.py
 After this step the vector service can start without reaching external
 endpoints.
 
+## Remote vector service configuration
+
+When the vector service is configured to call a remote embedding endpoint, the
+following environment variables control connection behavior:
+
+- `VECTOR_SERVICE_URL` – base URL for the remote vector service.
+- `VECTOR_SERVICE_TIMEOUT` – request timeout in seconds (default `10`).
+- `VECTOR_SERVICE_REMOTE_ATTEMPTS` – number of retry attempts before falling
+  back to local handling (default `6`).
+- `VECTOR_SERVICE_REMOTE_RETRY_DELAY` – delay in seconds between retry attempts
+  (default `0.25`).
+
 ## Retriever
 
 ```python
@@ -407,4 +419,3 @@ Build and run the daemon in a container:
 docker build -t menace-vector .
 docker run -p 8000:8000 menace-vector python scripts/run_vector_service.py
 ```
-
