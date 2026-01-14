@@ -159,44 +159,59 @@ def _remote_timeout() -> float | None:
     return value
 
 
-def _remote_attempts() -> int:
-    raw = os.getenv("VECTOR_SERVICE_REMOTE_ATTEMPTS", "6").strip()
-    if not raw:
-        return 6
-    try:
-        value = int(raw)
-    except Exception:
-        logger.warning(
-            "invalid VECTOR_SERVICE_REMOTE_ATTEMPTS=%r; defaulting to 6",
-            raw,
-        )
-        return 6
-    if value <= 0:
-        logger.warning(
-            "VECTOR_SERVICE_REMOTE_ATTEMPTS must be positive; defaulting to 6",
-        )
-        return 6
-    return value
-
-
-def _remote_retry_delay() -> float:
-    raw = os.getenv("VECTOR_SERVICE_REMOTE_RETRY_DELAY", "0.25").strip()
-    if not raw:
-        return 0.25
-    try:
-        value = float(raw)
-    except Exception:
-        logger.warning(
-            "invalid VECTOR_SERVICE_REMOTE_RETRY_DELAY=%r; defaulting to 0.25",
-            raw,
-        )
-        return 0.25
-    if value <= 0:
-        logger.warning(
-            "VECTOR_SERVICE_REMOTE_RETRY_DELAY must be positive; defaulting to 0.25",
-        )
-        return 0.25
-    return value
+def _remote_call_retry_config() -> tuple[int, float, float]:
+    raw_attempts = os.getenv("VECTOR_SERVICE_REMOTE_ATTEMPTS", "6").strip()
+    raw_delay = os.getenv("VECTOR_SERVICE_REMOTE_DELAY", "0.25").strip()
+    raw_backoff = os.getenv("VECTOR_SERVICE_REMOTE_BACKOFF", "1.0").strip()
+    if not raw_attempts:
+        attempts = 6
+    else:
+        try:
+            attempts = int(raw_attempts)
+        except Exception:
+            logger.warning(
+                "invalid VECTOR_SERVICE_REMOTE_ATTEMPTS=%r; defaulting to 6",
+                raw_attempts,
+            )
+            attempts = 6
+        if attempts <= 0:
+            logger.warning(
+                "VECTOR_SERVICE_REMOTE_ATTEMPTS must be positive; defaulting to 6",
+            )
+            attempts = 6
+    if not raw_delay:
+        delay = 0.25
+    else:
+        try:
+            delay = float(raw_delay)
+        except Exception:
+            logger.warning(
+                "invalid VECTOR_SERVICE_REMOTE_DELAY=%r; defaulting to 0.25",
+                raw_delay,
+            )
+            delay = 0.25
+        if delay <= 0:
+            logger.warning(
+                "VECTOR_SERVICE_REMOTE_DELAY must be positive; defaulting to 0.25",
+            )
+            delay = 0.25
+    if not raw_backoff:
+        backoff = 1.0
+    else:
+        try:
+            backoff = float(raw_backoff)
+        except Exception:
+            logger.warning(
+                "invalid VECTOR_SERVICE_REMOTE_BACKOFF=%r; defaulting to 1.0",
+                raw_backoff,
+            )
+            backoff = 1.0
+        if backoff < 1.0:
+            logger.warning(
+                "VECTOR_SERVICE_REMOTE_BACKOFF must be >= 1.0; defaulting to 1.0",
+            )
+            backoff = 1.0
+    return attempts, delay, backoff
 
 
 def _embedder_ceiling() -> float | None:
@@ -223,8 +238,6 @@ def _embedder_ceiling() -> float | None:
 _REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
 _REMOTE_ENDPOINT = _REMOTE_URL.rstrip("/") if _REMOTE_URL else None
 _REMOTE_TIMEOUT = _remote_timeout()
-_REMOTE_ATTEMPTS = _remote_attempts()
-_REMOTE_RETRY_DELAY = _remote_retry_delay()
 _REMOTE_DISABLED = False
 _EMBEDDER_WAIT_CEILING = _embedder_ceiling()
 _VECTOR_SERVICE_BOOT_TS = time.monotonic()
@@ -1413,8 +1426,8 @@ class SharedVectorService:
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        attempts = _REMOTE_ATTEMPTS
-        delay = _REMOTE_RETRY_DELAY
+        attempts, delay, backoff = _remote_call_retry_config()
+        wait = delay
         last_exc: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
@@ -1431,7 +1444,8 @@ class SharedVectorService:
                     exc,
                 )
                 if attempt < attempts:
-                    time.sleep(delay)
+                    time.sleep(wait)
+                    wait *= backoff
                     continue
             except json.JSONDecodeError as exc:
                 logger.warning(
