@@ -40,6 +40,19 @@ following environment variables control connection behavior:
   remote calls during early process boot, forcing the local embedding fallback
   until the window expires (default `0`).
 
+Readiness probing is governed by separate retry knobs used when checking the
+remote service health endpoint:
+
+- `VECTOR_SERVICE_READY_RETRIES` – number of readiness probes before giving up
+  (default `6`).
+- `VECTOR_SERVICE_READY_DELAY` – delay in seconds between readiness probes
+  (default `0.25`).
+- `VECTOR_SERVICE_READY_BACKOFF` – multiplier applied to the readiness probe
+  delay (default `1.5`).
+- `VECTOR_SERVICE_READY_BOOT_RETRIES` – optional cap applied to the first
+  readiness probe cycle after process start, useful for reducing log volume on
+  cold boot (default unset).
+
 ## Retriever
 
 ```python

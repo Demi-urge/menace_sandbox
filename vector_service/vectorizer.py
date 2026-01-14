@@ -115,6 +115,9 @@ VECTOR_EMBEDDER_RESOLVE_TOTAL = getattr(
 
 
 logger = logging.getLogger(__name__)
+_REMOTE_LOG_THROTTLE_SECS = 5.0
+_LOG_THROTTLE_STATE: Dict[str, float] = {}
+_LOG_THROTTLE_LOCK = threading.Lock()
 
 
 def _trace(event: str, **extra: Any) -> None:
@@ -124,6 +127,16 @@ def _trace(event: str, **extra: Any) -> None:
     if flag and flag.lower() not in {"0", "false", "no", "off"}:
         payload = {"event": event, **extra}
         logger.log(logging.INFO, "vector-service: %s", event, extra=payload)
+
+
+def _throttled_debug(key: str, message: str, *args: Any) -> None:
+    now = time.monotonic()
+    with _LOG_THROTTLE_LOCK:
+        last_log = _LOG_THROTTLE_STATE.get(key, 0.0)
+        if now - last_log < _REMOTE_LOG_THROTTLE_SECS:
+            return
+        _LOG_THROTTLE_STATE[key] = now
+    logger.debug(message, *args)
 
 
 def _timestamp_payload(start: float | None = None, **extra: Any) -> Dict[str, Any]:
@@ -241,6 +254,7 @@ _REMOTE_TIMEOUT = _remote_timeout()
 _REMOTE_DISABLED = False
 _REMOTE_BOOT_TS = time.time()
 _REMOTE_BOOT_GRACE_LOGGED = False
+_REMOTE_READY_BOOT_USED = False
 _EMBEDDER_WAIT_CEILING = _embedder_ceiling()
 
 
@@ -272,9 +286,11 @@ def _should_skip_remote_on_boot() -> bool:
 
 
 def _remote_ready_retry_config() -> tuple[int, float, float]:
+    global _REMOTE_READY_BOOT_USED
     raw_retries = os.getenv("VECTOR_SERVICE_READY_RETRIES", "6").strip()
     raw_delay = os.getenv("VECTOR_SERVICE_READY_DELAY", "0.25").strip()
     raw_backoff = os.getenv("VECTOR_SERVICE_READY_BACKOFF", "1.5").strip()
+    raw_boot_retries = os.getenv("VECTOR_SERVICE_READY_BOOT_RETRIES", "").strip()
     try:
         retries = max(1, int(raw_retries))
     except Exception:
@@ -283,6 +299,18 @@ def _remote_ready_retry_config() -> tuple[int, float, float]:
             raw_retries,
         )
         retries = 6
+    if raw_boot_retries:
+        try:
+            boot_retries = max(1, int(raw_boot_retries))
+        except Exception:
+            logger.warning(
+                "invalid VECTOR_SERVICE_READY_BOOT_RETRIES=%r; ignoring",
+                raw_boot_retries,
+            )
+        else:
+            if not _REMOTE_READY_BOOT_USED:
+                retries = min(retries, boot_retries)
+                _REMOTE_READY_BOOT_USED = True
     try:
         delay = max(0.05, float(raw_delay))
     except Exception:
@@ -311,7 +339,11 @@ def _probe_remote_ready() -> bool:
         with urllib.request.urlopen(ready_url, timeout=timeout):
             return True
     except Exception as exc:
-        logger.debug("remote vector service readiness probe failed: %s", exc)
+        _throttled_debug(
+            "remote_ready_probe_failed",
+            "remote vector service readiness probe failed: %s",
+            exc,
+        )
         return False
 
 
@@ -1439,7 +1471,8 @@ class SharedVectorService:
                     return json.loads(resp.read().decode("utf-8"))
             except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
                 last_exc = exc
-                logger.debug(
+                _throttled_debug(
+                    "remote_vector_attempt_failed",
                     "remote vector service attempt %s/%s failed: %s",
                     attempt,
                     attempts,
