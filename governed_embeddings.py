@@ -3116,6 +3116,40 @@ def governed_embed(
     )
     try:  # pragma: no cover - external model may fail at runtime
         return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
+    except ValueError as exc:
+        message = str(exc)
+        if (
+            "does not accept any additional keyword arguments" in message
+            or "not use" in message
+        ):
+            dropped_keys = sorted(encode_kwargs)
+            logger.warning(
+                "embedding retry without kwargs after ValueError (model_name=%s model_path=%s "
+                "dropped_keys=%s)",
+                getattr(model, "model_name", None),
+                getattr(model, "model_name_or_path", None),
+                dropped_keys,
+                exc_info=exc,
+            )
+            try:  # pragma: no cover - external model may fail at runtime
+                return model.encode([cleaned_for_embedding])[0].tolist()
+            except Exception:
+                logger.exception(
+                    "embedding failed during model.encode retry after ValueError "
+                    "(redacted=%s cleaned_empty=%s text_len=%s)",
+                    redacted,
+                    cleaned_empty,
+                    len(cleaned_for_embedding),
+                )
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
+        logger.exception(
+            "embedding failed during model.encode after ValueError "
+            "(redacted=%s cleaned_empty=%s text_len=%s)",
+            redacted,
+            cleaned_empty,
+            len(cleaned_for_embedding),
+        )
+        return [0.0] * _STUB_EMBEDDER_DIMENSION
     except IndexError as exc:
         retry_cap = effective_max_tokens
         if tokenizer is None:
