@@ -3268,10 +3268,36 @@ def governed_embed(
             fallback_cap_applied = True
         if tokenizer is None and not fallback_cap_applied:
             retry_cap = min(retry_cap, DEFAULT_FALLBACK_RETRY_CAP)
+        retry_tokenizer_max = None
+        retry_config_max_positions = None
+        retry_tokenizer = tokenizer or _resolve_tokenizer(model)
+        if retry_tokenizer is not None:
+            candidate = getattr(retry_tokenizer, "model_max_length", None)
+            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+                retry_tokenizer_max = candidate
+        retry_first_module = None
+        if hasattr(model, "_first_module"):
+            try:
+                retry_first_module = model._first_module()
+            except Exception:
+                retry_first_module = None
+        if retry_first_module is not None:
+            retry_auto_model = getattr(retry_first_module, "auto_model", None)
+            retry_config = getattr(retry_auto_model, "config", None)
+            candidate = getattr(retry_config, "max_position_embeddings", None)
+            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
+                retry_config_max_positions = candidate
         if isinstance(max_positions, int):
             retry_cap = min(retry_cap, max(1, max_positions - special_overhead))
+        if isinstance(retry_config_max_positions, int):
+            retry_cap = min(
+                retry_cap,
+                max(1, retry_config_max_positions - special_overhead),
+            )
         if isinstance(max_seq_length, int):
             retry_cap = min(retry_cap, max_seq_length)
+        if isinstance(retry_tokenizer_max, int):
+            retry_cap = min(retry_cap, max(1, retry_tokenizer_max - special_overhead))
         derived_caps: list[int] = []
         first_module = None
         if hasattr(model, "_first_module"):
@@ -3325,6 +3351,44 @@ def governed_embed(
             model,
             retry_cap,
             special_overhead,
+        )
+        final_retry_tokens = _count_tokens(
+            cleaned_retry,
+            model,
+            retry_cap,
+            add_special_tokens=True,
+        )
+        while final_retry_tokens > retry_cap and retry_cap > 1:
+            retry_cap = max(1, retry_cap // 2)
+            (
+                cleaned_retry,
+                _,
+                _,
+                _,
+            ) = _truncate_text_for_embedding(
+                cleaned_for_embedding,
+                model,
+                retry_cap,
+                special_overhead,
+            )
+            final_retry_tokens = _count_tokens(
+                cleaned_retry,
+                model,
+                retry_cap,
+                add_special_tokens=True,
+            )
+        if final_retry_tokens > retry_cap:
+            logger.warning(
+                "embedding retry exceeded cap after truncation "
+                "(retry_cap=%s token_count=%s)",
+                retry_cap,
+                final_retry_tokens,
+            )
+            return [0.0] * _STUB_EMBEDDER_DIMENSION
+        logger.info(
+            "embedding retry final token count (tokens=%s cap=%s)",
+            final_retry_tokens,
+            retry_cap,
         )
         retry_kwargs = dict(encode_kwargs)
         if supports_max_length:
