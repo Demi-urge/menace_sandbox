@@ -1253,6 +1253,53 @@ def initialise_sentence_transformer(
         return _materialise_sentence_transformer_device(model, target_device)
 
 
+def _clamp_embedder_max_seq_length(model_obj: Any) -> None:
+    def _coerce_seq_length(value: Any) -> int | None:
+        if isinstance(value, int) and 0 < value < 1_000_000:
+            return value
+        return None
+
+    tokenizer = getattr(model_obj, "tokenizer", None) or getattr(model_obj, "_tokenizer", None)
+    tokenizer_max = _coerce_seq_length(
+        getattr(tokenizer, "model_max_length", None) if tokenizer is not None else None
+    )
+
+    auto_model = getattr(model_obj, "auto_model", None)
+    if auto_model is None and hasattr(model_obj, "_first_module"):
+        try:
+            first_module = model_obj._first_module()
+        except Exception:
+            first_module = None
+        auto_model = getattr(first_module, "auto_model", None) if first_module is not None else None
+
+    max_positions = None
+    if auto_model is not None:
+        config = getattr(auto_model, "config", None)
+        max_positions = _coerce_seq_length(
+            getattr(config, "max_position_embeddings", None) if config is not None else None
+        )
+
+    existing_max_seq_length = _coerce_seq_length(getattr(model_obj, "max_seq_length", None))
+    cap_candidates = [
+        value for value in (existing_max_seq_length, tokenizer_max, max_positions) if value is not None
+    ]
+    if not cap_candidates:
+        return
+
+    safe_seq_len = min(cap_candidates)
+    model_obj.max_seq_length = safe_seq_len
+    logger.info(
+        "clamped sentence transformer max_seq_length",
+        extra={
+            "model": getattr(model_obj, "model_name", None) or _MODEL_NAME,
+            "max_seq_length": safe_seq_len,
+            "existing_max_seq_length": existing_max_seq_length,
+            "tokenizer_max_length": tokenizer_max,
+            "max_position_embeddings": max_positions,
+        },
+    )
+
+
 def _purge_corrupted_snapshot(snapshot_path: Path) -> None:
     """Remove a corrupted ``SentenceTransformer`` snapshot directory."""
 
@@ -2285,6 +2332,7 @@ def _load_embedder(
                     prefer_local=True,
                     **snapshot_kwargs,
                 )
+                _clamp_embedder_max_seq_length(model)
                 duration = time.perf_counter() - start
                 logger.info(
                     "loaded sentence transformer from snapshot",
@@ -2378,6 +2426,7 @@ def _load_embedder(
         model = initialise_sentence_transformer(
             _MODEL_ID, prefer_local=prefer_local, **local_kwargs
         )
+        _clamp_embedder_max_seq_length(model)
         duration = time.perf_counter() - start
         logger.info(
             "loaded sentence transformer",
@@ -2419,6 +2468,7 @@ def _load_embedder(
                 model = initialise_sentence_transformer(
                     _MODEL_ID, prefer_local=prefer_local, **local_kwargs
                 )
+                _clamp_embedder_max_seq_length(model)
                 duration = time.perf_counter() - start
                 logger.info(
                     "loaded sentence transformer after retry",
