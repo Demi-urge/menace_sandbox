@@ -2848,6 +2848,12 @@ def governed_embed(
         if isinstance(max_positions, int) and 0 < max_positions < 1_000_000:
             max_position_candidates.append(max_positions)
         auto_model = getattr(model_obj, "auto_model", None)
+        auto_config = getattr(auto_model, "config", None)
+        auto_max_positions = (
+            getattr(auto_config, "max_position_embeddings", None) if auto_config is not None else None
+        )
+        if isinstance(auto_max_positions, int) and 0 < auto_max_positions < 1_000_000:
+            max_position_candidates.append(auto_max_positions)
         embeddings = getattr(auto_model, "embeddings", None)
         position_embeddings = getattr(embeddings, "position_embeddings", None)
         num_embeddings = getattr(position_embeddings, "num_embeddings", None)
