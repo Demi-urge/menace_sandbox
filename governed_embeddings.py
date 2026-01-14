@@ -2785,6 +2785,43 @@ def governed_embed(
         tokenizer = getattr(model_obj, "tokenizer", None)
         if tokenizer is None:
             tokenizer = getattr(model_obj, "_tokenizer", None)
+        if tokenizer is not None:
+            return tokenizer
+        first_module = None
+        if hasattr(model_obj, "_first_module"):
+            try:
+                first_module = model_obj._first_module()
+            except Exception:
+                first_module = None
+        if first_module is not None:
+            logger.debug("tokenizer resolution falling back to _first_module()")
+            tokenizer = getattr(first_module, "tokenizer", None)
+            if tokenizer is None:
+                tokenizer = getattr(first_module, "_tokenizer", None)
+            if tokenizer is not None:
+                return tokenizer
+            auto_model = getattr(first_module, "auto_model", None)
+            tokenizer = getattr(auto_model, "tokenizer", None)
+            if tokenizer is None:
+                tokenizer = getattr(auto_model, "_tokenizer", None)
+            if tokenizer is not None:
+                return tokenizer
+            config = getattr(auto_model, "config", None) if auto_model is not None else None
+            tokenizer = getattr(config, "tokenizer", None)
+            if tokenizer is None:
+                tokenizer = getattr(config, "_tokenizer", None)
+            if tokenizer is not None:
+                return tokenizer
+        auto_model = getattr(model_obj, "auto_model", None)
+        tokenizer = getattr(auto_model, "tokenizer", None)
+        if tokenizer is None:
+            tokenizer = getattr(auto_model, "_tokenizer", None)
+        if tokenizer is not None:
+            return tokenizer
+        config = getattr(auto_model, "config", None) if auto_model is not None else None
+        tokenizer = getattr(config, "tokenizer", None)
+        if tokenizer is None:
+            tokenizer = getattr(config, "_tokenizer", None)
         return tokenizer
 
     def _resolve_max_position_embeddings(model_obj: Any) -> int | None:
