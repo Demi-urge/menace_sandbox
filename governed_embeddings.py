@@ -3134,16 +3134,20 @@ def governed_embed(
         lowered = message.lower()
         reduced_kwargs: dict[str, Any] | None = None
         dropped_keys: list[str] = []
-        if encode_kwargs and allowed_encode_keys is not None:
-            filtered = {key: value for key, value in encode_kwargs.items() if key in allowed_encode_keys}
-            if filtered != encode_kwargs:
-                reduced_kwargs = filtered
-        if reduced_kwargs is None and encode_kwargs and (
+        should_strip_kwargs = (
             "additional keyword arguments" in lowered
+            or "does not accept any additional keyword arguments" in lowered
             or "unexpected keyword argument" in lowered
-            or "does not accept" in lowered
-        ):
-            reduced_kwargs = {}
+        )
+        if should_strip_kwargs and encode_kwargs:
+            if allowed_encode_keys is not None:
+                filtered = {
+                    key: value for key, value in encode_kwargs.items() if key in allowed_encode_keys
+                }
+                if filtered != encode_kwargs:
+                    reduced_kwargs = filtered
+            if reduced_kwargs is None:
+                reduced_kwargs = {}
         if reduced_kwargs is not None:
             dropped_keys = sorted(set(encode_kwargs) - set(reduced_kwargs))
             logger.warning(
