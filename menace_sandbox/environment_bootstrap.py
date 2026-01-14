@@ -98,6 +98,8 @@ _BOOTSTRAP_STATE: Mapping[str, object] | None = None
 _BOOTSTRAP_STATUS = "not_started"
 _BOOTSTRAP_ERROR: str | None = None
 _BOOTSTRAP_EVENT = threading.Event()
+_EAGER_EMBEDDER_INIT_LOCK = threading.Lock()
+_EAGER_EMBEDDER_INIT_STARTED = False
 
 
 class _BootstrapGuard:
@@ -197,8 +199,35 @@ def _readiness_snapshot() -> Mapping[str, object]:
         _BOOTSTRAP_STATE = snapshot
     else:
         _BOOTSTRAP_STATE = {"ready": False, "components": {}, "heartbeat": None}
-
     return _BOOTSTRAP_STATE
+
+
+def _start_eager_embedder_init(logger: logging.Logger) -> None:
+    global _EAGER_EMBEDDER_INIT_STARTED
+    with _EAGER_EMBEDDER_INIT_LOCK:
+        if _EAGER_EMBEDDER_INIT_STARTED:
+            return
+        _EAGER_EMBEDDER_INIT_STARTED = True
+
+    try:  # pragma: no cover - prefer package relative imports
+        from .governed_embeddings import get_embedder
+    except Exception:  # pragma: no cover - fallback when executed directly
+        from governed_embeddings import get_embedder
+
+    def _runner() -> None:
+        logger.info("eager embedder init started")
+        try:
+            get_embedder(bootstrap_mode=True)
+        except Exception:
+            logger.exception("eager embedder init failed")
+        finally:
+            logger.info("eager embedder init complete")
+
+    threading.Thread(
+        target=_runner,
+        name="eager-embedder-init",
+        daemon=True,
+    ).start()
 
 
 def _wait_for_inflight_bootstrap(*, timeout: float | None, description: str) -> Mapping[str, object]:
@@ -3375,6 +3404,7 @@ class EnvironmentBootstrapper:
     ) -> None:
         with bootstrap_metrics.bootstrap_attempt(logger=self.logger):
             self.initialise_background_watchers()
+            _start_eager_embedder_init(self.logger)
             timeout = (
                 timeout
                 if timeout is not None
