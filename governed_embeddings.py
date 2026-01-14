@@ -14,6 +14,8 @@ import traceback
 from pathlib import Path
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, TYPE_CHECKING, cast, Set
 
+logger = logging.getLogger(__name__)
+
 try:  # pragma: no cover - lock utilities are optional in some environments
     from lock_utils import (
         LOCK_TIMEOUT,
@@ -140,8 +142,35 @@ model: "SentenceTransformer | None"
 
 DEFAULT_SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_CHAR_TRUNCATION_THRESHOLD = 8000
-MAX_SAFE_CHARS = 4000
+DEFAULT_MAX_SAFE_CHARS = 4000
 EMBEDDING_CHARS_PER_TOKEN = 4
+
+
+def _read_positive_int_env(var_name: str, default: int) -> int:
+    raw_value = os.getenv(var_name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "invalid %s value %r; using default %s",
+            var_name,
+            raw_value,
+            default,
+        )
+        return default
+    if parsed <= 0:
+        logger.warning(
+            "%s must be positive; using default %s",
+            var_name,
+            default,
+        )
+        return default
+    return parsed
+
+
+MAX_SAFE_CHARS = _read_positive_int_env("EMBEDDING_MAX_SAFE_CHARS", DEFAULT_MAX_SAFE_CHARS)
 
 
 def canonical_model_id(model_name: str | None) -> str:
@@ -198,8 +227,6 @@ from compliance.license_fingerprint import (
     fingerprint as license_fingerprint,
 )
 from analysis.semantic_diff_filter import find_semantic_risks
-
-logger = logging.getLogger(__name__)
 
 _EMBEDDER: SentenceTransformer | None = None
 _EMBEDDER_LOCK: SandboxLockType | None = None
