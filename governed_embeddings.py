@@ -11,8 +11,9 @@ import tarfile
 import threading
 import time
 import traceback
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, TYPE_CHECKING, cast, Set
+from typing import Any, Callable, Iterable, List, Mapping, MutableMapping, Optional, TYPE_CHECKING, cast, Set
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,7 @@ EMBEDDING_CHAR_TRUNCATION_THRESHOLD = 8000
 DEFAULT_MAX_SAFE_CHARS = 4000
 EMBEDDING_CHARS_PER_TOKEN = 4
 DEFAULT_FALLBACK_RETRY_CAP = 128
+_FAST_TOKENIZER_ENCODE_LOCKS: MutableMapping[int, threading.Lock] = defaultdict(threading.Lock)
 
 
 def _read_positive_int_env(var_name: str, default: int) -> int:
@@ -3086,6 +3088,9 @@ def governed_embed(
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     allowed_encode_keys = _resolve_allowed_encode_keys(model)
     tokenizer = _resolve_tokenizer(model)
+    encode_lock: threading.Lock | None = None
+    if tokenizer is not None and supports_truncation and getattr(tokenizer, "is_fast", False):
+        encode_lock = _FAST_TOKENIZER_ENCODE_LOCKS[id(tokenizer)]
     if tokenizer is None:
         special_overhead = 2
     else:
@@ -3216,8 +3221,18 @@ def governed_embed(
         len(cleaned_for_embedding),
         approx_tokens,
     )
+
+    def _encode_with_lock(payload: Callable[[], Any]) -> Any:
+        if encode_lock is None:
+            return payload()
+        logger.debug("serializing encode call for fast tokenizer safety")
+        with encode_lock:
+            return payload()
+
     try:  # pragma: no cover - external model may fail at runtime
-        return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
+        return _encode_with_lock(
+            lambda: model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
+        )
     except ValueError as exc:
         lowered = str(exc).lower()
         if "additional keyword arguments" in lowered:
@@ -3229,7 +3244,9 @@ def governed_embed(
                 exc_info=exc,
             )
             try:  # pragma: no cover - external model may fail at runtime
-                return model.encode([cleaned_for_embedding])[0].tolist()
+                return _encode_with_lock(
+                    lambda: model.encode([cleaned_for_embedding])[0].tolist()
+                )
             except Exception:
                 logger.exception(
                     "embedding failed during model.encode (redacted=%s cleaned_empty=%s text_len=%s)",
@@ -3398,7 +3415,9 @@ def governed_embed(
                 key: value for key, value in retry_kwargs.items() if key in allowed_encode_keys
             }
         try:  # pragma: no cover - external model may fail at runtime
-            return model.encode([cleaned_retry], **retry_kwargs)[0].tolist()
+            return _encode_with_lock(
+                lambda: model.encode([cleaned_retry], **retry_kwargs)[0].tolist()
+            )
         except ValueError as exc:
             lowered = str(exc).lower()
             if "additional keyword arguments" in lowered:
@@ -3410,7 +3429,9 @@ def governed_embed(
                     exc_info=exc,
                 )
                 try:  # pragma: no cover - external model may fail at runtime
-                    return model.encode([cleaned_retry])[0].tolist()
+                    return _encode_with_lock(
+                        lambda: model.encode([cleaned_retry])[0].tolist()
+                    )
                 except Exception:
                     logger.exception(
                         "embedding failed during model.encode retry "
