@@ -109,7 +109,9 @@ class VectorServiceReadyStatus(TypedDict):
     timed_out: bool
 
 
-def _wait_for_vector_service_ready(*, logger: logging.Logger) -> VectorServiceReadyStatus:
+def _wait_for_vector_service_ready(
+    *, logger: logging.Logger, service: SharedVectorService | None = None
+) -> VectorServiceReadyStatus:
     base = os.environ.get("VECTOR_SERVICE_URL")
     if not base:
         return {"ready": True, "elapsed": 0.0, "attempts": 0, "timed_out": False}
@@ -141,14 +143,23 @@ def _wait_for_vector_service_ready(*, logger: logging.Logger) -> VectorServiceRe
         try:
             attempts += 1
             with urllib.request.urlopen(ready_url, timeout=2.0):
+                elapsed = time.monotonic() - start
+                logger.info(
+                    "vector service readiness confirmed",
+                    extra={"elapsed": elapsed, "attempts": attempts},
+                )
                 return {
                     "ready": True,
-                    "elapsed": time.monotonic() - start,
+                    "elapsed": elapsed,
                     "attempts": attempts,
                     "timed_out": False,
                 }
         except Exception as exc:
-            logger.debug("vector service readiness probe failed: %s", exc)
+            logger.debug(
+                "vector service readiness probe failed: %s",
+                exc,
+                extra={"elapsed": time.monotonic() - start, "attempts": attempts},
+            )
         time.sleep(delay)
         delay = min(delay * 1.5, 5.0)
 
@@ -168,9 +179,43 @@ def _wait_for_vector_service_ready(*, logger: logging.Logger) -> VectorServiceRe
                     "timed_out": False,
                 }
         except Exception as exc:
-            logger.debug("vector service readiness probe failed: %s", exc)
+            logger.debug(
+                "vector service readiness probe failed: %s",
+                exc,
+                extra={"elapsed": time.monotonic() - start, "attempts": attempts},
+            )
         time.sleep(delay)
         delay = min(delay * 1.5, 5.0)
+
+    if service is not None:
+        try:
+            attempts += 1
+            probe_start = time.monotonic()
+            service.vectorise("text", {"text": "probe"})
+            elapsed = time.monotonic() - start
+            logger.info(
+                "vector service readiness confirmed via local probe",
+                extra={
+                    "elapsed": elapsed,
+                    "attempts": attempts,
+                    "probe_elapsed": time.monotonic() - probe_start,
+                },
+            )
+            return {
+                "ready": True,
+                "elapsed": elapsed,
+                "attempts": attempts,
+                "timed_out": True,
+            }
+        except Exception as exc:
+            logger.info(
+                "vector service local readiness probe failed",
+                extra={
+                    "elapsed": time.monotonic() - start,
+                    "attempts": attempts,
+                    "error": str(exc),
+                },
+            )
 
     elapsed = time.monotonic() - start
     logger.warning(
@@ -211,7 +256,7 @@ def seed_initial_vectors(
         )
         return {"status": "local", "elapsed": 0.0, "attempts": 0}
 
-    ready_status = _wait_for_vector_service_ready(logger=logger)
+    ready_status = _wait_for_vector_service_ready(logger=logger, service=service)
     if not ready_status["ready"]:
         _seed_direct(store, logger=logger)
         elapsed = time.monotonic() - seed_start
