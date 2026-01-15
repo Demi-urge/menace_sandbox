@@ -7,7 +7,7 @@ import os
 import time
 import urllib.request
 import uuid
-from typing import Iterable
+from typing import Iterable, Literal, TypedDict
 
 from .vector_store import VectorStore, get_default_vector_store
 
@@ -38,10 +38,23 @@ def _seed_direct(store: VectorStore, *, logger: logging.Logger) -> None:
     logger.info("vector store seeded", extra={"count": 3, "dimension": dimension})
 
 
-def _wait_for_vector_service_ready(*, logger: logging.Logger) -> bool:
+class VectorSeedStatus(TypedDict):
+    status: Literal["remote", "local", "skipped"]
+    elapsed: float
+    attempts: int
+
+
+class VectorServiceReadyStatus(TypedDict):
+    ready: bool
+    elapsed: float
+    attempts: int
+    timed_out: bool
+
+
+def _wait_for_vector_service_ready(*, logger: logging.Logger) -> VectorServiceReadyStatus:
     base = os.environ.get("VECTOR_SERVICE_URL")
     if not base:
-        return True
+        return {"ready": True, "elapsed": 0.0, "attempts": 0, "timed_out": False}
 
     try:
         timeout = max(1.0, float(os.environ.get("VECTOR_SERVICE_READY_TIMEOUT", "150")))
@@ -70,7 +83,12 @@ def _wait_for_vector_service_ready(*, logger: logging.Logger) -> bool:
         try:
             attempts += 1
             with urllib.request.urlopen(ready_url, timeout=2.0):
-                return True
+                return {
+                    "ready": True,
+                    "elapsed": time.monotonic() - start,
+                    "attempts": attempts,
+                    "timed_out": False,
+                }
         except Exception as exc:
             logger.debug("vector service readiness probe failed: %s", exc)
         time.sleep(delay)
@@ -85,7 +103,12 @@ def _wait_for_vector_service_ready(*, logger: logging.Logger) -> bool:
                     "vector service readiness reached during extended retries",
                     extra={"retry_budget": retry_budget, "elapsed": elapsed, "attempts": attempts},
                 )
-                return True
+                return {
+                    "ready": True,
+                    "elapsed": elapsed,
+                    "attempts": attempts,
+                    "timed_out": False,
+                }
         except Exception as exc:
             logger.debug("vector service readiness probe failed: %s", exc)
         time.sleep(delay)
@@ -96,16 +119,23 @@ def _wait_for_vector_service_ready(*, logger: logging.Logger) -> bool:
         "vector service readiness timed out after extended retries; falling back to local seeding",
         extra={"retry_budget": retry_budget, "elapsed": elapsed, "attempts": attempts},
     )
-    return False
+    return {
+        "ready": False,
+        "elapsed": elapsed,
+        "attempts": attempts,
+        "timed_out": True,
+    }
 
 
-def seed_initial_vectors(service: SharedVectorService | None, *, logger: logging.Logger) -> None:
+def seed_initial_vectors(
+    service: SharedVectorService | None, *, logger: logging.Logger
+) -> VectorSeedStatus:
     """Warm baseline embeddings for the configured vector store."""
 
     store = get_default_vector_store(lazy=False)
     if store is None:
         logger.warning("vector store unavailable; skipping vector seeding")
-        return
+        return {"status": "skipped", "elapsed": 0.0, "attempts": 0}
 
     try:
         store.load()
@@ -114,11 +144,24 @@ def seed_initial_vectors(service: SharedVectorService | None, *, logger: logging
 
     if service is None:
         _seed_direct(store, logger=logger)
-        return
+        return {"status": "local", "elapsed": 0.0, "attempts": 0}
 
-    if not _wait_for_vector_service_ready(logger=logger):
+    ready_status = _wait_for_vector_service_ready(logger=logger)
+    if not ready_status["ready"]:
         _seed_direct(store, logger=logger)
-        return
+        if ready_status["timed_out"]:
+            logger.info(
+                "local seeding completed after remote readiness timeout",
+                extra={
+                    "elapsed": ready_status["elapsed"],
+                    "attempts": ready_status["attempts"],
+                },
+            )
+        return {
+            "status": "local",
+            "elapsed": ready_status["elapsed"],
+            "attempts": ready_status["attempts"],
+        }
 
     try:
         text = "menace bootstrap seed vector"
@@ -128,9 +171,15 @@ def seed_initial_vectors(service: SharedVectorService | None, *, logger: logging
                 "text", record_id, {"text": text}, metadata={"seed": True}
             )
         logger.info("seeded baseline vectors via SharedVectorService", extra={"count": 3})
+        return {
+            "status": "remote",
+            "elapsed": ready_status["elapsed"],
+            "attempts": ready_status["attempts"],
+        }
     except Exception:
         logger.exception("shared vector service seeding failed; falling back to direct store")
         _seed_direct(store, logger=logger)
+        return {"status": "local", "elapsed": 0.0, "attempts": 0}
 
 
 __all__ = ["seed_initial_vectors"]
