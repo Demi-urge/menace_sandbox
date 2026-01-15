@@ -267,9 +267,10 @@ def seed_initial_vectors(
         )
         if ready_status["timed_out"]:
             logger.info(
-                "local seeding completed after remote readiness timeout",
+                "local vector seeding completed after readiness timeout",
                 extra={
-                    "elapsed": ready_status["elapsed"],
+                    "elapsed": elapsed,
+                    "readiness_elapsed": ready_status["elapsed"],
                     "attempts": ready_status["attempts"],
                 },
             )
