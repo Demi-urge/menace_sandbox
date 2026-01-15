@@ -11,7 +11,7 @@ import tarfile
 import threading
 import time
 import traceback
-from collections import defaultdict
+import weakref
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Mapping, MutableMapping, Optional, TYPE_CHECKING, cast, Set
 
@@ -146,7 +146,10 @@ EMBEDDING_CHAR_TRUNCATION_THRESHOLD = 8000
 DEFAULT_MAX_SAFE_CHARS = 4000
 EMBEDDING_CHARS_PER_TOKEN = 4
 DEFAULT_FALLBACK_RETRY_CAP = 128
-_FAST_TOKENIZER_ENCODE_LOCKS: MutableMapping[int, threading.Lock] = defaultdict(threading.Lock)
+_FAST_TOKENIZER_ENCODE_LOCKS: "weakref.WeakKeyDictionary[Any, threading.RLock]" = (
+    weakref.WeakKeyDictionary()
+)
+_FAST_TOKENIZER_ENCODE_LOCKS_GUARD = threading.Lock()
 
 
 def _read_positive_int_env(var_name: str, default: int) -> int:
@@ -174,6 +177,36 @@ def _read_positive_int_env(var_name: str, default: int) -> int:
 
 
 MAX_SAFE_CHARS = _read_positive_int_env("EMBEDDING_MAX_SAFE_CHARS", DEFAULT_MAX_SAFE_CHARS)
+
+
+def _resolve_fast_tokenizer_lock(
+    model_obj: Any | None,
+    tokenizer_obj: Any | None,
+) -> threading.RLock | None:
+    if tokenizer_obj is None or not getattr(tokenizer_obj, "is_fast", False):
+        return None
+    if model_obj is None:
+        return _EMBEDDER_ENCODE_LOCK
+    try:
+        with _FAST_TOKENIZER_ENCODE_LOCKS_GUARD:
+            existing = _FAST_TOKENIZER_ENCODE_LOCKS.get(model_obj)
+            if existing is not None:
+                return existing
+            created = threading.RLock()
+            _FAST_TOKENIZER_ENCODE_LOCKS[model_obj] = created
+            return created
+    except TypeError:
+        return _EMBEDDER_ENCODE_LOCK
+
+
+def _lock_is_held(lock: threading.RLock) -> bool:
+    is_owned = getattr(lock, "_is_owned", None)
+    if callable(is_owned):
+        try:
+            return bool(is_owned())
+        except Exception:  # pragma: no cover - defensive
+            return False
+    return False
 
 
 def canonical_model_id(model_name: str | None) -> str:
@@ -3147,15 +3180,26 @@ def governed_embed(
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     allowed_encode_keys = _resolve_allowed_encode_keys(model)
     tokenizer = _resolve_tokenizer(model)
-    if tokenizer is None:
-        special_overhead = 2
-    else:
+    encode_lock = _resolve_fast_tokenizer_lock(model, tokenizer)
+
+    def _with_tokenizer_lock(payload: Callable[[], Any]) -> Any:
+        if encode_lock is None:
+            return payload()
+        with encode_lock:
+            return payload()
+
+    def _compute_special_overhead() -> int:
+        if tokenizer is None:
+            return 2
         special_overhead = 2
         if hasattr(tokenizer, "num_special_tokens_to_add"):
             try:
                 special_overhead = tokenizer.num_special_tokens_to_add(pair=False)
             except Exception:
                 special_overhead = 2
+        return special_overhead
+
+    special_overhead = _with_tokenizer_lock(_compute_special_overhead)
     (
         effective_max_tokens,
         tokenizer_max,
@@ -3184,12 +3228,6 @@ def governed_embed(
         allowed_encode_keys is None or "truncation" in allowed_encode_keys
     ):
         encode_kwargs["truncation"] = True
-    encode_requires_lock = (
-        (tokenizer is not None and getattr(tokenizer, "is_fast", False))
-        or "truncation" in encode_kwargs
-        or "max_length" in encode_kwargs
-    )
-    encode_lock: threading.Lock | None = _EMBEDDER_ENCODE_LOCK if encode_requires_lock else None
     cleaned_for_embedding = cleaned
     if isinstance(max_positions, int):
         safe_chars = max_positions * EMBEDDING_CHARS_PER_TOKEN
@@ -3220,22 +3258,26 @@ def governed_embed(
         )
         cleaned_for_embedding = cleaned_for_embedding[:EMBEDDING_CHAR_TRUNCATION_THRESHOLD]
     hard_max_tokens = effective_max_tokens
-    original_token_count = _count_tokens(
-        cleaned_for_embedding,
-        model,
-        hard_max_tokens,
-        add_special_tokens=True,
+    original_token_count = _with_tokenizer_lock(
+        lambda: _count_tokens(
+            cleaned_for_embedding,
+            model,
+            hard_max_tokens,
+            add_special_tokens=True,
+        )
     )
     (
         cleaned_for_embedding,
         token_truncated,
         pre_trunc_tokens,
         post_trunc_tokens,
-    ) = _truncate_text_for_embedding(
-        cleaned_for_embedding,
-        model,
-        hard_max_tokens,
-        special_overhead,
+    ) = _with_tokenizer_lock(
+        lambda: _truncate_text_for_embedding(
+            cleaned_for_embedding,
+            model,
+            hard_max_tokens,
+            special_overhead,
+        )
     )
     logger.debug(
         "embedding truncation details "
@@ -3244,11 +3286,13 @@ def governed_embed(
         pre_trunc_tokens,
         post_trunc_tokens,
     )
-    truncated_token_count = _count_tokens(
-        cleaned_for_embedding,
-        model,
-        hard_max_tokens,
-        add_special_tokens=True,
+    truncated_token_count = _with_tokenizer_lock(
+        lambda: _count_tokens(
+            cleaned_for_embedding,
+            model,
+            hard_max_tokens,
+            add_special_tokens=True,
+        )
     )
     if token_truncated:
         logger.warning(
@@ -3425,17 +3469,21 @@ def governed_embed(
             _,
             _,
             _,
-        ) = _truncate_text_for_embedding(
-            cleaned_for_embedding,
-            model,
-            retry_cap,
-            special_overhead,
+        ) = _with_tokenizer_lock(
+            lambda: _truncate_text_for_embedding(
+                cleaned_for_embedding,
+                model,
+                retry_cap,
+                special_overhead,
+            )
         )
-        final_retry_tokens = _count_tokens(
-            cleaned_retry,
-            model,
-            retry_cap,
-            add_special_tokens=True,
+        final_retry_tokens = _with_tokenizer_lock(
+            lambda: _count_tokens(
+                cleaned_retry,
+                model,
+                retry_cap,
+                add_special_tokens=True,
+            )
         )
         while final_retry_tokens > retry_cap and retry_cap > 1:
             retry_cap = max(1, retry_cap // 2)
@@ -3444,17 +3492,21 @@ def governed_embed(
                 _,
                 _,
                 _,
-            ) = _truncate_text_for_embedding(
-                cleaned_for_embedding,
-                model,
-                retry_cap,
-                special_overhead,
+            ) = _with_tokenizer_lock(
+                lambda: _truncate_text_for_embedding(
+                    cleaned_for_embedding,
+                    model,
+                    retry_cap,
+                    special_overhead,
+                )
             )
-            final_retry_tokens = _count_tokens(
-                cleaned_retry,
-                model,
-                retry_cap,
-                add_special_tokens=True,
+            final_retry_tokens = _with_tokenizer_lock(
+                lambda: _count_tokens(
+                    cleaned_retry,
+                    model,
+                    retry_cap,
+                    add_special_tokens=True,
+                )
             )
         if final_retry_tokens > retry_cap:
             logger.warning(
@@ -3529,8 +3581,11 @@ def governed_embed(
                 exc_info=exc,
             )
             try:  # pragma: no cover - external model may fail at runtime
-                with _EMBEDDER_ENCODE_LOCK:
-                    return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
+                retry_lock = encode_lock or _EMBEDDER_ENCODE_LOCK
+                if retry_lock is not None and not _lock_is_held(retry_lock):
+                    with retry_lock:
+                        return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
+                return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
             except Exception:
                 logger.exception(
                     "embedding failed during model.encode retry after tokenizer already borrowed "

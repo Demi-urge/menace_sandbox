@@ -49,6 +49,68 @@ def test_governed_embed_redacts_and_embeds(monkeypatch, caplog):
     assert any("redacted" in r.msg for r in caplog.records)
 
 
+def test_governed_embed_serializes_fast_tokenizer(monkeypatch):
+    class DummyTokenizer:
+        is_fast = True
+        model_max_length = 512
+
+        def __init__(self) -> None:
+            self._borrow_lock = threading.Lock()
+
+        def encode(self, text: str, add_special_tokens: bool = False, **_: object) -> list[int]:
+            if not self._borrow_lock.acquire(blocking=False):
+                raise RuntimeError("Already borrowed")
+            try:
+                time.sleep(0.005)
+                token_count = max(
+                    1, len(text) // governed_embeddings.EMBEDDING_CHARS_PER_TOKEN
+                )
+                return list(range(token_count))
+            finally:
+                self._borrow_lock.release()
+
+        def decode(self, token_ids: list[int], skip_special_tokens: bool = True) -> str:
+            return "x" * (len(token_ids) * governed_embeddings.EMBEDDING_CHARS_PER_TOKEN)
+
+        def num_special_tokens_to_add(self, pair: bool = False) -> int:
+            return 2
+
+    tokenizer = DummyTokenizer()
+
+    class DummyEmbedder:
+        model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        tokenizer = tokenizer
+
+        def encode(self, arr, **_: object):
+            self.tokenizer.encode(arr[0], add_special_tokens=True)
+            return [types.SimpleNamespace(tolist=lambda: [0.1, 0.2])]
+
+    monkeypatch.setattr(governed_embeddings, "redact", lambda text: text)
+    monkeypatch.setattr(governed_embeddings, "license_check", lambda text: None)
+
+    embedder = DummyEmbedder()
+    barrier = threading.Barrier(5)
+    results: list[list[float]] = []
+    errors: list[Exception] = []
+
+    def worker() -> None:
+        try:
+            barrier.wait()
+            results.append(governed_embed("fast tokenizer test", embedder=embedder))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    assert len(results) == 5
+    assert all(isinstance(vec, list) and vec for vec in results)
+
+
 def test_governed_embed_hard_caps_before_tokenization(caplog):
     class DummyTokenizer:
         model_max_length = 512
