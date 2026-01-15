@@ -7,7 +7,7 @@ import os
 import time
 import urllib.request
 import uuid
-from typing import Iterable, Literal, TypedDict
+from typing import Iterable, Literal, Mapping, MutableMapping, TypedDict
 
 from .vector_store import VectorStore, get_default_vector_store
 
@@ -18,6 +18,63 @@ except Exception:  # pragma: no cover - fallback when vectorizer import fails
     class SharedVectorService:  # type: ignore
         def __init__(self, *_, **__):
             raise RuntimeError("SharedVectorService unavailable")
+
+
+def _emit_local_seed_readiness(*, elapsed: float, logger: logging.Logger) -> None:
+    try:  # pragma: no cover - best effort
+        from menace_sandbox.bootstrap_timeout_policy import (
+            emit_bootstrap_heartbeat,
+            read_bootstrap_heartbeat,
+        )
+    except Exception:
+        return
+
+    heartbeat = read_bootstrap_heartbeat() or {}
+    readiness = heartbeat.get("readiness") if isinstance(heartbeat, Mapping) else {}
+
+    components: MutableMapping[str, str] = {}
+    component_readiness: MutableMapping[str, Mapping[str, object]] = {}
+
+    if isinstance(readiness, Mapping):
+        raw_components = readiness.get("components")
+        if isinstance(raw_components, Mapping):
+            components.update({str(key): str(value) for key, value in raw_components.items()})
+
+        raw_component_readiness = readiness.get("component_readiness")
+        if isinstance(raw_component_readiness, Mapping):
+            for key, value in raw_component_readiness.items():
+                state = value if isinstance(value, Mapping) else {"status": value}
+                component_readiness[str(key)] = dict(state)
+
+    now = time.time()
+    components["vector_seeding"] = "ready"
+    readiness_entry: MutableMapping[str, object] = dict(
+        component_readiness.get("vector_seeding", {})
+    )
+    readiness_entry.update(
+        {
+            "status": "ready",
+            "ts": now,
+            "reason": "fallback_local_seed",
+            "elapsed": elapsed,
+        }
+    )
+    component_readiness["vector_seeding"] = dict(readiness_entry)
+
+    readiness_payload: dict[str, object] = {
+        "components": dict(components),
+        "component_readiness": dict(component_readiness),
+        "ready": readiness.get("ready") if isinstance(readiness, Mapping) else False,
+        "online": readiness.get("online") if isinstance(readiness, Mapping) else False,
+    }
+
+    enriched = dict(heartbeat)
+    enriched["readiness"] = readiness_payload
+    emit_bootstrap_heartbeat(enriched)
+    logger.debug(
+        "emitted local vector seeding readiness heartbeat",
+        extra={"reason": "fallback_local_seed", "elapsed": elapsed},
+    )
 
 
 def _seed_direct(store: VectorStore, *, logger: logging.Logger) -> None:
@@ -132,6 +189,7 @@ def seed_initial_vectors(
 ) -> VectorSeedStatus:
     """Warm baseline embeddings for the configured vector store."""
 
+    seed_start = time.monotonic()
     store = get_default_vector_store(lazy=False)
     if store is None:
         logger.warning("vector store unavailable; skipping vector seeding")
@@ -144,11 +202,23 @@ def seed_initial_vectors(
 
     if service is None:
         _seed_direct(store, logger=logger)
+        elapsed = time.monotonic() - seed_start
+        _emit_local_seed_readiness(elapsed=elapsed, logger=logger)
+        logger.info(
+            "seeding recovered via local fallback",
+            extra={"elapsed": elapsed},
+        )
         return {"status": "local", "elapsed": 0.0, "attempts": 0}
 
     ready_status = _wait_for_vector_service_ready(logger=logger)
     if not ready_status["ready"]:
         _seed_direct(store, logger=logger)
+        elapsed = time.monotonic() - seed_start
+        _emit_local_seed_readiness(elapsed=elapsed, logger=logger)
+        logger.info(
+            "seeding recovered via local fallback",
+            extra={"elapsed": elapsed},
+        )
         if ready_status["timed_out"]:
             logger.info(
                 "local seeding completed after remote readiness timeout",
@@ -179,6 +249,12 @@ def seed_initial_vectors(
     except Exception:
         logger.exception("shared vector service seeding failed; falling back to direct store")
         _seed_direct(store, logger=logger)
+        elapsed = time.monotonic() - seed_start
+        _emit_local_seed_readiness(elapsed=elapsed, logger=logger)
+        logger.info(
+            "seeding recovered via local fallback",
+            extra={"elapsed": elapsed},
+        )
         return {"status": "local", "elapsed": 0.0, "attempts": 0}
 
 
