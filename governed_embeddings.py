@@ -2844,6 +2844,64 @@ def governed_embed(
         config = getattr(auto_model, "config", None) if auto_model is not None else None
         return _tokenizer_from(config)
 
+    def _clone_fast_tokenizer_for_safe_retry(tokenizer_obj: Any) -> Any | None:
+        if tokenizer_obj is None or not getattr(tokenizer_obj, "is_fast", False):
+            return None
+        name_or_path = getattr(tokenizer_obj, "name_or_path", None)
+        if not name_or_path:
+            return None
+        tokenizer_cls = tokenizer_obj.__class__
+        from_pretrained = getattr(tokenizer_cls, "from_pretrained", None)
+        if not callable(from_pretrained):
+            return None
+        try:
+            return tokenizer_cls.from_pretrained(name_or_path, use_fast=True)
+        except Exception as exc:  # pragma: no cover - best effort cloning
+            logger.debug(
+                "failed to clone fast tokenizer for safe retry (name_or_path=%s): %s",
+                name_or_path,
+                exc,
+            )
+            return None
+
+    @contextlib.contextmanager
+    def _temporary_tokenizer(model_obj: Any, replacement: Any | None) -> Iterable[None]:
+        if replacement is None:
+            yield
+            return
+        updates: list[tuple[Any, str, Any]] = []
+
+        def _apply(target: Any) -> None:
+            for attr in ("tokenizer", "_tokenizer"):
+                if not hasattr(target, attr):
+                    continue
+                try:
+                    current = getattr(target, attr)
+                except Exception:
+                    continue
+                updates.append((target, attr, current))
+                try:
+                    setattr(target, attr, replacement)
+                except Exception:
+                    updates.pop()
+
+        _apply(model_obj)
+        if hasattr(model_obj, "_first_module"):
+            try:
+                first_module = model_obj._first_module()
+            except Exception:
+                first_module = None
+            if first_module is not None:
+                _apply(first_module)
+        try:
+            yield
+        finally:
+            for target, attr, current in updates:
+                try:
+                    setattr(target, attr, current)
+                except Exception:
+                    continue
+
     def _resolve_max_position_embeddings(model_obj: Any) -> int | None:
         max_position_candidates: list[int] = []
         config = getattr(model_obj, "config", None)
@@ -3456,6 +3514,47 @@ def governed_embed(
                 len(cleaned_retry),
             )
             return [0.0] * _STUB_EMBEDDER_DIMENSION
+    except RuntimeError as exc:
+        if "Already borrowed" in str(exc):
+            safe_kwargs = dict(encode_kwargs)
+            safe_kwargs.pop("max_length", None)
+            if "truncation" in safe_kwargs:
+                safe_kwargs["truncation"] = False
+            if allowed_encode_keys is not None:
+                safe_kwargs = {
+                    key: value for key, value in safe_kwargs.items() if key in allowed_encode_keys
+                }
+            retry_tokenizer = _clone_fast_tokenizer_for_safe_retry(tokenizer)
+            logger.warning(
+                "embedding retry after tokenizer already borrowed "
+                "(model_name=%s model_path=%s tokenizer_fast=%s cloned_tokenizer=%s)",
+                getattr(model, "model_name", None),
+                getattr(model, "model_name_or_path", None),
+                getattr(tokenizer, "is_fast", False) if tokenizer is not None else None,
+                retry_tokenizer is not None,
+                exc_info=exc,
+            )
+            try:  # pragma: no cover - external model may fail at runtime
+                with _temporary_tokenizer(model, retry_tokenizer):
+                    return _encode_with_lock(
+                        lambda: model.encode([cleaned_for_embedding], **safe_kwargs)[0].tolist()
+                    )
+            except Exception:
+                logger.exception(
+                    "embedding failed during safe retry after tokenizer already borrowed "
+                    "(redacted=%s cleaned_empty=%s text_len=%s)",
+                    redacted,
+                    cleaned_empty,
+                    len(cleaned_for_embedding),
+                )
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
+        logger.exception(
+            "embedding failed during model.encode (redacted=%s cleaned_empty=%s text_len=%s)",
+            redacted,
+            cleaned_empty,
+            len(cleaned_for_embedding),
+        )
+        return [0.0] * _STUB_EMBEDDER_DIMENSION
     except Exception:
         logger.exception(
             "embedding failed during model.encode (redacted=%s cleaned_empty=%s text_len=%s)",
