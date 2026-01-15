@@ -52,11 +52,23 @@ def _wait_for_vector_service_ready(*, logger: logging.Logger) -> bool:
         )
         timeout = 150.0
 
+    try:
+        retry_budget = max(0, int(os.environ.get("VECTOR_SERVICE_READY_RETRY_BUDGET", "6")))
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_READY_RETRY_BUDGET=%r; defaulting to 6 retries",
+            os.environ.get("VECTOR_SERVICE_READY_RETRY_BUDGET"),
+        )
+        retry_budget = 6
+
     ready_url = f"{base.rstrip('/')}/health/ready"
-    deadline = time.monotonic() + timeout
+    start = time.monotonic()
+    deadline = start + timeout
     delay = 1.0
+    attempts = 0
     while time.monotonic() < deadline:
         try:
+            attempts += 1
             with urllib.request.urlopen(ready_url, timeout=2.0):
                 return True
         except Exception as exc:
@@ -64,9 +76,25 @@ def _wait_for_vector_service_ready(*, logger: logging.Logger) -> bool:
         time.sleep(delay)
         delay = min(delay * 1.5, 5.0)
 
+    for _ in range(retry_budget):
+        try:
+            attempts += 1
+            with urllib.request.urlopen(ready_url, timeout=2.0):
+                elapsed = time.monotonic() - start
+                logger.info(
+                    "vector service readiness reached during extended retries",
+                    extra={"retry_budget": retry_budget, "elapsed": elapsed, "attempts": attempts},
+                )
+                return True
+        except Exception as exc:
+            logger.debug("vector service readiness probe failed: %s", exc)
+        time.sleep(delay)
+        delay = min(delay * 1.5, 5.0)
+
+    elapsed = time.monotonic() - start
     logger.warning(
-        "vector service readiness timed out after %.1fs; falling back to local seeding",
-        timeout,
+        "vector service readiness timed out after extended retries; falling back to local seeding",
+        extra={"retry_budget": retry_budget, "elapsed": elapsed, "attempts": attempts},
     )
     return False
 
