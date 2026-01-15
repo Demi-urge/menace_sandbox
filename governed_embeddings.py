@@ -3180,6 +3180,7 @@ def governed_embed(
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     allowed_encode_keys = _resolve_allowed_encode_keys(model)
     tokenizer = _resolve_tokenizer(model)
+    is_fast_tokenizer = tokenizer is not None and getattr(tokenizer, "is_fast", False)
     encode_lock = _resolve_fast_tokenizer_lock(model, tokenizer)
 
     def _with_tokenizer_lock(payload: Callable[[], Any]) -> Any:
@@ -3301,6 +3302,9 @@ def governed_embed(
             post_trunc_tokens,
             hard_max_tokens,
         )
+        if is_fast_tokenizer:
+            encode_kwargs.pop("max_length", None)
+            encode_kwargs.pop("truncation", None)
     token_limit = (
         max_positions if isinstance(max_positions, int) else hard_max_tokens + special_overhead
     )
@@ -3574,18 +3578,24 @@ def governed_embed(
         if "Already borrowed" in str(exc):
             logger.warning(
                 "embedding retry after tokenizer already borrowed "
-                "(model_name=%s model_path=%s tokenizer_fast=%s)",
+                "(model_name=%s model_path=%s tokenizer_fast=%s text_len=%s)",
                 getattr(model, "model_name", None),
                 getattr(model, "model_name_or_path", None),
                 getattr(tokenizer, "is_fast", False) if tokenizer is not None else None,
+                len(cleaned_for_embedding),
                 exc_info=exc,
             )
             try:  # pragma: no cover - external model may fail at runtime
+                retry_kwargs = {
+                    key: value
+                    for key, value in encode_kwargs.items()
+                    if key not in {"max_length", "truncation"}
+                }
                 retry_lock = encode_lock or _EMBEDDER_ENCODE_LOCK
                 if retry_lock is not None and not _lock_is_held(retry_lock):
                     with retry_lock:
-                        return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
-                return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
+                        return model.encode([cleaned_for_embedding], **retry_kwargs)[0].tolist()
+                return model.encode([cleaned_for_embedding], **retry_kwargs)[0].tolist()
             except Exception:
                 logger.exception(
                     "embedding failed during model.encode retry after tokenizer already borrowed "
