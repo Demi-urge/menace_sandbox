@@ -570,9 +570,20 @@ def _ensure_vector_service() -> None:
     import sys
 
     # Configuration hooks ---------------------------------------------------
-    ready_tries = int(os.environ.get("VECTOR_SERVICE_RETRY_COUNT", "5"))
     ready_delay = float(os.environ.get("VECTOR_SERVICE_RETRY_DELAY", "0.5"))
     ready_backoff = float(os.environ.get("VECTOR_SERVICE_RETRY_BACKOFF", "2.0"))
+    ready_budget_raw = os.environ.get(
+        "VECTOR_SERVICE_READY_BUDGET_SECONDS",
+        os.environ.get("VECTOR_SERVICE_READY_TIMEOUT", "150"),
+    )
+    try:
+        ready_budget = max(1.0, float(ready_budget_raw))
+    except Exception:
+        logger.warning(
+            "invalid VECTOR_SERVICE_READY_BUDGET_SECONDS=%r; defaulting to 150s",
+            ready_budget_raw,
+        )
+        ready_budget = 150.0
     start_tries = int(os.environ.get("VECTOR_SERVICE_START_RETRIES", "3"))
     start_delay = float(os.environ.get("VECTOR_SERVICE_START_DELAY", "1.0"))
     start_backoff = float(os.environ.get("VECTOR_SERVICE_START_BACKOFF", "2.0"))
@@ -609,7 +620,7 @@ def _ensure_vector_service() -> None:
         return stdout_text, stderr_text
 
     def _wait_ready(
-        tries: int,
+        deadline: float,
         delay: float,
         backoff: float,
         *,
@@ -618,21 +629,28 @@ def _ensure_vector_service() -> None:
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ) -> bool:
+        start = time.monotonic()
         wait = delay
-        for _ in range(tries):
+        max_backoff = 5.0
+        while time.monotonic() < deadline:
             if process is not None:
                 exit_code = process.poll()
                 if exit_code is not None:
+                    elapsed = time.monotonic() - start
                     stdout_text, stderr_text = _collect_process_output(process)
                     command_str = " ".join(command or [])
                     env_pythonpath = (env or {}).get("PYTHONPATH")
                     pythonpath_display = env_pythonpath or "<unset>"
                     logger.error(
-                        "vector service exited early with code %s (cmd=%s cwd=%s PYTHONPATH=%s)",
+                        (
+                            "vector service exited early with code %s "
+                            "(cmd=%s cwd=%s PYTHONPATH=%s elapsed=%.2fs)"
+                        ),
                         exit_code,
                         command_str,
                         cwd,
                         pythonpath_display,
+                        elapsed,
                     )
                     if stderr_text:
                         logger.error("vector service stderr:\n%s", stderr_text)
@@ -651,9 +669,25 @@ def _ensure_vector_service() -> None:
                         error_parts.append(f"stdout:\n{stdout_text}")
                     raise VectorServiceError("\n".join(error_parts))
             if _ready():
+                elapsed = time.monotonic() - start
+                logger.info(
+                    "vector service ready after %.2fs (next wait %.2fs)",
+                    elapsed,
+                    wait,
+                )
                 return True
+            elapsed = time.monotonic() - start
+            logger.debug(
+                "vector service not ready after %.2fs; retrying in %.2fs",
+                elapsed,
+                wait,
+            )
             time.sleep(wait)
-            wait *= backoff
+            wait = min(wait * backoff, max_backoff)
+        elapsed = time.monotonic() - start
+        logger.warning(
+            "vector service readiness timed out after %.2fs", elapsed
+        )
         return False
 
     def _verify_embedding_endpoint() -> None:
@@ -674,7 +708,7 @@ def _ensure_vector_service() -> None:
             raise VectorServiceError(
                 f"embedding endpoint unavailable at {url}") from exc
 
-    if _wait_ready(ready_tries, ready_delay, ready_backoff):
+    if _wait_ready(time.monotonic() + ready_budget, ready_delay, ready_backoff):
         _verify_embedding_endpoint()
         return
 
@@ -720,7 +754,7 @@ def _ensure_vector_service() -> None:
             logger.error("failed to launch vector service: %s", exc)
             process = None
         if _wait_ready(
-            ready_tries,
+            time.monotonic() + ready_budget,
             ready_delay,
             ready_backoff,
             process=process,
