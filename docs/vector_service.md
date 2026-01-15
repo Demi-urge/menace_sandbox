@@ -43,6 +43,8 @@ following environment variables control connection behavior:
 Readiness probing is governed by separate retry knobs used when checking the
 remote service health endpoint:
 
+- `VECTOR_SERVICE_READY_TIMEOUT` – total readiness wait budget in seconds
+  (default `120` when `VECTOR_SERVICE_URL` is set; overrides retry count).
 - `VECTOR_SERVICE_READY_RETRIES` – number of readiness probes before giving up
   (default `6`).
 - `VECTOR_SERVICE_READY_DELAY` – delay in seconds between readiness probes
