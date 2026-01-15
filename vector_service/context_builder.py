@@ -628,7 +628,7 @@ def _ensure_vector_service() -> None:
         command: list[str] | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
-    ) -> bool:
+    ) -> tuple[bool, float]:
         start = time.monotonic()
         wait = delay
         max_backoff = 5.0
@@ -675,7 +675,7 @@ def _ensure_vector_service() -> None:
                     elapsed,
                     wait,
                 )
-                return True
+                return True, elapsed
             elapsed = time.monotonic() - start
             logger.debug(
                 "vector service not ready after %.2fs; retrying in %.2fs",
@@ -688,7 +688,7 @@ def _ensure_vector_service() -> None:
         logger.warning(
             "vector service readiness timed out after %.2fs", elapsed
         )
-        return False
+        return False, elapsed
 
     def _verify_embedding_endpoint() -> None:
         if not verify_embeddings:
@@ -708,9 +708,49 @@ def _ensure_vector_service() -> None:
             raise VectorServiceError(
                 f"embedding endpoint unavailable at {url}") from exc
 
-    if _wait_ready(time.monotonic() + ready_budget, ready_delay, ready_backoff):
+    ready, ready_elapsed = _wait_ready(
+        time.monotonic() + ready_budget, ready_delay, ready_backoff
+    )
+    if ready:
         _verify_embedding_endpoint()
         return
+
+    def _attempt_local_fallback(wait_elapsed: float) -> bool:
+        fallback_start = time.monotonic()
+        try:
+            try:
+                from .vectorizer import SharedVectorService  # type: ignore
+            except Exception:
+                from vector_service.vectorizer import SharedVectorService  # type: ignore
+            service = SharedVectorService(
+                warmup_lite=True,
+                hydrate_handlers=False,
+                lazy_vector_store=True,
+            )
+            service.vectorise("text", {"text": "vector readiness fallback probe"})
+            fallback_elapsed = time.monotonic() - fallback_start
+            logger.info(
+                "vector readiness recovered via local fallback",
+                extra={
+                    "wait_elapsed": wait_elapsed,
+                    "fallback_elapsed": fallback_elapsed,
+                    "fallback_result": "success",
+                },
+            )
+            return True
+        except Exception as exc:
+            fallback_elapsed = time.monotonic() - fallback_start
+            logger.warning(
+                "vector readiness local fallback failed",
+                extra={
+                    "wait_elapsed": wait_elapsed,
+                    "fallback_elapsed": fallback_elapsed,
+                    "fallback_result": "failed",
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
+            return False
 
     repo_root = Path(__file__).resolve().parent.parent
     script_module = "menace_sandbox.scripts.run_vector_service"
@@ -737,6 +777,7 @@ def _ensure_vector_service() -> None:
     last_error: Exception | None = None
     wait = start_delay
     command = [sys.executable, "-m", script_module]
+    last_wait_elapsed = ready_elapsed
     for attempt in range(1, start_tries + 1):
         logger.info(
             "starting vector service attempt %s/%s", attempt, start_tries
@@ -753,7 +794,7 @@ def _ensure_vector_service() -> None:
             last_error = exc
             logger.error("failed to launch vector service: %s", exc)
             process = None
-        if _wait_ready(
+        ready, last_wait_elapsed = _wait_ready(
             time.monotonic() + ready_budget,
             ready_delay,
             ready_backoff,
@@ -761,7 +802,8 @@ def _ensure_vector_service() -> None:
             command=command,
             cwd=str(repo_root),
             env=env,
-        ):
+        )
+        if ready:
             _verify_embedding_endpoint()
             return
         logger.error(
@@ -769,6 +811,9 @@ def _ensure_vector_service() -> None:
         )
         time.sleep(wait)
         wait *= start_backoff
+
+    if _attempt_local_fallback(last_wait_elapsed):
+        return
 
     message = f"vector service unavailable at {base} after {start_tries} attempts"
     logger.error(message)
