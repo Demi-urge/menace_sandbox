@@ -36,7 +36,11 @@ _INIT_LOCK = threading.Lock()
 _INITIALISED = threading.Event()
 
 
-def _mark_component_state(component: str, status: str) -> None:
+def _mark_component_state(
+    component: str,
+    status: str,
+    details: Mapping[str, object] | None = None,
+) -> None:
     """Update the bootstrap heartbeat with the latest component state."""
 
     now = time.time()
@@ -60,7 +64,11 @@ def _mark_component_state(component: str, status: str) -> None:
                 component_readiness[str(key)] = dict(state)
 
     components[component] = status
-    component_readiness[component] = {"status": status, "ts": now}
+    readiness_entry: dict[str, object] = dict(component_readiness.get(component, {}))
+    readiness_entry.update({"status": status, "ts": now})
+    if details:
+        readiness_entry.update(details)
+    component_readiness[component] = readiness_entry
 
     all_ready = all(components.get(name) == "ready" for name in CORE_COMPONENTS)
     readiness_payload: dict[str, object] = {
@@ -105,15 +113,26 @@ def _hydrate_retriever() -> None:
     )
 
 
-def _seed_vectors() -> None:
+def _seed_vectors() -> Mapping[str, object] | None:
     """Seed baseline vectors to avoid cold-start requests."""
 
-    service = SharedVectorService(
-        hydrate_handlers=True,
-        warmup_lite=False,
-        lazy_vector_store=False,
-    )
+    try:
+        service = SharedVectorService(
+            hydrate_handlers=True,
+            warmup_lite=False,
+            lazy_vector_store=False,
+        )
+    except Exception as exc:
+        logger.warning(
+            "vector seeding falling back to direct store seeding",
+            extra={"fallback": "local"},
+            exc_info=exc,
+        )
+        seed_vectors.seed_initial_vectors(None, logger=logger)
+        return {"fallback": "local", "error": str(exc)}
+
     seed_vectors.seed_initial_vectors(service, logger=logger)
+    return None
 
 
 def initialize_vector_service() -> Mapping[str, object] | None:
@@ -139,7 +158,7 @@ def initialize_vector_service() -> Mapping[str, object] | None:
         for component, action in stages:
             logger.info("starting vector bootstrap stage", extra={"component": component})
             try:
-                action()
+                readiness_details = action()
             except Exception as exc:
                 heartbeat_snapshot = read_bootstrap_heartbeat()
                 logger.exception(
@@ -152,7 +171,11 @@ def initialize_vector_service() -> Mapping[str, object] | None:
                     pass
                 raise VectorBootstrapError(component, heartbeat_snapshot, exc) from exc
 
-            _mark_component_state(component, "ready")
+            _mark_component_state(
+                component,
+                "ready",
+                readiness_details if isinstance(readiness_details, Mapping) else None,
+            )
             heartbeat_snapshot = read_bootstrap_heartbeat()
             logger.info(
                 "completed vector bootstrap stage",
@@ -181,4 +204,3 @@ class VectorBootstrapError(RuntimeError):
         self.heartbeat = heartbeat
         super().__init__(f"vector bootstrap stage '{stage}' failed")
         self.__cause__ = exc
-
