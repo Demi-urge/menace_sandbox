@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import urllib.error
 import urllib.request
 import uuid
 from typing import Iterable, Literal, Mapping, MutableMapping, TypedDict
@@ -233,6 +234,14 @@ def seed_initial_vectors(
             "attempts": ready_status["attempts"],
         }
 
+    def _is_expected_deferral(exc: Exception) -> bool:
+        if isinstance(exc, (TimeoutError, urllib.error.URLError)):
+            return True
+        if isinstance(exc, RuntimeError):
+            message = str(exc).lower()
+            return "deferred" in message or "unavailable" in message
+        return False
+
     try:
         text = "menace bootstrap seed vector"
         for _ in range(3):
@@ -246,11 +255,23 @@ def seed_initial_vectors(
             "elapsed": ready_status["elapsed"],
             "attempts": ready_status["attempts"],
         }
-    except Exception:
-        logger.exception("shared vector service seeding failed; falling back to direct store")
+    except Exception as exc:
+        if _is_expected_deferral(exc):
+            logger.warning(
+                "shared vector service unavailable; falling back to direct store",
+                extra={"error": str(exc)},
+            )
+        else:
+            logger.exception(
+                "shared vector service seeding failed; falling back to direct store"
+            )
         _seed_direct(store, logger=logger)
         elapsed = time.monotonic() - seed_start
         _emit_local_seed_readiness(elapsed=elapsed, logger=logger)
+        logger.info(
+            "vector store seeded via fallback after remote/local deferral",
+            extra={"elapsed": elapsed},
+        )
         logger.info(
             "seeding recovered via local fallback",
             extra={"elapsed": elapsed},
