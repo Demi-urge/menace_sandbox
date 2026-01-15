@@ -285,12 +285,33 @@ def _should_skip_remote_on_boot() -> bool:
     return elapsed < _REMOTE_BOOT_GRACE_SECS
 
 
-def _remote_ready_retry_config() -> tuple[int, float, float]:
+def _remote_ready_retry_config() -> tuple[int, float, float, float | None]:
     global _REMOTE_READY_BOOT_USED
     raw_retries = os.getenv("VECTOR_SERVICE_READY_RETRIES", "6").strip()
     raw_delay = os.getenv("VECTOR_SERVICE_READY_DELAY", "0.25").strip()
     raw_backoff = os.getenv("VECTOR_SERVICE_READY_BACKOFF", "1.5").strip()
     raw_boot_retries = os.getenv("VECTOR_SERVICE_READY_BOOT_RETRIES", "").strip()
+    raw_timeout = os.getenv("VECTOR_SERVICE_READY_TIMEOUT", "").strip()
+    timeout: float | None = None
+    default_timeout = 120.0
+    if raw_timeout:
+        try:
+            timeout = float(raw_timeout)
+        except Exception:
+            logger.warning(
+                "invalid VECTOR_SERVICE_READY_TIMEOUT=%r; defaulting to %.0fs",
+                raw_timeout,
+                default_timeout,
+            )
+            timeout = default_timeout
+        if timeout <= 0:
+            logger.warning(
+                "VECTOR_SERVICE_READY_TIMEOUT must be positive; defaulting to %.0fs",
+                default_timeout,
+            )
+            timeout = default_timeout
+    elif _REMOTE_ENDPOINT is not None:
+        timeout = default_timeout
     try:
         retries = max(1, int(raw_retries))
     except Exception:
@@ -327,7 +348,7 @@ def _remote_ready_retry_config() -> tuple[int, float, float]:
             raw_backoff,
         )
         backoff = 1.5
-    return retries, delay, backoff
+    return retries, delay, backoff, timeout
 
 
 def _probe_remote_ready() -> bool:
@@ -350,12 +371,40 @@ def _probe_remote_ready() -> bool:
 def _wait_for_remote_ready() -> bool:
     if _should_skip_remote_on_boot():
         return False
-    retries, delay, backoff = _remote_ready_retry_config()
+    retries, delay, backoff, timeout = _remote_ready_retry_config()
     wait = delay
+    attempts = 0
+    start = time.monotonic()
+    deadline = start + timeout if timeout is not None else None
     for _ in range(retries):
+        attempts += 1
         if _probe_remote_ready():
             return True
-        time.sleep(wait)
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
+        if deadline is not None:
+            sleep_for = min(wait, max(0.0, deadline - time.monotonic()))
+        else:
+            sleep_for = wait
+        if sleep_for <= 0:
+            return False
+        time.sleep(sleep_for)
+        wait *= backoff
+    if deadline is None:
+        return False
+    while time.monotonic() < deadline:
+        attempts += 1
+        if _probe_remote_ready():
+            elapsed = time.monotonic() - start
+            logger.info(
+                "remote vector service readiness reached after extended wait",
+                extra={"elapsed": elapsed, "attempts": attempts},
+            )
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(wait, remaining))
         wait *= backoff
     return False
 
