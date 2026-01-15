@@ -234,6 +234,7 @@ from analysis.semantic_diff_filter import find_semantic_risks
 _EMBEDDER: SentenceTransformer | None = None
 _EMBEDDER_LOCK: SandboxLockType | None = None
 _EMBEDDER_THREAD_LOCK = threading.RLock()
+_EMBEDDER_ENCODE_LOCK = threading.RLock()
 _MODEL_NAME = _MODEL_ID
 SENTENCE_TRANSFORMER_DEVICE = _resolve_sentence_transformer_device()
 _EMBEDDER_INIT_TIMEOUT = float(os.getenv("EMBEDDER_INIT_TIMEOUT", "180"))
@@ -3146,9 +3147,6 @@ def governed_embed(
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     allowed_encode_keys = _resolve_allowed_encode_keys(model)
     tokenizer = _resolve_tokenizer(model)
-    encode_lock: threading.Lock | None = None
-    if tokenizer is not None and supports_truncation and getattr(tokenizer, "is_fast", False):
-        encode_lock = _FAST_TOKENIZER_ENCODE_LOCKS[id(tokenizer)]
     if tokenizer is None:
         special_overhead = 2
     else:
@@ -3186,6 +3184,12 @@ def governed_embed(
         allowed_encode_keys is None or "truncation" in allowed_encode_keys
     ):
         encode_kwargs["truncation"] = True
+    encode_requires_lock = (
+        (tokenizer is not None and getattr(tokenizer, "is_fast", False))
+        or "truncation" in encode_kwargs
+        or "max_length" in encode_kwargs
+    )
+    encode_lock: threading.Lock | None = _EMBEDDER_ENCODE_LOCK if encode_requires_lock else None
     cleaned_for_embedding = cleaned
     if isinstance(max_positions, int):
         safe_chars = max_positions * EMBEDDING_CHARS_PER_TOKEN
@@ -3516,32 +3520,20 @@ def governed_embed(
             return [0.0] * _STUB_EMBEDDER_DIMENSION
     except RuntimeError as exc:
         if "Already borrowed" in str(exc):
-            safe_kwargs = dict(encode_kwargs)
-            safe_kwargs.pop("max_length", None)
-            if "truncation" in safe_kwargs:
-                safe_kwargs["truncation"] = False
-            if allowed_encode_keys is not None:
-                safe_kwargs = {
-                    key: value for key, value in safe_kwargs.items() if key in allowed_encode_keys
-                }
-            retry_tokenizer = _clone_fast_tokenizer_for_safe_retry(tokenizer)
             logger.warning(
                 "embedding retry after tokenizer already borrowed "
-                "(model_name=%s model_path=%s tokenizer_fast=%s cloned_tokenizer=%s)",
+                "(model_name=%s model_path=%s tokenizer_fast=%s)",
                 getattr(model, "model_name", None),
                 getattr(model, "model_name_or_path", None),
                 getattr(tokenizer, "is_fast", False) if tokenizer is not None else None,
-                retry_tokenizer is not None,
                 exc_info=exc,
             )
             try:  # pragma: no cover - external model may fail at runtime
-                with _temporary_tokenizer(model, retry_tokenizer):
-                    return _encode_with_lock(
-                        lambda: model.encode([cleaned_for_embedding], **safe_kwargs)[0].tolist()
-                    )
+                with _EMBEDDER_ENCODE_LOCK:
+                    return model.encode([cleaned_for_embedding], **encode_kwargs)[0].tolist()
             except Exception:
                 logger.exception(
-                    "embedding failed during safe retry after tokenizer already borrowed "
+                    "embedding failed during model.encode retry after tokenizer already borrowed "
                     "(redacted=%s cleaned_empty=%s text_len=%s)",
                     redacted,
                     cleaned_empty,
