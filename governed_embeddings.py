@@ -3002,6 +3002,16 @@ def governed_embed(
                 )
                 _add_candidate(max_positions, label)
             auto_model = getattr(first_module, "auto_model", None)
+            auto_model_config = getattr(auto_model, "config", None)
+            auto_model_max_positions = (
+                getattr(auto_model_config, "max_position_embeddings", None)
+                if auto_model_config is not None
+                else None
+            )
+            _add_candidate(
+                auto_model_max_positions,
+                "model._first_module().auto_model.config.max_position_embeddings",
+            )
             embeddings = getattr(auto_model, "embeddings", None)
             position_embeddings = getattr(embeddings, "position_embeddings", None)
             num_embeddings = getattr(position_embeddings, "num_embeddings", None)
@@ -3211,8 +3221,13 @@ def governed_embed(
             if value is not None
         ]
         if cap_sources:
+            effective_max_tokens = min([hard_cap, *cap_sources])
+            if isinstance(max_positions, int):
+                effective_max_tokens = min(
+                    effective_max_tokens, max(1, max_positions - special_overhead)
+                )
             return (
-                min([hard_cap, *cap_sources]),
+                effective_max_tokens,
                 tokenizer_max,
                 max_positions,
                 safe_max_tokens,
@@ -3374,6 +3389,24 @@ def governed_embed(
         len(cleaned_for_embedding),
         approx_tokens,
     )
+    if isinstance(max_positions, int):
+        pre_encode_tokens = _with_tokenizer_lock(
+            lambda: _count_tokens(
+                cleaned_for_embedding,
+                model,
+                max_positions,
+                add_special_tokens=True,
+                conservative_on_error=True,
+            )
+        )
+        if pre_encode_tokens > max_positions:
+            logger.warning(
+                "embedding input exceeds max_position_embeddings before encode; "
+                "returning zero vector (tokens=%s max_positions=%s)",
+                pre_encode_tokens,
+                max_positions,
+            )
+            return [0.0] * _STUB_EMBEDDER_DIMENSION
 
     def _encode_with_lock(payload: Callable[[], Any]) -> Any:
         if encode_lock is None:
