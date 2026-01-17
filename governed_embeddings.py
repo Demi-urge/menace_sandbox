@@ -3920,44 +3920,46 @@ def governed_embed(
                 )
                 if retry_short_circuit:
                     return [0.0] * _STUB_EMBEDDER_DIMENSION
-        except ValueError as exc:
-            lowered = str(exc).lower()
-            if "additional keyword arguments" in lowered:
-                logger.warning(
-                    "embedding retry after ValueError with unsupported kwargs "
-                    "(model_name=%s model_path=%s)",
-                    getattr(model, "model_name", None),
-                    getattr(model, "model_name_or_path", None),
-                    exc_info=exc,
+            except ValueError as exc:
+                lowered = str(exc).lower()
+                if "additional keyword arguments" in lowered:
+                    logger.warning(
+                        "embedding retry after ValueError with unsupported kwargs "
+                        "(model_name=%s model_path=%s)",
+                        getattr(model, "model_name", None),
+                        getattr(model, "model_name_or_path", None),
+                        exc_info=exc,
+                    )
+                    try:  # pragma: no cover - external model may fail at runtime
+                        return _encode_with_lock(
+                            lambda: model.encode([cleaned_retry])[0].tolist()
+                        )
+                    except Exception:
+                        logger.exception(
+                            "embedding failed during model.encode retry "
+                            "(redacted=%s cleaned_empty=%s text_len=%s)",
+                            redacted,
+                            cleaned_empty,
+                            len(cleaned_retry),
+                        )
+                        return [0.0] * _STUB_EMBEDDER_DIMENSION
+                logger.exception(
+                    "embedding failed during model.encode retry "
+                    "(redacted=%s cleaned_empty=%s text_len=%s)",
+                    redacted,
+                    cleaned_empty,
+                    len(cleaned_retry),
                 )
-                try:  # pragma: no cover - external model may fail at runtime
-                    return _encode_with_lock(
-                        lambda: model.encode([cleaned_retry])[0].tolist()
-                    )
-                except Exception:
-                    logger.exception(
-                        "embedding failed during model.encode retry "
-                        "(redacted=%s cleaned_empty=%s text_len=%s)",
-                        redacted,
-                        cleaned_empty,
-                        len(cleaned_retry),
-                    )
-                    return [0.0] * _STUB_EMBEDDER_DIMENSION
-            logger.exception(
-                "embedding failed during model.encode retry (redacted=%s cleaned_empty=%s text_len=%s)",
-                redacted,
-                cleaned_empty,
-                len(cleaned_retry),
-            )
-            return [0.0] * _STUB_EMBEDDER_DIMENSION
-        except Exception:
-            logger.exception(
-                "embedding failed during model.encode retry (redacted=%s cleaned_empty=%s text_len=%s)",
-                redacted,
-                cleaned_empty,
-                len(cleaned_retry),
-            )
-            return [0.0] * _STUB_EMBEDDER_DIMENSION
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
+            except Exception:
+                logger.exception(
+                    "embedding failed during model.encode retry "
+                    "(redacted=%s cleaned_empty=%s text_len=%s)",
+                    redacted,
+                    cleaned_empty,
+                    len(cleaned_retry),
+                )
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
     except RuntimeError as exc:
         if "Already borrowed" in str(exc):
             logger.warning(
