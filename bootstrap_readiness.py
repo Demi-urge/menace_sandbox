@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
+import json
+import urllib.request
 
 import atexit
 import importlib.util
@@ -13,6 +15,7 @@ import os
 import sys
 import threading
 import time
+import governed_embeddings
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
@@ -68,6 +71,13 @@ _SANDBOX_FORCED_COMPONENTS: tuple[str, ...] = (
 
 CORE_COMPONENTS: set[str] = {"vector_seeding", "retriever_hydration", "db_index_load"}
 OPTIONAL_COMPONENTS: set[str] = {"orchestrator_state", "background_loops"}
+
+_EMBED_READINESS_TEXT = "menace readiness probe"
+_RAW_EMBED_TIMEOUT = os.getenv("MENACE_EMBED_READINESS_TIMEOUT_SECS", "2.5").strip()
+try:
+    _EMBED_READINESS_TIMEOUT_SECS = float(_RAW_EMBED_TIMEOUT) if _RAW_EMBED_TIMEOUT else 2.5
+except ValueError:
+    _EMBED_READINESS_TIMEOUT_SECS = 2.5
 
 
 @dataclass(frozen=True)
@@ -415,6 +425,54 @@ def log_component_readiness(
     )
 
     return readiness_meta
+
+
+def _probe_embedding_local(timeout: float) -> bool:
+    try:
+        vector = governed_embeddings.governed_embed(
+            _EMBED_READINESS_TEXT, timeout=timeout
+        )
+    except Exception:
+        LOGGER.debug("local embedding probe failed", exc_info=True)
+        return False
+    return isinstance(vector, list) and len(vector) > 0
+
+
+def _probe_embedding_http(url: str, timeout: float) -> bool:
+    payload = json.dumps(
+        {"kind": "text", "record": {"text": _EMBED_READINESS_TEXT}}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/vectorise",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        LOGGER.debug("remote embedding probe failed", exc_info=True)
+        return False
+    vector = data.get("vector")
+    return isinstance(vector, list) and len(vector) > 0
+
+
+def probe_embedding_service(timeout: float | None = None) -> tuple[bool, str]:
+    """Return ``(ready, mode)`` for the embedding service readiness probe."""
+
+    url = os.getenv("VECTOR_SERVICE_URL", "").strip()
+    probe_timeout = (
+        _EMBED_READINESS_TIMEOUT_SECS if timeout is None else max(timeout, 0.1)
+    )
+    if url:
+        if _probe_embedding_http(url, probe_timeout):
+            return True, "remote"
+        if _probe_embedding_local(probe_timeout):
+            return True, "local_fallback"
+        return False, "remote"
+    if _probe_embedding_local(probe_timeout):
+        return True, "local"
+    return False, "local"
 
 
 def _coerce_heartbeat_max_age(raw_value: str | None, default: float) -> float:
@@ -796,9 +854,68 @@ class ReadinessSignal:
 
     def await_ready(self, timeout: float | None = None) -> bool:
         """Block until readiness is achieved or ``timeout`` expires."""
-        # SANDBOX OVERRIDE: always report ready immediately
-        self._ready_state = True
-        return True
+        start = time.perf_counter()
+        deadline = start + timeout if timeout is not None else None
+        embedder_waiting = False
+        embedder_mode = "unknown"
+
+        while True:
+            probe = self.probe()
+            embedder_ready = False
+            if probe.ready:
+                embedder_ready, embedder_mode = probe_embedding_service()
+                if embedder_ready:
+                    if embedder_waiting and embedder_mode in {"local", "local_fallback"}:
+                        LOGGER.info(
+                            "local embedding fallback ready after %.1fs",
+                            time.perf_counter() - start,
+                            extra={
+                                "event": "bootstrap-embedder-fallback-ready",
+                                "elapsed": time.perf_counter() - start,
+                                "mode": embedder_mode,
+                            },
+                        )
+                    return True
+                embedder_waiting = True
+
+            now = time.perf_counter()
+            elapsed = now - start
+            if deadline is not None and now >= deadline:
+                if not probe.ready:
+                    self._log_pending_components(
+                        probe,
+                        elapsed=elapsed,
+                        timeout=timeout,
+                        level=logging.WARNING,
+                        force=True,
+                    )
+                raise TimeoutError(
+                    f"bootstrap readiness timed out after {elapsed:.1f}s"
+                )
+
+            if not probe.ready:
+                self._log_pending_components(
+                    probe,
+                    elapsed=elapsed,
+                    timeout=timeout if timeout is not None else float("inf"),
+                    level=logging.INFO,
+                )
+            elif not embedder_ready and embedder_waiting:
+                now = time.perf_counter()
+                throttle = max(self.poll_interval * 4.0, _READINESS_LOG_THROTTLE_SECONDS)
+                if self._last_pending_log is None or (now - self._last_pending_log) >= throttle:
+                    self._last_pending_log = now
+                    LOGGER.info(
+                        "embedding readiness pending after %.1fs",
+                        elapsed,
+                        extra={
+                            "event": "bootstrap-embedder-pending",
+                            "mode": embedder_mode,
+                            "timeout": timeout,
+                        },
+                    )
+
+            time.sleep(self.poll_interval)
 
     def _log_pending_components(
         self,
@@ -863,6 +980,7 @@ __all__ = [
     "readiness_signal",
     "component_readiness_timestamps",
     "log_component_readiness",
+    "probe_embedding_service",
     "start_bootstrap_heartbeat_keepalive",
     "stop_bootstrap_heartbeat_keepalive",
     "stage_for_step",

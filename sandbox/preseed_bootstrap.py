@@ -85,6 +85,7 @@ from bootstrap_readiness import (
     build_stage_deadlines,
     lagging_optional_components,
     minimal_online,
+    probe_embedding_service,
     stage_for_step,
 )
 from bootstrap_metrics import (
@@ -1966,6 +1967,42 @@ def _resolve_aggregator_timeout(
 
     return timeout
 
+
+_RAW_EMBEDDER_SEED_WAIT = os.getenv("MENACE_EMBEDDER_SEED_WAIT_SECS", "150").strip()
+try:
+    _EMBEDDER_SEED_WAIT_SECS = (
+        float(_RAW_EMBEDDER_SEED_WAIT) if _RAW_EMBEDDER_SEED_WAIT else 150.0
+    )
+except ValueError:
+    _EMBEDDER_SEED_WAIT_SECS = 150.0
+
+
+def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
+    start = time.perf_counter()
+    deadline = start + timeout if timeout is not None else None
+    waited = False
+
+    while True:
+        ready, mode = probe_embedding_service()
+        if ready:
+            if waited and mode in {"local", "local_fallback"}:
+                LOGGER.info(
+                    "local fallback embedder ready after %.1fs; resuming seeding",
+                    time.perf_counter() - start,
+                    extra={
+                        "event": "embedder-fallback-ready",
+                        "elapsed": time.perf_counter() - start,
+                        "mode": mode,
+                    },
+                )
+            return True
+
+        now = time.perf_counter()
+        if deadline is not None and now >= deadline:
+            return False
+        waited = True
+        remaining = None if deadline is None else max(deadline - now, 0.0)
+        time.sleep(min(1.0, remaining) if remaining is not None else 1.0)
 
 def _seed_research_aggregator_context(
     *,
@@ -8171,6 +8208,10 @@ def initialize_bootstrap_context(
             )
 
             if skip_unless_embedder_ready and not embedder_ready:
+                embedder_ready = _await_embedder_ready_for_seeding(
+                    _EMBEDDER_SEED_WAIT_SECS
+                )
+            if skip_unless_embedder_ready and not embedder_ready:
                 LOGGER.warning(
                     (
                         "skipping research aggregator seeding because embedder is not ready; "
@@ -8693,6 +8734,10 @@ def initialize_bootstrap_context(
             final_seed_timeout, embedder_ready=embedder_ready
         )
 
+        if skip_unless_embedder_ready and not embedder_ready:
+            embedder_ready = _await_embedder_ready_for_seeding(
+                _EMBEDDER_SEED_WAIT_SECS
+            )
         if skip_unless_embedder_ready and not embedder_ready:
             LOGGER.warning(
                 (
