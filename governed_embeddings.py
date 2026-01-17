@@ -3511,6 +3511,67 @@ def governed_embed(
             getattr(model, "model_name_or_path", None),
             exc_info=exc,
         )
+
+        def _validate_retry_length(
+            retry_text: str,
+            cap: int,
+        ) -> tuple[str, int, int | None, bool]:
+            max_input_tokens = cap + max(0, special_overhead)
+            validated_input_count: int | None = None
+            hard_trim_applied = False
+            if retry_tokenizer is not None:
+                try:
+                    tokenized = _with_tokenizer_lock(
+                        lambda: retry_tokenizer(
+                            retry_text,
+                            add_special_tokens=True,
+                            truncation=True,
+                            max_length=max_input_tokens,
+                        )
+                    )
+                except Exception:
+                    tokenized = None
+                if tokenized is not None:
+                    input_ids = (
+                        tokenized.get("input_ids") if isinstance(tokenized, dict) else tokenized
+                    )
+                    if isinstance(input_ids, tuple):
+                        input_ids = list(input_ids)
+                    if (
+                        isinstance(input_ids, list)
+                        and input_ids
+                        and isinstance(input_ids[0], list)
+                    ):
+                        input_ids = input_ids[0]
+                    if isinstance(input_ids, list):
+                        if len(input_ids) > max_input_tokens:
+                            input_ids = input_ids[:max_input_tokens]
+                            hard_trim_applied = True
+                        validated_input_count = len(input_ids)
+                        if hard_trim_applied and hasattr(retry_tokenizer, "decode"):
+                            try:
+                                retry_text = _with_tokenizer_lock(
+                                    lambda: retry_tokenizer.decode(
+                                        input_ids, skip_special_tokens=True
+                                    )
+                                )
+                            except Exception:
+                                pass
+                        final_tokens = max(
+                            1, validated_input_count - max(0, special_overhead)
+                        )
+                        return retry_text, final_tokens, validated_input_count, hard_trim_applied
+            final_tokens = _with_tokenizer_lock(
+                lambda: _count_tokens(
+                    retry_text,
+                    model,
+                    cap,
+                    add_special_tokens=True,
+                    conservative_on_error=True,
+                )
+            )
+            return retry_text, final_tokens, validated_input_count, hard_trim_applied
+
         (
             cleaned_retry,
             _,
@@ -3524,15 +3585,19 @@ def governed_embed(
                 special_overhead,
             )
         )
-        final_retry_tokens = _with_tokenizer_lock(
-            lambda: _count_tokens(
-                cleaned_retry,
-                model,
-                retry_cap,
-                add_special_tokens=True,
-                conservative_on_error=True,
+        (
+            cleaned_retry,
+            final_retry_tokens,
+            validated_input_count,
+            hard_trim_applied,
+        ) = _validate_retry_length(cleaned_retry, retry_cap)
+        if hard_trim_applied:
+            logger.warning(
+                "embedding retry applied hard trim after tokenizer truncation "
+                "(token_count=%s cap=%s)",
+                validated_input_count,
+                retry_cap + max(0, special_overhead),
             )
-        )
         while final_retry_tokens > retry_cap and retry_cap > 1:
             retry_cap = max(1, retry_cap // 2)
             (
@@ -3548,15 +3613,31 @@ def governed_embed(
                     special_overhead,
                 )
             )
-            final_retry_tokens = _with_tokenizer_lock(
-                lambda: _count_tokens(
-                    cleaned_retry,
-                    model,
-                    retry_cap,
-                    add_special_tokens=True,
-                    conservative_on_error=True,
+            (
+                cleaned_retry,
+                final_retry_tokens,
+                validated_input_count,
+                hard_trim_applied,
+            ) = _validate_retry_length(cleaned_retry, retry_cap)
+            if hard_trim_applied:
+                logger.warning(
+                    "embedding retry applied hard trim after tokenizer truncation "
+                    "(token_count=%s cap=%s)",
+                    validated_input_count,
+                    retry_cap + max(0, special_overhead),
                 )
+        if (
+            validated_input_count is not None
+            and validated_input_count > retry_cap + max(0, special_overhead)
+        ):
+            logger.warning(
+                "embedding retry exceeded cap after tokenizer validation "
+                "(retry_cap=%s token_count=%s max_input=%s)",
+                retry_cap,
+                validated_input_count,
+                retry_cap + max(0, special_overhead),
             )
+            return [0.0] * _STUB_EMBEDDER_DIMENSION
         if final_retry_tokens > retry_cap:
             logger.warning(
                 "embedding retry exceeded cap after truncation "
@@ -3616,15 +3697,19 @@ def governed_embed(
                         special_overhead,
                     )
                 )
-                final_retry_tokens = _with_tokenizer_lock(
-                    lambda: _count_tokens(
-                        cleaned_retry,
-                        model,
-                        retry_cap,
-                        add_special_tokens=True,
-                        conservative_on_error=True,
+                (
+                    cleaned_retry,
+                    final_retry_tokens,
+                    validated_input_count,
+                    hard_trim_applied,
+                ) = _validate_retry_length(cleaned_retry, retry_cap)
+                if hard_trim_applied:
+                    logger.warning(
+                        "embedding retry applied hard trim after tokenizer truncation "
+                        "(token_count=%s cap=%s)",
+                        validated_input_count,
+                        retry_cap + max(0, special_overhead),
                     )
-                )
                 while final_retry_tokens > retry_cap and retry_cap > 1:
                     retry_cap = max(1, retry_cap // 2)
                     (
@@ -3640,15 +3725,33 @@ def governed_embed(
                             special_overhead,
                         )
                     )
-                    final_retry_tokens = _with_tokenizer_lock(
-                        lambda: _count_tokens(
-                            cleaned_retry,
-                            model,
-                            retry_cap,
-                            add_special_tokens=True,
-                            conservative_on_error=True,
+                    (
+                        cleaned_retry,
+                        final_retry_tokens,
+                        validated_input_count,
+                        hard_trim_applied,
+                    ) = _validate_retry_length(cleaned_retry, retry_cap)
+                    if hard_trim_applied:
+                        logger.warning(
+                            "embedding retry applied hard trim after tokenizer truncation "
+                            "(token_count=%s cap=%s)",
+                            validated_input_count,
+                            retry_cap + max(0, special_overhead),
                         )
+                if (
+                    validated_input_count is not None
+                    and validated_input_count > retry_cap + max(0, special_overhead)
+                ):
+                    logger.warning(
+                        "embedding retry exceeded cap after tokenizer validation "
+                        "(retry_cap=%s token_count=%s max_input=%s model_name=%s model_path=%s)",
+                        retry_cap,
+                        validated_input_count,
+                        retry_cap + max(0, special_overhead),
+                        getattr(model, "model_name", None),
+                        getattr(model, "model_name_or_path", None),
                     )
+                    return [0.0] * _STUB_EMBEDDER_DIMENSION
                 if retry_cap <= 1 or final_retry_tokens > retry_cap:
                     logger.warning(
                         "embedding retry exhausted after IndexError "
