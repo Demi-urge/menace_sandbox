@@ -3920,6 +3920,7 @@ def governed_embed(
                 )
                 if retry_short_circuit:
                     return [0.0] * _STUB_EMBEDDER_DIMENSION
+
             except ValueError as exc:
                 lowered = str(exc).lower()
                 if "additional keyword arguments" in lowered:
@@ -3951,6 +3952,7 @@ def governed_embed(
                     len(cleaned_retry),
                 )
                 return [0.0] * _STUB_EMBEDDER_DIMENSION
+
             except Exception:
                 logger.exception(
                     "embedding failed during model.encode retry "
