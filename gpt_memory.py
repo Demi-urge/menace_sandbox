@@ -305,7 +305,7 @@ def _bootstrap_failure_detail(probe) -> str | None:
     return None
 
 
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 12.0) -> None:
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> None:
     env_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     try:
         parsed_timeout = float(env_timeout) if env_timeout else None
