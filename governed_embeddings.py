@@ -3605,6 +3605,73 @@ def governed_embed(
             )
             return retry_text, final_tokens, validated_input_count, hard_trim_applied
 
+        def _enforce_retry_truncation_if_needed(
+            retry_text: str,
+            retry_tokens: int,
+            cap: int,
+            retry_kwargs: dict[str, Any],
+        ) -> tuple[str, int, int | None, bool, bool]:
+            if "max_length" in retry_kwargs or "truncation" in retry_kwargs:
+                return retry_text, retry_tokens, None, False, False
+            if retry_tokenizer is None:
+                if retry_tokens > cap:
+                    logger.warning(
+                        "embedding retry truncation unavailable via encode; "
+                        "short-circuiting retry (token_count=%s cap=%s model_name=%s model_path=%s)",
+                        retry_tokens,
+                        cap,
+                        getattr(model, "model_name", None),
+                        getattr(model, "model_name_or_path", None),
+                    )
+                    return retry_text, retry_tokens, None, False, True
+                return retry_text, retry_tokens, None, False, False
+            logger.warning(
+                "embedding retry truncation unavailable via encode; "
+                "forcing tokenizer truncation (token_count=%s cap=%s model_name=%s model_path=%s)",
+                retry_tokens,
+                cap,
+                getattr(model, "model_name", None),
+                getattr(model, "model_name_or_path", None),
+            )
+            (
+                retry_text,
+                retry_tokens,
+                validated_input_count,
+                hard_trim_applied,
+            ) = _validate_retry_length(retry_text, cap)
+            if hard_trim_applied:
+                logger.warning(
+                    "embedding retry applied hard trim after tokenizer truncation "
+                    "(token_count=%s cap=%s)",
+                    validated_input_count,
+                    cap + max(0, special_overhead),
+                )
+            if (
+                validated_input_count is not None
+                and validated_input_count > cap + max(0, special_overhead)
+            ):
+                logger.warning(
+                    "embedding retry exceeded cap after forced tokenizer truncation "
+                    "(retry_cap=%s token_count=%s max_input=%s model_name=%s model_path=%s)",
+                    cap,
+                    validated_input_count,
+                    cap + max(0, special_overhead),
+                    getattr(model, "model_name", None),
+                    getattr(model, "model_name_or_path", None),
+                )
+                return retry_text, retry_tokens, validated_input_count, hard_trim_applied, True
+            if retry_tokens > cap:
+                logger.warning(
+                    "embedding retry exceeded cap after forced tokenizer truncation "
+                    "(retry_cap=%s token_count=%s model_name=%s model_path=%s)",
+                    cap,
+                    retry_tokens,
+                    getattr(model, "model_name", None),
+                    getattr(model, "model_name_or_path", None),
+                )
+                return retry_text, retry_tokens, validated_input_count, hard_trim_applied, True
+            return retry_text, retry_tokens, validated_input_count, hard_trim_applied, False
+
         (
             cleaned_retry,
             _,
@@ -3679,11 +3746,6 @@ def governed_embed(
                 final_retry_tokens,
             )
             return [0.0] * _STUB_EMBEDDER_DIMENSION
-        logger.info(
-            "embedding retry final token count (tokens=%s cap=%s)",
-            final_retry_tokens,
-            retry_cap,
-        )
         retry_kwargs = dict(encode_kwargs)
         if supports_max_length:
             retry_kwargs["max_length"] = retry_cap
@@ -3703,6 +3765,25 @@ def governed_embed(
                 or (key == "max_length" and supports_max_length)
                 or (key == "truncation" and supports_truncation)
             }
+        (
+            cleaned_retry,
+            final_retry_tokens,
+            validated_input_count,
+            hard_trim_applied,
+            retry_short_circuit,
+        ) = _enforce_retry_truncation_if_needed(
+            cleaned_retry,
+            final_retry_tokens,
+            retry_cap,
+            retry_kwargs,
+        )
+        if retry_short_circuit:
+            return [0.0] * _STUB_EMBEDDER_DIMENSION
+        logger.info(
+            "embedding retry final token count (tokens=%s cap=%s)",
+            final_retry_tokens,
+            retry_cap,
+        )
         while True:
             try:  # pragma: no cover - external model may fail at runtime
                 return _encode_with_lock(
@@ -3825,6 +3906,20 @@ def governed_embed(
                         or (key == "max_length" and supports_max_length)
                         or (key == "truncation" and supports_truncation)
                     }
+                (
+                    cleaned_retry,
+                    final_retry_tokens,
+                    validated_input_count,
+                    hard_trim_applied,
+                    retry_short_circuit,
+                ) = _enforce_retry_truncation_if_needed(
+                    cleaned_retry,
+                    final_retry_tokens,
+                    retry_cap,
+                    retry_kwargs,
+                )
+                if retry_short_circuit:
+                    return [0.0] * _STUB_EMBEDDER_DIMENSION
         except ValueError as exc:
             lowered = str(exc).lower()
             if "additional keyword arguments" in lowered:
