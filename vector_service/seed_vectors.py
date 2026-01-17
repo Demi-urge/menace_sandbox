@@ -116,6 +116,8 @@ def _wait_for_vector_service_ready(
     if not base:
         return {"ready": True, "elapsed": 0.0, "attempts": 0, "timed_out": False}
 
+    readiness_probe = os.environ.get("VECTOR_SERVICE_READY_PROBE", "").strip().lower()
+
     try:
         timeout = max(1.0, float(os.environ.get("VECTOR_SERVICE_READY_TIMEOUT", "150")))
     except Exception:
@@ -144,6 +146,34 @@ def _wait_for_vector_service_ready(
             attempts += 1
             with urllib.request.urlopen(ready_url, timeout=2.0):
                 elapsed = time.monotonic() - start
+                if readiness_probe == "embed" and service is not None:
+                    try:
+                        attempts += 1
+                        probe_start = time.monotonic()
+                        service.vectorise("text", {"text": "probe"})
+                        logger.info(
+                            "vector service embedding probe succeeded",
+                            extra={
+                                "elapsed": elapsed,
+                                "attempts": attempts,
+                                "probe_elapsed": time.monotonic() - probe_start,
+                            },
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "vector service embedding validation failed",
+                            extra={
+                                "elapsed": elapsed,
+                                "attempts": attempts,
+                                "error": str(exc),
+                            },
+                        )
+                        return {
+                            "ready": False,
+                            "elapsed": elapsed,
+                            "attempts": attempts,
+                            "timed_out": False,
+                        }
                 logger.info(
                     "vector service readiness confirmed",
                     extra={"elapsed": elapsed, "attempts": attempts},
@@ -168,6 +198,36 @@ def _wait_for_vector_service_ready(
             attempts += 1
             with urllib.request.urlopen(ready_url, timeout=2.0):
                 elapsed = time.monotonic() - start
+                if readiness_probe == "embed" and service is not None:
+                    try:
+                        attempts += 1
+                        probe_start = time.monotonic()
+                        service.vectorise("text", {"text": "probe"})
+                        logger.info(
+                            "vector service embedding probe succeeded",
+                            extra={
+                                "retry_budget": retry_budget,
+                                "elapsed": elapsed,
+                                "attempts": attempts,
+                                "probe_elapsed": time.monotonic() - probe_start,
+                            },
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "vector service embedding validation failed",
+                            extra={
+                                "retry_budget": retry_budget,
+                                "elapsed": elapsed,
+                                "attempts": attempts,
+                                "error": str(exc),
+                            },
+                        )
+                        return {
+                            "ready": False,
+                            "elapsed": elapsed,
+                            "attempts": attempts,
+                            "timed_out": False,
+                        }
                 logger.info(
                     "vector service readiness reached during extended retries",
                     extra={"retry_budget": retry_budget, "elapsed": elapsed, "attempts": attempts},
