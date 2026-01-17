@@ -3533,8 +3533,20 @@ def governed_embed(
         if supports_max_length:
             retry_kwargs["max_length"] = retry_cap
         if allowed_encode_keys is not None:
+            if supports_max_length and "max_length" in retry_kwargs and "max_length" not in allowed_encode_keys:
+                logger.debug(
+                    "embedding retry keeping max_length despite allowed_encode_keys filter"
+                )
+            if supports_truncation and "truncation" in retry_kwargs and "truncation" not in allowed_encode_keys:
+                logger.debug(
+                    "embedding retry keeping truncation despite allowed_encode_keys filter"
+                )
             retry_kwargs = {
-                key: value for key, value in retry_kwargs.items() if key in allowed_encode_keys
+                key: value
+                for key, value in retry_kwargs.items()
+                if key in allowed_encode_keys
+                or (key == "max_length" and supports_max_length)
+                or (key == "truncation" and supports_truncation)
             }
         while True:
             try:  # pragma: no cover - external model may fail at runtime
@@ -3613,10 +3625,28 @@ def governed_embed(
                 if supports_max_length:
                     retry_kwargs["max_length"] = retry_cap
                 if allowed_encode_keys is not None:
+                    if (
+                        supports_max_length
+                        and "max_length" in retry_kwargs
+                        and "max_length" not in allowed_encode_keys
+                    ):
+                        logger.debug(
+                            "embedding retry keeping max_length despite allowed_encode_keys filter"
+                        )
+                    if (
+                        supports_truncation
+                        and "truncation" in retry_kwargs
+                        and "truncation" not in allowed_encode_keys
+                    ):
+                        logger.debug(
+                            "embedding retry keeping truncation despite allowed_encode_keys filter"
+                        )
                     retry_kwargs = {
                         key: value
                         for key, value in retry_kwargs.items()
                         if key in allowed_encode_keys
+                        or (key == "max_length" and supports_max_length)
+                        or (key == "truncation" and supports_truncation)
                     }
         except ValueError as exc:
             lowered = str(exc).lower()
