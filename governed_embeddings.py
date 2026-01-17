@@ -3536,6 +3536,87 @@ def governed_embed(
             return _encode_with_lock(
                 lambda: model.encode([cleaned_retry], **retry_kwargs)[0].tolist()
             )
+        except IndexError as exc:
+            logger.warning(
+                "embedding retry after second IndexError (retry_cap=%s model_name=%s model_path=%s)",
+                retry_cap,
+                getattr(model, "model_name", None),
+                getattr(model, "model_name_or_path", None),
+                exc_info=exc,
+            )
+            retry_cap = max(1, min(128, retry_cap // 2))
+            (
+                cleaned_retry,
+                _,
+                _,
+                _,
+            ) = _with_tokenizer_lock(
+                lambda: _truncate_text_for_embedding(
+                    cleaned_for_embedding,
+                    model,
+                    retry_cap,
+                    special_overhead,
+                )
+            )
+            final_retry_tokens = _with_tokenizer_lock(
+                lambda: _count_tokens(
+                    cleaned_retry,
+                    model,
+                    retry_cap,
+                    add_special_tokens=True,
+                )
+            )
+            while final_retry_tokens > retry_cap and retry_cap > 1:
+                retry_cap = max(1, min(128, retry_cap // 2))
+                (
+                    cleaned_retry,
+                    _,
+                    _,
+                    _,
+                ) = _with_tokenizer_lock(
+                    lambda: _truncate_text_for_embedding(
+                        cleaned_for_embedding,
+                        model,
+                        retry_cap,
+                        special_overhead,
+                    )
+                )
+                final_retry_tokens = _with_tokenizer_lock(
+                    lambda: _count_tokens(
+                        cleaned_retry,
+                        model,
+                        retry_cap,
+                        add_special_tokens=True,
+                    )
+                )
+            if final_retry_tokens > retry_cap:
+                logger.warning(
+                    "embedding retry exceeded reduced cap after second IndexError "
+                    "(retry_cap=%s token_count=%s)",
+                    retry_cap,
+                    final_retry_tokens,
+                )
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
+            retry_kwargs = dict(encode_kwargs)
+            if supports_max_length:
+                retry_kwargs["max_length"] = retry_cap
+            if allowed_encode_keys is not None:
+                retry_kwargs = {
+                    key: value for key, value in retry_kwargs.items() if key in allowed_encode_keys
+                }
+            try:  # pragma: no cover - external model may fail at runtime
+                return _encode_with_lock(
+                    lambda: model.encode([cleaned_retry], **retry_kwargs)[0].tolist()
+                )
+            except Exception:
+                logger.exception(
+                    "embedding failed after second IndexError retry "
+                    "(redacted=%s cleaned_empty=%s text_len=%s)",
+                    redacted,
+                    cleaned_empty,
+                    len(cleaned_retry),
+                )
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
         except ValueError as exc:
             lowered = str(exc).lower()
             if "additional keyword arguments" in lowered:
