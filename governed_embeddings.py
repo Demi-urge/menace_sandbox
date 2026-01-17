@@ -3007,6 +3007,7 @@ def governed_embed(
         max_tokens: int,
         *,
         add_special_tokens: bool = False,
+        conservative_on_error: bool = False,
     ) -> int:
         tokenizer = _resolve_tokenizer(model_obj)
         if tokenizer is not None:
@@ -3017,7 +3018,8 @@ def governed_embed(
                 )
                 return len(token_ids)
             except Exception:
-                pass
+                if conservative_on_error and isinstance(max_tokens, int) and max_tokens > 0:
+                    return max_tokens + 1
         return max(1, len(text) // EMBEDDING_CHARS_PER_TOKEN)
 
     def _is_minilm_model(model_obj: Any) -> bool:
@@ -3487,6 +3489,7 @@ def governed_embed(
                 model,
                 retry_cap,
                 add_special_tokens=True,
+                conservative_on_error=True,
             )
         )
         while final_retry_tokens > retry_cap and retry_cap > 1:
@@ -3510,6 +3513,7 @@ def governed_embed(
                     model,
                     retry_cap,
                     add_special_tokens=True,
+                    conservative_on_error=True,
                 )
             )
         if final_retry_tokens > retry_cap:
@@ -3564,6 +3568,7 @@ def governed_embed(
                     model,
                     retry_cap,
                     add_special_tokens=True,
+                    conservative_on_error=True,
                 )
             )
             while final_retry_tokens > retry_cap and retry_cap > 1:
@@ -3587,6 +3592,7 @@ def governed_embed(
                         model,
                         retry_cap,
                         add_special_tokens=True,
+                        conservative_on_error=True,
                     )
                 )
             if final_retry_tokens > retry_cap:
