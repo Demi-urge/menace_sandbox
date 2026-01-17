@@ -2937,34 +2937,50 @@ def governed_embed(
                     continue
 
     def _resolve_max_position_embeddings(model_obj: Any) -> int | None:
-        max_position_candidates: list[int] = []
+        max_position_candidates: list[tuple[int, str]] = []
+
+        def _add_candidate(value: Any, source: str) -> None:
+            if isinstance(value, int) and 0 < value < 1_000_000:
+                max_position_candidates.append((value, source))
+
         config = getattr(model_obj, "config", None)
         max_positions = getattr(config, "max_position_embeddings", None) if config is not None else None
-        if isinstance(max_positions, int) and 0 < max_positions < 1_000_000:
-            max_position_candidates.append(max_positions)
+        _add_candidate(max_positions, "model.config.max_position_embeddings")
+
+        model = getattr(model_obj, "model", None)
+        model_config = getattr(model, "config", None) if model is not None else None
+        model_max_positions = (
+            getattr(model_config, "max_position_embeddings", None) if model_config is not None else None
+        )
+        _add_candidate(model_max_positions, "model.model.config.max_position_embeddings")
+
         auto_model = getattr(model_obj, "auto_model", None)
         auto_config = getattr(auto_model, "config", None)
         auto_max_positions = (
             getattr(auto_config, "max_position_embeddings", None) if auto_config is not None else None
         )
-        if isinstance(auto_max_positions, int) and 0 < auto_max_positions < 1_000_000:
-            max_position_candidates.append(auto_max_positions)
+        _add_candidate(auto_max_positions, "model.auto_model.config.max_position_embeddings")
+
         embeddings = getattr(auto_model, "embeddings", None)
         position_embeddings = getattr(embeddings, "position_embeddings", None)
         num_embeddings = getattr(position_embeddings, "num_embeddings", None)
-        if isinstance(num_embeddings, int) and 0 < num_embeddings < 1_000_000:
-            max_position_candidates.append(num_embeddings)
+        _add_candidate(num_embeddings, "model.auto_model.embeddings.position_embeddings.num_embeddings")
+
+        model_embeddings = getattr(model, "embeddings", None)
+        model_position_embeddings = getattr(model_embeddings, "position_embeddings", None)
+        model_num_embeddings = getattr(model_position_embeddings, "num_embeddings", None)
+        _add_candidate(model_num_embeddings, "model.model.embeddings.position_embeddings.num_embeddings")
+
         candidate = getattr(model_obj, "max_seq_length", None)
-        if isinstance(candidate, int) and 0 < candidate < 1_000_000:
-            max_position_candidates.append(candidate)
+        _add_candidate(candidate, "model.max_seq_length")
         candidate = getattr(model_obj, "get_max_seq_length", None)
         if callable(candidate):
             try:
                 candidate = candidate()
             except Exception:
                 candidate = None
-        if isinstance(candidate, int) and 0 < candidate < 1_000_000:
-            max_position_candidates.append(candidate)
+        _add_candidate(candidate, "model.get_max_seq_length()")
+
         first_module = None
         if hasattr(model_obj, "_first_module"):
             try:
@@ -2972,34 +2988,59 @@ def governed_embed(
             except Exception:
                 first_module = None
         if first_module is not None:
-            config_sources = [first_module, getattr(first_module, "auto_model", None)]
-            for source in config_sources:
+            config_sources = [
+                (first_module, "model._first_module().config.max_position_embeddings"),
+                (getattr(first_module, "auto_model", None), "model._first_module().auto_model.config.max_position_embeddings"),
+                (getattr(first_module, "model", None), "model._first_module().model.config.max_position_embeddings"),
+            ]
+            for source, label in config_sources:
                 if source is None:
                     continue
                 config = getattr(source, "config", None)
                 max_positions = (
                     getattr(config, "max_position_embeddings", None) if config is not None else None
                 )
-                if isinstance(max_positions, int) and 0 < max_positions < 1_000_000:
-                    max_position_candidates.append(max_positions)
+                _add_candidate(max_positions, label)
             auto_model = getattr(first_module, "auto_model", None)
             embeddings = getattr(auto_model, "embeddings", None)
             position_embeddings = getattr(embeddings, "position_embeddings", None)
             num_embeddings = getattr(position_embeddings, "num_embeddings", None)
-            if isinstance(num_embeddings, int) and 0 < num_embeddings < 1_000_000:
-                max_position_candidates.append(num_embeddings)
+            _add_candidate(
+                num_embeddings,
+                "model._first_module().auto_model.embeddings.position_embeddings.num_embeddings",
+            )
+            first_model = getattr(first_module, "model", None)
+            first_model_auto = getattr(first_module, "auto_model", None)
+            first_model_from_auto = getattr(first_model_auto, "model", None)
+            first_model_embeddings = getattr(first_model, "embeddings", None)
+            first_model_position_embeddings = getattr(first_model_embeddings, "position_embeddings", None)
+            first_model_num_embeddings = getattr(first_model_position_embeddings, "num_embeddings", None)
+            _add_candidate(
+                first_model_num_embeddings,
+                "model._first_module().model.embeddings.position_embeddings.num_embeddings",
+            )
+            auto_model_embeddings = getattr(first_model_from_auto, "embeddings", None)
+            auto_model_position_embeddings = getattr(auto_model_embeddings, "position_embeddings", None)
+            auto_model_num_embeddings = getattr(auto_model_position_embeddings, "num_embeddings", None)
+            _add_candidate(
+                auto_model_num_embeddings,
+                "model._first_module().auto_model.model.embeddings.position_embeddings.num_embeddings",
+            )
             candidate = getattr(first_module, "max_seq_length", None)
-            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
-                max_position_candidates.append(candidate)
+            _add_candidate(candidate, "model._first_module().max_seq_length")
             candidate = getattr(first_module, "get_max_seq_length", None)
             if callable(candidate):
                 try:
                     candidate = candidate()
                 except Exception:
                     candidate = None
-            if isinstance(candidate, int) and 0 < candidate < 1_000_000:
-                max_position_candidates.append(candidate)
-        return min(max_position_candidates) if max_position_candidates else None
+            _add_candidate(candidate, "model._first_module().get_max_seq_length()")
+
+        if not max_position_candidates:
+            return None
+        max_positions, source = min(max_position_candidates, key=lambda item: item[0])
+        logger.debug("resolved max_position_embeddings=%s from %s", max_positions, source)
+        return max_positions
 
     def _count_tokens(
         text: str,
