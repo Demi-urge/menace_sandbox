@@ -3050,6 +3050,20 @@ def governed_embed(
         )
         _add_candidate(auto_max_positions, "model.auto_model.config.max_position_embeddings")
 
+        direct_embeddings = getattr(model_obj, "embeddings", None)
+        direct_position_embeddings = getattr(direct_embeddings, "position_embeddings", None)
+        direct_num_embeddings = getattr(direct_position_embeddings, "num_embeddings", None)
+        _add_candidate(
+            direct_num_embeddings,
+            "model.embeddings.position_embeddings.num_embeddings",
+        )
+        direct_weight = getattr(direct_position_embeddings, "weight", None)
+        direct_weight_shape = getattr(direct_weight, "shape", None)
+        _add_candidate(
+            _shape_head(direct_weight_shape),
+            "model.embeddings.position_embeddings.weight.shape[0]",
+        )
+
         embeddings = getattr(auto_model, "embeddings", None)
         position_embeddings = getattr(embeddings, "position_embeddings", None)
         num_embeddings = getattr(position_embeddings, "num_embeddings", None)
@@ -3170,6 +3184,45 @@ def governed_embed(
         max_positions, source = min(max_position_candidates, key=lambda item: item[0])
         logger.debug("resolved max_position_embeddings=%s from %s", max_positions, source)
         return max_positions
+
+    def _resolve_direct_position_embeddings(
+        model_obj: Any,
+    ) -> tuple[int | None, str | None, list[str]]:
+        missing_fields: list[str] = []
+
+        def _try_path(root: Any, path: str) -> tuple[int | None, str | None]:
+            current = root
+            for part in path.split("."):
+                if current is None:
+                    missing_fields.append(path)
+                    return None, None
+                if part.endswith("()"):
+                    attr = part[:-2]
+                    try:
+                        current = getattr(current, attr)()
+                    except Exception:
+                        missing_fields.append(path)
+                        return None, None
+                    continue
+                current = getattr(current, part, None)
+            if isinstance(current, int) and 0 < current < 1_000_000:
+                return current, path
+            missing_fields.append(path)
+            return None, None
+
+        paths = [
+            "_first_module().auto_model.embeddings.position_embeddings.num_embeddings",
+            "_first_module().model.embeddings.position_embeddings.num_embeddings",
+            "_first_module().auto_model.model.embeddings.position_embeddings.num_embeddings",
+            "auto_model.embeddings.position_embeddings.num_embeddings",
+            "model.embeddings.position_embeddings.num_embeddings",
+            "embeddings.position_embeddings.num_embeddings",
+        ]
+        for path in paths:
+            value, source = _try_path(model_obj, path)
+            if value is not None:
+                return value, f"model.{source}", missing_fields
+        return None, None, missing_fields
 
     def _count_tokens(
         text: str,
@@ -3659,23 +3712,27 @@ def governed_embed(
     except IndexError as exc:
         retry_cap = effective_max_tokens
         fallback_cap_applied = False
-        fallback_cap = None
-        fallback_model_max_length = None
-        if max_positions is None and max_seq_length is None:
-            fallback_tokenizer = _resolve_tokenizer(model)
-            fallback_model_max_length = (
-                getattr(fallback_tokenizer, "model_max_length", None)
-                if fallback_tokenizer is not None
-                else None
+        retry_missing_fields: list[str] = []
+        direct_max_positions, direct_source, retry_missing_fields = (
+            _resolve_direct_position_embeddings(model)
+        )
+        if isinstance(direct_max_positions, int):
+            max_positions = direct_max_positions
+            max_seq_length = direct_max_positions
+            retry_cap = min(retry_cap, max(1, direct_max_positions - special_overhead))
+            if hasattr(model, "max_seq_length"):
+                try:
+                    model.max_seq_length = direct_max_positions
+                except Exception:
+                    pass
+            logger.debug(
+                "embedding retry resolved max_position_embeddings from direct probe "
+                "(max_positions=%s source=%s)",
+                direct_max_positions,
+                direct_source,
             )
-            if (
-                isinstance(fallback_model_max_length, int)
-                and 0 < fallback_model_max_length < 10_000
-            ):
-                fallback_cap = fallback_model_max_length
-            else:
-                fallback_cap = DEFAULT_FALLBACK_RETRY_CAP
-            retry_cap = min(retry_cap, fallback_cap)
+        if max_positions is None and max_seq_length is None and direct_max_positions is None:
+            retry_cap = min(retry_cap, DEFAULT_FALLBACK_RETRY_CAP)
             fallback_cap_applied = True
         if tokenizer is None and not fallback_cap_applied:
             retry_cap = min(retry_cap, DEFAULT_FALLBACK_RETRY_CAP)
@@ -3735,9 +3792,17 @@ def governed_embed(
         if fallback_cap_applied:
             logger.warning(
                 "embedding retry fallback cap applied due to missing max positions "
-                "(fallback_cap=%s tokenizer_max_length=%s model_name=%s model_path=%s)",
-                fallback_cap,
-                fallback_model_max_length,
+                "(fallback_cap=%s missing_fields=%s model_name=%s model_path=%s)",
+                DEFAULT_FALLBACK_RETRY_CAP,
+                retry_missing_fields,
+                getattr(model, "model_name", None),
+                getattr(model, "model_name_or_path", None),
+            )
+        if retry_missing_fields and direct_max_positions is None:
+            logger.warning(
+                "embedding retry missing position metadata for direct probe "
+                "(missing_fields=%s model_name=%s model_path=%s)",
+                retry_missing_fields,
                 getattr(model, "model_name", None),
                 getattr(model, "model_name_or_path", None),
             )
@@ -3899,6 +3964,13 @@ def governed_embed(
             validated_input_count,
             hard_trim_applied,
         ) = _validate_retry_length(cleaned_retry, retry_cap)
+        if retry_tokenizer is not None:
+            (
+                cleaned_retry,
+                final_retry_tokens,
+                validated_input_count,
+                hard_trim_applied,
+            ) = _validate_retry_length(cleaned_retry, retry_cap)
         if hard_trim_applied:
             logger.warning(
                 "embedding retry applied hard trim after tokenizer truncation "
@@ -3955,8 +4027,9 @@ def governed_embed(
             )
             return [0.0] * _STUB_EMBEDDER_DIMENSION
         retry_kwargs = dict(encode_kwargs)
+        retry_max_length = retry_cap + max(0, special_overhead)
         if supports_max_length:
-            retry_kwargs["max_length"] = retry_cap
+            retry_kwargs["max_length"] = retry_max_length
         if allowed_encode_keys is not None:
             if supports_max_length and "max_length" in retry_kwargs and "max_length" not in allowed_encode_keys:
                 logger.debug(
@@ -4025,6 +4098,13 @@ def governed_embed(
                     validated_input_count,
                     hard_trim_applied,
                 ) = _validate_retry_length(cleaned_retry, retry_cap)
+                if retry_tokenizer is not None:
+                    (
+                        cleaned_retry,
+                        final_retry_tokens,
+                        validated_input_count,
+                        hard_trim_applied,
+                    ) = _validate_retry_length(cleaned_retry, retry_cap)
                 if hard_trim_applied:
                     logger.warning(
                         "embedding retry applied hard trim after tokenizer truncation "
@@ -4088,8 +4168,9 @@ def governed_embed(
                     )
                     return [0.0] * _STUB_EMBEDDER_DIMENSION
                 retry_kwargs = dict(encode_kwargs)
+                retry_max_length = retry_cap + max(0, special_overhead)
                 if supports_max_length:
-                    retry_kwargs["max_length"] = retry_cap
+                    retry_kwargs["max_length"] = retry_max_length
                 if allowed_encode_keys is not None:
                     if (
                         supports_max_length
