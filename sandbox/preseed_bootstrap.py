@@ -2002,10 +2002,10 @@ def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
                     },
                 )
             return True
-        if not remote_wait_logged and mode in {"remote", "remote_cached_local"}:
+        if not remote_wait_logged and mode == "remote":
             remote_wait_logged = True
             LOGGER.info(
-                "vector timed out during remote \u2013 waiting for local fallback\u2026",
+                "vector timed out during remote probe; waiting for local fallback before seeding",
                 extra={
                     "event": "embedder-remote-unready-wait",
                     "elapsed": time.perf_counter() - start,
@@ -2019,6 +2019,50 @@ def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
         waited = True
         remaining = None if deadline is None else max(deadline - now, 0.0)
         time.sleep(min(1.0, remaining) if remaining is not None else 1.0)
+
+
+def _schedule_deferred_research_aggregator_seed(
+    *,
+    func: Callable[..., Any],
+    timeout: float | None,
+    bootstrap_deadline: float | None,
+    description: str,
+    heavy_bootstrap: bool,
+    contention_scale: float,
+    budget: SharedTimeoutCoordinator | None,
+    budget_label: str,
+    label: str,
+    event_label: str,
+    seed_kwargs: dict[str, Any],
+) -> None:
+    def _deferred_seed() -> None:
+        _await_embedder_ready_for_seeding(None)
+        _run_with_timeout(
+            func,
+            timeout=timeout,
+            bootstrap_deadline=bootstrap_deadline,
+            description=description,
+            abort_on_timeout=False,
+            heavy_bootstrap=heavy_bootstrap,
+            contention_scale=contention_scale,
+            budget=budget,
+            budget_label=budget_label,
+            label=label,
+            **seed_kwargs,
+        )
+
+    try:
+        _BOOTSTRAP_BACKGROUND_EXECUTOR.submit(_deferred_seed)
+        LOGGER.info(
+            "scheduled deferred research aggregator seeding after embedder readiness",
+            extra={"event": event_label},
+        )
+    except RuntimeError:
+        LOGGER.warning(
+            "unable to schedule deferred research aggregator seeding",
+            exc_info=True,
+            extra={"event": f"{event_label}-failed"},
+        )
 
 def _seed_research_aggregator_context(
     *,
@@ -8223,6 +8267,7 @@ def initialize_bootstrap_context(
                 "vector_seeding", reason="placeholder_seed"
             )
 
+            defer_placeholder_seed = False
             if skip_unless_embedder_ready and not embedder_ready:
                 embedder_ready = _await_embedder_ready_for_seeding(
                     _EMBEDDER_SEED_WAIT_SECS
@@ -8230,36 +8275,59 @@ def initialize_bootstrap_context(
             if skip_unless_embedder_ready and not embedder_ready:
                 LOGGER.warning(
                     (
-                        "embedder not ready after %ss; proceeding with seeding using local fallback"
+                        "vector timed out during remote probe; waiting for local fallback before seeding"
                     ),
-                    _EMBEDDER_SEED_WAIT_SECS,
                     extra={
-                        "event": "research-aggregator-skip",
+                        "event": "research-aggregator-seed-deferred",
                         "reason": "embedder-unready",
                     },
                 )
                 _BOOTSTRAP_SCHEDULER.mark_partial(
                     "vector_seeding", reason="embedder_unready"
                 )
-            _run_with_timeout(
-                _timed_callable,
-                timeout=placeholder_seed_timeout,
-                bootstrap_deadline=bootstrap_deadline,
-                description="_seed_research_aggregator_context placeholder",
-                abort_on_timeout=False,
-                heavy_bootstrap=heavy_bootstrap,
-                contention_scale=placeholder_seed_gate["timeout_scale"],
-                budget=shared_timeout_coordinator,
-                budget_label="orchestrator_state",
-                func=_seed_research_aggregator_context,
-                label="_seed_research_aggregator_context placeholder",
-                registry=registry,
-                data_bot=data_bot,
-                context_builder=context_builder,
-                engine=engine,
-                pipeline=bootstrap_manager,
-                manager=bootstrap_manager,
-            )
+                defer_placeholder_seed = True
+                _schedule_deferred_research_aggregator_seed(
+                    func=_timed_callable,
+                    timeout=placeholder_seed_timeout,
+                    bootstrap_deadline=bootstrap_deadline,
+                    description="_seed_research_aggregator_context placeholder",
+                    heavy_bootstrap=heavy_bootstrap,
+                    contention_scale=placeholder_seed_gate["timeout_scale"],
+                    budget=shared_timeout_coordinator,
+                    budget_label="orchestrator_state",
+                    label="_seed_research_aggregator_context placeholder",
+                    event_label="research-aggregator-seed-deferred-placeholder",
+                    seed_kwargs={
+                        "func": _seed_research_aggregator_context,
+                        "label": "_seed_research_aggregator_context placeholder",
+                        "registry": registry,
+                        "data_bot": data_bot,
+                        "context_builder": context_builder,
+                        "engine": engine,
+                        "pipeline": bootstrap_manager,
+                        "manager": bootstrap_manager,
+                    },
+                )
+            if not defer_placeholder_seed:
+                _run_with_timeout(
+                    _timed_callable,
+                    timeout=placeholder_seed_timeout,
+                    bootstrap_deadline=bootstrap_deadline,
+                    description="_seed_research_aggregator_context placeholder",
+                    abort_on_timeout=False,
+                    heavy_bootstrap=heavy_bootstrap,
+                    contention_scale=placeholder_seed_gate["timeout_scale"],
+                    budget=shared_timeout_coordinator,
+                    budget_label="orchestrator_state",
+                    func=_seed_research_aggregator_context,
+                    label="_seed_research_aggregator_context placeholder",
+                    registry=registry,
+                    data_bot=data_bot,
+                    context_builder=context_builder,
+                    engine=engine,
+                    pipeline=bootstrap_manager,
+                    manager=bootstrap_manager,
+                )
             LOGGER.info(
                 "after _seed_research_aggregator_context (last_step=%s)",
                 BOOTSTRAP_PROGRESS["last_step"],
@@ -8752,6 +8820,7 @@ def initialize_bootstrap_context(
             final_seed_timeout, embedder_ready=embedder_ready
         )
 
+        defer_final_seed = False
         if skip_unless_embedder_ready and not embedder_ready:
             embedder_ready = _await_embedder_ready_for_seeding(
                 _EMBEDDER_SEED_WAIT_SECS
@@ -8759,31 +8828,55 @@ def initialize_bootstrap_context(
         if skip_unless_embedder_ready and not embedder_ready:
             LOGGER.warning(
                 (
-                    "embedder not ready after %ss; proceeding with seeding using local fallback"
+                    "vector timed out during remote probe; waiting for local fallback before seeding"
                 ),
-                _EMBEDDER_SEED_WAIT_SECS,
-                extra={"event": "research-aggregator-skip", "reason": "embedder-unready"},
+                extra={
+                    "event": "research-aggregator-seed-deferred",
+                    "reason": "embedder-unready",
+                },
             )
             _BOOTSTRAP_SCHEDULER.mark_partial(
                 "vector_seeding", reason="embedder_unready"
             )
-        _run_with_timeout(
-            _seed_research_aggregator_context,
-            timeout=final_seed_timeout,
-            bootstrap_deadline=bootstrap_deadline,
-            description="_seed_research_aggregator_context final",
-            abort_on_timeout=False,
-            heavy_bootstrap=heavy_bootstrap,
-            contention_scale=final_seed_gate["timeout_scale"],
-            budget=shared_timeout_coordinator,
-            budget_label="orchestrator_state",
-            registry=registry,
-            data_bot=data_bot,
-            context_builder=context_builder,
-            engine=engine,
-            pipeline=pipeline,
-            manager=manager,
-        )
+            defer_final_seed = True
+            _schedule_deferred_research_aggregator_seed(
+                func=_seed_research_aggregator_context,
+                timeout=final_seed_timeout,
+                bootstrap_deadline=bootstrap_deadline,
+                description="_seed_research_aggregator_context final",
+                heavy_bootstrap=heavy_bootstrap,
+                contention_scale=final_seed_gate["timeout_scale"],
+                budget=shared_timeout_coordinator,
+                budget_label="orchestrator_state",
+                label="_seed_research_aggregator_context final",
+                event_label="research-aggregator-seed-deferred-final",
+                seed_kwargs={
+                    "registry": registry,
+                    "data_bot": data_bot,
+                    "context_builder": context_builder,
+                    "engine": engine,
+                    "pipeline": pipeline,
+                    "manager": manager,
+                },
+            )
+        if not defer_final_seed:
+            _run_with_timeout(
+                _seed_research_aggregator_context,
+                timeout=final_seed_timeout,
+                bootstrap_deadline=bootstrap_deadline,
+                description="_seed_research_aggregator_context final",
+                abort_on_timeout=False,
+                heavy_bootstrap=heavy_bootstrap,
+                contention_scale=final_seed_gate["timeout_scale"],
+                budget=shared_timeout_coordinator,
+                budget_label="orchestrator_state",
+                registry=registry,
+                data_bot=data_bot,
+                context_builder=context_builder,
+                engine=engine,
+                pipeline=pipeline,
+                manager=manager,
+            )
         LOGGER.info(
             "_seed_research_aggregator_context finished (last_step=%s)",
             BOOTSTRAP_PROGRESS["last_step"],
