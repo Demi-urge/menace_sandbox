@@ -65,6 +65,7 @@ _READINESS_LOG_THROTTLE_SECONDS = 5.0
 _KEEPALIVE_COMPONENT_GRACE_SECONDS = 5.0
 _KEEPALIVE_GRACE_START: float | None = None
 _LAST_COMPONENT_SNAPSHOT: dict[str, str] | None = None
+_BOOTSTRAP_STRICT_TIMEOUT_ENV = "MENACE_BOOTSTRAP_STRICT_TIMEOUT"
 _SANDBOX_FORCED_COMPONENTS: tuple[str, ...] = (
     "db_index_load",
     "retriever_hydration",
@@ -399,7 +400,15 @@ def component_readiness_timestamps(
         status = raw.get("status") if isinstance(raw, Mapping) else raw
         status = str(status) if status is not None else "unknown"
         ts = _extract_timestamp(raw) if isinstance(raw, Mapping) else None
-        readiness_meta[component] = {"status": status, "ts": ts or fallback_ts}
+        entry: dict[str, object] = {"status": status, "ts": ts or fallback_ts}
+        if isinstance(raw, Mapping):
+            reason = raw.get("reason")
+            if reason is not None:
+                entry["reason"] = reason
+            elapsed = raw.get("elapsed")
+            if elapsed is not None:
+                entry["elapsed"] = elapsed
+        readiness_meta[component] = entry
 
     if isinstance(readiness_field, Mapping):
         component_details = readiness_field.get("component_readiness")
@@ -1064,7 +1073,9 @@ class ReadinessSignal:
 
         return self.probe().ready
 
-    def await_ready(self, timeout: float | None = None) -> bool | ReadinessAwaitResult:
+    def await_ready(
+        self, timeout: float | None = None, *, strict_timeout: bool | None = None
+    ) -> bool | ReadinessAwaitResult:
         """Block until readiness is achieved or ``timeout`` expires."""
         global _LAST_EMBEDDER_LOCAL_FALLBACK
         start = time.perf_counter()
@@ -1072,6 +1083,7 @@ class ReadinessSignal:
         embedder_waiting = False
         embedder_mode = "unknown"
         embedder_fallback_attempted = False
+        strict_timeout = self._resolve_strict_timeout(strict_timeout)
 
         while True:
             probe = self.probe()
@@ -1122,6 +1134,11 @@ class ReadinessSignal:
                         elapsed=elapsed,
                         reason="embedder_timeout_fallback",
                     )
+                fallback_result = None
+                if not strict_timeout:
+                    fallback_result = self._check_local_fallback_readiness(elapsed=elapsed)
+                if fallback_result is not None:
+                    return fallback_result
                 if not probe.ready:
                     self._log_pending_components(
                         probe,
@@ -1157,6 +1174,54 @@ class ReadinessSignal:
                     )
 
             time.sleep(self.poll_interval)
+
+    def _resolve_strict_timeout(self, strict_timeout: bool | None) -> bool:
+        if strict_timeout is not None:
+            return strict_timeout
+        raw = os.getenv(_BOOTSTRAP_STRICT_TIMEOUT_ENV, "").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
+
+    def _check_local_fallback_readiness(
+        self, *, elapsed: float
+    ) -> ReadinessAwaitResult | None:
+        readiness_meta = component_readiness_timestamps(max_age=self.max_age)
+        vector_meta = readiness_meta.get("vector_seeding", {})
+        status = str(vector_meta.get("status", "")).lower()
+        reason = str(vector_meta.get("reason", "")).lower()
+        fallback_ready = status == "ready" or reason == "fallback_local_seed"
+
+        if not fallback_ready:
+            online_state = shared_online_state(max_age=self.max_age) or {}
+            components = (
+                online_state.get("components") if isinstance(online_state, Mapping) else None
+            )
+            component_status = None
+            if isinstance(components, Mapping):
+                component_status = components.get("vector_seeding")
+            if isinstance(component_status, str):
+                fallback_ready = component_status.lower() == "ready"
+
+        if not fallback_ready:
+            return None
+
+        LOGGER.warning(
+            "bootstrap readiness timeout recovered via local fallback vector seeding after %.1fs",
+            elapsed,
+            extra={
+                "event": "bootstrap-local-fallback-readiness-recovered",
+                "elapsed": elapsed,
+                "component": "vector_seeding",
+                "status": vector_meta.get("status"),
+                "reason": vector_meta.get("reason"),
+            },
+        )
+        return ReadinessAwaitResult(
+            ready=True,
+            degraded=True,
+            mode="local_fallback",
+            elapsed=elapsed,
+            reason="fallback_local_seed",
+        )
 
     def _log_pending_components(
         self,
