@@ -89,6 +89,15 @@ try:
     )
 except ValueError:
     _EMBED_REMOTE_PROBE_COOLDOWN_SECS = 45.0
+_RAW_EMBED_REMOTE_CONNECT_TIMEOUT = os.getenv(
+    "MENACE_EMBED_REMOTE_CONNECT_TIMEOUT_SECS", "0.75"
+).strip()
+try:
+    _EMBED_REMOTE_CONNECT_TIMEOUT_SECS = (
+        float(_RAW_EMBED_REMOTE_CONNECT_TIMEOUT) if _RAW_EMBED_REMOTE_CONNECT_TIMEOUT else 0.75
+    )
+except ValueError:
+    _EMBED_REMOTE_CONNECT_TIMEOUT_SECS = 0.75
 _LAST_REMOTE_PROBE_FAILURE_AT: float | None = None
 _LAST_REMOTE_PROBE_WARNING_AT: float | None = None
 _EMBED_HEALTH_PATHS: tuple[str, ...] = (
@@ -458,7 +467,12 @@ def _probe_embedding_local(timeout: float) -> bool:
     return isinstance(vector, list) and len(vector) > 0
 
 
-def _probe_embedding_http(url: str, timeout: float) -> bool:
+def _probe_embedding_http(
+    url: str,
+    timeout: float,
+    *,
+    connect_timeout: float | None = None,
+) -> bool:
     global _LAST_REMOTE_PROBE_FAILURE_AT, _LAST_REMOTE_PROBE_WARNING_AT
 
     now = time.time()
@@ -495,6 +509,8 @@ def _probe_embedding_http(url: str, timeout: float) -> bool:
                     "event": "remote-embedding-probe-timeout",
                     "cooldown_secs": _EMBED_REMOTE_PROBE_COOLDOWN_SECS,
                     "timeout_s": timeout_s,
+                    "connect_timeout_s": connect_timeout,
+                    "read_timeout_s": timeout,
                     "elapsed_s": elapsed_s,
                     "url": context_url,
                 },
@@ -568,7 +584,9 @@ def _probe_embedding_http(url: str, timeout: float) -> bool:
     return isinstance(vector, list) and len(vector) > 0
 
 
-def probe_embedding_service(timeout: float | None = None) -> tuple[bool, str]:
+def probe_embedding_service(
+    timeout: float | None = None, *, readiness_loop: bool = False
+) -> tuple[bool, str]:
     """Return ``(ready, mode)`` for the embedding service readiness probe."""
 
     url = os.getenv("VECTOR_SERVICE_URL", "").strip()
@@ -582,8 +600,45 @@ def probe_embedding_service(timeout: float | None = None) -> tuple[bool, str]:
             and _EMBED_REMOTE_PROBE_COOLDOWN_SECS > 0
             and (now - _LAST_REMOTE_PROBE_FAILURE_AT) < _EMBED_REMOTE_PROBE_COOLDOWN_SECS
         )
-        if _probe_embedding_http(url, probe_timeout):
-            return True, "remote"
+        connect_timeout = min(
+            max(_EMBED_REMOTE_CONNECT_TIMEOUT_SECS, 0.1), probe_timeout
+        )
+        if readiness_loop:
+            if _probe_embedding_local(probe_timeout):
+                if cooldown_active:
+                    return True, "local_fallback_cached_remote"
+                return True, "local_fallback"
+
+        remote_result: dict[str, bool] = {}
+        remote_done = threading.Event()
+
+        def _remote_probe() -> None:
+            remote_result["ready"] = _probe_embedding_http(
+                url,
+                probe_timeout,
+                connect_timeout=connect_timeout,
+            )
+            remote_done.set()
+
+        threading.Thread(
+            target=_remote_probe,
+            daemon=True,
+            name="embedder-remote-probe",
+        ).start()
+
+        if remote_done.wait(connect_timeout):
+            if remote_result.get("ready"):
+                return True, "remote"
+        else:
+            LOGGER.info(
+                "remote embedding probe pending; falling back to local probe",
+                extra={
+                    "event": "remote-embedding-probe-connect-timeout",
+                    "connect_timeout_s": connect_timeout,
+                    "read_timeout_s": probe_timeout,
+                    "url": url,
+                },
+            )
         if _probe_embedding_local(probe_timeout):
             if cooldown_active:
                 return True, "local_fallback_cached_remote"
@@ -984,7 +1039,9 @@ class ReadinessSignal:
             probe = self.probe()
             embedder_ready = False
             if probe.ready:
-                embedder_ready, embedder_mode = probe_embedding_service()
+                embedder_ready, embedder_mode = probe_embedding_service(
+                    readiness_loop=True
+                )
                 if embedder_ready:
                     if embedder_waiting and embedder_mode in {"local", "local_fallback"}:
                         LOGGER.info(
