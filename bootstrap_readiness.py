@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 import json
+import urllib.error
 import urllib.request
 
 import atexit
@@ -78,6 +79,14 @@ try:
     _EMBED_READINESS_TIMEOUT_SECS = float(_RAW_EMBED_TIMEOUT) if _RAW_EMBED_TIMEOUT else 2.5
 except ValueError:
     _EMBED_READINESS_TIMEOUT_SECS = 2.5
+_RAW_EMBED_PROBE_COOLDOWN = os.getenv("VECTOR_SERVICE_PROBE_COOLDOWN_SECS", "30").strip()
+try:
+    _EMBED_PROBE_COOLDOWN_SECS = (
+        float(_RAW_EMBED_PROBE_COOLDOWN) if _RAW_EMBED_PROBE_COOLDOWN else 30.0
+    )
+except ValueError:
+    _EMBED_PROBE_COOLDOWN_SECS = 30.0
+_LAST_EMBED_HTTP_FAILURE: float | None = None
 
 
 @dataclass(frozen=True)
@@ -450,6 +459,14 @@ def _probe_embedding_http(url: str, timeout: float) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+    except (TimeoutError, urllib.error.URLError):
+        global _LAST_EMBED_HTTP_FAILURE
+        _LAST_EMBED_HTTP_FAILURE = time.time()
+        LOGGER.warning(
+            "remote embedding probe failed; applying cooldown",
+            exc_info=True,
+        )
+        return False
     except Exception:
         LOGGER.debug("remote embedding probe failed", exc_info=True)
         return False
@@ -465,10 +482,21 @@ def probe_embedding_service(timeout: float | None = None) -> tuple[bool, str]:
         _EMBED_READINESS_TIMEOUT_SECS if timeout is None else max(timeout, 0.1)
     )
     if url:
-        if _probe_embedding_http(url, probe_timeout):
-            return True, "remote"
+        now = time.time()
+        cooldown_active = (
+            _LAST_EMBED_HTTP_FAILURE is not None
+            and _EMBED_PROBE_COOLDOWN_SECS > 0
+            and (now - _LAST_EMBED_HTTP_FAILURE) < _EMBED_PROBE_COOLDOWN_SECS
+        )
+        if not cooldown_active:
+            if _probe_embedding_http(url, probe_timeout):
+                return True, "remote"
         if _probe_embedding_local(probe_timeout):
+            if cooldown_active:
+                return True, "local_fallback_cached_remote"
             return True, "local_fallback"
+        if cooldown_active:
+            return False, "remote_cached_local"
         return False, "remote"
     if _probe_embedding_local(probe_timeout):
         return True, "local"
