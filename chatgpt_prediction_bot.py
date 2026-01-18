@@ -20,6 +20,7 @@ from .coding_bot_interface import self_coding_managed
 from .self_coding_engine import SelfCodingEngine
 from context_builder import handle_failure, PromptBuildError
 from bootstrap_readiness import readiness_signal
+from bootstrap_timeout_policy import resolve_bootstrap_gate_timeout
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any, Iterable, List, Mapping, Tuple
@@ -112,9 +113,12 @@ except Exception:  # pragma: no cover - fallback when service missing
         """Fallback placeholder when vector service is unavailable."""
 
 
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 10.0) -> None:
+def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> None:
+    resolved_timeout = resolve_bootstrap_gate_timeout(
+        fallback_timeout=max(timeout if timeout is not None else 180.0, 180.0)
+    )
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+        _BOOTSTRAP_READINESS.await_ready(timeout=resolved_timeout)
     except TimeoutError as exc:  # pragma: no cover - defensive path
         raise RuntimeError(
             f"{component} cannot start until bootstrap readiness clears: "
