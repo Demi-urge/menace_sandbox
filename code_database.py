@@ -576,7 +576,7 @@ class CodeDB(EmbeddableDBMixin):
         if self._fts_disabled_until and datetime.utcnow() < self._fts_disabled_until:
             return
         try:
-            self._execute(conn, SQL_CREATE_FTS)
+            self._execute_schema_stmt(conn, SQL_CREATE_FTS)
             self._execute_fts(conn, SQL_POPULATE_FTS, ())
             self.has_fts = True
             self._fts_failures = 0
@@ -614,7 +614,7 @@ class CodeDB(EmbeddableDBMixin):
             # table (for example foreign keys) do not fail with ``no such table``
             # errors.  ``SQL_CREATE_CODE_TABLE`` already guards with
             # ``IF NOT EXISTS`` making the call idempotent.
-            self._execute(conn, SQL_CREATE_CODE_TABLE)
+            self._execute_schema_stmt(conn, SQL_CREATE_CODE_TABLE)
             cols = [
                 r[1]
                 for r in conn.execute("PRAGMA table_info(code)").fetchall()
@@ -631,7 +631,7 @@ class CodeDB(EmbeddableDBMixin):
                         col = stmt.split()[5]
                         if col in cols:
                             continue
-                    self._execute(conn, stmt)
+                    self._execute_schema_stmt(conn, stmt)
                 version = target
                 conn.execute(f"PRAGMA user_version = {version}")
                 cols = [
@@ -645,6 +645,31 @@ class CodeDB(EmbeddableDBMixin):
 
     def _with_retry(self, func: Callable[[Any], T]) -> T:
         return with_retry(func, exc=sqlite3.Error, logger=logger)
+
+    def _execute_schema_stmt(self, conn: Any, stmt: str) -> None:
+        class _NonRetryableSchemaError(Exception):
+            """Wrapper to short-circuit schema retries."""
+
+        def op() -> None:
+            try:
+                self._execute(conn, stmt)
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                if "locked" not in message:
+                    raise _NonRetryableSchemaError from exc
+                logger.debug("schema DDL locked; retrying")
+                raise
+
+        try:
+            with_retry(
+                op,
+                attempts=3,
+                delay=0.2,
+                exc=sqlite3.OperationalError,
+                logger=logger,
+            )
+        except _NonRetryableSchemaError as exc:
+            raise exc.__cause__ or exc
 
     def _conn_wrapper(self, func: Callable[[Any], T]) -> T:
         with self._connect() as conn:
