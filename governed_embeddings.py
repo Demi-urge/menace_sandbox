@@ -1371,10 +1371,23 @@ def _clamp_embedder_max_seq_length(model_obj: Any) -> None:
             return value
         return None
 
+    def _resolve_special_overhead(tokenizer_obj: Any | None) -> int:
+        if tokenizer_obj is None:
+            return 2
+        if hasattr(tokenizer_obj, "num_special_tokens_to_add"):
+            try:
+                special_count = tokenizer_obj.num_special_tokens_to_add(pair=False)
+            except Exception:
+                return 2
+            if isinstance(special_count, int) and special_count >= 0:
+                return special_count
+        return 2
+
     tokenizer = getattr(model_obj, "tokenizer", None) or getattr(model_obj, "_tokenizer", None)
     tokenizer_max = _coerce_seq_length(
         getattr(tokenizer, "model_max_length", None) if tokenizer is not None else None
     )
+    special_overhead = _resolve_special_overhead(tokenizer)
 
     auto_model = getattr(model_obj, "auto_model", None)
     if auto_model is None and hasattr(model_obj, "_first_module"):
@@ -1394,9 +1407,20 @@ def _clamp_embedder_max_seq_length(model_obj: Any) -> None:
     existing_max_seq_length = _coerce_seq_length(getattr(model_obj, "max_seq_length", None))
     embedding_table_size, embedding_table_source = _resolve_position_embedding_table_size(model_obj)
     embedding_table_size = _coerce_seq_length(embedding_table_size)
+    embedding_table_cap = (
+        _coerce_seq_length(embedding_table_size - special_overhead)
+        if isinstance(embedding_table_size, int)
+        else None
+    )
     cap_candidates = [
         value
-        for value in (existing_max_seq_length, tokenizer_max, max_positions, embedding_table_size)
+        for value in (
+            existing_max_seq_length,
+            tokenizer_max,
+            max_positions,
+            embedding_table_size,
+            embedding_table_cap,
+        )
         if value is not None
     ]
     if not cap_candidates:
@@ -1413,7 +1437,9 @@ def _clamp_embedder_max_seq_length(model_obj: Any) -> None:
             "tokenizer_max_length": tokenizer_max,
             "max_position_embeddings": max_positions,
             "embedding_table_size": embedding_table_size,
+            "embedding_table_cap": embedding_table_cap,
             "embedding_table_source": embedding_table_source,
+            "special_overhead": special_overhead,
         },
     )
 
@@ -3384,12 +3410,18 @@ def governed_embed(
         ]
         max_seq_length = min(seq_length_candidates) if seq_length_candidates else None
         max_positions = _resolve_max_position_embeddings(model_obj)
+        embedding_table_size, _ = _resolve_position_embedding_table_size(model_obj)
+        embedding_table_cap = (
+            max(1, embedding_table_size - special_overhead)
+            if isinstance(embedding_table_size, int)
+            else None
+        )
         safe_max_tokens = (
             max(1, max_positions - special_overhead) if isinstance(max_positions, int) else None
         )
         cap_sources = [
             value
-            for value in (tokenizer_max, safe_max_tokens, max_seq_length)
+            for value in (tokenizer_max, safe_max_tokens, max_seq_length, embedding_table_cap)
             if value is not None
         ]
         if cap_sources:
@@ -3398,6 +3430,8 @@ def governed_embed(
                 effective_max_tokens = min(
                     effective_max_tokens, max(1, max_positions - special_overhead)
                 )
+            if isinstance(embedding_table_cap, int):
+                effective_max_tokens = min(effective_max_tokens, embedding_table_cap)
             return (
                 effective_max_tokens,
                 tokenizer_max,
@@ -3594,6 +3628,61 @@ def governed_embed(
         exceeds = validated_count > max_input_tokens
         return validated_text, validated_count, exceeds
 
+    def _coerce_input_ids(tokenized: Any) -> list[int] | None:
+        input_ids = tokenized.get("input_ids") if isinstance(tokenized, dict) else tokenized
+        if isinstance(input_ids, tuple):
+            input_ids = list(input_ids)
+        if isinstance(input_ids, list) and input_ids and isinstance(input_ids[0], list):
+            input_ids = input_ids[0]
+        if not isinstance(input_ids, list):
+            return None
+        return input_ids
+
+    def _enforce_position_embedding_limit(
+        raw_text: str,
+        limit: int,
+        tokenizer_obj: Any,
+    ) -> tuple[str, int | None, bool, bool]:
+        try:
+            tokenized = _with_tokenizer_lock(
+                lambda: tokenizer_obj(
+                    raw_text,
+                    add_special_tokens=True,
+                    truncation=False,
+                )
+            )
+        except Exception:
+            return raw_text, None, False, True
+        input_ids = _coerce_input_ids(tokenized)
+        if input_ids is None:
+            return raw_text, None, False, True
+        token_count = len(input_ids)
+        if token_count <= limit:
+            return raw_text, token_count, False, False
+        try:
+            tokenized = _with_tokenizer_lock(
+                lambda: tokenizer_obj(
+                    raw_text,
+                    add_special_tokens=True,
+                    truncation=True,
+                    max_length=limit,
+                )
+            )
+        except Exception:
+            return raw_text, token_count, False, True
+        input_ids = _coerce_input_ids(tokenized)
+        if input_ids is None:
+            return raw_text, token_count, False, True
+        if hasattr(tokenizer_obj, "decode"):
+            try:
+                truncated_text = _with_tokenizer_lock(
+                    lambda: tokenizer_obj.decode(input_ids, skip_special_tokens=True)
+                )
+            except Exception:
+                return raw_text, token_count, False, True
+            return truncated_text, len(input_ids), True, False
+        return raw_text, token_count, False, True
+
     cleaned_for_embedding, validated_input_count, validated_exceeds = _prevalidate_embedding_input(
         cleaned_for_embedding, enforced_cap
     )
@@ -3650,24 +3739,51 @@ def governed_embed(
         max_positions,
         tokenizer_max,
     )
-    if isinstance(max_positions, int):
-        pre_encode_tokens = _with_tokenizer_lock(
-            lambda: _count_tokens(
+    if isinstance(embedding_table_size, int):
+        retry_tokenizer = tokenizer or _resolve_tokenizer(model)
+        if retry_tokenizer is None:
+            pre_encode_tokens = _with_tokenizer_lock(
+                lambda: _count_tokens(
+                    cleaned_for_embedding,
+                    model,
+                    embedding_table_size,
+                    add_special_tokens=True,
+                    conservative_on_error=True,
+                )
+            )
+            if pre_encode_tokens > embedding_table_size:
+                logger.warning(
+                    "embedding input exceeds position embedding limit without tokenizer; "
+                    "returning zero vector (tokens=%s limit=%s)",
+                    pre_encode_tokens,
+                    embedding_table_size,
+                )
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
+        else:
+            (
                 cleaned_for_embedding,
-                model,
-                max_positions,
-                add_special_tokens=True,
-                conservative_on_error=True,
-            )
-        )
-        if pre_encode_tokens > max_positions:
-            logger.warning(
-                "embedding input exceeds max_position_embeddings before encode; "
-                "returning zero vector (tokens=%s max_positions=%s)",
                 pre_encode_tokens,
-                max_positions,
+                precheck_truncated,
+                precheck_failed,
+            ) = _enforce_position_embedding_limit(
+                cleaned_for_embedding,
+                embedding_table_size,
+                retry_tokenizer,
             )
-            return [0.0] * _STUB_EMBEDDER_DIMENSION
+            if precheck_failed:
+                logger.warning(
+                    "embedding input pre-check failed for position embedding limit; "
+                    "returning zero vector (limit=%s)",
+                    embedding_table_size,
+                )
+                return [0.0] * _STUB_EMBEDDER_DIMENSION
+            if precheck_truncated:
+                logger.warning(
+                    "embedding input exceeded position embedding limit; applied tokenizer truncation "
+                    "(tokens=%s limit=%s)",
+                    pre_encode_tokens,
+                    embedding_table_size,
+                )
 
     def _encode_with_lock(payload: Callable[[], Any]) -> Any:
         if encode_lock is None:
