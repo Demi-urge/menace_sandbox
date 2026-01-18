@@ -163,6 +163,10 @@ class _BootstrapVectorMetricsStub:
         self._awaiting_readiness_signal = False
         self._readiness_guard_reasons: list[str] = []
         self._warmup_cwd: Path | None = None
+        self._readiness_signal = None
+        self._readiness_waiter_active = False
+        self._readiness_initial_timeout_logged = False
+        self._readiness_hard_failure = False
         self._activation_blocked = bool(
             self._activation_kwargs.get("bootstrap_fast")
             or self._activation_kwargs.get("warmup")
@@ -555,6 +559,7 @@ class _BootstrapVectorMetricsStub:
             return
 
         self._readiness_hook_registered = True
+        self._readiness_signal = readiness_signal
         budget = self._readiness_wait_budget_seconds()
 
         self._schedule_readiness_timeout()
@@ -566,67 +571,18 @@ class _BootstrapVectorMetricsStub:
                 if budget is not None and outcome is False:
                     timed_out = True
                 else:
-                    self._readiness_ready = True
+                    self._handle_readiness_ready(eventual=False)
             except TimeoutError:
                 timed_out = True
             except Exception:  # pragma: no cover - best effort logging
+                self._readiness_hard_failure = True
                 logger.debug(
                     "vector metrics stub readiness gate failed", exc_info=True
                 )
                 return
             if timed_out:
-                try:
-                    self._pending_readiness_reason = (
-                        self._pending_readiness_reason or "readiness_timeout"
-                    )
-                    self._log_deferred_activation(reason="readiness_timeout")
-                    _increment_deferral_metric("readiness_timeout")
-                    self.promote_after_readiness_async(
-                        reason=self._pending_readiness_reason,
-                        force=True,
-                    )
-                except Exception:  # pragma: no cover - defensive
-                    logger.debug(
-                        "vector metrics stub readiness timeout failed", exc_info=True
-                    )
+                self._start_extended_readiness_wait(reason="initial_timeout")
                 return
-            try:
-                pending = _pending_weight_mapping()
-                logger.info(
-                    "vector_metrics_db.bootstrap.stub_promotion_pending",
-                    extra={"pending_weights": len(pending)},
-                )
-                if self._warmup_guarded_activation and self._activation_blocked:
-                    self._release_activation_block(
-                        reason="bootstrap_ready", configure_ready=True
-                    )
-                self._log_deferred_activation(reason="bootstrap_ready_cached")
-                _increment_deferral_metric("bootstrap_ready_cached")
-                if self._awaiting_readiness_signal and not self._post_warmup_activation_requested:
-                    self._post_warmup_activation_requested = True
-                    self._post_warmup_activation_reason = "bootstrap_ready"
-                    self._awaiting_readiness_signal = False
-                    _increment_deferral_metric("readiness_signal_released")
-                    logger.info(
-                        "vector_metrics_db.bootstrap.readiness_signal_auto_activation",
-                        extra={
-                            "pending_weights": len(pending),
-                            "guard_reasons": self._readiness_guard_reasons,
-                        },
-                    )
-                if not self._post_warmup_activation_requested:
-                    logger.info(
-                        "vector_metrics_db.bootstrap.readiness_waiting_for_activation",
-                        extra={"pending_weights": len(pending)},
-                    )
-                    self._pending_readiness_reason = "bootstrap_ready"
-                    return
-                self._pending_readiness_reason = "bootstrap_ready"
-                self.promote_after_readiness_async(reason="bootstrap_ready")
-            except Exception:  # pragma: no cover - best effort logging
-                logger.debug(
-                    "vector metrics stub readiness activation failed", exc_info=True
-                )
 
         logger.info(
             "vector_metrics_db.bootstrap.stub_readiness_registered",
@@ -642,6 +598,87 @@ class _BootstrapVectorMetricsStub:
             name="vector-metrics-stub-readiness",
             daemon=True,
         ).start()
+
+    def _start_extended_readiness_wait(self, *, reason: str) -> None:
+        if self._readiness_signal is None:
+            return
+        if self._readiness_ready or self._delegate is not None:
+            return
+        if self._readiness_waiter_active:
+            return
+        if not self._readiness_initial_timeout_logged:
+            logger.info(
+                "vector_metrics_db.bootstrap.readiness_initial_timeout",
+                extra={"budget": self._readiness_wait_budget_seconds(), "reason": reason},
+            )
+            self._readiness_initial_timeout_logged = True
+        self._readiness_waiter_active = True
+
+        def _await_ready_without_timeout() -> None:
+            try:
+                self._readiness_signal().await_ready(timeout=None)
+            except Exception:  # pragma: no cover - best effort logging
+                self._readiness_waiter_active = False
+                self._readiness_hard_failure = True
+                logger.debug(
+                    "vector metrics stub readiness background wait failed",
+                    exc_info=True,
+                )
+                self._readiness_timeout_fallback()
+                return
+            self._readiness_waiter_active = False
+            logger.info(
+                "vector_metrics_db.bootstrap.readiness_eventual",
+                extra={"reason": reason},
+            )
+            self._handle_readiness_ready(eventual=True)
+
+        threading.Thread(
+            target=_await_ready_without_timeout,
+            name="vector-metrics-stub-readiness-extended",
+            daemon=True,
+        ).start()
+
+    def _handle_readiness_ready(self, *, eventual: bool) -> None:
+        self._readiness_ready = True
+        try:
+            pending = _pending_weight_mapping()
+            logger.info(
+                "vector_metrics_db.bootstrap.stub_promotion_pending",
+                extra={"pending_weights": len(pending)},
+            )
+            if self._warmup_guarded_activation and self._activation_blocked:
+                self._release_activation_block(
+                    reason="bootstrap_ready", configure_ready=True
+                )
+            self._log_deferred_activation(reason="bootstrap_ready_cached")
+            _increment_deferral_metric("bootstrap_ready_cached")
+            if self._awaiting_readiness_signal and not self._post_warmup_activation_requested:
+                self._post_warmup_activation_requested = True
+                self._post_warmup_activation_reason = "bootstrap_ready"
+                self._awaiting_readiness_signal = False
+                _increment_deferral_metric("readiness_signal_released")
+                logger.info(
+                    "vector_metrics_db.bootstrap.readiness_signal_auto_activation",
+                    extra={
+                        "pending_weights": len(pending),
+                        "guard_reasons": self._readiness_guard_reasons,
+                        "eventual": eventual,
+                    },
+                )
+            if not self._post_warmup_activation_requested:
+                logger.info(
+                    "vector_metrics_db.bootstrap.readiness_waiting_for_activation",
+                    extra={"pending_weights": len(pending), "eventual": eventual},
+                )
+                self._pending_readiness_reason = "bootstrap_ready"
+                return
+            self._pending_readiness_reason = "bootstrap_ready"
+            self.promote_after_readiness_async(reason="bootstrap_ready")
+        except Exception:  # pragma: no cover - best effort logging
+            logger.debug(
+                "vector metrics stub readiness activation failed", exc_info=True
+            )
 
     def promote_after_readiness_async(
         self, *, reason: str = "bootstrap_ready", force: bool = False
@@ -702,6 +739,11 @@ class _BootstrapVectorMetricsStub:
 
     def _readiness_timeout_fallback(self) -> None:
         if self._delegate is not None or self._readiness_ready:
+            return
+        if self._readiness_signal is None:
+            self._readiness_hard_failure = True
+        if not self._readiness_hard_failure:
+            self._start_extended_readiness_wait(reason="timeout_fallback")
             return
         self._pending_readiness_reason = (
             self._pending_readiness_reason or "readiness_timeout"
