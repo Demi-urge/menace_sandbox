@@ -1942,6 +1942,15 @@ async def self_improvement_cycle(
             logger.debug("error", extra=log_record(err=str(exc)))
             logger.exception("meta planner execution failed", exc_info=exc)
         finally:
+            tick_snapshot = tick_state.snapshot() if tick_state is not None else None
+            logger.info(
+                "cycle tick completed",
+                extra=log_record(
+                    tick_count=tick_snapshot.get("tick_count") if tick_snapshot else None,
+                    last_tick=tick_snapshot.get("last_tick") if tick_snapshot else None,
+                    sleep_interval=interval,
+                ),
+            )
             await asyncio.sleep(interval)
 
 
