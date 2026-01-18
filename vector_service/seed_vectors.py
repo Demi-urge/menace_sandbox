@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import socket
 import urllib.error
 import urllib.request
 import uuid
@@ -119,13 +120,13 @@ def _wait_for_vector_service_ready(
     readiness_probe = os.environ.get("VECTOR_SERVICE_READY_PROBE", "").strip().lower()
 
     try:
-        timeout = max(1.0, float(os.environ.get("VECTOR_SERVICE_READY_TIMEOUT", "150")))
+        timeout = max(1.0, float(os.environ.get("VECTOR_SERVICE_READY_TIMEOUT", "180")))
     except Exception:
         logger.warning(
-            "invalid VECTOR_SERVICE_READY_TIMEOUT=%r; defaulting to 150s",
+            "invalid VECTOR_SERVICE_READY_TIMEOUT=%r; defaulting to 180s",
             os.environ.get("VECTOR_SERVICE_READY_TIMEOUT"),
         )
-        timeout = 150.0
+        timeout = 180.0
 
     try:
         retry_budget = max(0, int(os.environ.get("VECTOR_SERVICE_READY_RETRY_BUDGET", "6")))
@@ -141,11 +142,26 @@ def _wait_for_vector_service_ready(
     deadline = start + timeout
     delay = 1.0
     attempts = 0
+    ready_seen = False
+    ready_elapsed = 0.0
+    embedding_timeout_logged = False
+
+    def _is_timeout_error(exc: Exception) -> bool:
+        if isinstance(exc, (TimeoutError, socket.timeout)):
+            return True
+        if isinstance(exc, urllib.error.URLError):
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, (TimeoutError, socket.timeout)):
+                return True
+            return "timed out" in str(exc).lower()
+        return False
     while time.monotonic() < deadline:
         try:
             attempts += 1
             with urllib.request.urlopen(ready_url, timeout=2.0):
                 elapsed = time.monotonic() - start
+                ready_seen = True
+                ready_elapsed = elapsed
                 if readiness_probe == "embed" and service is not None:
                     try:
                         attempts += 1
@@ -160,6 +176,18 @@ def _wait_for_vector_service_ready(
                             },
                         )
                     except Exception as exc:
+                        if _is_timeout_error(exc):
+                            if not embedding_timeout_logged:
+                                logger.warning(
+                                    "remote embedding probe timed out; waiting for local fallback",
+                                    extra={
+                                        "elapsed": elapsed,
+                                        "attempts": attempts,
+                                        "error": str(exc),
+                                    },
+                                )
+                                embedding_timeout_logged = True
+                            continue
                         logger.warning(
                             "vector service embedding validation failed",
                             extra={
@@ -168,12 +196,7 @@ def _wait_for_vector_service_ready(
                                 "error": str(exc),
                             },
                         )
-                        return {
-                            "ready": False,
-                            "elapsed": elapsed,
-                            "attempts": attempts,
-                            "timed_out": False,
-                        }
+                        continue
                 logger.info(
                     "vector service readiness confirmed",
                     extra={"elapsed": elapsed, "attempts": attempts},
@@ -198,6 +221,8 @@ def _wait_for_vector_service_ready(
             attempts += 1
             with urllib.request.urlopen(ready_url, timeout=2.0):
                 elapsed = time.monotonic() - start
+                ready_seen = True
+                ready_elapsed = elapsed
                 if readiness_probe == "embed" and service is not None:
                     try:
                         attempts += 1
@@ -213,6 +238,19 @@ def _wait_for_vector_service_ready(
                             },
                         )
                     except Exception as exc:
+                        if _is_timeout_error(exc):
+                            if not embedding_timeout_logged:
+                                logger.warning(
+                                    "remote embedding probe timed out; waiting for local fallback",
+                                    extra={
+                                        "retry_budget": retry_budget,
+                                        "elapsed": elapsed,
+                                        "attempts": attempts,
+                                        "error": str(exc),
+                                    },
+                                )
+                                embedding_timeout_logged = True
+                            continue
                         logger.warning(
                             "vector service embedding validation failed",
                             extra={
@@ -222,12 +260,7 @@ def _wait_for_vector_service_ready(
                                 "error": str(exc),
                             },
                         )
-                        return {
-                            "ready": False,
-                            "elapsed": elapsed,
-                            "attempts": attempts,
-                            "timed_out": False,
-                        }
+                        continue
                 logger.info(
                     "vector service readiness reached during extended retries",
                     extra={"retry_budget": retry_budget, "elapsed": elapsed, "attempts": attempts},
@@ -246,6 +279,18 @@ def _wait_for_vector_service_ready(
             )
         time.sleep(delay)
         delay = min(delay * 1.5, 5.0)
+
+    if ready_seen:
+        logger.info(
+            "vector service readiness observed without embedding probe success",
+            extra={"elapsed": ready_elapsed, "attempts": attempts},
+        )
+        return {
+            "ready": True,
+            "elapsed": ready_elapsed,
+            "attempts": attempts,
+            "timed_out": False,
+        }
 
     if service is not None:
         try:
@@ -314,6 +359,11 @@ def seed_initial_vectors(
             "seeding recovered via local fallback",
             extra={"elapsed": elapsed},
         )
+        logger.info(
+            "recovered via local after %.1fs",
+            elapsed,
+            extra={"elapsed": elapsed},
+        )
         return {"status": "local", "elapsed": 0.0, "attempts": 0}
 
     ready_status = _wait_for_vector_service_ready(logger=logger, service=service)
@@ -323,6 +373,11 @@ def seed_initial_vectors(
         _emit_local_seed_readiness(elapsed=elapsed, logger=logger)
         logger.info(
             "seeding recovered via local fallback",
+            extra={"elapsed": elapsed},
+        )
+        logger.info(
+            "recovered via local after %.1fs",
+            elapsed,
             extra={"elapsed": elapsed},
         )
         if ready_status["timed_out"]:
@@ -380,6 +435,11 @@ def seed_initial_vectors(
         )
         logger.info(
             "seeding recovered via local fallback",
+            extra={"elapsed": elapsed},
+        )
+        logger.info(
+            "recovered via local after %.1fs",
+            elapsed,
             extra={"elapsed": elapsed},
         )
         return {"status": "local", "elapsed": 0.0, "attempts": 0}
