@@ -37,7 +37,7 @@ from .coding_bot_interface import (
     self_coding_managed,
 )
 from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
-from bootstrap_readiness import readiness_signal
+from bootstrap_readiness import readiness_signal, probe_embedding_service
 from bootstrap_timeout_policy import resolve_bootstrap_gate_timeout
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
@@ -298,21 +298,68 @@ def _ensure_bootstrap_ready(
     resolved_timeout = _bootstrap_gate_timeout(
         vector_heavy=True, fallback=timeout if timeout is not None else 180.0
     )
+    overall_budget = min(max(resolved_timeout, 120.0), 180.0)
+    initial_timeout = min(resolved_timeout, max(overall_budget - 30.0, 30.0))
+    start = time.monotonic()
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=resolved_timeout)
+        _BOOTSTRAP_READINESS.await_ready(timeout=initial_timeout)
         return True
     except TimeoutError as exc:  # pragma: no cover - defensive path
-        message = (
-            f"{component} unavailable until bootstrap readiness clears: "
-            f"{_BOOTSTRAP_READINESS.describe()}"
+        timeout_exc = exc
+        logger.warning(
+            "%s bootstrap readiness timed out after %.1fs; waiting for fallback recovery",
+            component,
+            initial_timeout,
+            extra={
+                "event": "bootstrap-readiness-timeout",
+                "timeout": initial_timeout,
+                "budget": overall_budget,
+            },
         )
-        if allow_degraded:
-            logger.warning(
-                message,
-                extra={"event": "research-aggregator-bootstrap-degraded"},
-            )
-            return False
-        raise RuntimeError(message) from exc
+
+    poll_interval = getattr(_BOOTSTRAP_READINESS, "poll_interval", 0.5)
+    deadline = start + overall_budget
+    while time.monotonic() < deadline:
+        probe = _BOOTSTRAP_READINESS.probe()
+        embedder_ready, embedder_mode = probe_embedding_service(readiness_loop=True)
+        if probe.ready and embedder_ready:
+            elapsed = time.monotonic() - start
+            if embedder_mode.startswith("local"):
+                logger.info(
+                    "%s readiness recovered via local embedding fallback after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-embedder-local-fallback-ready",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            else:
+                logger.info(
+                    "%s readiness recovered after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-readiness-recovered",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            return True
+        time.sleep(poll_interval)
+
+    message = (
+        f"{component} unavailable until bootstrap readiness clears: "
+        f"{_BOOTSTRAP_READINESS.describe()}"
+    )
+    if allow_degraded:
+        logger.warning(
+            message,
+            extra={"event": "research-aggregator-bootstrap-degraded"},
+        )
+        return False
+    raise RuntimeError(message) from timeout_exc
 
 
 # Eagerly advertise the bootstrap placeholder as soon as the module loads so
