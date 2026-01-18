@@ -30,16 +30,22 @@ Example
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Mapping, Tuple
 
 from vector_service.context_builder import ContextBuilder
-from coding_bot_interface import advertise_bootstrap_placeholder, get_active_bootstrap_pipeline
+from coding_bot_interface import (
+    _resolve_bootstrap_wait_timeout,
+    advertise_bootstrap_placeholder,
+    get_active_bootstrap_pipeline,
+)
 if __package__ in (None, ""):
     from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
 else:
     from .bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
-from bootstrap_readiness import readiness_signal
+from bootstrap_readiness import readiness_signal, probe_embedding_service
+from bootstrap_timeout_policy import resolve_bootstrap_gate_timeout
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from roi_tracker import ROITracker
 
@@ -60,18 +66,78 @@ _roi_tracker = ROITracker()
 _BOOTSTRAP_PLACEHOLDER_PIPELINE: object | None = None
 _BOOTSTRAP_PLACEHOLDER_MANAGER: object | None = None
 _BOOTSTRAP_PLACEHOLDER_BROKER: object | None = None
-_BOOTSTRAP_GATE_TIMEOUT = 12.0
 _BOOTSTRAP_READINESS = readiness_signal()
+logger = logging.getLogger(__name__)
 
 
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
+def _bootstrap_gate_timeout(*, vector_heavy: bool = True, fallback: float | None = None) -> float:
+    resolved_fallback = fallback if fallback is not None else _resolve_bootstrap_wait_timeout(vector_heavy=vector_heavy)
+    if resolved_fallback is None:
+        resolved_fallback = 180.0
+    resolved_fallback = max(resolved_fallback, 180.0)
+    return resolve_bootstrap_gate_timeout(vector_heavy=vector_heavy, fallback_timeout=resolved_fallback)
+
+
+_BOOTSTRAP_GATE_TIMEOUT = _bootstrap_gate_timeout(vector_heavy=True)
+
+
+def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> None:
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+        resolved_timeout = _bootstrap_gate_timeout(vector_heavy=True, fallback=timeout)
+        overall_budget = min(max(resolved_timeout, 120.0), 180.0)
+        initial_timeout = min(resolved_timeout, max(overall_budget - 30.0, 30.0))
+        start = time.monotonic()
+        _BOOTSTRAP_READINESS.await_ready(timeout=initial_timeout)
+        return
     except TimeoutError as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(
-            f"{component} unavailable until bootstrap readiness clears: "
-            f"{_BOOTSTRAP_READINESS.describe()}"
-        ) from exc
+        timeout_exc = exc
+        logger.warning(
+            "%s bootstrap readiness timed out after %.1fs; waiting for fallback recovery",
+            component,
+            initial_timeout,
+            extra={
+                "event": "bootstrap-readiness-timeout",
+                "timeout": initial_timeout,
+                "budget": overall_budget,
+            },
+        )
+
+    poll_interval = getattr(_BOOTSTRAP_READINESS, "poll_interval", 0.5)
+    deadline = start + overall_budget
+    while time.monotonic() < deadline:
+        probe = _BOOTSTRAP_READINESS.probe()
+        embedder_ready, embedder_mode = probe_embedding_service(readiness_loop=True)
+        if probe.ready and embedder_ready:
+            elapsed = time.monotonic() - start
+            if embedder_mode.startswith("local"):
+                logger.info(
+                    "%s readiness recovered via local embedding fallback after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-embedder-local-fallback-ready",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            else:
+                logger.info(
+                    "%s readiness recovered after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-readiness-recovered",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            return
+        time.sleep(poll_interval)
+
+    raise RuntimeError(
+        f"{component} unavailable until bootstrap readiness clears: "
+        f"{_BOOTSTRAP_READINESS.describe()}"
+    ) from timeout_exc
 
 
 def _bootstrap_placeholders() -> tuple[object, object, object]:
