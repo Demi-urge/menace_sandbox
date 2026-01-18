@@ -554,7 +554,7 @@ class _BootstrapVectorMetricsStub:
         if self._readiness_hook_registered:
             return
         try:  # pragma: no cover - optional dependency
-            from bootstrap_readiness import readiness_signal
+            from bootstrap_readiness import ReadinessAwaitResult, readiness_signal
         except Exception:
             logger.debug("vector metrics stub readiness hook unavailable", exc_info=True)
             return
@@ -569,6 +569,18 @@ class _BootstrapVectorMetricsStub:
             timed_out = False
             try:
                 outcome = readiness_signal().await_ready(timeout=budget)
+                if isinstance(outcome, ReadinessAwaitResult) and outcome.degraded:
+                    logger.info(
+                        "vector metrics stub local fallback recovered after %.1fs",
+                        outcome.elapsed,
+                        extra={
+                            "event": "vector_metrics_db.bootstrap.readiness_local_fallback_recovered",
+                            "elapsed": outcome.elapsed,
+                            "mode": outcome.mode,
+                        },
+                    )
+                    self._handle_readiness_ready(eventual=False)
+                    return
                 if budget is not None and outcome is False:
                     timed_out = True
                 else:

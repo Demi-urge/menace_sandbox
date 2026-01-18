@@ -118,6 +118,15 @@ class ReadinessStage:
     optional: bool = False
 
 
+@dataclass(frozen=True)
+class ReadinessAwaitResult:
+    ready: bool
+    degraded: bool
+    mode: str
+    elapsed: float
+    reason: str
+
+
 READINESS_STAGES: tuple[ReadinessStage, ...] = (
     ReadinessStage("db_index_load", ("context_builder", "bot_registry"), optional=False),
     ReadinessStage("retriever_hydration", ("data_bot",), optional=False),
@@ -1055,13 +1064,14 @@ class ReadinessSignal:
 
         return self.probe().ready
 
-    def await_ready(self, timeout: float | None = None) -> bool:
+    def await_ready(self, timeout: float | None = None) -> bool | ReadinessAwaitResult:
         """Block until readiness is achieved or ``timeout`` expires."""
         global _LAST_EMBEDDER_LOCAL_FALLBACK
         start = time.perf_counter()
         deadline = start + timeout if timeout is not None else None
         embedder_waiting = False
         embedder_mode = "unknown"
+        embedder_fallback_attempted = False
 
         while True:
             probe = self.probe()
@@ -1070,6 +1080,8 @@ class ReadinessSignal:
                 embedder_ready, embedder_mode = probe_embedding_service(
                     readiness_loop=True
                 )
+                if not embedder_ready and os.getenv("VECTOR_SERVICE_URL", "").strip():
+                    embedder_fallback_attempted = True
                 if embedder_ready:
                     fallback_recovery: dict[str, object] | None = None
                     if embedder_waiting and embedder_mode == "local_fallback":
@@ -1102,6 +1114,14 @@ class ReadinessSignal:
             now = time.perf_counter()
             elapsed = now - start
             if deadline is not None and now >= deadline:
+                if probe.ready and embedder_waiting and embedder_fallback_attempted:
+                    return ReadinessAwaitResult(
+                        ready=True,
+                        degraded=True,
+                        mode=embedder_mode,
+                        elapsed=elapsed,
+                        reason="embedder_timeout_fallback",
+                    )
                 if not probe.ready:
                     self._log_pending_components(
                         probe,
@@ -1196,6 +1216,7 @@ __all__ = [
     "build_stage_deadlines",
     "lagging_optional_components",
     "minimal_online",
+    "ReadinessAwaitResult",
     "ReadinessProbe",
     "ReadinessSignal",
     "readiness_signal",
