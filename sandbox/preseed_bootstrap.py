@@ -1996,6 +1996,7 @@ def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
     deadline = start + timeout if timeout is not None else None
     waited = False
     remote_wait_logged = False
+    last_unready_log = 0.0
 
     while True:
         ready, mode = probe_embedding_service()
@@ -2011,10 +2012,10 @@ def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
                     },
                 )
             return True
-        if not remote_wait_logged and mode == "remote":
+        if not remote_wait_logged and mode in {"remote", "remote_cached_local"}:
             remote_wait_logged = True
             LOGGER.info(
-                "vector timed out during remote probe; waiting for local fallback before seeding",
+                "remote probe timeout detected; waiting for local fallback before seeding",
                 extra={
                     "event": "embedder-remote-unready-wait",
                     "elapsed": time.perf_counter() - start,
@@ -2023,6 +2024,22 @@ def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
             )
 
         now = time.perf_counter()
+        if deadline is not None and now < deadline:
+            elapsed = now - start
+            remaining = max(deadline - now, 0.0)
+            if elapsed - last_unready_log >= 10.0:
+                last_unready_log = elapsed
+                LOGGER.info(
+                    "embedder still not ready; timeout window active (elapsed %.1fs, remaining %.1fs)",
+                    elapsed,
+                    remaining,
+                    extra={
+                        "event": "embedder-waiting",
+                        "elapsed": elapsed,
+                        "remaining": remaining,
+                        "mode": mode,
+                    },
+                )
         if deadline is not None and now >= deadline:
             return False
         waited = True
@@ -8277,9 +8294,27 @@ def initialize_bootstrap_context(
             )
 
             if skip_unless_embedder_ready and not embedder_ready:
+                recovery_start = time.perf_counter()
                 embedder_ready = _await_embedder_ready_for_seeding(
                     _EMBEDDER_SEED_WAIT_SECS
                 )
+                if embedder_ready:
+                    _, recovery_mode = probe_embedding_service()
+                    if recovery_mode in {
+                        "local",
+                        "local_fallback",
+                        "local_fallback_cached_remote",
+                    }:
+                        recovery_elapsed = time.perf_counter() - recovery_start
+                        LOGGER.info(
+                            "Recovered via local after %.1f seconds \u2013 seeding proceeding.",
+                            recovery_elapsed,
+                            extra={
+                                "event": "embedder-local-recovery",
+                                "elapsed": recovery_elapsed,
+                                "mode": recovery_mode,
+                            },
+                        )
             if skip_unless_embedder_ready and not embedder_ready:
                 LOGGER.warning(
                     "embedder readiness timed out; proceeding with local seeding fallback",
@@ -8800,9 +8835,27 @@ def initialize_bootstrap_context(
         )
 
         if skip_unless_embedder_ready and not embedder_ready:
+            recovery_start = time.perf_counter()
             embedder_ready = _await_embedder_ready_for_seeding(
                 _EMBEDDER_SEED_WAIT_SECS
             )
+            if embedder_ready:
+                _, recovery_mode = probe_embedding_service()
+                if recovery_mode in {
+                    "local",
+                    "local_fallback",
+                    "local_fallback_cached_remote",
+                }:
+                    recovery_elapsed = time.perf_counter() - recovery_start
+                    LOGGER.info(
+                        "Recovered via local after %.1f seconds \u2013 seeding proceeding.",
+                        recovery_elapsed,
+                        extra={
+                            "event": "embedder-local-recovery",
+                            "elapsed": recovery_elapsed,
+                            "mode": recovery_mode,
+                        },
+                    )
         if skip_unless_embedder_ready and not embedder_ready:
             LOGGER.warning(
                 "embedder readiness timed out; proceeding with local seeding fallback",
