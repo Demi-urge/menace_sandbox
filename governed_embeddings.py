@@ -179,6 +179,81 @@ def _read_positive_int_env(var_name: str, default: int) -> int:
 MAX_SAFE_CHARS = _read_positive_int_env("EMBEDDING_MAX_SAFE_CHARS", DEFAULT_MAX_SAFE_CHARS)
 
 
+def _resolve_position_embedding_table_size(
+    model_obj: Any,
+) -> tuple[int | None, str | None]:
+    candidates: list[tuple[int, str]] = []
+
+    def _add_candidate(value: Any, source: str) -> None:
+        if isinstance(value, int) and 0 < value < 1_000_000:
+            candidates.append((value, source))
+
+    def _add_from_position_embeddings(position_embeddings: Any, source_prefix: str) -> None:
+        if position_embeddings is None:
+            return
+        num_embeddings = getattr(position_embeddings, "num_embeddings", None)
+        _add_candidate(num_embeddings, f"{source_prefix}.num_embeddings")
+        weight = getattr(position_embeddings, "weight", None)
+        shape = getattr(weight, "shape", None)
+        if shape is not None:
+            try:
+                shape_value = shape[0]
+            except Exception:
+                shape_value = None
+            _add_candidate(shape_value, f"{source_prefix}.weight.shape[0]")
+
+    auto_model = getattr(model_obj, "auto_model", None)
+    auto_embeddings = getattr(auto_model, "embeddings", None)
+    _add_from_position_embeddings(
+        getattr(auto_embeddings, "position_embeddings", None),
+        "model.auto_model.embeddings.position_embeddings",
+    )
+    auto_model_inner = getattr(auto_model, "model", None)
+    auto_model_inner_embeddings = getattr(auto_model_inner, "embeddings", None)
+    _add_from_position_embeddings(
+        getattr(auto_model_inner_embeddings, "position_embeddings", None),
+        "model.auto_model.model.embeddings.position_embeddings",
+    )
+
+    model = getattr(model_obj, "model", None)
+    model_embeddings = getattr(model, "embeddings", None)
+    _add_from_position_embeddings(
+        getattr(model_embeddings, "position_embeddings", None),
+        "model.model.embeddings.position_embeddings",
+    )
+
+    first_module = None
+    if hasattr(model_obj, "_first_module"):
+        try:
+            first_module = model_obj._first_module()
+        except Exception:
+            first_module = None
+    if first_module is not None:
+        first_auto_model = getattr(first_module, "auto_model", None)
+        first_auto_embeddings = getattr(first_auto_model, "embeddings", None)
+        _add_from_position_embeddings(
+            getattr(first_auto_embeddings, "position_embeddings", None),
+            "model._first_module().auto_model.embeddings.position_embeddings",
+        )
+        first_auto_inner = getattr(first_auto_model, "model", None)
+        first_auto_inner_embeddings = getattr(first_auto_inner, "embeddings", None)
+        _add_from_position_embeddings(
+            getattr(first_auto_inner_embeddings, "position_embeddings", None),
+            "model._first_module().auto_model.model.embeddings.position_embeddings",
+        )
+        first_model = getattr(first_module, "model", None)
+        first_model_embeddings = getattr(first_model, "embeddings", None)
+        _add_from_position_embeddings(
+            getattr(first_model_embeddings, "position_embeddings", None),
+            "model._first_module().model.embeddings.position_embeddings",
+        )
+
+    if not candidates:
+        return None, None
+    value, source = min(candidates, key=lambda item: item[0])
+    return value, source
+
+
 def _resolve_fast_tokenizer_lock(
     model_obj: Any | None,
     tokenizer_obj: Any | None,
@@ -1317,8 +1392,12 @@ def _clamp_embedder_max_seq_length(model_obj: Any) -> None:
         )
 
     existing_max_seq_length = _coerce_seq_length(getattr(model_obj, "max_seq_length", None))
+    embedding_table_size, embedding_table_source = _resolve_position_embedding_table_size(model_obj)
+    embedding_table_size = _coerce_seq_length(embedding_table_size)
     cap_candidates = [
-        value for value in (existing_max_seq_length, tokenizer_max, max_positions) if value is not None
+        value
+        for value in (existing_max_seq_length, tokenizer_max, max_positions, embedding_table_size)
+        if value is not None
     ]
     if not cap_candidates:
         return
@@ -1333,6 +1412,8 @@ def _clamp_embedder_max_seq_length(model_obj: Any) -> None:
             "existing_max_seq_length": existing_max_seq_length,
             "tokenizer_max_length": tokenizer_max,
             "max_position_embeddings": max_positions,
+            "embedding_table_size": embedding_table_size,
+            "embedding_table_source": embedding_table_source,
         },
     )
 
@@ -2943,6 +3024,14 @@ def governed_embed(
             if isinstance(value, int) and 0 < value < 1_000_000:
                 max_position_candidates.append((value, source))
 
+        def _shape_head(value: Any) -> Any:
+            if value is None:
+                return None
+            try:
+                return value[0]
+            except Exception:
+                return None
+
         config = getattr(model_obj, "config", None)
         max_positions = getattr(config, "max_position_embeddings", None) if config is not None else None
         _add_candidate(max_positions, "model.config.max_position_embeddings")
@@ -2965,11 +3054,23 @@ def governed_embed(
         position_embeddings = getattr(embeddings, "position_embeddings", None)
         num_embeddings = getattr(position_embeddings, "num_embeddings", None)
         _add_candidate(num_embeddings, "model.auto_model.embeddings.position_embeddings.num_embeddings")
+        weight = getattr(position_embeddings, "weight", None)
+        weight_shape = getattr(weight, "shape", None)
+        _add_candidate(
+            _shape_head(weight_shape),
+            "model.auto_model.embeddings.position_embeddings.weight.shape[0]",
+        )
 
         model_embeddings = getattr(model, "embeddings", None)
         model_position_embeddings = getattr(model_embeddings, "position_embeddings", None)
         model_num_embeddings = getattr(model_position_embeddings, "num_embeddings", None)
         _add_candidate(model_num_embeddings, "model.model.embeddings.position_embeddings.num_embeddings")
+        model_weight = getattr(model_position_embeddings, "weight", None)
+        model_weight_shape = getattr(model_weight, "shape", None)
+        _add_candidate(
+            _shape_head(model_weight_shape),
+            "model.model.embeddings.position_embeddings.weight.shape[0]",
+        )
 
         candidate = getattr(model_obj, "max_seq_length", None)
         _add_candidate(candidate, "model.max_seq_length")
@@ -3019,6 +3120,12 @@ def governed_embed(
                 num_embeddings,
                 "model._first_module().auto_model.embeddings.position_embeddings.num_embeddings",
             )
+            weight = getattr(position_embeddings, "weight", None)
+            weight_shape = getattr(weight, "shape", None)
+            _add_candidate(
+                _shape_head(weight_shape),
+                "model._first_module().auto_model.embeddings.position_embeddings.weight.shape[0]",
+            )
             first_model = getattr(first_module, "model", None)
             first_model_auto = getattr(first_module, "auto_model", None)
             first_model_from_auto = getattr(first_model_auto, "model", None)
@@ -3029,12 +3136,24 @@ def governed_embed(
                 first_model_num_embeddings,
                 "model._first_module().model.embeddings.position_embeddings.num_embeddings",
             )
+            first_model_weight = getattr(first_model_position_embeddings, "weight", None)
+            first_model_weight_shape = getattr(first_model_weight, "shape", None)
+            _add_candidate(
+                _shape_head(first_model_weight_shape),
+                "model._first_module().model.embeddings.position_embeddings.weight.shape[0]",
+            )
             auto_model_embeddings = getattr(first_model_from_auto, "embeddings", None)
             auto_model_position_embeddings = getattr(auto_model_embeddings, "position_embeddings", None)
             auto_model_num_embeddings = getattr(auto_model_position_embeddings, "num_embeddings", None)
             _add_candidate(
                 auto_model_num_embeddings,
                 "model._first_module().auto_model.model.embeddings.position_embeddings.num_embeddings",
+            )
+            auto_model_weight = getattr(auto_model_position_embeddings, "weight", None)
+            auto_model_weight_shape = getattr(auto_model_weight, "shape", None)
+            _add_candidate(
+                _shape_head(auto_model_weight_shape),
+                "model._first_module().auto_model.model.embeddings.position_embeddings.weight.shape[0]",
             )
             candidate = getattr(first_module, "max_seq_length", None)
             _add_candidate(candidate, "model._first_module().max_seq_length")
@@ -3266,10 +3385,28 @@ def governed_embed(
         safe_max_tokens,
         max_seq_length,
     ) = _resolve_effective_max_tokens(model, special_overhead)
+    embedding_table_size, embedding_table_source = _resolve_position_embedding_table_size(model)
+    embedding_table_cap = None
+    cap_source = "config"
+    if isinstance(embedding_table_size, int):
+        embedding_table_cap = max(1, embedding_table_size - special_overhead)
+        if effective_max_tokens > embedding_table_cap:
+            effective_max_tokens = embedding_table_cap
+            cap_source = "embedding_matrix"
+        elif effective_max_tokens == embedding_table_cap:
+            cap_source = "embedding_matrix"
+    logger.info(
+        "embedding token cap source resolved "
+        "(source=%s effective_max_tokens=%s embedding_table_size=%s embedding_table_source=%s)",
+        cap_source,
+        effective_max_tokens,
+        embedding_table_size,
+        embedding_table_source,
+    )
     logger.info(
         "embedding token cap configured "
         "(effective=%s hard_cap=%s tokenizer_max=%s max_positions=%s max_seq_length=%s "
-        "safe_max=%s special_overhead=%s)",
+        "safe_max=%s special_overhead=%s embedding_table_cap=%s)",
         effective_max_tokens,
         200,
         tokenizer_max,
@@ -3277,6 +3414,7 @@ def governed_embed(
         max_seq_length,
         safe_max_tokens,
         special_overhead,
+        embedding_table_cap,
     )
     encode_kwargs: dict[str, Any] = {}
     if supports_max_length and (
