@@ -548,6 +548,7 @@ class _BootstrapVectorMetricsStub:
         return self._activate(reason=reason)
 
     def register_readiness_hook(self) -> None:
+        """Register readiness signal listener and log the wait budget."""
         if self._delegate is not None:
             return
         if self._readiness_hook_registered:
@@ -591,6 +592,7 @@ class _BootstrapVectorMetricsStub:
                 "warmup": bool(self._activation_kwargs.get("warmup")),
                 "read_only": bool(self._activation_kwargs.get("read_only")),
                 "ensure_exists": self._activation_kwargs.get("ensure_exists"),
+                "readiness_budget": budget,
             },
         )
         threading.Thread(
@@ -709,7 +711,7 @@ class _BootstrapVectorMetricsStub:
 
     def _readiness_wait_budget_seconds(self) -> float | None:
         budget = self._first_write_budget
-        if budget is None:
+        if budget is None or budget <= 0:
             budget = _first_write_activation_budget_seconds()
         # Keep this budget above the remote probe retry window to avoid
         # premature readiness timeout reports during cold boot.
@@ -1514,6 +1516,18 @@ def _bootstrap_timers_active() -> bool:
     return any(os.getenv(name) for name in _BOOTSTRAP_TIMER_ENVS)
 
 
+def _vector_services_configured() -> bool:
+    return any(
+        os.getenv(name)
+        for name in (
+            "VECTOR_SERVICE_URL",
+            "VECTOR_SERVICE_SOCKET",
+            "VECTOR_SERVICE_HOST",
+            "VECTOR_SERVICE_PORT",
+        )
+    )
+
+
 def _enforce_bootstrap_timer_stub(
     *, bootstrap_fast: bool | None, warmup: bool | None, read_only: bool
 ) -> bool:
@@ -1552,20 +1566,42 @@ def _first_write_activation_budget_seconds() -> float | None:
     if env_budget is not None:
         return env_budget
 
+    vector_bootstrap_budget = _parse_budget(os.getenv("MENACE_BOOTSTRAP_VECTOR_WAIT_SECS"))
+    vector_ready_budget = _parse_budget(os.getenv("VECTOR_SERVICE_READY_TIMEOUT"))
+    vector_budgets = [
+        budget for budget in (vector_bootstrap_budget, vector_ready_budget) if budget is not None
+    ]
+    if vector_budgets:
+        budget = max(vector_budgets)
+        if _vector_services_configured():
+            budget = max(budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+        return budget
+
     readiness_budget = _parse_budget(os.getenv(_VECTOR_READINESS_WAIT_ENV))
     if readiness_budget is not None:
-        return max(readiness_budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+        budget = readiness_budget
+        if _vector_services_configured():
+            budget = max(budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+        return budget
 
     bootstrap_budget = _parse_budget(os.getenv("MENACE_BOOTSTRAP_WAIT_SECS"))
     if bootstrap_budget is not None:
-        return max(bootstrap_budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+        budget = bootstrap_budget
+        if _vector_services_configured():
+            budget = max(budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+        return budget
 
     timer_budgets = [
         _parse_budget(os.getenv(name)) for name in _BOOTSTRAP_TIMER_ENVS
     ]
     timer_budgets = [b for b in timer_budgets if b is not None]
     if timer_budgets:
-        return min(timer_budgets)
+        budget = min(timer_budgets)
+        if _vector_services_configured():
+            budget = max(budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+        return budget
+    if _vector_services_configured():
+        return _COLD_BOOT_READINESS_FLOOR_SECS
     if _bootstrap_timers_active():
         return 0.0
     return None
