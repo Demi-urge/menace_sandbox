@@ -1604,6 +1604,7 @@ async def self_improvement_cycle(
                     tick_thread_ident=tick_snapshot["last_tick_thread_ident"],
                 ),
             )
+        cycle_ok = False
         try:
             decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
             if info.get("reason") == "missing_metrics":
@@ -1936,21 +1937,37 @@ async def self_improvement_cycle(
                     roi_delta=delta.get("roi", 0.0),
                     entropy_delta=delta.get("entropy", 0.0),
                 )
-
+            cycle_ok = True
         except Exception as exc:  # pragma: no cover - planner is best effort
             _debug_cycle("error", reason=str(exc))
             logger.debug("error", extra=log_record(err=str(exc)))
             logger.exception("meta planner execution failed", exc_info=exc)
         finally:
             tick_snapshot = tick_state.snapshot() if tick_state is not None else None
-            logger.info(
-                "cycle tick completed",
-                extra=log_record(
-                    tick_count=tick_snapshot.get("tick_count") if tick_snapshot else None,
-                    last_tick=tick_snapshot.get("last_tick") if tick_snapshot else None,
-                    sleep_interval=interval,
-                ),
-            )
+            if cycle_ok:
+                logger.info(
+                    "cycle tick completed; scheduling next run in %ss",
+                    interval,
+                    extra=log_record(
+                        tick_count=tick_snapshot.get("tick_count")
+                        if tick_snapshot
+                        else None,
+                        last_tick=tick_snapshot.get("last_tick") if tick_snapshot else None,
+                        sleep_interval=interval,
+                    ),
+                )
+            else:
+                logger.info(
+                    "cycle tick completed after error; scheduling next run in %ss",
+                    interval,
+                    extra=log_record(
+                        tick_count=tick_snapshot.get("tick_count")
+                        if tick_snapshot
+                        else None,
+                        last_tick=tick_snapshot.get("last_tick") if tick_snapshot else None,
+                        sleep_interval=interval,
+                    ),
+                )
             await asyncio.sleep(interval)
 
 
