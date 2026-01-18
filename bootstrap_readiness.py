@@ -91,6 +91,13 @@ except ValueError:
     _EMBED_REMOTE_PROBE_COOLDOWN_SECS = 45.0
 _LAST_REMOTE_PROBE_FAILURE_AT: float | None = None
 _LAST_REMOTE_PROBE_WARNING_AT: float | None = None
+_EMBED_HEALTH_PATHS: tuple[str, ...] = (
+    "/health/ready",
+    "/readyz",
+    "/healthz",
+    "/health",
+    "/status",
+)
 
 
 @dataclass(frozen=True)
@@ -470,18 +477,10 @@ def _probe_embedding_http(url: str, timeout: float) -> bool:
             },
         )
         return False
-    payload = json.dumps(
-        {"kind": "text", "record": {"text": _EMBED_READINESS_TEXT}}
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        f"{url.rstrip('/')}/vectorise",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (TimeoutError, socket.timeout):
+
+    def _record_timeout(context_url: str, timeout_s: float, elapsed_s: float) -> None:
+        global _LAST_REMOTE_PROBE_FAILURE_AT, _LAST_REMOTE_PROBE_WARNING_AT
+
         now = time.time()
         _LAST_REMOTE_PROBE_FAILURE_AT = now
         if (
@@ -495,9 +494,67 @@ def _probe_embedding_http(url: str, timeout: float) -> bool:
                 extra={
                     "event": "remote-embedding-probe-timeout",
                     "cooldown_secs": _EMBED_REMOTE_PROBE_COOLDOWN_SECS,
+                    "timeout_s": timeout_s,
+                    "elapsed_s": elapsed_s,
+                    "url": context_url,
                 },
                 exc_info=True,
             )
+
+    health_timeout = min(timeout, 1.0)
+    for path in _EMBED_HEALTH_PATHS:
+        health_url = f"{url.rstrip('/')}{path}"
+        req = urllib.request.Request(health_url)
+        start = time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=health_timeout) as resp:
+                raw_body = resp.read().decode("utf-8")
+            try:
+                data = json.loads(raw_body)
+            except json.JSONDecodeError:
+                data = None
+        except urllib.error.HTTPError as exc:
+            if exc.code in {404, 405}:
+                continue
+            _LAST_REMOTE_PROBE_FAILURE_AT = time.time()
+            LOGGER.debug("remote embedding health probe failed", exc_info=True)
+            return False
+        except (TimeoutError, socket.timeout):
+            _record_timeout(health_url, health_timeout, time.monotonic() - start)
+            return False
+        except urllib.error.URLError:
+            _LAST_REMOTE_PROBE_FAILURE_AT = time.time()
+            LOGGER.debug("remote embedding health probe failed", exc_info=True)
+            return False
+        except Exception:
+            _LAST_REMOTE_PROBE_FAILURE_AT = time.time()
+            LOGGER.debug("remote embedding health probe failed", exc_info=True)
+            return False
+        if isinstance(data, Mapping):
+            status = data.get("status")
+            if isinstance(status, str) and status.lower() in {"ok", "ready", "live"}:
+                return True
+            bootstrap = data.get("bootstrap")
+            if isinstance(bootstrap, Mapping) and bootstrap.get("ready") is True:
+                return True
+            return False
+        return True
+
+    payload = json.dumps(
+        {"kind": "text", "record": {"text": "ping"}}
+    ).encode("utf-8")
+    embed_timeout = min(timeout, 1.5)
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/vectorise",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=embed_timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (TimeoutError, socket.timeout):
+        _record_timeout(f"{url.rstrip('/')}/vectorise", embed_timeout, time.monotonic() - start)
         return False
     except urllib.error.URLError:
         _LAST_REMOTE_PROBE_FAILURE_AT = time.time()
