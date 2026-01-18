@@ -54,6 +54,8 @@ _VECTOR_DB_LOCK = threading.Lock()
 _PENDING_WEIGHTS: dict[str, float] = {}
 _READINESS_HOOK_ARMED = False
 _FIRST_WRITE_BUDGET_ENV = "VECTOR_METRICS_FIRST_WRITE_BUDGET_SECS"
+_VECTOR_READINESS_WAIT_ENV = "MENACE_VECTOR_READINESS_WAIT_SECS"
+_COLD_BOOT_READINESS_FLOOR_SECS = 150.0
 _BOOTSTRAP_PERSISTENCE_OVERRIDE_ENV = "VECTOR_METRICS_ALLOW_BOOTSTRAP_PERSISTENCE"
 _WARMUP_DEFERRAL_EMITTED = False
 _VECTOR_METRICS_SCHEMA_TIMEOUT_ENV = "VECTOR_METRICS_SCHEMA_TIMEOUT_MS"
@@ -65,6 +67,7 @@ _DEFAULT_VECTOR_METRICS_SCHEMA_BACKOFF_MS = 100
 
 _BOOTSTRAP_TIMER_ENVS = (
     "MENACE_BOOTSTRAP_WAIT_SECS",
+    _VECTOR_READINESS_WAIT_ENV,
     "MENACE_BOOTSTRAP_VECTOR_WAIT_SECS",
     "BOOTSTRAP_STEP_TIMEOUT",
     "BOOTSTRAP_VECTOR_STEP_TIMEOUT",
@@ -671,6 +674,8 @@ class _BootstrapVectorMetricsStub:
         budget = self._first_write_budget
         if budget is None:
             budget = _first_write_activation_budget_seconds()
+        # Keep this budget above the remote probe retry window to avoid
+        # premature readiness timeout reports during cold boot.
         return budget if budget and budget > 0 else None
 
     def _schedule_readiness_timeout(self) -> None:
@@ -1505,6 +1510,14 @@ def _first_write_activation_budget_seconds() -> float | None:
     if env_budget is not None:
         return env_budget
 
+    readiness_budget = _parse_budget(os.getenv(_VECTOR_READINESS_WAIT_ENV))
+    if readiness_budget is not None:
+        return max(readiness_budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+
+    bootstrap_budget = _parse_budget(os.getenv("MENACE_BOOTSTRAP_WAIT_SECS"))
+    if bootstrap_budget is not None:
+        return max(bootstrap_budget, _COLD_BOOT_READINESS_FLOOR_SECS)
+
     timer_budgets = [
         _parse_budget(os.getenv(name)) for name in _BOOTSTRAP_TIMER_ENVS
     ]
@@ -1513,7 +1526,7 @@ def _first_write_activation_budget_seconds() -> float | None:
         return min(timer_budgets)
     if _bootstrap_timers_active():
         return 0.0
-    return 10.0
+    return None
 
 
 def _vector_metrics_schema_timeout_ms() -> int | None:
