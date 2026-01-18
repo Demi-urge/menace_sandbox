@@ -19,7 +19,7 @@ from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 from .self_coding_engine import SelfCodingEngine
 from context_builder import handle_failure, PromptBuildError
-from bootstrap_readiness import readiness_signal
+from bootstrap_readiness import readiness_signal, probe_embedding_service
 from bootstrap_timeout_policy import resolve_bootstrap_gate_timeout
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -117,13 +117,61 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> 
     resolved_timeout = resolve_bootstrap_gate_timeout(
         fallback_timeout=max(timeout if timeout is not None else 180.0, 180.0)
     )
+    overall_budget = min(max(resolved_timeout, 120.0), 180.0)
+    initial_timeout = min(resolved_timeout, max(overall_budget - 30.0, 30.0))
+    start = time.monotonic()
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=resolved_timeout)
+        _BOOTSTRAP_READINESS.await_ready(timeout=initial_timeout)
+        return
     except TimeoutError as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(
-            f"{component} cannot start until bootstrap readiness clears: "
-            f"{_BOOTSTRAP_READINESS.describe()}"
-        ) from exc
+        timeout_exc = exc
+        logger.warning(
+            "%s bootstrap readiness timed out after %.1fs; waiting for fallback recovery",
+            component,
+            initial_timeout,
+            extra={
+                "event": "bootstrap-readiness-timeout",
+                "timeout": initial_timeout,
+                "budget": overall_budget,
+            },
+        )
+
+    poll_interval = getattr(_BOOTSTRAP_READINESS, "poll_interval", 0.5)
+    deadline = start + overall_budget
+    while time.monotonic() < deadline:
+        probe = _BOOTSTRAP_READINESS.probe()
+        embedder_ready, embedder_mode = probe_embedding_service(readiness_loop=True)
+        if probe.ready and embedder_ready:
+            elapsed = time.monotonic() - start
+            if embedder_mode.startswith("local"):
+                logger.info(
+                    "%s readiness recovered via local embedding fallback after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-embedder-local-fallback-ready",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            else:
+                logger.info(
+                    "%s readiness recovered after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-readiness-recovered",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            return
+        time.sleep(poll_interval)
+
+    raise RuntimeError(
+        f"{component} cannot start until bootstrap readiness clears: "
+        f"{_BOOTSTRAP_READINESS.describe()}"
+    ) from timeout_exc
 
 
 def _build_prediction_prompt(

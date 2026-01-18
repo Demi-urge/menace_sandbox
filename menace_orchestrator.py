@@ -27,7 +27,7 @@ if __package__ in (None, ""):
     from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
 else:
     from .bootstrap_gate import resolve_bootstrap_placeholders
-from bootstrap_readiness import readiness_signal
+from bootstrap_readiness import readiness_signal, probe_embedding_service
 from bootstrap_timeout_policy import resolve_bootstrap_gate_timeout
 
 _BOOTSTRAP_READINESS = readiness_signal()
@@ -43,13 +43,62 @@ def _bootstrap_gate_timeout(*, vector_heavy: bool = False, fallback: float | Non
 
 def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> None:
     resolved_timeout = _bootstrap_gate_timeout(fallback=timeout)
+    overall_budget = min(max(resolved_timeout, 120.0), 180.0)
+    initial_timeout = min(resolved_timeout, max(overall_budget - 30.0, 30.0))
+    start = time.monotonic()
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=resolved_timeout)
+        _BOOTSTRAP_READINESS.await_ready(timeout=initial_timeout)
+        return
     except TimeoutError as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(
-            f"{component} cannot start until bootstrap readiness clears: "
-            f"{_BOOTSTRAP_READINESS.describe()}"
-        ) from exc
+        timeout_exc = exc
+        logging.getLogger(__name__).warning(
+            "%s bootstrap readiness timed out after %.1fs; waiting for fallback recovery",
+            component,
+            initial_timeout,
+            extra={
+                "event": "bootstrap-readiness-timeout",
+                "timeout": initial_timeout,
+                "budget": overall_budget,
+            },
+        )
+
+    logger = logging.getLogger(__name__)
+    poll_interval = getattr(_BOOTSTRAP_READINESS, "poll_interval", 0.5)
+    deadline = start + overall_budget
+    while time.monotonic() < deadline:
+        probe = _BOOTSTRAP_READINESS.probe()
+        embedder_ready, embedder_mode = probe_embedding_service(readiness_loop=True)
+        if probe.ready and embedder_ready:
+            elapsed = time.monotonic() - start
+            if embedder_mode.startswith("local"):
+                logger.info(
+                    "%s readiness recovered via local embedding fallback after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-embedder-local-fallback-ready",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            else:
+                logger.info(
+                    "%s readiness recovered after %.1fs",
+                    component,
+                    elapsed,
+                    extra={
+                        "event": "bootstrap-readiness-recovered",
+                        "mode": embedder_mode,
+                        "elapsed": elapsed,
+                    },
+                )
+            return
+        time.sleep(poll_interval)
+
+    raise RuntimeError(
+        f"{component} cannot start until bootstrap readiness clears: "
+        f"{_BOOTSTRAP_READINESS.describe()}"
+    ) from timeout_exc
 
 def _seed_bootstrap_placeholder() -> tuple[object, object]:
     _ensure_bootstrap_ready("MenaceOrchestrator bootstrap placeholder")
