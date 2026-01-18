@@ -3357,7 +3357,6 @@ def governed_embed(
     supports_max_length, supports_truncation = _encode_supports_truncation(model)
     allowed_encode_keys = _resolve_allowed_encode_keys(model)
     tokenizer = _resolve_tokenizer(model)
-    is_fast_tokenizer = tokenizer is not None and getattr(tokenizer, "is_fast", False)
     encode_lock = _resolve_fast_tokenizer_lock(model, tokenizer)
 
     def _with_tokenizer_lock(payload: Callable[[], Any]) -> Any:
@@ -3498,9 +3497,76 @@ def governed_embed(
             post_trunc_tokens,
             hard_max_tokens,
         )
-        if is_fast_tokenizer:
-            encode_kwargs.pop("max_length", None)
-            encode_kwargs.pop("truncation", None)
+    enforced_cap_candidates = [effective_max_tokens]
+    if isinstance(max_positions, int):
+        enforced_cap_candidates.append(max_positions)
+    if isinstance(tokenizer_max, int):
+        enforced_cap_candidates.append(tokenizer_max)
+    enforced_cap = min(enforced_cap_candidates)
+
+    def _prevalidate_embedding_input(
+        raw_text: str,
+        cap: int,
+    ) -> tuple[str, int | None, bool]:
+        if tokenizer is None:
+            return raw_text, None, False
+        max_input_tokens = max(1, cap)
+        try:
+            tokenized = _with_tokenizer_lock(
+                lambda: tokenizer(
+                    raw_text,
+                    add_special_tokens=True,
+                    truncation=True,
+                    max_length=max_input_tokens,
+                )
+            )
+        except Exception:
+            return raw_text, None, False
+        input_ids = tokenized.get("input_ids") if isinstance(tokenized, dict) else tokenized
+        if isinstance(input_ids, tuple):
+            input_ids = list(input_ids)
+        if isinstance(input_ids, list) and input_ids and isinstance(input_ids[0], list):
+            input_ids = input_ids[0]
+        if not isinstance(input_ids, list):
+            return raw_text, None, False
+        validated_count = len(input_ids)
+        validated_text = raw_text
+        if hasattr(tokenizer, "decode"):
+            try:
+                validated_text = _with_tokenizer_lock(
+                    lambda: tokenizer.decode(input_ids, skip_special_tokens=True)
+                )
+            except Exception:
+                validated_text = raw_text
+        exceeds = validated_count > max_input_tokens
+        return validated_text, validated_count, exceeds
+
+    cleaned_for_embedding, validated_input_count, validated_exceeds = _prevalidate_embedding_input(
+        cleaned_for_embedding, enforced_cap
+    )
+    if validated_input_count is not None:
+        logger.debug(
+            "embedding pre-encode validation "
+            "(validated_tokens=%s enforced_cap=%s max_positions=%s tokenizer_max=%s "
+            "effective_max_tokens=%s)",
+            validated_input_count,
+            enforced_cap,
+            max_positions,
+            tokenizer_max,
+            effective_max_tokens,
+        )
+    if validated_exceeds:
+        logger.warning(
+            "embedding input exceeds enforced cap pre-encode; returning zero vector "
+            "(validated_tokens=%s enforced_cap=%s max_positions=%s tokenizer_max=%s "
+            "effective_max_tokens=%s)",
+            validated_input_count,
+            enforced_cap,
+            max_positions,
+            tokenizer_max,
+            effective_max_tokens,
+        )
+        return [0.0] * _STUB_EMBEDDER_DIMENSION
     token_limit = (
         max_positions if isinstance(max_positions, int) else hard_max_tokens + special_overhead
     )
@@ -3523,9 +3589,13 @@ def governed_embed(
         return [0.0] * _STUB_EMBEDDER_DIMENSION
     approx_tokens = max(1, len(cleaned_for_embedding) // EMBEDDING_CHARS_PER_TOKEN)
     logger.debug(
-        "encoding embedding input (chars=%s approx_tokens=%s)",
+        "encoding embedding input "
+        "(chars=%s approx_tokens=%s enforced_cap=%s max_positions=%s tokenizer_max=%s)",
         len(cleaned_for_embedding),
         approx_tokens,
+        enforced_cap,
+        max_positions,
+        tokenizer_max,
     )
     if isinstance(max_positions, int):
         pre_encode_tokens = _with_tokenizer_lock(
@@ -3719,7 +3789,7 @@ def governed_embed(
                             input_ids = input_ids[:max_input_tokens]
                             hard_trim_applied = True
                         validated_input_count = len(input_ids)
-                        if hard_trim_applied and hasattr(retry_tokenizer, "decode"):
+                        if hasattr(retry_tokenizer, "decode"):
                             try:
                                 retry_text = _with_tokenizer_lock(
                                     lambda: retry_tokenizer.decode(
