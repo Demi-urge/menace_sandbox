@@ -38,6 +38,7 @@ from .coding_bot_interface import (
 )
 from .bootstrap_helpers import bootstrap_state_snapshot, ensure_bootstrapped
 from bootstrap_readiness import readiness_signal
+from bootstrap_timeout_policy import resolve_bootstrap_gate_timeout
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -87,7 +88,16 @@ _BOOTSTRAP_READINESS = readiness_signal()
 _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
 _BOOTSTRAP_BROKER: object | None = None
-_BOOTSTRAP_GATE_TIMEOUT = 12.0
+def _bootstrap_gate_timeout(*, vector_heavy: bool = True, fallback: float | None = None) -> float:
+    resolved_fallback = fallback if fallback is not None else 180.0
+    resolved_wait = _resolve_bootstrap_wait_timeout(vector_heavy=vector_heavy)
+    if resolved_wait is not None:
+        resolved_fallback = max(resolved_fallback, resolved_wait)
+    resolved_fallback = max(resolved_fallback, 180.0)
+    return resolve_bootstrap_gate_timeout(vector_heavy=vector_heavy, fallback_timeout=resolved_fallback)
+
+
+_BOOTSTRAP_GATE_TIMEOUT = _bootstrap_gate_timeout(vector_heavy=True)
 _DEPENDENCY_RESOLUTION_WAIT_FLOOR = 0.05
 _DEPENDENCY_RESOLUTION_MAX_WAIT_DEFAULT = 3.0
 
@@ -281,12 +291,15 @@ def _resolve_dependency_max_wait(default: float, *, cap: float | None = None) ->
 
 
 def _ensure_bootstrap_ready(
-    component: str, *, timeout: float = 15.0, allow_degraded: bool = False
+    component: str, *, timeout: float | None = None, allow_degraded: bool = False
 ) -> bool:
     """Block until bootstrap readiness clears unless degraded mode is allowed."""
 
+    resolved_timeout = _bootstrap_gate_timeout(
+        vector_heavy=True, fallback=timeout if timeout is not None else 180.0
+    )
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+        _BOOTSTRAP_READINESS.await_ready(timeout=resolved_timeout)
         return True
     except TimeoutError as exc:  # pragma: no cover - defensive path
         message = (

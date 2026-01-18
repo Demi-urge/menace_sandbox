@@ -21,19 +21,30 @@ import uuid
 from .coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
+    _resolve_bootstrap_wait_timeout,
 )
 if __package__ in (None, ""):
     from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
 else:
     from .bootstrap_gate import resolve_bootstrap_placeholders
 from bootstrap_readiness import readiness_signal
+from bootstrap_timeout_policy import resolve_bootstrap_gate_timeout
 
 _BOOTSTRAP_READINESS = readiness_signal()
 
 
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
+def _bootstrap_gate_timeout(*, vector_heavy: bool = False, fallback: float | None = None) -> float:
+    resolved_fallback = fallback if fallback is not None else _resolve_bootstrap_wait_timeout(vector_heavy=vector_heavy)
+    if resolved_fallback is None:
+        resolved_fallback = 180.0
+    resolved_fallback = max(resolved_fallback, 180.0)
+    return resolve_bootstrap_gate_timeout(vector_heavy=vector_heavy, fallback_timeout=resolved_fallback)
+
+
+def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> None:
+    resolved_timeout = _bootstrap_gate_timeout(fallback=timeout)
     try:
-        _BOOTSTRAP_READINESS.await_ready(timeout=timeout)
+        _BOOTSTRAP_READINESS.await_ready(timeout=resolved_timeout)
     except TimeoutError as exc:  # pragma: no cover - defensive path
         raise RuntimeError(
             f"{component} cannot start until bootstrap readiness clears: "
@@ -41,9 +52,7 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 15.0) -> None:
         ) from exc
 
 def _seed_bootstrap_placeholder() -> tuple[object, object]:
-    _ensure_bootstrap_ready(
-        "MenaceOrchestrator bootstrap placeholder", timeout=12.0
-    )
+    _ensure_bootstrap_ready("MenaceOrchestrator bootstrap placeholder")
     pipeline, manager, broker = resolve_bootstrap_placeholders(
         description="MenaceOrchestrator bootstrap gate"
     )
@@ -97,7 +106,6 @@ from .coding_bot_interface import (
     _current_bootstrap_context,
     claim_bootstrap_dependency_entry,
     _peek_owner_promise,
-    _resolve_bootstrap_wait_timeout,
     _resolve_caller_module_name,
     prepare_pipeline_for_bootstrap,
 )
