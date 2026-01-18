@@ -100,6 +100,8 @@ except ValueError:
     _EMBED_REMOTE_CONNECT_TIMEOUT_SECS = 0.75
 _LAST_REMOTE_PROBE_FAILURE_AT: float | None = None
 _LAST_REMOTE_PROBE_WARNING_AT: float | None = None
+_LAST_EMBEDDER_LOCAL_FALLBACK: dict[str, object] | None = None
+_LAST_EMBEDDER_LOCAL_FALLBACK_LOCK = threading.Lock()
 _EMBED_HEALTH_PATHS: tuple[str, ...] = (
     "/health/ready",
     "/readyz",
@@ -589,7 +591,9 @@ def probe_embedding_service(
 ) -> tuple[bool, str]:
     """Return ``(ready, mode)`` for the embedding service readiness probe."""
 
+    global _LAST_EMBEDDER_LOCAL_FALLBACK
     url = os.getenv("VECTOR_SERVICE_URL", "").strip()
+    start = time.perf_counter()
     probe_timeout = (
         _EMBED_READINESS_TIMEOUT_SECS if timeout is None else max(timeout, 0.1)
     )
@@ -626,11 +630,13 @@ def probe_embedding_service(
             name="embedder-remote-probe",
         ).start()
 
+        remote_timed_out = False
         if remote_done.wait(connect_timeout):
             if remote_result.get("ready"):
                 return True, "remote"
         else:
-            LOGGER.info(
+            remote_timed_out = True
+            LOGGER.debug(
                 "remote embedding probe pending; falling back to local probe",
                 extra={
                     "event": "remote-embedding-probe-connect-timeout",
@@ -640,6 +646,27 @@ def probe_embedding_service(
                 },
             )
         if _probe_embedding_local(probe_timeout):
+            if remote_timed_out:
+                elapsed = time.perf_counter() - start
+                LOGGER.info(
+                    "remote embedding probe timed out; recovered via local fallback after %.1fs",
+                    elapsed,
+                    extra={
+                        "event": "remote-embedding-probe-local-fallback-recovered",
+                        "elapsed": elapsed,
+                        "mode": "local_fallback",
+                        "connect_timeout_s": connect_timeout,
+                        "read_timeout_s": probe_timeout,
+                        "url": url,
+                    },
+                )
+                with _LAST_EMBEDDER_LOCAL_FALLBACK_LOCK:
+                    _LAST_EMBEDDER_LOCAL_FALLBACK = {
+                        "elapsed": elapsed,
+                        "mode": "local_fallback",
+                        "url": url,
+                        "recorded_at": time.time(),
+                    }
             if cooldown_active:
                 return True, "local_fallback_cached_remote"
             return True, "local_fallback"
@@ -1030,6 +1057,7 @@ class ReadinessSignal:
 
     def await_ready(self, timeout: float | None = None) -> bool:
         """Block until readiness is achieved or ``timeout`` expires."""
+        global _LAST_EMBEDDER_LOCAL_FALLBACK
         start = time.perf_counter()
         deadline = start + timeout if timeout is not None else None
         embedder_waiting = False
@@ -1043,15 +1071,30 @@ class ReadinessSignal:
                     readiness_loop=True
                 )
                 if embedder_ready:
+                    fallback_recovery: dict[str, object] | None = None
+                    if embedder_waiting and embedder_mode == "local_fallback":
+                        with _LAST_EMBEDDER_LOCAL_FALLBACK_LOCK:
+                            fallback_recovery = _LAST_EMBEDDER_LOCAL_FALLBACK
+                            _LAST_EMBEDDER_LOCAL_FALLBACK = None
                     if embedder_waiting and embedder_mode in {"local", "local_fallback"}:
+                        extra = {
+                            "event": "bootstrap-embedder-fallback-ready",
+                            "elapsed": time.perf_counter() - start,
+                            "mode": embedder_mode,
+                        }
+                        if fallback_recovery:
+                            extra.update(
+                                {
+                                    "recovery_event": "remote-embedding-probe-local-fallback-recovered",
+                                    "recovery_elapsed": fallback_recovery.get("elapsed"),
+                                    "recovery_url": fallback_recovery.get("url"),
+                                    "recovery_recorded_at": fallback_recovery.get("recorded_at"),
+                                }
+                            )
                         LOGGER.info(
                             "local embedding fallback ready after %.1fs",
                             time.perf_counter() - start,
-                            extra={
-                                "event": "bootstrap-embedder-fallback-ready",
-                                "elapsed": time.perf_counter() - start,
-                                "mode": embedder_mode,
-                            },
+                            extra=extra,
                         )
                     return True
                 embedder_waiting = True
