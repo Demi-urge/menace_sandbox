@@ -20,7 +20,7 @@ import json
 from collections import deque, Counter
 import re
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 import os
 import sys
@@ -35,6 +35,17 @@ try:  # pragma: no cover - support execution without package context
     from .safe_repr import basic_repr
 except ImportError:  # pragma: no cover - allow running as a script
     from safe_repr import basic_repr  # type: ignore
+
+try:  # pragma: no cover - prefer shared file lock helpers
+    from .lock_utils import FileLock  # type: ignore
+except Exception:  # pragma: no cover - fallback to filelock
+    try:
+        from lock_utils import FileLock  # type: ignore
+    except Exception:
+        try:
+            from filelock import FileLock  # type: ignore
+        except Exception:  # pragma: no cover - no file lock available
+            FileLock = None  # type: ignore
 
 import license_detector
 try:  # pragma: no cover - prefer canonical menace_sandbox mixin
@@ -430,7 +441,22 @@ class CodeDB(EmbeddableDBMixin):
             self._init_engine()
         else:
             with self._connect() as conn:
-                self._ensure_schema(conn)
+                lock_context = nullcontext()
+                lock_path = None
+                if FileLock is not None and self.path:
+                    lock_path = Path(f"{self.path}.schema.lock")
+                    logger.info(
+                        "Waiting for code DB schema lock",
+                        extra={"lock_path": str(lock_path)},
+                    )
+                    lock_context = FileLock(str(lock_path))
+                with lock_context:
+                    if lock_path:
+                        logger.info(
+                            "Acquired code DB schema lock",
+                            extra={"lock_path": str(lock_path)},
+                        )
+                    self._ensure_schema(conn)
 
         if self.path and self.path.name:
             index_path = self.path.with_name(Path(self.DEFAULT_VECTOR_INDEX_PATH).name)
