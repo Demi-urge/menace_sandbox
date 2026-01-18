@@ -429,7 +429,7 @@ class CodeDB(EmbeddableDBMixin):
         if self.engine is not None:
             self._init_engine()
         else:
-            with self._connect() as conn:
+            with self._schema_connect() as conn:
                 self._ensure_schema(conn)
 
         if self.path and self.path.name:
@@ -505,6 +505,36 @@ class CodeDB(EmbeddableDBMixin):
                 except Exception:
                     conn.rollback()
                     raise
+        finally:
+            self._lock.release()
+
+    @contextmanager
+    def _schema_connect(self) -> Iterator[Any]:
+        timeout = _code_db_lock_timeout_secs()
+        acquired = self._lock.acquire(timeout=timeout)
+        if not acquired:
+            logger.warning(
+                "code_db.lock.acquire.timeout",
+                extra={"timeout_s": timeout},
+            )
+            raise TimeoutError(
+                f"Timed out after {timeout:.3f}s waiting for code DB lock."
+            )
+        try:
+            if self.engine is not None:
+                with self.engine.begin() as conn:
+                    yield conn
+            else:
+                if self.router is None:
+                    raise RuntimeError("DBRouter not configured")
+                with self.router.schema_connection("code") as conn:
+                    conn.execute("PRAGMA foreign_keys = ON")
+                    try:
+                        yield conn
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
         finally:
             self._lock.release()
 
