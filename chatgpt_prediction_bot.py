@@ -16,7 +16,7 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import _resolve_bootstrap_wait_timeout, self_coding_managed
 from .self_coding_engine import SelfCodingEngine
 from context_builder import handle_failure, PromptBuildError
 from bootstrap_readiness import readiness_signal, probe_embedding_service
@@ -114,9 +114,7 @@ except Exception:  # pragma: no cover - fallback when service missing
 
 
 def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> None:
-    resolved_timeout = resolve_bootstrap_gate_timeout(
-        fallback_timeout=max(timeout if timeout is not None else 180.0, 180.0)
-    )
+    resolved_timeout = _bootstrap_gate_timeout(fallback=timeout)
     overall_budget = min(max(resolved_timeout, 120.0), 180.0)
     initial_timeout = min(resolved_timeout, max(overall_budget - 30.0, 30.0))
     start = time.monotonic()
@@ -172,6 +170,14 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> 
         f"{component} cannot start until bootstrap readiness clears: "
         f"{_BOOTSTRAP_READINESS.describe()}"
     ) from timeout_exc
+
+
+def _bootstrap_gate_timeout(*, fallback: float | None = None) -> float:
+    resolved_fallback = fallback if fallback is not None else _resolve_bootstrap_wait_timeout()
+    if resolved_fallback is None:
+        resolved_fallback = 180.0
+    resolved_fallback = max(resolved_fallback, 180.0)
+    return resolve_bootstrap_gate_timeout(fallback_timeout=resolved_fallback)
 
 
 def _build_prediction_prompt(
