@@ -1968,26 +1968,32 @@ def _resolve_aggregator_timeout(
     return timeout
 
 
-_RAW_EMBEDDER_SEED_WAIT = os.getenv("MENACE_EMBEDDER_SEED_WAIT_SECS", "150").strip()
+_RAW_EMBEDDER_SEED_WAIT = os.getenv("MENACE_EMBEDDER_SEED_WAIT_SECS", "180").strip()
+_EMBEDDER_SEED_WAIT_MIN_SECS = 180.0
 try:
-    _EMBEDDER_SEED_WAIT_SECS = (
-        float(_RAW_EMBEDDER_SEED_WAIT) if _RAW_EMBEDDER_SEED_WAIT else 150.0
+    _parsed_embedder_seed_wait = (
+        float(_RAW_EMBEDDER_SEED_WAIT) if _RAW_EMBEDDER_SEED_WAIT else None
     )
 except ValueError:
-    _EMBEDDER_SEED_WAIT_SECS = 150.0
+    _parsed_embedder_seed_wait = None
+_EMBEDDER_SEED_WAIT_SECS = max(
+    _EMBEDDER_SEED_WAIT_MIN_SECS,
+    _parsed_embedder_seed_wait or _EMBEDDER_SEED_WAIT_MIN_SECS,
+)
 
 
 def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
     start = time.perf_counter()
     deadline = start + timeout if timeout is not None else None
     waited = False
+    remote_wait_logged = False
 
     while True:
         ready, mode = probe_embedding_service()
         if ready:
             if waited and mode in {"local", "local_fallback"}:
                 LOGGER.info(
-                    "local fallback embedder ready after %.1fs; resuming seeding",
+                    "recovered via local after %.1fs \u2013 seeding proceeding",
                     time.perf_counter() - start,
                     extra={
                         "event": "embedder-fallback-ready",
@@ -1996,6 +2002,16 @@ def _await_embedder_ready_for_seeding(timeout: float | None) -> bool:
                     },
                 )
             return True
+        if not remote_wait_logged and mode in {"remote", "remote_cached_local"}:
+            remote_wait_logged = True
+            LOGGER.info(
+                "vector timed out during remote \u2013 waiting for local fallback\u2026",
+                extra={
+                    "event": "embedder-remote-unready-wait",
+                    "elapsed": time.perf_counter() - start,
+                    "mode": mode,
+                },
+            )
 
         now = time.perf_counter()
         if deadline is not None and now >= deadline:
