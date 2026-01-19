@@ -315,6 +315,7 @@ except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
 
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
+SIGNAL_SHUTDOWN_REQUESTED = threading.Event()
 
 
 # Centralized helper for emoji-forward logging so critical launch phases are
@@ -487,7 +488,19 @@ def _normalize_log_level(value: str | int | None) -> int:
 
 
 def handle_sigint(sig: int, frame: Any) -> None:
-    print("[META] Caught Ctrl+C — requesting safe shutdown")
+    if SHUTDOWN_EVENT.is_set():
+        return
+    if SIGNAL_SHUTDOWN_REQUESTED.is_set():
+        return
+    SIGNAL_SHUTDOWN_REQUESTED.set()
+    try:
+        signal_name = signal.Signals(sig).name
+    except ValueError:
+        signal_name = f"signal {sig}"
+    print(
+        f"[META] Caught {signal_name} — requesting safe shutdown "
+        f"(shutdown_in_progress={SHUTDOWN_EVENT.is_set()})"
+    )
     SHUTDOWN_EVENT.set()
 
 
