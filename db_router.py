@@ -1154,6 +1154,7 @@ class DBRouter:
 
         conn = self.get_connection(table_name, operation="bootstrap")
         previous_timeout: int | None = None
+        read_uncommitted = False
         effective_timeout = self.bootstrap_timeout_ms if timeout_ms is None else timeout_ms
         try:
             if effective_timeout is not None:
@@ -1162,11 +1163,20 @@ class DBRouter:
                     conn.execute(f"PRAGMA busy_timeout={effective_timeout}")
                 except Exception:  # pragma: no cover - safety during bootstrap
                     previous_timeout = None
+            try:
+                conn.execute("PRAGMA read_uncommitted=1")
+                read_uncommitted = True
+            except Exception:  # pragma: no cover - optional optimisation
+                read_uncommitted = False
             yield conn
         finally:
-            if previous_timeout is not None:
-                with contextlib.suppress(Exception):
+            try:
+                if read_uncommitted:
+                    conn.execute("PRAGMA read_uncommitted=0")
+                if previous_timeout is not None:
                     conn.execute(f"PRAGMA busy_timeout={previous_timeout}")
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
 
     # ------------------------------------------------------------------
     def execute_and_log(

@@ -429,7 +429,7 @@ class CodeDB(EmbeddableDBMixin):
         if self.engine is not None:
             self._init_engine()
         else:
-            with self._schema_connect() as conn:
+            with self._schema_bootstrap_connect() as conn:
                 self._ensure_schema(conn)
 
         if self.path and self.path.name:
@@ -509,7 +509,7 @@ class CodeDB(EmbeddableDBMixin):
             self._lock.release()
 
     @contextmanager
-    def _schema_connect(self) -> Iterator[Any]:
+    def _schema_bootstrap_connect(self) -> Iterator[Any]:
         timeout = _code_db_lock_timeout_secs()
         acquired = self._lock.acquire(timeout=timeout)
         if not acquired:
@@ -527,7 +527,17 @@ class CodeDB(EmbeddableDBMixin):
             else:
                 if self.router is None:
                     raise RuntimeError("DBRouter not configured")
-                with self.router.schema_connection("code") as conn:
+                if hasattr(self.router, "schema_connection"):
+                    connection_cm = self.router.schema_connection("code")
+                elif hasattr(self.router, "bootstrap_connection"):
+                    connection_cm = self.router.bootstrap_connection("code")
+                else:  # pragma: no cover - legacy router fallback
+                    @contextmanager
+                    def _fallback_conn() -> Iterator[Any]:
+                        yield self.router.get_connection("code")
+
+                    connection_cm = _fallback_conn()
+                with connection_cm as conn:
                     conn.execute("PRAGMA foreign_keys = ON")
                     try:
                         yield conn
