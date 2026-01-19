@@ -12,14 +12,17 @@ import contextvars
 import importlib.util
 import json
 import logging
+import os
 import py_compile
 import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import traceback
 import hashlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -3043,95 +3046,147 @@ class SelfCodingEngine:
                 self.logger.exception("chunk generation failed", extra={"chunk": idx})
                 return ""
 
-        with ThreadPoolExecutor(max_workers=min(len(chunks), 4) or 1) as ex:
-            futures = {ex.submit(_generate, i): i for i in range(len(chunks))}
-            generated_chunks: Dict[int, str] = {i: "" for i in range(len(chunks))}
-            for fut in as_completed(futures):
-                idx = futures[fut]
-                try:
-                    generated_chunks[idx] = fut.result() or ""
-                except Exception:
-                    self.logger.exception("chunk generation failed", extra={"chunk": idx})
-                    generated_chunks[idx] = ""
+        batch_timeout_s = float(os.getenv("SELF_CODING_BATCH_TIMEOUT", "900"))
+        heartbeat_s = float(os.getenv("SELF_CODING_BATCH_HEARTBEAT", "45"))
+        batch_start = time.monotonic()
+        stage = {"name": "chunk_generation"}
+        stop_event = threading.Event()
+        timeout_event = threading.Event()
 
-        for idx, ch in enumerate(chunks):
-            generated = generated_chunks.get(idx, "")
-            if not generated.strip() or not _verify(generated):
-                continue
+        def _heartbeat() -> None:
+            while not stop_event.wait(heartbeat_s):
+                elapsed = time.monotonic() - batch_start
+                current_stage = stage["name"]
+                if elapsed >= batch_timeout_s:
+                    if not timeout_event.is_set():
+                        timeout_event.set()
+                        self.logger.warning(
+                            "batch stalled during %s",
+                            current_stage,
+                            extra={
+                                "stage": current_stage,
+                                "elapsed_s": elapsed,
+                                "timeout_s": batch_timeout_s,
+                            },
+                        )
+                    return
+                self.logger.info(
+                    "batch heartbeat: %s",
+                    current_stage,
+                    extra={"stage": current_stage, "elapsed_s": elapsed},
+                )
 
-            insert_at = ch.end_line + offset
-            patch_lines = generated.rstrip().splitlines()
-            original_lines[insert_at:insert_at] = patch_lines
-            _atomic_write(
-                path, "\n".join(original_lines) + "\n", lock=lock
-            )
+        heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+        heartbeat_thread.start()
 
-            patch_key = f"{path}:{description}:{idx}"
-            if self.rollback_mgr:
-                try:
-                    self.rollback_mgr.register_patch(patch_key, self.bot_name)
-                except Exception:
-                    self.logger.exception("failed to register patch")
+        generated_chunks: Dict[int, str] = {i: "" for i in range(len(chunks))}
+        try:
+            with ThreadPoolExecutor(max_workers=min(len(chunks), 4) or 1) as ex:
+                futures = {ex.submit(_generate, i): i for i in range(len(chunks))}
+                pending = set(futures)
+                while pending:
+                    done, pending = wait(pending, timeout=1.0)
+                    for fut in done:
+                        idx = futures[fut]
+                        try:
+                            generated_chunks[idx] = fut.result() or ""
+                        except Exception:
+                            self.logger.exception(
+                                "chunk generation failed", extra={"chunk": idx}
+                            )
+                            generated_chunks[idx] = ""
+                    if timeout_event.is_set():
+                        for fut in pending:
+                            fut.cancel()
+                        return None, False, 0.0
 
-            ci_result = self._run_ci(path)
-            if not ci_result.success:
-                del original_lines[insert_at:insert_at + len(patch_lines)]
+            stage["name"] = "chunk_application"
+            for idx, ch in enumerate(chunks):
+                stage["name"] = f"chunk_application:{idx + 1}/{len(chunks)}"
+                if timeout_event.is_set():
+                    return last_patch_id, success_any, 0.0
+                generated = generated_chunks.get(idx, "")
+                if not generated.strip() or not _verify(generated):
+                    continue
+
+                insert_at = ch.end_line + offset
+                patch_lines = generated.rstrip().splitlines()
+                original_lines[insert_at:insert_at] = patch_lines
                 _atomic_write(
                     path, "\n".join(original_lines) + "\n", lock=lock
                 )
+
+                patch_key = f"{path}:{description}:{idx}"
                 if self.rollback_mgr:
                     try:
-                        self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
+                        self.rollback_mgr.register_patch(patch_key, self.bot_name)
                     except Exception:
-                        self.logger.exception("chunk rollback failed")
+                        self.logger.exception("failed to register patch")
+
+                stage["name"] = f"chunk_ci:{idx + 1}/{len(chunks)}"
+                ci_result = self._run_ci(path)
+                stage["name"] = f"chunk_application:{idx + 1}/{len(chunks)}"
+                if not ci_result.success:
+                    del original_lines[insert_at:insert_at + len(patch_lines)]
+                    _atomic_write(
+                        path, "\n".join(original_lines) + "\n", lock=lock
+                    )
+                    if self.rollback_mgr:
+                        try:
+                            self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
+                        except Exception:
+                            self.logger.exception("chunk rollback failed")
+                    if self.patch_db:
+                        try:
+                            pid = self.patch_db.add(
+                                PatchRecord(
+                                    filename=str(path),
+                                    description=f"{description} [chunk {idx}]",
+                                    roi_before=0.0,
+                                    roi_after=0.0,
+                                    reverted=True,
+                                )
+                            )
+                            record_patch_metadata(pid, {"chunk": idx}, patch_db=self.patch_db)
+                        except Exception:
+                            self.logger.exception("failed to record chunk metadata")
+                    continue
+
+                success_any = True
+                offset += len(patch_lines)
                 if self.patch_db:
                     try:
-                        pid = self.patch_db.add(
+                        last_patch_id = self.patch_db.add(
                             PatchRecord(
                                 filename=str(path),
                                 description=f"{description} [chunk {idx}]",
                                 roi_before=0.0,
                                 roi_after=0.0,
-                                reverted=True,
+                                reverted=False,
                             )
                         )
-                        record_patch_metadata(pid, {"chunk": idx}, patch_db=self.patch_db)
+                        record_patch_metadata(
+                            last_patch_id, {"chunk": idx}, patch_db=self.patch_db
+                        )
                     except Exception:
                         self.logger.exception("failed to record chunk metadata")
-                continue
 
-            success_any = True
-            offset += len(patch_lines)
-            if self.patch_db:
-                try:
-                    last_patch_id = self.patch_db.add(
-                        PatchRecord(
-                            filename=str(path),
-                            description=f"{description} [chunk {idx}]",
-                            roi_before=0.0,
-                            roi_after=0.0,
-                            reverted=False,
-                        )
-                    )
-                    record_patch_metadata(
-                        last_patch_id, {"chunk": idx}, patch_db=self.patch_db
-                    )
-                except Exception:
-                    self.logger.exception("failed to record chunk metadata")
+                if self.roi_tracker:
+                    try:
+                        self.roi_tracker.update(0.0, 0.0)
+                    except Exception:
+                        self.logger.exception("ROI tracker update failed")
 
-            if self.roi_tracker:
-                try:
-                    self.roi_tracker.update(0.0, 0.0)
-                except Exception:
-                    self.logger.exception("ROI tracker update failed")
+                if self.memory_mgr:
+                    try:
+                        self.memory_mgr.store(str(path), generated, tags="code")
+                    except Exception:
+                        self.logger.exception("memory store failed")
 
-            if self.memory_mgr:
-                try:
-                    self.memory_mgr.store(str(path), generated, tags="code")
-                except Exception:
-                    self.logger.exception("memory store failed")
-
-        return last_patch_id, success_any, 0.0
+            return last_patch_id, success_any, 0.0
+        finally:
+            stop_event.set()
+            heartbeat_thread.join(timeout=1.0)
 
     def apply_patch(
         self,
