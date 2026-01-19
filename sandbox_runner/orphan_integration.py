@@ -7,6 +7,9 @@ from typing import Iterable, Dict, List, TYPE_CHECKING, Tuple
 
 import json
 from datetime import datetime
+import sys
+import threading
+from concurrent.futures.process import BrokenProcessPool
 
 import yaml
 
@@ -15,6 +18,22 @@ from dynamic_path_router import resolve_path, resolve_module_path
 
 if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only
     from roi_tracker import ROITracker
+
+ORPHAN_SHUTDOWN_EVENT = threading.Event()
+
+
+def _shutdown_in_progress() -> bool:
+    module = sys.modules.get("start_autonomous_sandbox")
+    event = getattr(module, "SHUTDOWN_EVENT", None) if module else None
+    event = event or ORPHAN_SHUTDOWN_EVENT
+    try:
+        return bool(event.is_set())
+    except Exception:
+        return False
+
+
+def _default_orphan_result() -> Tuple[None, Dict[str, List[str]], List[int], bool, bool]:
+    return None, {}, [], False, False
 
 
 def integrate_and_graph_orphans(
@@ -61,32 +80,45 @@ def integrate_and_graph_orphans(
 
     paths: List[str]
     if modules is None:
+        if _shutdown_in_progress():
+            return _default_orphan_result()
         try:
             if recursive:
                 from .orphan_discovery import discover_recursive_orphans
 
-                mapping = discover_recursive_orphans(str(repo))
+                try:
+                    mapping = discover_recursive_orphans(str(repo))
+                except BrokenProcessPool:
+                    if _shutdown_in_progress():
+                        log.info("orphan discovery halted during shutdown")
+                        return _default_orphan_result()
+                    log.exception("orphan discovery failed")
+                    return _default_orphan_result()
                 names = mapping.keys()
             else:
                 from .orphan_discovery import discover_orphan_modules
 
                 names = discover_orphan_modules(str(repo), recursive=False)
         except Exception:  # pragma: no cover - best effort
+            if _shutdown_in_progress():
+                return _default_orphan_result()
             log.exception("orphan discovery failed")
-            return None, {}, [], False, False
+            return _default_orphan_result()
+        if _shutdown_in_progress():
+            return _default_orphan_result()
         if not names:
-            return None, {}, [], False, False
+            return _default_orphan_result()
         paths = [resolve_module_path(name).as_posix() for name in names]
     else:
         paths = [resolve_path(m).as_posix() for m in modules]
         if not paths:
-            return None, {}, [], False, False
+            return _default_orphan_result()
 
     try:
         from .environment import auto_include_modules, try_integrate_into_workflows
     except Exception:  # pragma: no cover - best effort
         log.exception("environment helpers import failed")
-        return None, {}, [], False, False
+        return _default_orphan_result()
 
     builder = context_builder
     try:
@@ -95,7 +127,7 @@ def integrate_and_graph_orphans(
         )
     except Exception:  # pragma: no cover - best effort
         log.exception("auto include of discovered orphans failed")
-        return None, {}, [], False, False
+        return _default_orphan_result()
 
     added = tested.get("added", [])
     synergy_ok = False
