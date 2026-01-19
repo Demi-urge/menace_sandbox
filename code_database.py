@@ -673,7 +673,7 @@ class CodeDB(EmbeddableDBMixin):
                             continue
                     self._execute_schema_stmt(conn, stmt)
                 version = target
-                conn.execute(f"PRAGMA user_version = {version}")
+                self._execute_schema_stmt(conn, f"PRAGMA user_version = {version}")
                 cols = [
                     r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()
                 ]
@@ -697,16 +697,30 @@ class CodeDB(EmbeddableDBMixin):
         class _NonRetryableSchemaError(Exception):
             """Wrapper to short-circuit schema retries."""
 
+        stmt_type = (
+            stmt.strip().split(maxsplit=1)[0].upper() if stmt.strip() else "UNKNOWN"
+        )
+        attempt = 0
+
         def op() -> None:
+            nonlocal attempt
+            attempt += 1
             try:
                 self._execute(conn, stmt)
             except sqlite3.OperationalError as exc:
                 message = str(exc).lower()
                 if "locked" not in message:
                     raise _NonRetryableSchemaError from exc
-                logger.info(
-                    "schema statement locked; retrying",
-                    extra={"sql": stmt, "exc_class": exc.__class__.__name__},
+                logger.warning(
+                    "schema statement locked; retrying %s/%s",
+                    attempt,
+                    attempts,
+                    extra={
+                        "sql": stmt,
+                        "stmt_type": stmt_type,
+                        "retry_count": attempt,
+                        "exc_class": exc.__class__.__name__,
+                    },
                 )
                 raise
 
