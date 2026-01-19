@@ -1008,6 +1008,7 @@ class DBRouter:
             if local_db_path != ":memory:" and os.path.isdir(local_db_path)
             else local_db_path
         )
+        self.local_db_path = local_path
         if local_path != ":memory:":
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
         self.local_conn: LoggedConnection = sqlite3.connect(  # noqa: SQL001
@@ -1029,6 +1030,7 @@ class DBRouter:
 
         if shared_db_path != ":memory:":
             os.makedirs(os.path.dirname(shared_db_path), exist_ok=True)
+        self.shared_db_path = shared_db_path
         self.shared_conn: LoggedConnection = sqlite3.connect(  # noqa: SQL001
             shared_db_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
@@ -1147,8 +1149,13 @@ class DBRouter:
         ``DB_ROUTER_SCHEMA_TIMEOUT_MS``) to prevent long waits during bootstrap.
         The original timeout is restored once the caller exits the context.
         """
-
-        conn = self.get_connection(table_name, operation="schema")
+        db_path = self.shared_db_path if table_name in SHARED_TABLES else self.local_db_path
+        using_existing = db_path == ":memory:"
+        if using_existing:
+            conn = self.get_connection(table_name, operation="schema")
+        else:
+            conn = sqlite3.connect(db_path, check_same_thread=False)  # noqa: SQL001
+            _configure_sqlite_connection(conn)
         previous_timeout: int | None = None
         try:
             if _SCHEMA_TIMEOUT_MS is not None:
@@ -1172,6 +1179,11 @@ class DBRouter:
                     conn.execute(f"PRAGMA busy_timeout={previous_timeout}")
             except Exception:  # pragma: no cover - best effort cleanup
                 pass
+            if not using_existing:
+                try:
+                    conn.close()
+                except Exception:  # pragma: no cover - best effort cleanup
+                    pass
 
     # ------------------------------------------------------------------
     @contextlib.contextmanager
