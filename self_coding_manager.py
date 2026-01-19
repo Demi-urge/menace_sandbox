@@ -9,6 +9,7 @@ requests originate from the orchestrator before proceeding.
 
 from pathlib import Path
 import sys
+import concurrent.futures
 
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
@@ -1605,6 +1606,82 @@ class SelfCodingManager:
         self.refresh_quick_fix_context()
         summary: dict[str, Any] = {}
         ctx_meta = dict(context_meta or {})
+        default_timeout = 900.0
+        raw_timeout = os.getenv("POST_PATCH_TIMEOUT_SECS")
+        if raw_timeout:
+            try:
+                post_patch_timeout_secs = float(raw_timeout)
+            except ValueError:
+                self.logger.warning(
+                    "invalid POST_PATCH_TIMEOUT_SECS value; using default",
+                    extra={"value": raw_timeout, "default": default_timeout},
+                )
+                post_patch_timeout_secs = default_timeout
+        else:
+            post_patch_timeout_secs = default_timeout
+        if post_patch_timeout_secs <= 0:
+            post_patch_timeout_secs = default_timeout
+        heartbeat_interval = 45.0
+
+        def _run_step_with_timeout(
+            step_name: str,
+            func: Callable[..., Any],
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[bool, Any]:
+            done_event = threading.Event()
+
+            def _heartbeat() -> None:
+                while not done_event.wait(heartbeat_interval):
+                    self.logger.info(
+                        "post patch cycle heartbeat",
+                        extra={
+                            "step": step_name,
+                            "bot_name": self.bot_name,
+                            "timeout": post_patch_timeout_secs,
+                        },
+                    )
+
+            thread = threading.Thread(target=_heartbeat, daemon=True)
+            thread.start()
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(func, *args, **kwargs)
+                    try:
+                        return False, future.result(timeout=post_patch_timeout_secs)
+                    except concurrent.futures.TimeoutError:
+                        cancelled = future.cancel()
+                        self.logger.error(
+                            "post patch cycle step timed out",
+                            extra={
+                                "step": step_name,
+                                "timeout": post_patch_timeout_secs,
+                                "cancelled": cancelled,
+                            },
+                        )
+                        return True, None
+            finally:
+                done_event.set()
+                thread.join(timeout=1.0)
+
+        def _finish_timeout(step_name: str) -> dict[str, Any]:
+            summary["timed_out"] = {
+                "step": step_name,
+                "timeout_secs": post_patch_timeout_secs,
+            }
+            self._last_validation_summary = summary
+            if self.data_bot:
+                try:
+                    self.data_bot.collect(
+                        self.bot_name,
+                        post_patch_cycle_success=0.0,
+                        post_patch_cycle_error=f"timeout:{step_name}",
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to record post patch timeout metrics"
+                    )
+            return summary
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 subprocess.run(["git", "clone", str(repo_root), tmp_dir], check=True)
@@ -1622,12 +1699,21 @@ class SelfCodingManager:
                     prev_cwd = os.getcwd()
                     os.chdir(str(clone_root))
                     try:
-                        valid, flags = self.quick_fix.validate_patch(
+                        timed_out, result = _run_step_with_timeout(
+                            "validate_patch",
+                            self.quick_fix.validate_patch,
                             str(cloned_module),
                             description,
                             repo_root=clone_root,
                             provenance_token=provenance_token,
                         )
+                        if timed_out:
+                            summary["quick_fix"] = {
+                                "timed_out": True,
+                                "step": "validate_patch",
+                            }
+                            return _finish_timeout("validate_patch")
+                        valid, flags = result
                         summary["quick_fix"] = {
                             "validation_flags": list(flags),
                         }
@@ -1654,12 +1740,19 @@ class SelfCodingManager:
                                     f"valid={valid}, flags={list(flags)}"
                                 )
                         if not skip_apply:
-                            passed, _pid, apply_flags = self.quick_fix.apply_validated_patch(
+                            timed_out, result = _run_step_with_timeout(
+                                "apply_validated_patch",
+                                self.quick_fix.apply_validated_patch,
                                 str(cloned_module),
                                 description,
                                 ctx_meta,
                                 provenance_token=provenance_token,
                             )
+                            if timed_out:
+                                summary["quick_fix"]["timed_out"] = True
+                                summary["quick_fix"]["step"] = "apply_validated_patch"
+                                return _finish_timeout("apply_validated_patch")
+                            passed, _pid, apply_flags = result
                             summary["quick_fix"].update(
                                 {
                                     "apply_flags": list(apply_flags),
@@ -1718,7 +1811,27 @@ class SelfCodingManager:
                         service = _SelfTestService(**run_kwargs)
                     except FileNotFoundError as exc:
                         raise RuntimeError("SelfTestService initialization failed") from exc
-                    results, passed_modules = service.run_once()
+                    timed_out, result = _run_step_with_timeout(
+                        "self_tests",
+                        service.run_once,
+                    )
+                    if timed_out:
+                        summary["self_tests"] = {
+                            "timed_out": True,
+                            "timeout_secs": post_patch_timeout_secs,
+                            "attempts": attempt_count + 1,
+                        }
+                        if workflow_tests:
+                            summary["self_tests"]["workflow_tests"] = list(
+                                workflow_tests
+                            )
+                        if workflow_sources:
+                            summary["self_tests"]["workflow_sources"] = {
+                                key: list(values)
+                                for key, values in workflow_sources.items()
+                            }
+                        return _finish_timeout("self_tests")
+                    results, passed_modules = result
                     failed_count = int(results.get("failed", 0))
                     summary["self_tests"] = {
                         "passed": int(results.get("passed", 0)),
@@ -1797,12 +1910,30 @@ class SelfCodingManager:
                         attempt_record["next_pytest_args"] = next_pytest_args
                     try:
                         self.refresh_quick_fix_context()
-                        passed, patch_id, apply_flags = self.quick_fix.apply_validated_patch(
+                        timed_out, result = _run_step_with_timeout(
+                            "apply_validated_patch",
+                            self.quick_fix.apply_validated_patch,
                             str(module),
                             repair_desc,
                             ctx_meta_attempt,
                             provenance_token=provenance_token,
                         )
+                        if timed_out:
+                            attempt_record["timed_out"] = True
+                            attempt_records.append(attempt_record)
+                            summary_attempts = [
+                                dict(record) for record in attempt_records
+                            ]
+                            summary["self_tests"]["repair_attempts"] = summary_attempts
+                            summary.setdefault("quick_fix", {})[
+                                "repair_attempts"
+                            ] = list(summary_attempts)
+                            summary["self_tests"]["timed_out"] = True
+                            summary["self_tests"]["timeout_secs"] = (
+                                post_patch_timeout_secs
+                            )
+                            return _finish_timeout("apply_validated_patch")
+                        passed, patch_id, apply_flags = result
                     except Exception as exc:
                         attempt_record["error"] = str(exc)
                         attempt_records.append(attempt_record)
