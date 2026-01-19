@@ -8,6 +8,7 @@ import contextlib
 import importlib
 import importlib.util
 import inspect
+import sqlite3
 from dataclasses import dataclass, fields, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Mapping
@@ -1559,15 +1560,35 @@ class ContextBuilder:
                     "failed to import %s for retriever: %s", class_name, detail
                 )
                 return
-            try:
-                init_kwargs = _db_init_kwargs(db_class)
-                retriever_kwargs[kwarg_name] = db_class(
-                    Path(resolved_path) if resolved_path is not None else None,
-                    **init_kwargs,
-                )
-            except Exception as exc:
-                failures[label] = str(exc)
-                logger.exception("failed to initialise %s at %s", class_name, resolved_path)
+            init_kwargs = _db_init_kwargs(db_class)
+            max_attempts = 6
+            backoff_seconds = 0.05
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    retriever_kwargs[kwarg_name] = db_class(
+                        Path(resolved_path) if resolved_path is not None else None,
+                        **init_kwargs,
+                    )
+                    return
+                except sqlite3.OperationalError as exc:
+                    message = str(exc).lower()
+                    if "locked" not in message:
+                        failures[label] = str(exc)
+                        logger.exception(
+                            "failed to initialise %s at %s", class_name, resolved_path
+                        )
+                        return
+                    if attempt >= max_attempts:
+                        failures[label] = f"{exc} (lock timeout during initialization)"
+                        logger.exception(
+                            "failed to initialise %s at %s", class_name, resolved_path
+                        )
+                        return
+                    time.sleep(min(backoff_seconds * (2 ** (attempt - 1)), 2.0))
+                except Exception as exc:
+                    failures[label] = str(exc)
+                    logger.exception("failed to initialise %s at %s", class_name, resolved_path)
+                    return
         for label, kind, module_names, class_name, path_key, kwarg_name in self._retriever_db_specs():
             _init_db(
                 label=label,
