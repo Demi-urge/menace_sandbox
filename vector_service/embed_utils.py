@@ -10,10 +10,13 @@ The function :func:`get_text_embeddings` accepts optional ``model`` and
 ``service`` instances which allows tests to inject lightweight stubs.
 """
 
-from typing import List
+from typing import Any, Callable, List
+import concurrent.futures
 import logging
 import json
 import os
+import threading
+import time
 import urllib.request
 
 import governed_embeddings
@@ -39,8 +42,101 @@ EMBED_DIM = 384
 _SERVICE: "SharedVectorService | None" = None
 _REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
 _LOCAL_FALLBACK_LOGGED = False
+_EMBED_BATCH_TIMEOUT_ENV = "EMBED_BATCH_TIMEOUT_SECS"
+_EMBED_BATCH_HEARTBEAT_ENV = "EMBED_BATCH_HEARTBEAT_SECS"
+_DEFAULT_EMBED_BATCH_TIMEOUT_SECS = 900.0
+_DEFAULT_EMBED_BATCH_HEARTBEAT_SECS = 45.0
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_positive_float(value: str | None, *, default: float, label: str) -> float:
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "invalid %s; using default",
+            label,
+            extra={"value": value, "default": default},
+        )
+        return default
+    if parsed <= 0:
+        logger.warning(
+            "%s must be positive; using default",
+            label,
+            extra={"value": parsed, "default": default},
+        )
+        return default
+    return parsed
+
+
+def _get_embed_batch_timeout() -> float:
+    return _parse_positive_float(
+        os.environ.get(_EMBED_BATCH_TIMEOUT_ENV),
+        default=_DEFAULT_EMBED_BATCH_TIMEOUT_SECS,
+        label=_EMBED_BATCH_TIMEOUT_ENV,
+    )
+
+
+def _get_embed_batch_heartbeat() -> float:
+    return _parse_positive_float(
+        os.environ.get(_EMBED_BATCH_HEARTBEAT_ENV),
+        default=_DEFAULT_EMBED_BATCH_HEARTBEAT_SECS,
+        label=_EMBED_BATCH_HEARTBEAT_ENV,
+    )
+
+
+def _run_with_timeout_and_heartbeat(
+    func: Callable[[], Any],
+    *,
+    timeout_s: float,
+    heartbeat_s: float,
+    state: dict[str, str],
+) -> Any:
+    stop_event = threading.Event()
+    start = time.monotonic()
+
+    def _heartbeat() -> None:
+        while not stop_event.wait(timeout=heartbeat_s):
+            logger.info(
+                "embedding batch heartbeat",
+                extra={
+                    "sub_step": state.get("sub_step", "unknown"),
+                    "elapsed_s": round(time.monotonic() - start, 1),
+                },
+            )
+
+    thread = None
+    if heartbeat_s > 0:
+        thread = threading.Thread(
+            target=_heartbeat,
+            name="embedding-batch-heartbeat",
+            daemon=True,
+        )
+        thread.start()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func)
+        try:
+            return future.result(timeout=timeout_s)
+        except concurrent.futures.TimeoutError:
+            cancelled = future.cancel()
+            logger.error(
+                "embedding batch timed out",
+                extra={
+                    "timeout_s": timeout_s,
+                    "sub_step": state.get("sub_step", "unknown"),
+                    "cancelled": cancelled,
+                    "elapsed_s": round(time.monotonic() - start, 1),
+                },
+            )
+            raise
+        finally:
+            stop_event.set()
+            if thread:
+                thread.join(timeout=1.0)
 
 
 def _remote_embed(url: str, text: str) -> List[float]:
@@ -91,15 +187,33 @@ def get_text_embeddings(
 
     mdl = model or _ensure_model()
     if mdl is not None:
-        vecs = mdl.encode(texts)  # type: ignore[arg-type]
-        if np is not None:
-            arr = np.atleast_2d(vecs)
-            return [list(map(float, v)) for v in arr]
-        if hasattr(vecs, "tolist"):
-            vecs = vecs.tolist()
-        if isinstance(vecs, list) and vecs and isinstance(vecs[0], (list, tuple)):
-            return [list(map(float, v)) for v in vecs]
-        return [list(map(float, vecs))]
+        timeout_s = _get_embed_batch_timeout()
+        heartbeat_s = _get_embed_batch_heartbeat()
+        state = {"sub_step": "encode_texts"}
+        try:
+            vecs = _run_with_timeout_and_heartbeat(
+                lambda: mdl.encode(texts),  # type: ignore[arg-type]
+                timeout_s=timeout_s,
+                heartbeat_s=heartbeat_s,
+                state=state,
+            )
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                "embedding batch timed out; falling back to alternate backend",
+                extra={
+                    "timeout_s": timeout_s,
+                    "sub_step": state.get("sub_step", "unknown"),
+                },
+            )
+        else:
+            if np is not None:
+                arr = np.atleast_2d(vecs)
+                return [list(map(float, v)) for v in arr]
+            if hasattr(vecs, "tolist"):
+                vecs = vecs.tolist()
+            if isinstance(vecs, list) and vecs and isinstance(vecs[0], (list, tuple)):
+                return [list(map(float, v)) for v in vecs]
+            return [list(map(float, vecs))]
 
     svc = service
     global _SERVICE
