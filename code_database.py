@@ -648,13 +648,15 @@ class CodeDB(EmbeddableDBMixin):
 
     def _ensure_schema(self, conn: Any) -> None:
         savepoint_name: str | None = None
+        savepoint_active = False
         if isinstance(conn, sqlite3.Connection):
             # PRAGMA or earlier statements may open an implicit transaction.
             in_transaction = getattr(conn, "in_transaction", False)
             if in_transaction:
                 logger.debug("schema bootstrap using existing sqlite transaction")
-                savepoint_name = "code_schema_bootstrap"
+                savepoint_name = "code_schema_init"
                 conn.execute(f"SAVEPOINT {savepoint_name}")
+                savepoint_active = True
             else:
                 conn.execute("BEGIN IMMEDIATE")
         try:
@@ -705,11 +707,16 @@ class CodeDB(EmbeddableDBMixin):
                 logger.warning("fts initialisation failed: %s", exc)
             if savepoint_name:
                 conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                savepoint_active = False
         except Exception:
             if savepoint_name:
                 conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
                 conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                savepoint_active = False
             raise
+        finally:
+            if savepoint_name and savepoint_active:
+                conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
 
     def _with_retry(self, func: Callable[[Any], T]) -> T:
         return with_retry(func, exc=sqlite3.Error, logger=logger)
