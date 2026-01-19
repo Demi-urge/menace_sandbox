@@ -685,9 +685,12 @@ class CodeDB(EmbeddableDBMixin):
                 self._execute(conn, stmt)
             except sqlite3.OperationalError as exc:
                 message = str(exc).lower()
-                if "locked" not in message:
+                if "database table is locked" not in message:
                     raise _NonRetryableSchemaError from exc
-                logger.debug("schema DDL locked; retrying")
+                logger.warning(
+                    "schema DDL locked; retrying",
+                    extra={"sql": stmt, "exc_class": exc.__class__.__name__},
+                )
                 raise
 
         try:
