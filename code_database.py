@@ -640,7 +640,11 @@ class CodeDB(EmbeddableDBMixin):
 
     def _ensure_schema(self, conn: Any) -> None:
         if isinstance(conn, sqlite3.Connection):
-            conn.execute("BEGIN IMMEDIATE")
+            in_transaction = getattr(conn, "in_transaction", False)
+            if in_transaction:
+                logger.debug("schema bootstrap using existing sqlite transaction")
+            else:
+                conn.execute("BEGIN IMMEDIATE")
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         missing_code_table = False
         try:
