@@ -686,7 +686,14 @@ class CodeDB(EmbeddableDBMixin):
     def _with_retry(self, func: Callable[[Any], T]) -> T:
         return with_retry(func, exc=sqlite3.Error, logger=logger)
 
-    def _execute_schema_stmt(self, conn: Any, stmt: str) -> None:
+    def _execute_with_retry(
+        self,
+        conn: Any,
+        stmt: str,
+        *,
+        attempts: int = 3,
+        delay: float = 0.2,
+    ) -> None:
         class _NonRetryableSchemaError(Exception):
             """Wrapper to short-circuit schema retries."""
 
@@ -695,10 +702,10 @@ class CodeDB(EmbeddableDBMixin):
                 self._execute(conn, stmt)
             except sqlite3.OperationalError as exc:
                 message = str(exc).lower()
-                if "database table is locked" not in message:
+                if "locked" not in message:
                     raise _NonRetryableSchemaError from exc
-                logger.warning(
-                    "schema DDL locked; retrying",
+                logger.info(
+                    "schema statement locked; retrying",
                     extra={"sql": stmt, "exc_class": exc.__class__.__name__},
                 )
                 raise
@@ -706,13 +713,16 @@ class CodeDB(EmbeddableDBMixin):
         try:
             with_retry(
                 op,
-                attempts=3,
-                delay=0.2,
+                attempts=attempts,
+                delay=delay,
                 exc=sqlite3.OperationalError,
                 logger=logger,
             )
         except _NonRetryableSchemaError as exc:
             raise exc.__cause__ or exc
+
+    def _execute_schema_stmt(self, conn: Any, stmt: str) -> None:
+        self._execute_with_retry(conn, stmt)
 
     def _conn_wrapper(self, func: Callable[[Any], T]) -> T:
         with self._connect() as conn:
