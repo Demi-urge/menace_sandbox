@@ -1572,14 +1572,26 @@ class ContextBuilder:
                     return
                 except sqlite3.OperationalError as exc:
                     message = str(exc).lower()
-                    if "locked" not in message:
+                    is_locked = "locked" in message
+                    is_transaction_state = "cannot start a transaction within a transaction" in message
+                    if not is_locked and not is_transaction_state:
                         failures[label] = str(exc)
                         logger.exception(
                             "failed to initialise %s at %s", class_name, resolved_path
                         )
                         return
+                    if is_transaction_state:
+                        logger.debug(
+                            "retrying %s initialization due to transaction state error: %s",
+                            class_name,
+                            exc,
+                        )
                     if attempt >= max_attempts:
-                        failures[label] = f"{exc} (lock timeout during initialization)"
+                        failures[label] = (
+                            f"{exc} (lock timeout during initialization)"
+                            if is_locked
+                            else f"{exc} (transaction state error during initialization)"
+                        )
                         logger.exception(
                             "failed to initialise %s at %s", class_name, resolved_path
                         )
