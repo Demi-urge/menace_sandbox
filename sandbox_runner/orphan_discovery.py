@@ -5,6 +5,9 @@ import concurrent.futures
 import json
 import logging
 import os
+import sys
+from concurrent.futures import CancelledError, InvalidStateError
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
@@ -57,6 +60,18 @@ else:
 
 class EvaluationError(Exception):
     """Raised when an AST node cannot be safely evaluated."""
+
+
+def _shutdown_in_progress() -> bool:
+    module = sys.modules.get("start_autonomous_sandbox")
+    event = getattr(module, "SHUTDOWN_EVENT", None) if module else None
+    if not event:
+        module = sys.modules.get("sandbox_runner.orphan_integration")
+        event = getattr(module, "ORPHAN_SHUTDOWN_EVENT", None) if module else None
+    try:
+        return bool(event and event.is_set())
+    except Exception:
+        return False
 
 
 def _resolve_assignment(
@@ -888,7 +903,13 @@ def discover_recursive_orphans(
     else:
         with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as ex:
             parse_iter = ex.map(_parse_file, candidates)
-            results = list(parse_iter)
+            try:
+                results = list(parse_iter)
+            except (BrokenProcessPool, InvalidStateError, CancelledError):
+                if _shutdown_in_progress():
+                    logger.info("discovery cancelled due to shutdown")
+                    return {}
+                raise
         parse_iter = results
 
     for result in parse_iter:
