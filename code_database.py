@@ -639,55 +639,69 @@ class CodeDB(EmbeddableDBMixin):
             self._fts_disabled_until = now + timedelta(minutes=backoff)
 
     def _ensure_schema(self, conn: Any) -> None:
+        savepoint_name: str | None = None
         if isinstance(conn, sqlite3.Connection):
+            # PRAGMA or earlier statements may open an implicit transaction.
             in_transaction = getattr(conn, "in_transaction", False)
             if in_transaction:
                 logger.debug("schema bootstrap using existing sqlite transaction")
+                savepoint_name = "code_schema_bootstrap"
+                conn.execute(f"SAVEPOINT {savepoint_name}")
             else:
                 conn.execute("BEGIN IMMEDIATE")
-        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        missing_code_table = False
         try:
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()]
-        except sqlite3.OperationalError:
-            cols = []
-            missing_code_table = True
-
-        if not cols:
-            missing_code_table = True
-            # ``code`` may not exist on freshly provisioned databases.  Create the
-            # base table ahead of running migrations so statements referencing the
-            # table (for example foreign keys) do not fail with ``no such table``
-            # errors.  ``SQL_CREATE_CODE_TABLE`` already guards with
-            # ``IF NOT EXISTS`` making the call idempotent.
-            self._execute_schema_stmt(conn, SQL_CREATE_CODE_TABLE)
-            cols = [
-                r[1]
-                for r in conn.execute("PRAGMA table_info(code)").fetchall()
-            ]
-            if missing_code_table and version > 0:
-                # The schema was unexpectedly absent even though a migration version
-                # was recorded.  Reset the version so migrations below can recreate
-                # auxiliary tables and indexes consistently.
-                version = 0
-        for target, stmts in MIGRATIONS:
-            if version < target:
-                for stmt in stmts:
-                    if stmt.startswith("ALTER TABLE code"):
-                        col = stmt.split()[5]
-                        if col in cols:
-                            continue
-                    self._execute_schema_stmt(conn, stmt)
-                version = target
-                self._execute_schema_stmt(conn, f"PRAGMA user_version = {version}")
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            missing_code_table = False
+            try:
                 cols = [
                     r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()
                 ]
+            except sqlite3.OperationalError:
+                cols = []
+                missing_code_table = True
 
-        try:
-            self._maybe_init_fts(conn)
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.warning("fts initialisation failed: %s", exc)
+            if not cols:
+                missing_code_table = True
+                # ``code`` may not exist on freshly provisioned databases.  Create the
+                # base table ahead of running migrations so statements referencing the
+                # table (for example foreign keys) do not fail with ``no such table``
+                # errors.  ``SQL_CREATE_CODE_TABLE`` already guards with
+                # ``IF NOT EXISTS`` making the call idempotent.
+                self._execute_schema_stmt(conn, SQL_CREATE_CODE_TABLE)
+                cols = [
+                    r[1]
+                    for r in conn.execute("PRAGMA table_info(code)").fetchall()
+                ]
+                if missing_code_table and version > 0:
+                    # The schema was unexpectedly absent even though a migration version
+                    # was recorded.  Reset the version so migrations below can recreate
+                    # auxiliary tables and indexes consistently.
+                    version = 0
+            for target, stmts in MIGRATIONS:
+                if version < target:
+                    for stmt in stmts:
+                        if stmt.startswith("ALTER TABLE code"):
+                            col = stmt.split()[5]
+                            if col in cols:
+                                continue
+                        self._execute_schema_stmt(conn, stmt)
+                    version = target
+                    self._execute_schema_stmt(conn, f"PRAGMA user_version = {version}")
+                    cols = [
+                        r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()
+                    ]
+
+            try:
+                self._maybe_init_fts(conn)
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("fts initialisation failed: %s", exc)
+            if savepoint_name:
+                conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+        except Exception:
+            if savepoint_name:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+            raise
 
     def _with_retry(self, func: Callable[[Any], T]) -> T:
         return with_retry(func, exc=sqlite3.Error, logger=logger)
