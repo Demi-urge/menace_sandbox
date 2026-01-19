@@ -1530,6 +1530,32 @@ class ContextBuilder:
                 init_kwargs["defer_index_load"] = bool(bootstrap_flag or warmup_flag)
             return init_kwargs
 
+        def _reset_db_router_for_retry() -> None:
+            try:
+                import db_router
+            except Exception:
+                return
+            router = getattr(db_router, "GLOBAL_ROUTER", None)
+            if router is None:
+                return
+            menace_id = getattr(router, "menace_id", None)
+            if not menace_id:
+                return
+            local_db_path = getattr(router, "local_db_path", None)
+            shared_db_path = getattr(router, "shared_db_path", None)
+            try:
+                router.close()
+            except Exception:
+                logger.debug("failed to close db router during retry reset", exc_info=True)
+            try:
+                db_router.init_db_router(
+                    menace_id,
+                    local_db_path=local_db_path,
+                    shared_db_path=shared_db_path,
+                )
+            except Exception:
+                logger.debug("failed to reinitialise db router during retry reset", exc_info=True)
+
         def _init_db(
             *,
             label: str,
@@ -1586,6 +1612,7 @@ class ContextBuilder:
                             class_name,
                             exc,
                         )
+                        _reset_db_router_for_retry()
                     if attempt >= max_attempts:
                         failures[label] = (
                             f"{exc} (lock timeout during initialization)"
