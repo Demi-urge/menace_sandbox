@@ -40,6 +40,12 @@ These optional variables control where prompt execution results are stored:
 - `CONTAINER_SNIPPET_PATH` – path inside the container where snippets are
   executed (default `/code/snippet.py`).
 
+## SQLite tuning variables
+
+- `DB_BUSY_TIMEOUT_MS` – SQLite `busy_timeout` in milliseconds for Menace
+  connections. Defaults to `15000` to accommodate initialization-heavy
+  workloads, and can be lowered or raised to tune lock wait behavior.
+
 ## Optional dependencies
 
 Some features rely on additional tools. Missing components degrade

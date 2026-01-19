@@ -639,6 +639,8 @@ class CodeDB(EmbeddableDBMixin):
             self._fts_disabled_until = now + timedelta(minutes=backoff)
 
     def _ensure_schema(self, conn: Any) -> None:
+        if isinstance(conn, sqlite3.Connection):
+            conn.execute("BEGIN IMMEDIATE")
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         missing_code_table = False
         try:
