@@ -70,6 +70,15 @@ try:
 except Exception:  # pragma: no cover - defensive
     _BOOTSTRAP_TIMEOUT_MS = 250
 
+# Default busy timeout for SQLite connections (in milliseconds).
+_BUSY_TIMEOUT_MS = 15000
+try:
+    _busy_timeout_env = os.getenv("DB_BUSY_TIMEOUT_MS")
+    if _busy_timeout_env:
+        _BUSY_TIMEOUT_MS = max(0, int(float(_busy_timeout_env)))
+except Exception:  # pragma: no cover - defensive
+    _BUSY_TIMEOUT_MS = 15000
+
 
 # Tables stored in the shared database.  These tables are visible to every
 # Menace instance.  The container is mutated in-place on reload so existing
@@ -931,7 +940,7 @@ def _configure_sqlite_connection(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Some SQLite builds (e.g. older Android) do not support WAL mode; ignore.
         pass
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA synchronous=NORMAL")
 
 
@@ -1515,7 +1524,7 @@ def init_db_router(
             "io": "filesystem",
         },
         "sqlite": {
-            "busy_timeout_ms": 5000,
+            "busy_timeout_ms": _BUSY_TIMEOUT_MS,
             "schema_timeout_ms": _SCHEMA_TIMEOUT_MS,
         },
         "deadline_s": deadline_limit,
