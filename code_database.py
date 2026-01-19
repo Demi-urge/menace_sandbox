@@ -649,9 +649,9 @@ class CodeDB(EmbeddableDBMixin):
     def _ensure_schema(self, conn: Any) -> None:
         savepoint_name: str | None = None
         savepoint_active = False
+        in_transaction = getattr(conn, "in_transaction", False)
         if isinstance(conn, sqlite3.Connection):
             # PRAGMA or earlier statements may open an implicit transaction.
-            in_transaction = getattr(conn, "in_transaction", False)
             if in_transaction:
                 logger.debug("schema bootstrap using existing sqlite transaction")
                 savepoint_name = "code_schema_init"
