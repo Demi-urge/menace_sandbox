@@ -940,6 +940,10 @@ class LoggedConnection(sqlite3.Connection):
 
     menace_id: str
 
+    def _lock_guard(self) -> contextlib.AbstractContextManager[None]:
+        lock = getattr(self, "_conn_lock", None)
+        return lock if lock is not None else contextlib.nullcontext()
+
     def cursor(self, *args, **kwargs):  # type: ignore[override]
         kwargs.setdefault("factory", LoggedCursor)
         cur: LoggedCursor = super().cursor(*args, **kwargs)  # type: ignore[assignment]
@@ -947,10 +951,16 @@ class LoggedConnection(sqlite3.Connection):
         return cur
 
     def execute(self, *args, **kwargs):  # type: ignore[override]
-        return self.cursor().execute(*args, **kwargs)
+        with self._lock_guard():
+            return self.cursor().execute(*args, **kwargs)
 
     def executemany(self, *args, **kwargs):  # type: ignore[override]
-        return self.cursor().executemany(*args, **kwargs)
+        with self._lock_guard():
+            return self.cursor().executemany(*args, **kwargs)
+
+    def commit(self) -> None:  # type: ignore[override]
+        with self._lock_guard():
+            return super().commit()
 
 
 class DBRouter:
@@ -980,6 +990,8 @@ class DBRouter:
         """
 
         self.menace_id = menace_id
+        self._local_conn_lock = threading.RLock()
+        self._shared_conn_lock = threading.RLock()
         # When ``local_db_path`` is a directory, create a database file for this
         # menace instance inside it.
         local_path = (
@@ -999,6 +1011,7 @@ class DBRouter:
         )
 
         self.local_conn.menace_id = menace_id
+        self.local_conn._conn_lock = self._local_conn_lock
         self.local_conn.audit_log_to_db = _audit_db_mirror_enabled_default
         self.local_conn.audit_log_reads = _audit_db_mirror_enabled_default
         self.local_conn.audit_bootstrap_safe = audit_bootstrap_safe_default
@@ -1011,6 +1024,7 @@ class DBRouter:
             shared_db_path, check_same_thread=False, factory=LoggedConnection
         )  # type: ignore[assignment]
         self.shared_conn.menace_id = menace_id
+        self.shared_conn._conn_lock = self._shared_conn_lock
         self.shared_conn.audit_log_to_db = _audit_db_mirror_enabled_default
         self.shared_conn.audit_log_reads = _audit_db_mirror_enabled_default
         self.shared_conn.audit_bootstrap_safe = audit_bootstrap_safe_default
@@ -1068,6 +1082,11 @@ class DBRouter:
         accesses are silent except for the optional audit log.  The returned
         :class:`LoggedConnection` automatically records the number of rows read
         or written for each executed statement.
+
+        Concurrency policy: connections are shared across threads but guarded by
+        per-connection locks in :class:`LoggedConnection`. Always obtain
+        connections via this method so the locking discipline and audit
+        instrumentation remain consistent.
         """
 
         if not table_name:
