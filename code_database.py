@@ -538,13 +538,21 @@ class CodeDB(EmbeddableDBMixin):
 
                     connection_cm = _fallback_conn()
                 with connection_cm as conn:
-                    conn.execute("PRAGMA foreign_keys = ON")
+                    prior_isolation_level = getattr(conn, "isolation_level", None)
+                    isolation_supported = hasattr(conn, "isolation_level")
+                    if isolation_supported:
+                        conn.isolation_level = None
                     try:
-                        yield conn
-                        conn.commit()
-                    except Exception:
-                        conn.rollback()
-                        raise
+                        conn.execute("PRAGMA foreign_keys = ON")
+                        try:
+                            yield conn
+                            conn.commit()
+                        except Exception:
+                            conn.rollback()
+                            raise
+                    finally:
+                        if isolation_supported:
+                            conn.isolation_level = prior_isolation_level
         finally:
             self._lock.release()
 
