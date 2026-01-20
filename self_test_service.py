@@ -2071,11 +2071,24 @@ class SelfTestService:
             target = mod
             info = self.orphan_traces.get(mod, {})
             if info.get("classification") == "candidate" and not self._has_pytest_file(mod):
+                self.logger.debug(
+                    "starting stub generation",
+                    extra=log_record(module=mod),
+                )
                 try:
                     stub_path = self._generate_pytest_stub(mod, self.stub_scenarios.get(mod))
                     target = stub_path.as_posix()
+                    self.logger.info(
+                        "completed stub generation",
+                        extra=log_record(module=mod, stub_path=target),
+                    )
                 except Exception:
                     self.logger.exception("failed to create pytest stub for %s", mod)
+            else:
+                self.logger.debug(
+                    "skipping stub generation",
+                    extra=log_record(module=mod),
+                )
 
             cmd = [
                 sys.executable,
@@ -2258,17 +2271,41 @@ class SelfTestService:
     
             if self.include_orphans and (refresh_orphans or not path.exists()):
                 try:
+                    self.logger.debug(
+                        "starting orphan discovery batch",
+                        extra=log_record(batch_index=1, module="orphan_discovery"),
+                    )
                     found = self._discover_orphans()
                     discovered.extend(found)
                     orphan_list.extend(found)
+                    self.logger.info(
+                        "completed orphan discovery batch",
+                        extra=log_record(
+                            batch_index=1,
+                            module="orphan_discovery",
+                            discovered=len(found),
+                        ),
+                    )
                 except Exception:
                     self.logger.exception("failed to discover orphan modules")
     
             if self.discover_orphans or self.discover_isolated:
                 try:
+                    self.logger.debug(
+                        "starting orphan discovery batch",
+                        extra=log_record(batch_index=2, module="orphan_discovery"),
+                    )
                     found = self._discover_orphans()
                     discovered.extend(found)
                     orphan_list.extend(found)
+                    self.logger.info(
+                        "completed orphan discovery batch",
+                        extra=log_record(
+                            batch_index=2,
+                            module="orphan_discovery",
+                            discovered=len(found),
+                        ),
+                    )
                 except Exception:
                     self.logger.exception("failed to auto-discover orphan modules")
     
@@ -2334,7 +2371,23 @@ class SelfTestService:
             failed_mods: set[str] = set()
             metrics: dict[str, dict[str, Any]] = {}
             if orphan_list:
+                self.logger.info(
+                    "starting orphan stub generation batch",
+                    extra=log_record(
+                        batch_index=0,
+                        module="orphan_stub_generation",
+                        module_count=len(orphan_list),
+                    ),
+                )
                 passed_mods, failed_mods, metrics = await self._test_orphan_modules(orphan_list)
+                self.logger.info(
+                    "completed orphan stub generation batch",
+                    extra=log_record(
+                        batch_index=0,
+                        module="orphan_stub_generation",
+                        module_count=len(orphan_list),
+                    ),
+                )
                 self.module_metrics.update(metrics)
                 self.orphan_passed_modules = sorted(passed_mods - set(redundant_list))
                 self.orphan_failed_modules = sorted(failed_mods)
@@ -2469,6 +2522,11 @@ class SelfTestService:
                         use_container = False
 
                 for idx, p in enumerate(paths):
+                    batch_label = p or "<root>"
+                    self.logger.info(
+                        "starting test runner batch",
+                        extra=log_record(batch_index=idx, module=batch_label),
+                    )
                     tmp_name: str | None = None
                     cmd = [
                         "python" if self.ephemeral else sys.executable,
@@ -2536,6 +2594,10 @@ class SelfTestService:
                         proc_info.append((full_cmd, None, True, cname, p))
                     else:
                         proc_info.append((cmd, tmp_name, False, None, p))
+                    self.logger.info(
+                        "queued test runner batch",
+                        extra=log_record(batch_index=idx, module=batch_label),
+                    )
 
                 async def _process(
                     cmd: list[str], tmp: str | None, is_container: bool, name: str | None
@@ -2768,7 +2830,14 @@ class SelfTestService:
             logs_snip = ""
             suite_metrics: dict[str, dict[str, float]] = {}
             retry_errors: dict[str, list[dict[str, Any]]] = {}
-            for (cmd, tmp, is_c, name, p), res in zip(proc_info, results):
+            for idx, ((cmd, tmp, is_c, name, p), res) in enumerate(
+                zip(proc_info, results)
+            ):
+                batch_label = p or "<root>"
+                self.logger.debug(
+                    "starting result aggregation batch",
+                    extra=log_record(batch_index=idx, module=batch_label),
+                )
                 if isinstance(res, Exception):
                     if first_exc is None:
                         first_exc = res
@@ -2813,6 +2882,10 @@ class SelfTestService:
                         self.result_callback(partial)
                     except Exception:
                         self.logger.exception("result callback failed")
+                self.logger.debug(
+                    "completed result aggregation batch",
+                    extra=log_record(batch_index=idx, module=batch_label),
+                )
 
             try:
                 self.error_logger.db.add_test_result(passed, failed)
