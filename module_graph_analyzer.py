@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import ast
+import logging
+import os
 from contextlib import contextmanager
 from pathlib import Path
 import signal
@@ -22,17 +24,33 @@ except Exception:  # pragma: no cover - optional dependency
 
 # ---------------------------------------------------------------------------
 
+logger = logging.getLogger(__name__)
+
+
 def _iter_py_files(root: str | Path, ignore: Iterable[str] | None = None) -> Iterable[Path]:
     """Yield all ``.py`` files under ``root`` skipping ignored paths."""
     root = Path(resolve_path(root))
     ignore = set(ignore or [])
-    for path in root.rglob("*.py"):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(root)
-        if any(rel.match(pat) or pat in rel.parts for pat in ignore):
-            continue
-        yield path
+
+    def _on_walk_error(exc: OSError) -> None:
+        logger.debug("Skipping directory during traversal due to error: %s", exc)
+
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=_on_walk_error, followlinks=False):
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if not (Path(dirpath) / dirname).is_symlink()
+        ]
+        for filename in filenames:
+            if not filename.endswith(".py"):
+                continue
+            path = Path(dirpath) / filename
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root)
+            if any(rel.match(pat) or pat in rel.parts for pat in ignore):
+                continue
+            yield path
 
 
 class _ParseTimeoutError(RuntimeError):
