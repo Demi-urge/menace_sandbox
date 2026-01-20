@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 import types
 from dataclasses import dataclass as _dc
@@ -244,3 +245,49 @@ def test_update_orphan_modules_records_metrics(monkeypatch, tmp_path):
     assert metrics_exporter.orphan_modules_redundant_total._value.get() == 0
     assert metrics_exporter.orphan_modules_legacy_total._value.get() == 0
     assert metrics_exporter.orphan_modules_reclassified_total._value.get() == 0
+
+
+def test_redundant_classifier_incomplete_graph_falls_back(monkeypatch, tmp_path, caplog):
+    module_path = tmp_path / "lonely.py"
+    module_path.write_text("VALUE = 1\n")  # path-ignore
+
+    class DummyGraph:
+        graph = {"build_complete": False}
+
+    monkeypatch.setattr(
+        orphan_analyzer,
+        "_cached_import_graph",
+        lambda root, ignore, max_file_size_bytes: DummyGraph(),
+    )
+    monkeypatch.setattr(orphan_analyzer, "_runtime_metrics", lambda _: {})
+
+    caplog.set_level(logging.DEBUG)
+    result = orphan_analyzer.classify_module(module_path, graph_root=tmp_path)
+
+    assert result == "candidate"
+    assert any(
+        "Import graph build incomplete for redundancy check." in record.message
+        and record.__dict__.get("repo_root") == str(tmp_path)
+        for record in caplog.records
+    )
+
+
+def test_redundant_classifier_build_failure_falls_back(monkeypatch, tmp_path, caplog):
+    module_path = tmp_path / "lonely.py"
+    module_path.write_text("VALUE = 1\n")  # path-ignore
+
+    def raise_permission(*_args, **_kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(orphan_analyzer, "_cached_import_graph", raise_permission)
+    monkeypatch.setattr(orphan_analyzer, "_runtime_metrics", lambda _: {})
+
+    caplog.set_level(logging.WARNING)
+    result = orphan_analyzer.classify_module(module_path, graph_root=tmp_path)
+
+    assert result == "candidate"
+    assert any(
+        "Import graph build failed for redundancy check." in record.message
+        and record.__dict__.get("repo_root") == str(tmp_path)
+        for record in caplog.records
+    )

@@ -25,6 +25,7 @@ from typing import Any, Dict, Iterable, Literal, Tuple, Protocol
 import ast
 import importlib
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -45,6 +46,7 @@ SAFE_GRAPH_IGNORES: Tuple[str, ...] = tuple(
             ".git",
             "__pycache__",
             ".venv",
+            "venv",
             "node_modules",
             "build",
             "dist",
@@ -52,6 +54,8 @@ SAFE_GRAPH_IGNORES: Tuple[str, ...] = tuple(
         )
     )
 )
+
+logger = logging.getLogger(__name__)
 
 try:  # optional dependency
     from radon.complexity import cc_visit  # type: ignore
@@ -254,12 +258,24 @@ def _redundant_classifier(
         graph = metrics.get("_import_graph")
         if graph is None:
             root = metrics.get("_graph_root") or module_path.parent
-            graph = _cached_import_graph(
-                root,
-                SAFE_GRAPH_IGNORES,
-                DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
-            )
+            try:
+                graph = _cached_import_graph(
+                    root,
+                    SAFE_GRAPH_IGNORES,
+                    DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning(
+                    "Import graph build failed for redundancy check.",
+                    exc_info=exc,
+                    extra={"repo_root": str(root)},
+                )
+                return None
         if not graph.graph.get("build_complete", True):
+            logger.debug(
+                "Import graph build incomplete for redundancy check.",
+                extra={"repo_root": str(metrics.get("_graph_root") or module_path.parent)},
+            )
             return None
         if module_path.name == "__init__.py":
             mod = module_path.parent.name
