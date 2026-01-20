@@ -97,6 +97,9 @@ class SelfTestEnvSettings(BaseSettings):
     self_test_run_timeout: float | None = Field(
         None, validation_alias="SELF_TEST_RUN_TIMEOUT"
     )
+    self_test_run_once_timeout_secs: float | None = Field(
+        None, validation_alias="SELF_TEST_RUN_ONCE_TIMEOUT_SECS"
+    )
     menace_self_test_image_tar: str | None = Field(
         None, validation_alias="MENACE_SELF_TEST_IMAGE_TAR"
     )
@@ -683,6 +686,12 @@ class SelfTestService:
             self.run_timeout = float(container_timeout)
         if self.run_timeout <= 0:
             self.run_timeout = float(container_timeout)
+        if env_settings.self_test_run_once_timeout_secs is not None:
+            self.run_once_timeout = float(env_settings.self_test_run_once_timeout_secs)
+        else:
+            self.run_once_timeout = float(self.run_timeout)
+        if self.run_once_timeout <= 0:
+            self.run_once_timeout = float(self.run_timeout)
         self.offline_install = settings.menace_offline_install
         self.report_dir = Path(report_dir)
         self.image_tar_path = env_settings.menace_self_test_image_tar
@@ -3090,12 +3099,15 @@ class SelfTestService:
             asyncio.run(
                 asyncio.wait_for(
                     self._run_once(refresh_orphans=refresh_orphans),
-                    timeout=self.run_timeout,
+                    timeout=self.run_once_timeout,
                 )
             )
         except asyncio.TimeoutError:
             runtime = time.monotonic() - start_time
-            self.logger.error("self-test run timed out")
+            self.logger.error(
+                "self-test run timed out after %.2f seconds",
+                self.run_once_timeout,
+            )
             self.orphan_passed_modules = []
             self.orphan_failed_modules = []
             self.results = {
