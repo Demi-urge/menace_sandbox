@@ -78,8 +78,16 @@ def _iter_py_files(
             return True
         return False
 
+    def _log_traversal_error(directory: os.PathLike[str] | str, exc: Exception) -> None:
+        logger.warning(
+            "Traversal error while scanning directory.",
+            exc_info=exc,
+            extra={"repo_root": str(root), "directory": str(directory)},
+        )
+
     def _on_walk_error(exc: OSError) -> None:
-        logger.debug("Skipping directory during traversal due to error: %s", exc)
+        failing_dir = exc.filename or str(root)
+        _log_traversal_error(failing_dir, exc)
         _mark_incomplete()
 
     for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=_on_walk_error, followlinks=False):
@@ -88,7 +96,7 @@ def _iter_py_files(
         try:
             rel_dir = Path(dirpath).relative_to(root)
         except (OSError, PermissionError, FileNotFoundError, ValueError) as exc:
-            logger.debug("Skipping directory during traversal due to error: %s", exc)
+            _log_traversal_error(dirpath, exc)
             _mark_incomplete()
             continue
         if max_depth is not None and len(rel_dir.parts) > max_depth:
@@ -114,7 +122,7 @@ def _iter_py_files(
                     continue
                 rel = path.relative_to(root)
             except (OSError, PermissionError, FileNotFoundError, ValueError) as exc:
-                logger.debug("Skipping file during traversal due to error: %s", exc)
+                _log_traversal_error(path.parent, exc)
                 _mark_incomplete()
                 continue
             if any(rel.match(pat) or pat in rel.parts for pat in ignore):
