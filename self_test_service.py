@@ -1824,6 +1824,40 @@ class SelfTestService:
 
         return "\n\n".join(snippets)
 
+    def _parse_json_report(self, stdout: str | bytes | None, mod: str) -> dict[str, Any]:
+        """Parse a JSON report from stdout, falling back to the last JSON line."""
+
+        if stdout is None:
+            return {}
+        raw = stdout.decode("utf-8", "replace") if isinstance(stdout, bytes) else str(stdout)
+        raw = raw.strip()
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = None
+        if payload is None:
+            lines = [line.strip() for line in raw.splitlines() if line.strip()]
+            for line in reversed(lines):
+                if not (line.startswith("{") or line.startswith("[")):
+                    continue
+                try:
+                    payload = json.loads(line)
+                except Exception:
+                    continue
+                break
+        if payload is None:
+            excerpt = self._format_subprocess_excerpt(raw, None)
+            message = "failed to parse test report for %s"
+            if excerpt:
+                message = f"{message}\n{excerpt}"
+            self.logger.error(message, mod, extra=log_record(stdout_excerpt=excerpt))
+            return {}
+        if isinstance(payload, dict):
+            return payload
+        return {"payload": payload}
+
     # ------------------------------------------------------------------
     def _run_module_harness(
         self, mod: str, *, use_ephemeral: bool | None = None
@@ -1996,11 +2030,7 @@ class SelfTestService:
                     timeout=self.container_timeout,
                 )
             out = proc.stdout
-            report: dict[str, Any] = {}
-            try:
-                report = json.loads(out or "{}")
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to parse test report for %s", mod)
+            report = self._parse_json_report(out, mod)
 
             summary = report.get("summary", {})
             warnings = report.get("warnings", []) or []
