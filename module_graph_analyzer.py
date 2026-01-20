@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import logging
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 import signal
@@ -46,21 +47,59 @@ DEFAULT_IGNORED_DIRS: tuple[str, ...] = (
 )
 
 
-def _iter_py_files(root: str | Path, ignore: Iterable[str] | None = None) -> Iterable[Path]:
+def _iter_py_files(
+    root: str | Path,
+    *,
+    ignore: Iterable[str] | None = None,
+    max_files: int | None = None,
+    max_scan_seconds: float | None = None,
+    max_depth: int | None = None,
+    scan_state: dict[str, int | bool] | None = None,
+) -> Iterable[Path]:
     """Yield all ``.py`` files under ``root`` skipping ignored paths."""
     root = Path(resolve_path(root))
     ignore = set(ignore or [])
+    if scan_state is None:
+        scan_state = {"build_complete": True, "skipped_files": 0}
+    start = time.monotonic()
+    yielded = 0
+
+    def _mark_incomplete() -> None:
+        scan_state["build_complete"] = False
+        scan_state["skipped_files"] = int(scan_state.get("skipped_files", 0)) + 1
+
+    def _limits_reached() -> bool:
+        if max_files is not None and yielded >= max_files:
+            _mark_incomplete()
+            return True
+        if max_scan_seconds is not None and (time.monotonic() - start) >= max_scan_seconds:
+            _mark_incomplete()
+            return True
+        return False
 
     def _on_walk_error(exc: OSError) -> None:
         logger.debug("Skipping directory during traversal due to error: %s", exc)
+        _mark_incomplete()
 
     for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=_on_walk_error, followlinks=False):
+        if _limits_reached():
+            return
+        rel_dir = Path(dirpath).relative_to(root)
+        if max_depth is not None and len(rel_dir.parts) > max_depth:
+            dirnames[:] = []
+            continue
         dirnames[:] = [
             dirname
             for dirname in dirnames
             if not (Path(dirpath) / dirname).is_symlink()
+            and not any(
+                (rel_dir / dirname).match(pat) or pat in (rel_dir / dirname).parts
+                for pat in ignore
+            )
         ]
         for filename in filenames:
+            if _limits_reached():
+                return
             if not filename.endswith(".py"):
                 continue
             path = Path(dirpath) / filename
@@ -70,6 +109,7 @@ def _iter_py_files(root: str | Path, ignore: Iterable[str] | None = None) -> Ite
             if any(rel.match(pat) or pat in rel.parts for pat in ignore):
                 continue
             yield path
+            yielded += 1
 
 
 class _ParseTimeoutError(RuntimeError):
@@ -108,16 +148,31 @@ def build_import_graph(
     ignore: Iterable[str] | None = None,
     max_file_size_bytes: int | None = 1_000_000,
     parse_timeout_s: float | None = None,
+    max_files: int | None = None,
+    max_scan_seconds: float | None = None,
+    max_depth: int | None = None,
 ) -> nx.DiGraph:
     """Return a directed graph of imports and cross-module calls.
 
     Files that exceed ``max_file_size_bytes``, fail decoding, or trigger
-    ``SyntaxError`` or timeouts are skipped.
+    ``SyntaxError`` or timeouts are skipped. Scans can be bounded with
+    ``max_files``/``max_scan_seconds`` to avoid long-running traversals.
     """
     root = Path(resolve_path(root))
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
-    for file in _iter_py_files(root, ignore=ignore):
+    ignore_set = set(DEFAULT_IGNORED_DIRS)
+    if ignore:
+        ignore_set.update(ignore)
+    scan_state: dict[str, int | bool] = {"build_complete": True, "skipped_files": 0}
+    for file in _iter_py_files(
+        root,
+        ignore=ignore_set,
+        max_files=max_files,
+        max_scan_seconds=max_scan_seconds,
+        max_depth=max_depth,
+        scan_state=scan_state,
+    ):
         rel = file.relative_to(root)
         if rel.name == "__init__.py":
             mod = rel.parent.as_posix()
@@ -133,30 +188,37 @@ def build_import_graph(
         else:
             graph.add_edge(a, b, weight=1)
 
-    skipped_files = 0
+    skipped_files = int(scan_state.get("skipped_files", 0))
+    build_complete = bool(scan_state.get("build_complete", True))
     for mod, file in modules.items():
         if max_file_size_bytes is not None:
             try:
                 if file.stat().st_size > max_file_size_bytes:
+                    build_complete = False
                     skipped_files += 1
                     continue
             except OSError:
+                build_complete = False
                 skipped_files += 1
                 continue
         try:
             text = file.read_text()
         except UnicodeDecodeError:
+            build_complete = False
             skipped_files += 1
             continue
         except OSError:
+            build_complete = False
             skipped_files += 1
             continue
         try:
             tree = _parse_source(text, str(file), parse_timeout_s)
         except (SyntaxError, UnicodeDecodeError, _ParseTimeoutError):
+            build_complete = False
             skipped_files += 1
             continue
         except Exception:
+            build_complete = False
             skipped_files += 1
             continue
         imports: Dict[str, str] = {}
@@ -191,7 +253,7 @@ def build_import_graph(
                     target_mod = imports.get(func.id)
                     if target_mod and target_mod in modules:
                         _add_edge(mod, target_mod)
-    graph.graph["build_complete"] = skipped_files == 0
+    graph.graph["build_complete"] = build_complete and skipped_files == 0
     graph.graph["skipped_files"] = skipped_files
     return graph
 
