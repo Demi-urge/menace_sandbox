@@ -321,25 +321,13 @@ class SnapshotTracker:
                                 logger.debug("Skipping module index for %s: not a regular file.", src)
                                 continue
                             try:
-                                resolved = src.resolve(strict=False)
-                            except Exception as exc:
-                                logger.debug(
-                                    "Skipping module index for %s: failed to resolve path (%s).",
-                                    src,
-                                    exc,
-                                )
-                                continue
-                            try:
-                                resolved.relative_to(repo_root)
-                            except Exception:
-                                logger.debug(
-                                    "Skipping module index for %s: outside repo root %s.",
-                                    resolved,
-                                    repo_root,
-                                )
-                                continue
-                            try:
-                                module_index.get(str(resolved))
+                                # Prefer repo-relative paths to avoid filesystem resolve() stalls.
+                                try:
+                                    rel = Path(src).relative_to(repo_root)
+                                    module_path = rel.as_posix()
+                                except ValueError:
+                                    module_path = str(src)
+                                module_index.get(module_path)
                             except Exception:
                                 pass
                         if strategy:
