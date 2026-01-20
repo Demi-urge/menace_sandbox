@@ -26,6 +26,25 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_IGNORED_DIRS: tuple[str, ...] = (
+    ".git",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    "node_modules",
+    "dist",
+    "build",
+    "logs",
+    "maintenance-logs",
+    "sandbox_data",
+    "*.db",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.egg-info",
+)
+
 
 def _iter_py_files(root: str | Path, ignore: Iterable[str] | None = None) -> Iterable[Path]:
     """Yield all ``.py`` files under ``root`` skipping ignored paths."""
