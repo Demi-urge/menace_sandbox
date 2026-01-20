@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import traceback
 import time
 import threading
 import queue
@@ -2260,7 +2261,7 @@ def start_self_improvement_cycle(
     watchdog_threshold = _env_float(
         "SELF_IMPROVEMENT_CYCLE_WATCHDOG_SECONDS", max(120.0, interval * 3)
     )
-    watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", False)
+    watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", True)
     watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
 
     monitor_state: dict[str, Any] = {"thread": None, "stop_event": None}
@@ -2350,8 +2351,20 @@ def start_self_improvement_cycle(
             if not stalled:
                 continue
             thread_state = current_thread.state()
+            tick_thread_ident = snapshot.get("last_tick_thread_ident") or thread_state.get(
+                "thread_ident"
+            )
+            stack_dump = None
+            if tick_thread_ident is not None:
+                frame_map = sys._current_frames()
+                frame = frame_map.get(tick_thread_ident)
+                if frame is not None:
+                    stack_dump = "".join(traceback.format_stack(frame))
+            stall_message = "self improvement cycle stalled"
+            if stack_dump:
+                stall_message = f"{stall_message}\n{stack_dump}"
             watchdog_logger.warning(
-                "self improvement cycle stalled",
+                stall_message,
                 extra=log_record(
                     last_tick_timestamp=last_tick,
                     last_tick_age_seconds=last_tick_age,
@@ -2360,6 +2373,7 @@ def start_self_improvement_cycle(
                     tick_thread_ident=snapshot.get("last_tick_thread_ident"),
                     watchdog_threshold_seconds=watchdog_threshold,
                     thread_state=thread_state,
+                    stall_stack_trace=stack_dump,
                 ),
             )
             if watchdog_restart:
