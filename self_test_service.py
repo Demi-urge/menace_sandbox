@@ -1231,49 +1231,62 @@ class SelfTestService:
             self.logger.exception("container cleanup failed")
 
     # ------------------------------------------------------------------
-    def _discover_orphans(self) -> list[str]:
+    def _discover_orphans(self, *, recursive: bool = True) -> list[str]:
         """Return orphan modules detected in the repository.
 
         This helper performs discovery only; persisting the results is handled
         by :meth:`_run_once` after combining orphan and isolated modules.
-        Discovery always enables recursive dependency tracing so helper modules
-        and their parent chains are captured in :attr:`orphan_traces`.
+        When ``recursive`` is ``True``, discovery enables dependency tracing so
+        helper modules and their parent chains are captured in
+        :attr:`orphan_traces`. When ``False``, only top-level orphan roots are
+        returned to keep discovery lightweight.
         """
         from sandbox_runner import discover_recursive_orphans as _discover
+        from sandbox_runner.orphan_discovery import discover_orphan_modules as _discover_flat
         from scripts.discover_isolated_modules import (
             discover_isolated_modules as _discover_iso,
         )
 
-        trace = _discover(
-            str(Path.cwd()),
-            module_map=str(
-                Path(
-                    resolve_path(
-                        getattr(settings, "sandbox_data_dir", None)
-                        or "sandbox_data"
-                    )
-                )
-                / "module_map.json"
-            ),
-        )
         self.orphan_traces = {}
-        for k, v in trace.items():
-            info: dict[str, Any] = {
-                "parents": [
-                    str(Path(*p.split(".")).with_suffix(".py"))
-                    for p in (
-                        v.get("parents") if isinstance(v, dict) else v
+        if recursive:
+            trace = _discover(
+                str(Path.cwd()),
+                module_map=str(
+                    Path(
+                        resolve_path(
+                            getattr(settings, "sandbox_data_dir", None)
+                            or "sandbox_data"
+                        )
                     )
-                ],
-                "classification": v.get("classification") if isinstance(v, dict) else None,
-                "redundant": bool(v.get("redundant")) if isinstance(v, dict) else None,
-            }
-            self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
+                    / "module_map.json"
+                ),
+            )
+            for k, v in trace.items():
+                info: dict[str, Any] = {
+                    "parents": [
+                        str(Path(*p.split(".")).with_suffix(".py"))
+                        for p in (
+                            v.get("parents") if isinstance(v, dict) else v
+                        )
+                    ],
+                    "classification": v.get("classification") if isinstance(v, dict) else None,
+                    "redundant": bool(v.get("redundant")) if isinstance(v, dict) else None,
+                }
+                self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
+        else:
+            flat = _discover_flat(str(Path.cwd()), recursive=False)
+            for mod in flat:
+                rel = str(Path(*mod.split(".")).with_suffix(".py"))
+                self.orphan_traces[rel] = {
+                    "parents": [],
+                    "classification": None,
+                    "redundant": None,
+                }
 
         # incorporate isolated modules so dependency chains are complete when
         # either recursive orphan discovery or isolated discovery is requested
         isolated: list[str] = []
-        if self.recursive_orphans or self.discover_isolated:
+        if recursive and (self.recursive_orphans or self.discover_isolated):
             try:
                 isolated = _discover_iso(Path.cwd(), recursive=True)
             except Exception:
@@ -1320,13 +1333,17 @@ class SelfTestService:
                 dict.fromkeys(dep_entry.get("parents", []) + chain)
             )
 
-        collected = collect_local_dependencies(
-            roots,
-            initial_parents=initial,
-            on_module=_on_module,
-            on_dependency=_on_dependency,
-        )
-        if not collected:
+        collected: set[str]
+        if recursive:
+            collected = collect_local_dependencies(
+                roots,
+                initial_parents=initial,
+                on_module=_on_module,
+                on_dependency=_on_dependency,
+            )
+            if not collected:
+                collected = set(roots)
+        else:
             collected = set(roots)
         modules = [str(Path(p)) for p in sorted(collected)]
 
@@ -2272,7 +2289,7 @@ class SelfTestService:
             discovered: list[str] = []
             redundant_list: list[str] = []
     
-            async def _run_orphan_discovery(batch_index: int) -> list[str]:
+            async def _run_orphan_discovery(batch_index: int) -> tuple[list[str], bool]:
                 discovery_timeout = (
                     env_settings.self_test_orphan_discovery_timeout_secs
                     or self.run_once_timeout
@@ -2298,9 +2315,9 @@ class SelfTestService:
                         )
 
                 heartbeat_task = asyncio.create_task(_heartbeat())
-                try:
+                async def _await_discovery(recursive: bool) -> tuple[list[str], bool]:
                     discovery_task = asyncio.create_task(
-                        asyncio.to_thread(self._discover_orphans)
+                        asyncio.to_thread(self._discover_orphans, recursive=recursive)
                     )
 
                     def _consume_result(task: asyncio.Task) -> None:
@@ -2312,7 +2329,13 @@ class SelfTestService:
                         {discovery_task}, timeout=discovery_timeout
                     )
                     if discovery_task in done:
-                        return discovery_task.result()
+                        return discovery_task.result(), False
+                    return [], True
+
+                try:
+                    found, timed_out = await _await_discovery(recursive=True)
+                    if not timed_out:
+                        return found, False
                     elapsed = time.monotonic() - start_time
                     self.logger.warning(
                         "orphan discovery timed out",
@@ -2323,24 +2346,53 @@ class SelfTestService:
                             timeout_seconds=discovery_timeout,
                         ),
                     )
-                    return []
+                    retry_found, retry_timed_out = await _await_discovery(recursive=False)
+                    if retry_timed_out:
+                        retry_elapsed = time.monotonic() - start_time
+                        self.logger.warning(
+                            "orphan discovery retry timed out",
+                            extra=log_record(
+                                batch_index=batch_index,
+                                module="orphan_discovery",
+                                elapsed_seconds=round(retry_elapsed, 2),
+                                timeout_seconds=discovery_timeout,
+                            ),
+                        )
+                        return [], True
+                    if retry_found:
+                        self.logger.info(
+                            "orphan discovery retry completed",
+                            extra=log_record(
+                                batch_index=batch_index,
+                                module="orphan_discovery",
+                                discovered=len(retry_found),
+                                recursive=False,
+                            ),
+                        )
+                    return retry_found, True
                 except Exception:
                     self.logger.exception("failed to discover orphan modules")
-                    return []
+                    return [], False
                 finally:
                     stop_event.set()
                     heartbeat_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await heartbeat_task
 
+            orphan_timeout = False
             if self.include_orphans and (refresh_orphans or not path.exists()):
                 self.logger.debug(
                     "starting orphan discovery batch",
                     extra=log_record(batch_index=1, module="orphan_discovery"),
                 )
-                found = await _run_orphan_discovery(batch_index=1)
-                discovered.extend(found)
-                orphan_list.extend(found)
+                found, timed_out = await _run_orphan_discovery(batch_index=1)
+                if timed_out:
+                    orphan_timeout = True
+                    orphan_list = []
+                    discovered = []
+                if found:
+                    discovered.extend(found)
+                    orphan_list.extend(found)
                 self.logger.info(
                     "completed orphan discovery batch",
                     extra=log_record(
@@ -2350,14 +2402,19 @@ class SelfTestService:
                     ),
                 )
     
-            if self.discover_orphans or self.discover_isolated:
+            if not orphan_timeout and (self.discover_orphans or self.discover_isolated):
                 self.logger.debug(
                     "starting orphan discovery batch",
                     extra=log_record(batch_index=2, module="orphan_discovery"),
                 )
-                found = await _run_orphan_discovery(batch_index=2)
-                discovered.extend(found)
-                orphan_list.extend(found)
+                found, timed_out = await _run_orphan_discovery(batch_index=2)
+                if timed_out:
+                    orphan_timeout = True
+                    orphan_list = []
+                    discovered = []
+                if found:
+                    discovered.extend(found)
+                    orphan_list.extend(found)
                 self.logger.info(
                     "completed orphan discovery batch",
                     extra=log_record(
