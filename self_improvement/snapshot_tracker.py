@@ -297,6 +297,10 @@ class SnapshotTracker:
                     repo_hint=SandboxSettings().sandbox_repo_path, fast=True
                 )
                 ckpt_dir = base / "checkpoints" / timestamp
+                try:
+                    module_index = ModuleIndexDB() if ModuleIndexDB else None
+                except Exception:  # pragma: no cover - best effort
+                    module_index = None
                 for f in files:
                     try:
                         src = Path(f)
@@ -306,7 +310,7 @@ class SnapshotTracker:
                             shutil.copy2(src, dest)
                         except Exception:  # pragma: no cover - best effort
                             dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-                        if ModuleIndexDB:
+                        if module_index:
                             if not src.exists():
                                 logger.debug("Skipping module index for %s: file missing.", src)
                                 continue
@@ -335,7 +339,7 @@ class SnapshotTracker:
                                 )
                                 continue
                             try:
-                                ModuleIndexDB().get(str(resolved))
+                                module_index.get(str(resolved))
                             except Exception:
                                 pass
                         if strategy:
