@@ -1,5 +1,8 @@
 import json
+from pathlib import Path
+
 import pytest
+
 from module_index_db import ModuleIndexDB
 
 
@@ -29,6 +32,17 @@ def test_distinct_paths(tmp_path):
     idx_a = db.get("a/foo.py")  # path-ignore
     idx_b = db.get("b/foo.py")  # path-ignore
     assert idx_a != idx_b
+
+
+def test_norm_skips_resolve_for_missing_absolute(tmp_path, monkeypatch):
+    db = ModuleIndexDB(tmp_path / "map.json")
+    missing = tmp_path / "missing" / "loop.py"
+
+    def fail_resolve(self, *args, **kwargs):
+        raise AssertionError("resolve should not be called for missing paths")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+    assert db._norm(str(missing)) == missing.as_posix()
 
 
 
@@ -95,4 +109,3 @@ def test_refresh_generates_when_unknown(monkeypatch, tmp_path):
     called.clear()
     db.refresh(["old.py"])  # path-ignore
     assert not called
-
