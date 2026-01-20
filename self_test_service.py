@@ -2344,6 +2344,9 @@ class SelfTestService:
                         return found, False
                     except asyncio.TimeoutError:
                         elapsed = time.monotonic() - start_time
+                        discovery_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await discovery_task
                         self.logger.warning(
                             "orphan discovery timed out",
                             extra=log_record(
@@ -2373,15 +2376,7 @@ class SelfTestService:
 
                 found, timed_out = await _attempt("recursive", recursive=True)
                 if timed_out:
-                    self.logger.info(
-                        "retrying orphan discovery with top-level scope",
-                        extra=log_record(
-                            batch_index=batch_index,
-                            module="orphan_discovery",
-                            scope="top_level",
-                        ),
-                    )
-                    found, _ = await _attempt("top_level", recursive=False)
+                    return []
                 return found
 
             if self.include_orphans and (refresh_orphans or not path.exists()):
