@@ -8,6 +8,7 @@ snapshot management going forward.
 
 from dataclasses import dataclass, asdict
 import json
+import logging
 import time
 import shutil
 from pathlib import Path
@@ -40,9 +41,9 @@ except Exception:  # pragma: no cover
     )
 
 try:  # pragma: no cover - optional dependency location
-    from menace_sandbox.dynamic_path_router import resolve_path
+    from menace_sandbox.dynamic_path_router import resolve_path, get_project_root
 except Exception:  # pragma: no cover
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, get_project_root  # type: ignore
 
 try:  # pragma: no cover - optional module
     from menace_sandbox import relevancy_radar
@@ -55,6 +56,8 @@ except Exception:  # pragma: no cover
     ModuleIndexDB = None  # type: ignore
 
 from . import prompt_memory
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -290,6 +293,9 @@ class SnapshotTracker:
                     strategy = prompt
                 timestamp = str(int(time.time()))
                 base = Path(resolve_path(SandboxSettings().sandbox_data_dir))
+                repo_root = get_project_root(
+                    repo_hint=SandboxSettings().sandbox_repo_path, fast=True
+                )
                 ckpt_dir = base / "checkpoints" / timestamp
                 for f in files:
                     try:
@@ -301,8 +307,35 @@ class SnapshotTracker:
                         except Exception:  # pragma: no cover - best effort
                             dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
                         if ModuleIndexDB:
+                            if not src.exists():
+                                logger.debug("Skipping module index for %s: file missing.", src)
+                                continue
+                            if src.is_symlink():
+                                logger.debug("Skipping module index for %s: symlink detected.", src)
+                                continue
+                            if not src.is_file():
+                                logger.debug("Skipping module index for %s: not a regular file.", src)
+                                continue
                             try:
-                                ModuleIndexDB().get(str(src))
+                                resolved = src.resolve(strict=False)
+                            except Exception as exc:
+                                logger.debug(
+                                    "Skipping module index for %s: failed to resolve path (%s).",
+                                    src,
+                                    exc,
+                                )
+                                continue
+                            try:
+                                resolved.relative_to(repo_root)
+                            except Exception:
+                                logger.debug(
+                                    "Skipping module index for %s: outside repo root %s.",
+                                    resolved,
+                                    repo_root,
+                                )
+                                continue
+                            try:
+                                ModuleIndexDB().get(str(resolved))
                             except Exception:
                                 pass
                         if strategy:
