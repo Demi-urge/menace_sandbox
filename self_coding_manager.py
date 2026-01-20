@@ -1646,8 +1646,9 @@ class SelfCodingManager:
             func: Callable[..., Any],
             *args: Any,
             **kwargs: Any,
-        ) -> tuple[bool, Any]:
+        ) -> tuple[bool, Any, float]:
             done_event = threading.Event()
+            start_time = time.monotonic()
 
             def _heartbeat() -> None:
                 while not done_event.wait(heartbeat_interval):
@@ -1666,26 +1667,30 @@ class SelfCodingManager:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(func, *args, **kwargs)
                     try:
-                        return False, future.result(timeout=post_patch_timeout_secs)
+                        result = future.result(timeout=post_patch_timeout_secs)
+                        return False, result, time.monotonic() - start_time
                     except concurrent.futures.TimeoutError:
                         cancelled = future.cancel()
+                        elapsed = time.monotonic() - start_time
                         self.logger.error(
                             "post patch cycle step timed out",
                             extra={
                                 "step": step_name,
                                 "timeout": post_patch_timeout_secs,
                                 "cancelled": cancelled,
+                                "elapsed_secs": elapsed,
                             },
                         )
-                        return True, None
+                        return True, None, elapsed
             finally:
                 done_event.set()
                 thread.join(timeout=1.0)
 
-        def _finish_timeout(step_name: str) -> dict[str, Any]:
+        def _finish_timeout(step_name: str, elapsed_secs: float) -> dict[str, Any]:
             summary["timed_out"] = {
                 "step": step_name,
                 "timeout_secs": post_patch_timeout_secs,
+                "elapsed_secs": elapsed_secs,
             }
             self._last_validation_summary = summary
             if self.data_bot:
@@ -1717,7 +1722,7 @@ class SelfCodingManager:
                     prev_cwd = os.getcwd()
                     os.chdir(str(clone_root))
                     try:
-                        timed_out, result = _run_step_with_timeout(
+                        timed_out, result, elapsed_secs = _run_step_with_timeout(
                             "validate_patch",
                             self.quick_fix.validate_patch,
                             str(cloned_module),
@@ -1729,8 +1734,9 @@ class SelfCodingManager:
                             summary["quick_fix"] = {
                                 "timed_out": True,
                                 "step": "validate_patch",
+                                "elapsed_secs": elapsed_secs,
                             }
-                            return _finish_timeout("validate_patch")
+                            return _finish_timeout("validate_patch", elapsed_secs)
                         valid, flags = result
                         summary["quick_fix"] = {
                             "validation_flags": list(flags),
@@ -1758,7 +1764,7 @@ class SelfCodingManager:
                                     f"valid={valid}, flags={list(flags)}"
                                 )
                         if not skip_apply:
-                            timed_out, result = _run_step_with_timeout(
+                            timed_out, result, elapsed_secs = _run_step_with_timeout(
                                 "apply_validated_patch",
                                 self.quick_fix.apply_validated_patch,
                                 str(cloned_module),
@@ -1769,7 +1775,10 @@ class SelfCodingManager:
                             if timed_out:
                                 summary["quick_fix"]["timed_out"] = True
                                 summary["quick_fix"]["step"] = "apply_validated_patch"
-                                return _finish_timeout("apply_validated_patch")
+                                summary["quick_fix"]["elapsed_secs"] = elapsed_secs
+                                return _finish_timeout(
+                                    "apply_validated_patch", elapsed_secs
+                                )
                             passed, _pid, apply_flags = result
                             summary["quick_fix"].update(
                                 {
@@ -1829,7 +1838,7 @@ class SelfCodingManager:
                         service = _SelfTestService(**run_kwargs)
                     except FileNotFoundError as exc:
                         raise RuntimeError("SelfTestService initialization failed") from exc
-                    timed_out, result = _run_step_with_timeout(
+                    timed_out, result, elapsed_secs = _run_step_with_timeout(
                         "self_tests",
                         service.run_once,
                     )
@@ -1837,6 +1846,7 @@ class SelfCodingManager:
                         summary["self_tests"] = {
                             "timed_out": True,
                             "timeout_secs": post_patch_timeout_secs,
+                            "elapsed_secs": elapsed_secs,
                             "attempts": attempt_count + 1,
                         }
                         if workflow_tests:
@@ -1848,7 +1858,7 @@ class SelfCodingManager:
                                 key: list(values)
                                 for key, values in workflow_sources.items()
                             }
-                        return _finish_timeout("self_tests")
+                        return _finish_timeout("self_tests", elapsed_secs)
                     results, passed_modules = result
                     failed_count = int(results.get("failed", 0))
                     summary["self_tests"] = {
@@ -1928,7 +1938,7 @@ class SelfCodingManager:
                         attempt_record["next_pytest_args"] = next_pytest_args
                     try:
                         self.refresh_quick_fix_context()
-                        timed_out, result = _run_step_with_timeout(
+                        timed_out, result, elapsed_secs = _run_step_with_timeout(
                             "apply_validated_patch",
                             self.quick_fix.apply_validated_patch,
                             str(module),
@@ -1938,6 +1948,7 @@ class SelfCodingManager:
                         )
                         if timed_out:
                             attempt_record["timed_out"] = True
+                            attempt_record["elapsed_secs"] = elapsed_secs
                             attempt_records.append(attempt_record)
                             summary_attempts = [
                                 dict(record) for record in attempt_records
@@ -1950,7 +1961,10 @@ class SelfCodingManager:
                             summary["self_tests"]["timeout_secs"] = (
                                 post_patch_timeout_secs
                             )
-                            return _finish_timeout("apply_validated_patch")
+                            summary["self_tests"]["elapsed_secs"] = elapsed_secs
+                            return _finish_timeout(
+                                "apply_validated_patch", elapsed_secs
+                            )
                         passed, patch_id, apply_flags = result
                     except Exception as exc:
                         attempt_record["error"] = str(exc)
