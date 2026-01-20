@@ -3723,6 +3723,13 @@ def internalize_coding_bot(
 
     if bot_registry is not None:
         node = bot_registry.graph.nodes.get(bot_name)
+    if node is not None:
+        disabled_state = node.get("self_coding_disabled")
+        if (
+            isinstance(disabled_state, dict)
+            and disabled_state.get("source") == "module_path_resolution"
+        ):
+            return _cooldown_disabled_manager(bot_registry, data_bot)
     existing_manager = None
     if node is not None:
         existing_manager = node.get("selfcoding_manager") or node.get("manager")

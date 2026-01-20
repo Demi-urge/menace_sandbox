@@ -743,6 +743,24 @@ class _ModulePathResolutionState:
     last_seen: float = field(default_factory=time.monotonic)
     last_module_hint: str | None = None
     last_resolved_path: str | None = None
+    warning_logged: bool = False
+
+    def reset_if_window_expired(self, window_seconds: float) -> None:
+        if window_seconds <= 0:
+            return
+        now = time.monotonic()
+        if self.count > 0 and (now - self.first_seen) > window_seconds:
+            self.count = 0
+            self.first_seen = now
+            self.last_seen = now
+            self.last_module_hint = None
+            self.last_resolved_path = None
+            self.warning_logged = False
+
+    def in_window(self, window_seconds: float) -> bool:
+        if window_seconds <= 0:
+            return True
+        return (time.monotonic() - self.first_seen) <= window_seconds
 
     def increment(self, module_hint: str | None, resolved_path: str | None) -> int:
         if self.count == 0:
@@ -1635,6 +1653,7 @@ class BotRegistry:
         self._module_path_failure_backoff_base = 1.5
         self._module_path_failure_backoff_max = 30.0
         self._module_path_failure_retry_cap = 3
+        self._module_path_failure_window_seconds = 300.0
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load(self.persist_path)
@@ -1872,9 +1891,12 @@ class BotRegistry:
             if state is None:
                 state = _ModulePathResolutionState()
                 self._module_path_failures[name] = state
+            state.reset_if_window_expired(self._module_path_failure_window_seconds)
             attempt = state.increment(module_hint, resolved_path)
 
-            if attempt >= self._module_path_failure_retry_cap:
+            if attempt >= self._module_path_failure_retry_cap and state.in_window(
+                self._module_path_failure_window_seconds
+            ):
                 node = self.graph.nodes.get(name)
                 if node is not None:
                     node["pending_internalization"] = False
@@ -1888,9 +1910,18 @@ class BotRegistry:
                         "failure_count": attempt,
                         "source": "module_path_resolution",
                     }
+                    node["is_coding_bot"] = False
                 self._module_path_failures.pop(name, None)
                 self._internalization_retry_attempts.pop(name, None)
                 self._cancel_internalization_retry(name)
+                if not state.warning_logged:
+                    logger.warning(
+                        "self-coding disabled for %s after repeated module_path resolution failures "
+                        "(reason=module_path_missing, module_hint=%s)",
+                        name,
+                        module_hint or resolved_path or "unknown",
+                    )
+                    state.warning_logged = True
                 return attempt, None, True
 
             retry_delay = min(
