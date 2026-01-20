@@ -35,6 +35,20 @@ class ModuleIndexDB:
         self._tags: Dict[str, list[str]] = {}
         skipped_norm_entries = 0
 
+        def normalize_key(key: str) -> str:
+            key_str = str(key)
+            if not key_str.strip() or "://" in key_str:
+                return key_str
+            try:
+                key_path = Path(key_str)
+            except Exception:
+                return key_str
+            has_drive = os.path.splitdrive(key_str)[0] != ""
+            has_parent = ".." in key_path.parts
+            if not key_path.is_absolute() and not has_drive and not has_parent:
+                return key_path.as_posix()
+            return self._norm(key_str)
+
         auto_env = os.getenv("SANDBOX_AUTO_MAP") == "1"
         legacy_env = os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1"
         if legacy_env and not auto_env:
@@ -83,7 +97,7 @@ class ModuleIndexDB:
                         if isinstance(mods, dict):
                             for key, value in mods.items():
                                 try:
-                                    norm_key = self._norm(str(key))
+                                    norm_key = normalize_key(str(key))
                                 except Exception:
                                     skipped_norm_entries += 1
                                     norm_key = str(key)
@@ -96,7 +110,7 @@ class ModuleIndexDB:
                                 if not isinstance(value, list):
                                     continue
                                 try:
-                                    norm_key = self._norm(str(key))
+                                    norm_key = normalize_key(str(key))
                                 except Exception:
                                     skipped_norm_entries += 1
                                     norm_key = str(key)
@@ -105,7 +119,7 @@ class ModuleIndexDB:
                         # ``build_module_map`` writes module -> int mappings
                         for key, value in data.items():
                             try:
-                                norm_key = self._norm(key)
+                                norm_key = normalize_key(key)
                             except Exception:
                                 skipped_norm_entries += 1
                                 norm_key = str(key)
@@ -119,7 +133,7 @@ class ModuleIndexDB:
                                 idx = abs(hash(grp)) % 1000
                             self._groups[str(grp)] = idx
                             for mod in modules:
-                                self._map[self._norm(str(mod))] = idx
+                                self._map[normalize_key(str(mod))] = idx
                     else:
                         # Fallback for module -> group mappings with string groups
                         grp_idx: Dict[str, int] = {}
@@ -127,7 +141,7 @@ class ModuleIndexDB:
                             key = str(grp)
                             idx = grp_idx.setdefault(key, abs(hash(key)) % 1000)
                             self._groups.setdefault(key, idx)
-                            norm = self._norm(mod)
+                            norm = normalize_key(mod)
                             self._map[norm] = idx
                             if "tags" in data:
                                 tags = data.get("tags", {}).get(mod)
