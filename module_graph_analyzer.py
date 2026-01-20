@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterable
+import signal
+import threading
+from typing import Dict, Iterable, Iterator
 
 import networkx as nx
 
@@ -32,12 +35,48 @@ def _iter_py_files(root: str | Path, ignore: Iterable[str] | None = None) -> Ite
         yield path
 
 
+class _ParseTimeoutError(RuntimeError):
+    """Raised when parsing exceeds the allotted timeout."""
+
+
+@contextmanager
+def _parse_timeout(timeout_s: float | None) -> Iterator[None]:
+    if not timeout_s or timeout_s <= 0:
+        yield
+        return
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _handler(signum: int, frame: object | None) -> None:
+        raise _ParseTimeoutError("ast.parse timed out")
+
+    previous_handler = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _parse_source(source: str, filename: str, timeout_s: float | None) -> ast.AST:
+    with _parse_timeout(timeout_s):
+        return ast.parse(source, filename=filename)
+
+
 def build_import_graph(
     root: Path | str,
     *,
     ignore: Iterable[str] | None = None,
+    max_file_size_bytes: int | None = 1_000_000,
+    parse_timeout_s: float | None = None,
 ) -> nx.DiGraph:
-    """Return a directed graph of imports and cross-module calls."""
+    """Return a directed graph of imports and cross-module calls.
+
+    Files that exceed ``max_file_size_bytes``, fail decoding, or trigger
+    ``SyntaxError`` or timeouts are skipped.
+    """
     root = Path(resolve_path(root))
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
@@ -57,10 +96,31 @@ def build_import_graph(
         else:
             graph.add_edge(a, b, weight=1)
 
+    skipped_files = 0
     for mod, file in modules.items():
+        if max_file_size_bytes is not None:
+            try:
+                if file.stat().st_size > max_file_size_bytes:
+                    skipped_files += 1
+                    continue
+            except OSError:
+                skipped_files += 1
+                continue
         try:
-            tree = ast.parse(file.read_text())
+            text = file.read_text()
+        except UnicodeDecodeError:
+            skipped_files += 1
+            continue
+        except OSError:
+            skipped_files += 1
+            continue
+        try:
+            tree = _parse_source(text, str(file), parse_timeout_s)
+        except (SyntaxError, UnicodeDecodeError, _ParseTimeoutError):
+            skipped_files += 1
+            continue
         except Exception:
+            skipped_files += 1
             continue
         imports: Dict[str, str] = {}
         for node in ast.walk(tree):
@@ -94,6 +154,8 @@ def build_import_graph(
                     target_mod = imports.get(func.id)
                     if target_mod and target_mod in modules:
                         _add_edge(mod, target_mod)
+    graph.graph["build_complete"] = skipped_files == 0
+    graph.graph["skipped_files"] = skipped_files
     return graph
 
 
