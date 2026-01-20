@@ -2315,27 +2315,22 @@ class SelfTestService:
                         )
 
                 heartbeat_task = asyncio.create_task(_heartbeat())
-                async def _await_discovery(recursive: bool) -> tuple[list[str], bool]:
-                    discovery_task = asyncio.create_task(
-                        asyncio.to_thread(self._discover_orphans, recursive=recursive)
-                    )
+                discovery_task = asyncio.create_task(
+                    asyncio.to_thread(self._discover_orphans, recursive=True)
+                )
 
-                    def _consume_result(task: asyncio.Task) -> None:
-                        with suppress(Exception):
-                            task.result()
+                def _consume_result(task: asyncio.Task) -> None:
+                    with suppress(Exception):
+                        task.result()
 
-                    discovery_task.add_done_callback(_consume_result)
-                    done, _ = await asyncio.wait(
-                        {discovery_task}, timeout=discovery_timeout
-                    )
-                    if discovery_task in done:
-                        return discovery_task.result(), False
-                    return [], True
+                discovery_task.add_done_callback(_consume_result)
 
                 try:
-                    found, timed_out = await _await_discovery(recursive=True)
-                    if not timed_out:
-                        return found, False
+                    found = await asyncio.wait_for(
+                        discovery_task, timeout=discovery_timeout
+                    )
+                    return found, False
+                except asyncio.TimeoutError:
                     elapsed = time.monotonic() - start_time
                     self.logger.warning(
                         "orphan discovery timed out",
@@ -2346,30 +2341,7 @@ class SelfTestService:
                             timeout_seconds=discovery_timeout,
                         ),
                     )
-                    retry_found, retry_timed_out = await _await_discovery(recursive=False)
-                    if retry_timed_out:
-                        retry_elapsed = time.monotonic() - start_time
-                        self.logger.warning(
-                            "orphan discovery retry timed out",
-                            extra=log_record(
-                                batch_index=batch_index,
-                                module="orphan_discovery",
-                                elapsed_seconds=round(retry_elapsed, 2),
-                                timeout_seconds=discovery_timeout,
-                            ),
-                        )
-                        return [], True
-                    if retry_found:
-                        self.logger.info(
-                            "orphan discovery retry completed",
-                            extra=log_record(
-                                batch_index=batch_index,
-                                module="orphan_discovery",
-                                discovered=len(retry_found),
-                                recursive=False,
-                            ),
-                        )
-                    return retry_found, True
+                    return [], True
                 except Exception:
                     self.logger.exception("failed to discover orphan modules")
                     return [], False
