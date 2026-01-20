@@ -340,6 +340,10 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "module_path": "menace_sandbox.prediction_manager_bot",
         "class_name": "FutureSynergySafetyRatingBot",
     },
+    "WorkflowEvolutionBot": {
+        "module_path": "menace_sandbox.workflow_evolution_bot",
+        "class_name": "WorkflowEvolutionBot",
+    },
     "FutureSynergyRiskIndexBot": {
         "module_path": "menace_sandbox.prediction_manager_bot",
         "class_name": "FutureSynergyRiskIndexBot",
