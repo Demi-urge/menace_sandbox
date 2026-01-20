@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 from typing import Dict, Iterable
 
@@ -126,16 +127,40 @@ class ModuleIndexDB:
     # --------------------------------------------------------------
     def _norm(self, name: str) -> str:
         """Return repository-relative POSIX path for ``name``."""
-        repo_path = get_project_root()
+        if not name or not name.strip() or "://" in name:
+            return name
         p = Path(name)
+        if not p.is_absolute() or not p.exists():
+            try:
+                return p.as_posix()
+            except Exception:
+                return str(p)
+        start = time.monotonic()
         try:
-            p = p.resolve()
-            return p.relative_to(repo_path).as_posix()
+            resolved = p.resolve(strict=False)
         except Exception:
             try:
                 return p.as_posix()
             except Exception:
                 return str(p)
+        duration = time.monotonic() - start
+        if duration > 0.25:
+            try:
+                return p.as_posix()
+            except Exception:
+                return str(p)
+        repo_path = get_project_root()
+        try:
+            if resolved == repo_path or resolved.is_relative_to(repo_path):
+                return resolved.relative_to(repo_path).as_posix()
+        except AttributeError:  # Python <3.9
+            try:
+                return resolved.relative_to(repo_path).as_posix()
+            except Exception:
+                return resolved.as_posix()
+        except Exception:
+            return resolved.as_posix()
+        return resolved.as_posix()
 
     # --------------------------------------------------------------
     def get(self, name: str) -> int:
