@@ -129,38 +129,32 @@ class ModuleIndexDB:
         """Return repository-relative POSIX path for ``name``."""
         if not name or not name.strip() or "://" in name:
             return name
-        p = Path(name)
-        if not p.is_absolute() or not p.exists():
-            try:
-                return p.as_posix()
-            except Exception:
-                return str(p)
-        start = time.monotonic()
+        repo_path = Path(get_project_root()).absolute()
+        p = Path(name).expanduser()
+        if not p.is_absolute():
+            p = repo_path / p
         try:
-            resolved = p.resolve(strict=False)
+            return p.relative_to(repo_path).as_posix()
         except Exception:
+            pass
+
+        if p.exists():
             try:
-                return p.as_posix()
-            except Exception:
-                return str(p)
-        duration = time.monotonic() - start
-        if duration > 0.25:
-            try:
-                return p.as_posix()
-            except Exception:
-                return str(p)
-        repo_path = get_project_root()
-        try:
-            if resolved == repo_path or resolved.is_relative_to(repo_path):
-                return resolved.relative_to(repo_path).as_posix()
-        except AttributeError:  # Python <3.9
+                resolved = p.resolve()
+            except (OSError, RuntimeError, ValueError):
+                try:
+                    return p.as_posix()
+                except Exception:
+                    return str(p)
             try:
                 return resolved.relative_to(repo_path).as_posix()
             except Exception:
                 return resolved.as_posix()
+
+        try:
+            return p.as_posix()
         except Exception:
-            return resolved.as_posix()
-        return resolved.as_posix()
+            return str(p)
 
     # --------------------------------------------------------------
     def get(self, name: str) -> int:
