@@ -2289,112 +2289,120 @@ class SelfTestService:
             discovered: list[str] = []
             redundant_list: list[str] = []
     
-            async def _run_orphan_discovery(batch_index: int) -> tuple[list[str], bool]:
+            async def _run_orphan_discovery(batch_index: int) -> list[str]:
                 discovery_timeout = (
                     env_settings.self_test_orphan_discovery_timeout_secs
                     or self.run_once_timeout
                     or 600.0
                 )
                 heartbeat_interval = 45.0
-                start_time = time.monotonic()
-                stop_event = asyncio.Event()
 
-                async def _heartbeat() -> None:
-                    while not stop_event.is_set():
-                        await asyncio.sleep(heartbeat_interval)
-                        if stop_event.is_set():
-                            break
-                        elapsed = time.monotonic() - start_time
+                async def _attempt(scope: str, *, recursive: bool) -> tuple[list[str], bool]:
+                    start_time = time.monotonic()
+                    stop_event = asyncio.Event()
+
+                    async def _heartbeat() -> None:
+                        while not stop_event.is_set():
+                            await asyncio.sleep(heartbeat_interval)
+                            if stop_event.is_set():
+                                break
+                            elapsed = time.monotonic() - start_time
+                            self.logger.info(
+                                "orphan discovery heartbeat",
+                                extra=log_record(
+                                    batch_index=batch_index,
+                                    module="orphan_discovery",
+                                    elapsed_seconds=round(elapsed, 2),
+                                    scope=scope,
+                                ),
+                            )
+
+                    heartbeat_task = asyncio.create_task(_heartbeat())
+                    discovery_task = asyncio.create_task(
+                        asyncio.to_thread(self._discover_orphans, recursive=recursive)
+                    )
+
+                    def _consume_result(task: asyncio.Task) -> None:
+                        with suppress(Exception):
+                            task.result()
+
+                    discovery_task.add_done_callback(_consume_result)
+
+                    try:
+                        found = await asyncio.wait_for(
+                            discovery_task, timeout=discovery_timeout
+                        )
                         self.logger.info(
-                            "orphan discovery heartbeat",
+                            "orphan discovery completed",
+                            extra=log_record(
+                                batch_index=batch_index,
+                                module="orphan_discovery",
+                                scope=scope,
+                                discovered=len(found),
+                            ),
+                        )
+                        return found, False
+                    except asyncio.TimeoutError:
+                        elapsed = time.monotonic() - start_time
+                        self.logger.warning(
+                            "orphan discovery timed out",
                             extra=log_record(
                                 batch_index=batch_index,
                                 module="orphan_discovery",
                                 elapsed_seconds=round(elapsed, 2),
+                                timeout_seconds=discovery_timeout,
+                                scope=scope,
                             ),
                         )
+                        return [], True
+                    except Exception:
+                        self.logger.exception(
+                            "failed to discover orphan modules",
+                            extra=log_record(
+                                batch_index=batch_index,
+                                module="orphan_discovery",
+                                scope=scope,
+                            ),
+                        )
+                        return [], False
+                    finally:
+                        stop_event.set()
+                        heartbeat_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await heartbeat_task
 
-                heartbeat_task = asyncio.create_task(_heartbeat())
-                discovery_task = asyncio.create_task(
-                    asyncio.to_thread(self._discover_orphans, recursive=True)
-                )
-
-                def _consume_result(task: asyncio.Task) -> None:
-                    with suppress(Exception):
-                        task.result()
-
-                discovery_task.add_done_callback(_consume_result)
-
-                try:
-                    found = await asyncio.wait_for(
-                        discovery_task, timeout=discovery_timeout
-                    )
-                    return found, False
-                except asyncio.TimeoutError:
-                    elapsed = time.monotonic() - start_time
-                    self.logger.warning(
-                        "orphan discovery timed out",
+                found, timed_out = await _attempt("recursive", recursive=True)
+                if timed_out:
+                    self.logger.info(
+                        "retrying orphan discovery with top-level scope",
                         extra=log_record(
                             batch_index=batch_index,
                             module="orphan_discovery",
-                            elapsed_seconds=round(elapsed, 2),
-                            timeout_seconds=discovery_timeout,
+                            scope="top_level",
                         ),
                     )
-                    return [], True
-                except Exception:
-                    self.logger.exception("failed to discover orphan modules")
-                    return [], False
-                finally:
-                    stop_event.set()
-                    heartbeat_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await heartbeat_task
+                    found, _ = await _attempt("top_level", recursive=False)
+                return found
 
-            orphan_timeout = False
             if self.include_orphans and (refresh_orphans or not path.exists()):
                 self.logger.debug(
                     "starting orphan discovery batch",
                     extra=log_record(batch_index=1, module="orphan_discovery"),
                 )
-                found, timed_out = await _run_orphan_discovery(batch_index=1)
-                if timed_out:
-                    orphan_timeout = True
-                    orphan_list = []
-                    discovered = []
+                found = await _run_orphan_discovery(batch_index=1)
                 if found:
                     discovered.extend(found)
                     orphan_list.extend(found)
-                self.logger.info(
-                    "completed orphan discovery batch",
-                    extra=log_record(
-                        batch_index=1,
-                        module="orphan_discovery",
-                        discovered=len(found),
-                    ),
-                )
     
-            if not orphan_timeout and (self.discover_orphans or self.discover_isolated):
+            if self.discover_orphans or self.discover_isolated:
                 self.logger.debug(
                     "starting orphan discovery batch",
                     extra=log_record(batch_index=2, module="orphan_discovery"),
                 )
-                found, timed_out = await _run_orphan_discovery(batch_index=2)
-                if timed_out:
-                    orphan_timeout = True
-                    orphan_list = []
-                    discovered = []
+                found = await _run_orphan_discovery(batch_index=2)
                 if found:
                     discovered.extend(found)
                     orphan_list.extend(found)
-                self.logger.info(
-                    "completed orphan discovery batch",
-                    extra=log_record(
-                        batch_index=2,
-                        module="orphan_discovery",
-                        discovered=len(found),
-                    ),
-                )
     
             if orphan_list:
                 orphan_list = list(dict.fromkeys(orphan_list))
