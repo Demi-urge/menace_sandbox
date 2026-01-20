@@ -238,8 +238,10 @@ def _redundant_classifier(
     module_path: Path, metrics: Dict[str, Any]
 ) -> Literal["redundant"] | None:
     try:
-        root = module_path.parent
-        graph = _cached_import_graph(root)
+        graph = metrics.get("_import_graph")
+        if graph is None:
+            root = metrics.get("_graph_root") or module_path.parent
+            graph = _cached_import_graph(root, DEFAULT_IGNORED_DIRS, DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES)
         if not graph.graph.get("build_complete", True):
             return None
         if module_path.name == "__init__.py":
@@ -263,19 +265,41 @@ def _normalized_root(root: Path) -> str:
     return str(root.resolve())
 
 
+def _root_mtime(root: Path) -> float:
+    try:
+        return root.stat().st_mtime
+    except Exception:  # pragma: no cover - best effort
+        return 0.0
+
+
 @lru_cache(maxsize=8)
-def _cached_import_graph_by_root(root: str) -> Any:
+def _cached_import_graph_by_key(
+    root: str,
+    ignore: Tuple[str, ...],
+    max_file_size_bytes: int,
+    root_mtime: float,
+) -> Any:
     normalized = Path(root)
     return build_import_graph(
         normalized,
-        ignore=DEFAULT_IGNORED_DIRS,
-        max_file_size_bytes=DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
+        ignore=ignore,
+        max_file_size_bytes=max_file_size_bytes,
         parse_timeout_s=DEFAULT_GRAPH_PARSE_TIMEOUT_S,
     )
 
 
-def _cached_import_graph(root: Path) -> Any:
-    return _cached_import_graph_by_root(_normalized_root(root))
+def _cached_import_graph(
+    root: Path,
+    ignore: Iterable[str],
+    max_file_size_bytes: int,
+) -> Any:
+    ignore_key = tuple(sorted(ignore))
+    return _cached_import_graph_by_key(
+        _normalized_root(root),
+        ignore_key,
+        max_file_size_bytes,
+        _root_mtime(root),
+    )
 
 
 DEFAULT_CLASSIFIERS: Tuple[Classifier, ...] = (
@@ -326,6 +350,8 @@ def classify_module(
     *,
     include_meta: bool = False,
     classifiers: Iterable[Classifier] | None = None,
+    graph_root: Path | None = None,
+    import_graph: Any | None = None,
 ) -> Literal["legacy", "redundant", "candidate"] | Tuple[
     Literal["legacy", "redundant", "candidate"], Dict[str, Any]
 ]:
@@ -342,6 +368,19 @@ def classify_module(
     """
 
     metrics = _static_metrics(module_path)
+    if import_graph is None and graph_root is not None:
+        try:
+            import_graph = _cached_import_graph(
+                graph_root,
+                DEFAULT_IGNORED_DIRS,
+                DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
+            )
+        except Exception:  # pragma: no cover - best effort
+            import_graph = None
+    if import_graph is not None:
+        metrics["_import_graph"] = import_graph
+    if graph_root is not None:
+        metrics["_graph_root"] = graph_root
     result: Literal["legacy", "redundant"] | None = None
     for classifier in classifiers or ALL_CLASSIFIERS:
         try:
@@ -356,16 +395,29 @@ def classify_module(
         metrics.update(_runtime_metrics(module_path))
 
     if include_meta:
-        return cls, metrics
+        public_metrics = {k: v for k, v in metrics.items() if not k.startswith("_")}
+        return cls, public_metrics
     return cls
 
 
 def analyze_redundancy(
-    module_path: Path, *, classifiers: Iterable[Classifier] | None = None
+    module_path: Path,
+    *,
+    classifiers: Iterable[Classifier] | None = None,
+    graph_root: Path | None = None,
+    import_graph: Any | None = None,
 ) -> bool:
     """Backward compatible wrapper returning ``True`` for non-candidates."""
 
-    return classify_module(module_path, classifiers=classifiers) != "candidate"
+    return (
+        classify_module(
+            module_path,
+            classifiers=classifiers,
+            graph_root=graph_root,
+            import_graph=import_graph,
+        )
+        != "candidate"
+    )
 
 
 __all__ = [

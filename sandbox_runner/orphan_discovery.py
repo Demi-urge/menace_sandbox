@@ -952,7 +952,11 @@ def discover_recursive_orphans(
         cls = classifications.get(mod)
         if cls is None:
             try:
-                cls, info = orphan_analyzer.classify_module(path, include_meta=True)
+                cls, info = orphan_analyzer.classify_module(
+                    path,
+                    include_meta=True,
+                    graph_root=repo,
+                )
             except Exception:
                 cls, info = "candidate", {}
             classifications[mod] = cls
@@ -985,7 +989,11 @@ def discover_recursive_orphans(
             child_cls = classifications.get(name)
             if child_cls is None:
                 try:
-                    child_cls, info = orphan_analyzer.classify_module(target, include_meta=True)
+                    child_cls, info = orphan_analyzer.classify_module(
+                        target,
+                        include_meta=True,
+                        graph_root=repo,
+                    )
                 except Exception:
                     child_cls, info = "candidate", {}
                 classifications[name] = child_cls
@@ -1018,7 +1026,10 @@ def discover_recursive_orphans(
             except FileNotFoundError:
                 continue
         try:
-            redundant_flag = orphan_analyzer.analyze_redundancy(target)
+            redundant_flag = orphan_analyzer.analyze_redundancy(
+                target,
+                graph_root=repo,
+            )
         except Exception:
             redundant_flag = cls in {"legacy", "redundant"}
         result[m] = {
