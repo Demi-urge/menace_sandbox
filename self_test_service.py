@@ -100,6 +100,9 @@ class SelfTestEnvSettings(BaseSettings):
     self_test_run_once_timeout_secs: float | None = Field(
         None, validation_alias="SELF_TEST_RUN_ONCE_TIMEOUT_SECS"
     )
+    self_test_orphan_discovery_timeout_secs: float | None = Field(
+        None, validation_alias="SELF_TEST_ORPHAN_DISCOVERY_TIMEOUT_SECS"
+    )
     menace_self_test_image_tar: str | None = Field(
         None, validation_alias="MENACE_SELF_TEST_IMAGE_TAR"
     )
@@ -2270,13 +2273,20 @@ class SelfTestService:
             redundant_list: list[str] = []
     
             async def _run_orphan_discovery(batch_index: int) -> list[str]:
-                discovery_timeout = self.run_once_timeout or 600.0
+                discovery_timeout = (
+                    env_settings.self_test_orphan_discovery_timeout_secs
+                    or self.run_once_timeout
+                    or 600.0
+                )
                 heartbeat_interval = 45.0
                 start_time = time.monotonic()
+                stop_event = asyncio.Event()
 
                 async def _heartbeat() -> None:
-                    while True:
+                    while not stop_event.is_set():
                         await asyncio.sleep(heartbeat_interval)
+                        if stop_event.is_set():
+                            break
                         elapsed = time.monotonic() - start_time
                         self.logger.info(
                             "orphan discovery heartbeat",
@@ -2289,11 +2299,20 @@ class SelfTestService:
 
                 heartbeat_task = asyncio.create_task(_heartbeat())
                 try:
-                    return await asyncio.wait_for(
-                        asyncio.to_thread(self._discover_orphans),
-                        timeout=discovery_timeout,
+                    discovery_task = asyncio.create_task(
+                        asyncio.to_thread(self._discover_orphans)
                     )
-                except asyncio.TimeoutError:
+
+                    def _consume_result(task: asyncio.Task) -> None:
+                        with suppress(Exception):
+                            task.result()
+
+                    discovery_task.add_done_callback(_consume_result)
+                    done, _ = await asyncio.wait(
+                        {discovery_task}, timeout=discovery_timeout
+                    )
+                    if discovery_task in done:
+                        return discovery_task.result()
                     elapsed = time.monotonic() - start_time
                     self.logger.warning(
                         "orphan discovery timed out",
@@ -2309,6 +2328,7 @@ class SelfTestService:
                     self.logger.exception("failed to discover orphan modules")
                     return []
                 finally:
+                    stop_event.set()
                     heartbeat_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await heartbeat_task
