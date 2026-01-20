@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -32,6 +33,7 @@ class ModuleIndexDB:
         self._map: Dict[str, int] = {}
         self._groups: Dict[str, int] = {}
         self._tags: Dict[str, list[str]] = {}
+        skipped_norm_entries = 0
 
         auto_env = os.getenv("SANDBOX_AUTO_MAP") == "1"
         legacy_env = os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1"
@@ -79,23 +81,35 @@ class ModuleIndexDB:
                         mods = data.get("modules", {})
                         grps = data.get("groups", {})
                         if isinstance(mods, dict):
-                            self._map = {
-                                self._norm(str(k)): int(v) for k, v in mods.items()
-                            }
+                            for key, value in mods.items():
+                                try:
+                                    norm_key = self._norm(str(key))
+                                except Exception:
+                                    skipped_norm_entries += 1
+                                    norm_key = str(key)
+                                self._map[norm_key] = int(value)
                         if isinstance(grps, dict):
                             self._groups = {str(k): int(v) for k, v in grps.items()}
                         tag_data = data.get("tags", {})
                         if isinstance(tag_data, dict):
-                            self._tags = {
-                                self._norm(str(k)): [str(t) for t in v]
-                                for k, v in tag_data.items()
-                                if isinstance(v, list)
-                            }
+                            for key, value in tag_data.items():
+                                if not isinstance(value, list):
+                                    continue
+                                try:
+                                    norm_key = self._norm(str(key))
+                                except Exception:
+                                    skipped_norm_entries += 1
+                                    norm_key = str(key)
+                                self._tags[norm_key] = [str(t) for t in value]
                     elif all(isinstance(v, int) for v in data.values()):
                         # ``build_module_map`` writes module -> int mappings
-                        self._map = {
-                            self._norm(k): int(v) for k, v in data.items()
-                        }
+                        for key, value in data.items():
+                            try:
+                                norm_key = self._norm(key)
+                            except Exception:
+                                skipped_norm_entries += 1
+                                norm_key = str(key)
+                            self._map[norm_key] = int(value)
                     elif all(isinstance(v, list) for v in data.values()):
                         # ``module_mapper.save_module_map`` stores group -> [modules]
                         for grp, modules in data.items():
@@ -119,6 +133,11 @@ class ModuleIndexDB:
                                 tags = data.get("tags", {}).get(mod)
                                 if isinstance(tags, list):
                                     self._tags[norm] = [str(t) for t in tags]
+                if skipped_norm_entries:
+                    logging.getLogger(__name__).debug(
+                        "ModuleIndexDB skipped %s entries while normalizing module keys",
+                        skipped_norm_entries,
+                    )
             except Exception:
                 self._map = {}
                 self._groups = {}
