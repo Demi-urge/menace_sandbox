@@ -19,6 +19,7 @@ Loaded classifiers are appended to :data:`DEFAULT_CLASSIFIERS` and participate
 in :func:`classify_module` evaluation.
 """
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Tuple, Protocol
 
@@ -34,7 +35,10 @@ try:  # Python 3.8+ standard library
 except Exception:  # pragma: no cover - fallback for older versions
     import importlib_metadata  # type: ignore
 
-from module_graph_analyzer import build_import_graph
+from module_graph_analyzer import DEFAULT_IGNORED_DIRS, build_import_graph
+
+DEFAULT_GRAPH_PARSE_TIMEOUT_S = 2.0
+DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES = 500_000
 
 try:  # optional dependency
     from radon.complexity import cc_visit  # type: ignore
@@ -235,7 +239,7 @@ def _redundant_classifier(
 ) -> Literal["redundant"] | None:
     try:
         root = module_path.parent
-        graph = build_import_graph(root)
+        graph = _cached_import_graph(root)
         if not graph.graph.get("build_complete", True):
             return None
         if module_path.name == "__init__.py":
@@ -253,6 +257,25 @@ def _redundant_classifier(
     except Exception:  # pragma: no cover - best effort
         pass
     return None
+
+
+def _normalized_root(root: Path) -> str:
+    return str(root.resolve())
+
+
+@lru_cache(maxsize=8)
+def _cached_import_graph_by_root(root: str) -> Any:
+    normalized = Path(root)
+    return build_import_graph(
+        normalized,
+        ignore=DEFAULT_IGNORED_DIRS,
+        max_file_size_bytes=DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
+        parse_timeout_s=DEFAULT_GRAPH_PARSE_TIMEOUT_S,
+    )
+
+
+def _cached_import_graph(root: Path) -> Any:
+    return _cached_import_graph_by_root(_normalized_root(root))
 
 
 DEFAULT_CLASSIFIERS: Tuple[Classifier, ...] = (
