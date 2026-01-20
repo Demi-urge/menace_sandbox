@@ -84,7 +84,12 @@ def _iter_py_files(
     for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=_on_walk_error, followlinks=False):
         if _limits_reached():
             return
-        rel_dir = Path(dirpath).relative_to(root)
+        try:
+            rel_dir = Path(dirpath).relative_to(root)
+        except (OSError, PermissionError, FileNotFoundError, ValueError) as exc:
+            logger.debug("Skipping directory during traversal due to error: %s", exc)
+            _mark_incomplete()
+            continue
         if max_depth is not None and len(rel_dir.parts) > max_depth:
             dirnames[:] = []
             continue
@@ -103,9 +108,14 @@ def _iter_py_files(
             if not filename.endswith(".py"):
                 continue
             path = Path(dirpath) / filename
-            if not path.is_file():
+            try:
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(root)
+            except (OSError, PermissionError, FileNotFoundError, ValueError) as exc:
+                logger.debug("Skipping file during traversal due to error: %s", exc)
+                _mark_incomplete()
                 continue
-            rel = path.relative_to(root)
             if any(rel.match(pat) or pat in rel.parts for pat in ignore):
                 continue
             yield path
