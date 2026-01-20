@@ -149,31 +149,31 @@ class ModuleIndexDB:
         if not name or not name.strip() or "://" in name:
             return name
         repo_path = Path(get_project_root()).absolute()
-        p = Path(name).expanduser()
-        if not p.is_absolute():
-            p = repo_path / p
-        try:
-            return p.relative_to(repo_path).as_posix()
-        except Exception:
-            pass
+        norm_str = os.path.normpath(str(name))
+        norm_path = Path(norm_str).expanduser()
+        norm_posix = norm_path.as_posix()
 
-        if p.exists():
+        if norm_path.is_absolute():
             try:
-                resolved = p.resolve()
-            except (OSError, RuntimeError, ValueError):
-                try:
-                    return p.as_posix()
-                except Exception:
-                    return str(p)
-            try:
-                return resolved.relative_to(repo_path).as_posix()
+                return norm_path.relative_to(repo_path).as_posix()
             except Exception:
-                return resolved.as_posix()
+                pass
 
-        try:
-            return p.as_posix()
-        except Exception:
-            return str(p)
+        resolve_enabled = os.getenv("SANDBOX_RESOLVE_MODULE_PATHS") == "1"
+        if resolve_enabled:
+            candidate = norm_path if norm_path.is_absolute() else repo_path / norm_path
+            if candidate.exists():
+                try:
+                    # Avoid unconditional resolve(): bad or looping module_map paths can stall.
+                    resolved = candidate.resolve()
+                    try:
+                        return resolved.relative_to(repo_path).as_posix()
+                    except Exception:
+                        return resolved.as_posix()
+                except (OSError, RuntimeError, ValueError):
+                    return norm_posix
+
+        return norm_posix
 
     # --------------------------------------------------------------
     def get(self, name: str) -> int:
