@@ -8,10 +8,11 @@ import logging
 import os
 import time
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 import signal
 import threading
-from typing import Dict, Iterable, Iterator
+from typing import Dict, Iterable, Iterator, Tuple
 
 import networkx as nx
 
@@ -270,6 +271,46 @@ def build_import_graph(
 
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=8)
+def _build_import_graph_cached(
+    root: str,
+    ignore: Tuple[str, ...],
+    max_file_size_bytes: int | None,
+    parse_timeout_s: float | None,
+) -> nx.DiGraph:
+    return build_import_graph(
+        Path(root),
+        ignore=ignore,
+        max_file_size_bytes=max_file_size_bytes,
+        parse_timeout_s=parse_timeout_s,
+    )
+
+
+def build_import_graph_cached(
+    root: Path | str,
+    *,
+    ignore: Iterable[str] | None = None,
+    max_file_size_bytes: int | None = 1_000_000,
+    parse_timeout_s: float | None = None,
+) -> nx.DiGraph:
+    """Cached variant of :func:`build_import_graph`.
+
+    The cache key includes the normalized root, ignore patterns, max file size,
+    and parse timeout. This ensures partial or failed builds are reused during
+    the same analysis cycle instead of retried.
+    """
+    normalized_root = str(Path(resolve_path(root)).resolve())
+    ignore_key = tuple(sorted(ignore or ()))
+    return _build_import_graph_cached(
+        normalized_root,
+        ignore_key,
+        max_file_size_bytes,
+        parse_timeout_s,
+    )
+
+
+# ---------------------------------------------------------------------------
+
 def _tokenize_doc(doc: str) -> set[str]:
     return {t.lower() for t in ast.literal_eval(repr(doc)).split() if t.isidentifier()}
 
@@ -374,4 +415,4 @@ def cluster_modules(
     return mapping
 
 
-__all__ = ["build_import_graph", "cluster_modules"]
+__all__ = ["build_import_graph", "build_import_graph_cached", "cluster_modules"]

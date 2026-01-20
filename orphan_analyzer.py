@@ -19,7 +19,6 @@ Loaded classifiers are appended to :data:`DEFAULT_CLASSIFIERS` and participate
 in :func:`classify_module` evaluation.
 """
 
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Tuple, Protocol
 
@@ -35,10 +34,24 @@ try:  # Python 3.8+ standard library
 except Exception:  # pragma: no cover - fallback for older versions
     import importlib_metadata  # type: ignore
 
-from module_graph_analyzer import DEFAULT_IGNORED_DIRS, build_import_graph
+from module_graph_analyzer import DEFAULT_IGNORED_DIRS, build_import_graph_cached
 
 DEFAULT_GRAPH_PARSE_TIMEOUT_S = 2.0
 DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES = 500_000
+SAFE_GRAPH_IGNORES: Tuple[str, ...] = tuple(
+    dict.fromkeys(
+        DEFAULT_IGNORED_DIRS
+        + (
+            ".git",
+            "__pycache__",
+            ".venv",
+            "node_modules",
+            "build",
+            "dist",
+            "logs",
+        )
+    )
+)
 
 try:  # optional dependency
     from radon.complexity import cc_visit  # type: ignore
@@ -241,7 +254,11 @@ def _redundant_classifier(
         graph = metrics.get("_import_graph")
         if graph is None:
             root = metrics.get("_graph_root") or module_path.parent
-            graph = _cached_import_graph(root, DEFAULT_IGNORED_DIRS, DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES)
+            graph = _cached_import_graph(
+                root,
+                SAFE_GRAPH_IGNORES,
+                DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
+            )
         if not graph.graph.get("build_complete", True):
             return None
         if module_path.name == "__init__.py":
@@ -261,44 +278,16 @@ def _redundant_classifier(
     return None
 
 
-def _normalized_root(root: Path) -> str:
-    return str(root.resolve())
-
-
-def _root_mtime(root: Path) -> float:
-    try:
-        return root.stat().st_mtime
-    except Exception:  # pragma: no cover - best effort
-        return 0.0
-
-
-@lru_cache(maxsize=8)
-def _cached_import_graph_by_key(
-    root: str,
-    ignore: Tuple[str, ...],
-    max_file_size_bytes: int,
-    root_mtime: float,
-) -> Any:
-    normalized = Path(root)
-    return build_import_graph(
-        normalized,
-        ignore=ignore,
-        max_file_size_bytes=max_file_size_bytes,
-        parse_timeout_s=DEFAULT_GRAPH_PARSE_TIMEOUT_S,
-    )
-
-
 def _cached_import_graph(
     root: Path,
     ignore: Iterable[str],
     max_file_size_bytes: int,
 ) -> Any:
-    ignore_key = tuple(sorted(ignore))
-    return _cached_import_graph_by_key(
-        _normalized_root(root),
-        ignore_key,
-        max_file_size_bytes,
-        _root_mtime(root),
+    return build_import_graph_cached(
+        root,
+        ignore=tuple(sorted(ignore)),
+        max_file_size_bytes=max_file_size_bytes,
+        parse_timeout_s=DEFAULT_GRAPH_PARSE_TIMEOUT_S,
     )
 
 
@@ -372,7 +361,7 @@ def classify_module(
         try:
             import_graph = _cached_import_graph(
                 graph_root,
-                DEFAULT_IGNORED_DIRS,
+                SAFE_GRAPH_IGNORES,
                 DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
             )
         except Exception:  # pragma: no cover - best effort
