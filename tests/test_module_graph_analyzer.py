@@ -1,6 +1,7 @@
 import json
 
 from scripts.generate_module_map import generate_module_map
+import module_graph_analyzer
 from module_graph_analyzer import build_import_graph, cluster_modules
 
 
@@ -43,3 +44,18 @@ def test_cluster_modules_direct(tmp_path):
     graph = build_import_graph(tmp_path)
     mapping = cluster_modules(graph)
     assert mapping['a'] == mapping['b']
+
+
+def test_build_import_graph_permission_error(monkeypatch, tmp_path):
+    def fake_walk(root, topdown=True, onerror=None, followlinks=False):
+        if onerror is not None:
+            onerror(PermissionError("no access"))
+        if False:
+            yield None
+
+    monkeypatch.setattr(module_graph_analyzer.os, "walk", fake_walk)
+
+    graph = build_import_graph(tmp_path)
+
+    assert graph.graph["build_complete"] is False
+    assert graph.graph["skipped_files"] == 1
