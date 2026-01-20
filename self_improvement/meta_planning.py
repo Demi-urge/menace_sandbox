@@ -5,7 +5,7 @@ optimization using the optional :class:`MetaWorkflowPlanner` component.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Sequence
 
 from importlib import import_module
 
@@ -1449,6 +1449,55 @@ async def self_improvement_cycle(
         snapshot_tracker = SnapshotTracker()
     except Exception:  # pragma: no cover - best effort fallback
         snapshot_tracker = None
+    stage_timeout = float(getattr(cfg, "meta_planner_stage_timeout", 300.0))
+    cycle_workflow_id = "meta_planning_cycle"
+
+    class _StageTimeoutError(RuntimeError):
+        """Signals a stage timeout in the meta planning cycle."""
+
+        def __init__(self, stage: str) -> None:
+            super().__init__(f"meta planning stage timed out: {stage}")
+            self.stage = stage
+
+    async def _run_stage(stage: str, action: Awaitable[Any], *, workflow_id: str) -> Any:
+        start = time.perf_counter()
+        logger.info(
+            "meta planning stage start",
+            extra=log_record(
+                stage=stage,
+                workflow_id=workflow_id,
+                elapsed_s=0.0,
+                timeout_s=stage_timeout,
+            ),
+        )
+        try:
+            result = await asyncio.wait_for(action, timeout=stage_timeout)
+        except asyncio.TimeoutError:
+            elapsed = time.perf_counter() - start
+            logger.warning(
+                "meta planning stage timeout",
+                extra=log_record(
+                    stage=stage,
+                    workflow_id=workflow_id,
+                    elapsed_s=elapsed,
+                    timeout_s=stage_timeout,
+                ),
+            )
+            raise _StageTimeoutError(stage) from None
+        except Exception as exc:
+            elapsed = time.perf_counter() - start
+            logger.exception(
+                "meta planning stage failed",
+                extra=log_record(stage=stage, workflow_id=workflow_id, elapsed_s=elapsed),
+                exc_info=exc,
+            )
+            raise
+        elapsed = time.perf_counter() - start
+        logger.info(
+            "meta planning stage completed",
+            extra=log_record(stage=stage, workflow_id=workflow_id, elapsed_s=elapsed),
+        )
+        return result
 
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])
@@ -1651,35 +1700,52 @@ async def self_improvement_cycle(
                     continue
 
             if snapshot_tracker is not None:
-                snapshot_tracker.capture(
-                    "before",
-                    {
-                        "files": list(repo_path.rglob("*.py")),
-                        "roi": BASELINE_TRACKER.current("roi"),
-                        "sandbox_score": get_latest_sandbox_score(
-                            SandboxSettings().sandbox_score_db
-                        ),
-                    },
-                    repo_path=repo_path,
+                await _run_stage(
+                    "snapshot_before",
+                    asyncio.to_thread(
+                        snapshot_tracker.capture,
+                        "before",
+                        {
+                            "files": list(repo_path.rglob("*.py")),
+                            "roi": BASELINE_TRACKER.current("roi"),
+                            "sandbox_score": get_latest_sandbox_score(
+                                SandboxSettings().sandbox_score_db
+                            ),
+                        },
+                        repo_path=repo_path,
+                    ),
+                    workflow_id=cycle_workflow_id,
                 )
-            records = planner.discover_and_persist(workflows)
+            records = await _run_stage(
+                "discover_and_persist",
+                asyncio.to_thread(planner.discover_and_persist, workflows),
+                workflow_id=cycle_workflow_id,
+            )
             active: list[list[str]] = []
             orphan_workflows: list[str] = []
             if DISCOVER_ORPHANS:
                 try:
-                    integrate_result = await integrate_orphans(
-                        recursive=RECURSIVE_ORPHANS
+                    integrate_result = await _run_stage(
+                        "integrate_orphans",
+                        integrate_orphans(recursive=RECURSIVE_ORPHANS),
+                        workflow_id=cycle_workflow_id,
                     )
                     if integrate_result:
                         orphan_workflows.extend(
                             w for w in integrate_result if isinstance(w, str)
                         )
+                except _StageTimeoutError:
+                    raise
                 except Exception:
                     logger.exception("orphan integration failed")
 
                 if RECURSIVE_ORPHANS:
                     try:
-                        scan_result = await post_round_orphan_scan(recursive=True)
+                        scan_result = await _run_stage(
+                            "post_round_orphan_scan",
+                            post_round_orphan_scan(recursive=True),
+                            workflow_id=cycle_workflow_id,
+                        )
                         integrated = (
                             scan_result.get("integrated")
                             if isinstance(scan_result, dict)
@@ -1689,6 +1755,8 @@ async def self_improvement_cycle(
                             orphan_workflows.extend(
                                 w for w in integrated if isinstance(w, str)
                             )
+                    except _StageTimeoutError:
+                        raise
                     except Exception:
                         logger.exception("recursive orphan discovery failed")
 
@@ -1920,16 +1988,21 @@ async def self_improvement_cycle(
                 planner.cluster_map.pop(tuple(chain), None)
 
             if snapshot_tracker is not None:
-                snapshot_tracker.capture(
-                    "after",
-                    {
-                        "files": list(repo_path.rglob("*.py")),
-                        "roi": BASELINE_TRACKER.current("roi"),
-                        "sandbox_score": get_latest_sandbox_score(
-                            SandboxSettings().sandbox_score_db
-                        ),
-                    },
-                    repo_path=repo_path,
+                await _run_stage(
+                    "snapshot_after",
+                    asyncio.to_thread(
+                        snapshot_tracker.capture,
+                        "after",
+                        {
+                            "files": list(repo_path.rglob("*.py")),
+                            "roi": BASELINE_TRACKER.current("roi"),
+                            "sandbox_score": get_latest_sandbox_score(
+                                SandboxSettings().sandbox_score_db
+                            ),
+                        },
+                        repo_path=repo_path,
+                    ),
+                    workflow_id=cycle_workflow_id,
                 )
                 delta = snapshot_tracker.delta()
                 _debug_cycle(
@@ -1938,6 +2011,12 @@ async def self_improvement_cycle(
                     entropy_delta=delta.get("entropy", 0.0),
                 )
             cycle_ok = True
+        except _StageTimeoutError as exc:
+            _debug_cycle("timeout", reason=exc.stage)
+            logger.warning(
+                "meta planning stage timed out; deferring to next tick",
+                extra=log_record(stage=exc.stage, workflow_id=cycle_workflow_id),
+            )
         except Exception as exc:  # pragma: no cover - planner is best effort
             _debug_cycle("error", reason=str(exc))
             logger.debug("error", extra=log_record(err=str(exc)))
