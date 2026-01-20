@@ -1621,7 +1621,25 @@ class SelfCodingManager:
             post_patch_timeout_secs = default_timeout
         if post_patch_timeout_secs <= 0:
             post_patch_timeout_secs = default_timeout
-        heartbeat_interval = 45.0
+        default_heartbeat = 45.0
+        raw_heartbeat = os.getenv("POST_PATCH_HEARTBEAT_SECS")
+        if raw_heartbeat:
+            try:
+                heartbeat_interval = float(raw_heartbeat)
+            except ValueError:
+                self.logger.warning(
+                    "invalid POST_PATCH_HEARTBEAT_SECS value; using default",
+                    extra={"value": raw_heartbeat, "default": default_heartbeat},
+                )
+                heartbeat_interval = default_heartbeat
+        else:
+            heartbeat_interval = default_heartbeat
+        if heartbeat_interval < 30.0 or heartbeat_interval > 60.0:
+            self.logger.warning(
+                "POST_PATCH_HEARTBEAT_SECS outside 30-60s range; using default",
+                extra={"value": heartbeat_interval, "default": default_heartbeat},
+            )
+            heartbeat_interval = default_heartbeat
 
         def _run_step_with_timeout(
             step_name: str,

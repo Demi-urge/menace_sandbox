@@ -675,11 +675,14 @@ class SelfTestService:
             if env_settings.self_test_timeout is not None
             else container_timeout
         )
-        self.run_timeout = (
-            env_settings.self_test_run_timeout
-            if env_settings.self_test_run_timeout is not None
-            else env_settings.self_test_timeout
-        )
+        if env_settings.self_test_run_timeout is not None:
+            self.run_timeout = float(env_settings.self_test_run_timeout)
+        elif env_settings.self_test_timeout is not None:
+            self.run_timeout = float(env_settings.self_test_timeout)
+        else:
+            self.run_timeout = float(container_timeout)
+        if self.run_timeout <= 0:
+            self.run_timeout = float(container_timeout)
         self.offline_install = settings.menace_offline_install
         self.report_dir = Path(report_dir)
         self.image_tar_path = env_settings.menace_self_test_image_tar
@@ -3084,15 +3087,12 @@ class SelfTestService:
 
         start_time = time.monotonic()
         try:
-            if self.run_timeout is not None:
-                asyncio.run(
-                    asyncio.wait_for(
-                        self._run_once(refresh_orphans=refresh_orphans),
-                        timeout=self.run_timeout,
-                    )
+            asyncio.run(
+                asyncio.wait_for(
+                    self._run_once(refresh_orphans=refresh_orphans),
+                    timeout=self.run_timeout,
                 )
-            else:
-                asyncio.run(self._run_once(refresh_orphans=refresh_orphans))
+            )
         except asyncio.TimeoutError:
             runtime = time.monotonic() - start_time
             self.logger.error("self-test run timed out")
