@@ -265,7 +265,7 @@ def _redundant_classifier(
                     DEFAULT_GRAPH_MAX_FILE_SIZE_BYTES,
                 )
             except Exception as exc:  # pragma: no cover - best effort
-                logger.warning(
+                logger.debug(
                     "Import graph build failed for redundancy check.",
                     exc_info=exc,
                     extra={"repo_root": str(root)},
