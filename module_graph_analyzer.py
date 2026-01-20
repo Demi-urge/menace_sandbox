@@ -212,29 +212,76 @@ def build_import_graph(
     for mod, file in modules.items():
         if max_file_size_bytes is not None:
             try:
-                if file.stat().st_size > max_file_size_bytes:
+                file_size = file.stat().st_size
+                if file_size > max_file_size_bytes:
                     build_complete = False
                     skipped_files += 1
+                    logger.debug(
+                        "Skipping import graph parse for oversized file.",
+                        extra={
+                            "path": str(file),
+                            "file_size": file_size,
+                            "max_file_size_bytes": max_file_size_bytes,
+                        },
+                    )
                     continue
-            except OSError:
+            except OSError as exc:
                 build_complete = False
                 skipped_files += 1
+                logger.debug(
+                    "Skipping import graph parse due to stat error.",
+                    exc_info=exc,
+                    extra={"path": str(file)},
+                )
                 continue
         try:
             text = file.read_text()
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as exc:
             build_complete = False
             skipped_files += 1
+            logger.debug(
+                "Skipping import graph parse due to decode error.",
+                exc_info=exc,
+                extra={"path": str(file)},
+            )
             continue
-        except OSError:
+        except OSError as exc:
             build_complete = False
             skipped_files += 1
+            logger.debug(
+                "Skipping import graph parse due to read error.",
+                exc_info=exc,
+                extra={"path": str(file)},
+            )
             continue
         try:
             tree = _parse_source(text, str(file), parse_timeout_s)
-        except (SyntaxError, UnicodeDecodeError, _ParseTimeoutError):
+        except SyntaxError as exc:
             build_complete = False
             skipped_files += 1
+            logger.debug(
+                "Skipping import graph parse due to syntax error.",
+                exc_info=exc,
+                extra={"path": str(file)},
+            )
+            continue
+        except UnicodeDecodeError as exc:
+            build_complete = False
+            skipped_files += 1
+            logger.debug(
+                "Skipping import graph parse due to decode error.",
+                exc_info=exc,
+                extra={"path": str(file)},
+            )
+            continue
+        except _ParseTimeoutError as exc:
+            build_complete = False
+            skipped_files += 1
+            logger.debug(
+                "Skipping import graph parse due to parse timeout.",
+                exc_info=exc,
+                extra={"path": str(file)},
+            )
             continue
         except Exception:
             build_complete = False
