@@ -236,6 +236,8 @@ def _redundant_classifier(
     try:
         root = module_path.parent
         graph = build_import_graph(root)
+        if not graph.graph.get("build_complete", True):
+            return None
         if module_path.name == "__init__.py":
             mod = module_path.parent.name
         else:
