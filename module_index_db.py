@@ -148,32 +148,40 @@ class ModuleIndexDB:
         """Return repository-relative POSIX path for ``name``."""
         if not name or not name.strip() or "://" in name:
             return name
-        repo_path = Path(get_project_root()).absolute()
         norm_str = os.path.normpath(str(name))
         norm_path = Path(norm_str).expanduser()
         norm_posix = norm_path.as_posix()
+        if not norm_path.is_absolute():
+            return norm_posix
 
-        if norm_path.is_absolute():
-            try:
-                return norm_path.relative_to(repo_path).as_posix()
-            except Exception:
-                pass
+        try:
+            repo_path = Path(os.path.abspath(get_project_root()))
+            abs_path = Path(os.path.abspath(norm_path))
+            abs_posix = abs_path.as_posix()
 
-        resolve_enabled = os.getenv("SANDBOX_RESOLVE_MODULE_PATHS") == "1"
-        if resolve_enabled:
-            candidate = norm_path if norm_path.is_absolute() else repo_path / norm_path
-            if candidate.exists():
+            if repo_path.is_absolute() and abs_path.is_absolute():
+                try:
+                    return abs_path.relative_to(repo_path).as_posix()
+                except Exception:
+                    pass
+
+            resolve_enabled = os.getenv("SANDBOX_RESOLVE_MODULE_PATHS") == "1"
+            if resolve_enabled and abs_path.exists():
                 try:
                     # Avoid unconditional resolve(): bad or looping module_map paths can stall.
-                    resolved = candidate.resolve()
-                    try:
-                        return resolved.relative_to(repo_path).as_posix()
-                    except Exception:
-                        return resolved.as_posix()
-                except (OSError, RuntimeError, ValueError):
+                    resolved = Path(os.path.abspath(abs_path))
+                    if repo_path.is_absolute() and resolved.is_absolute():
+                        try:
+                            return resolved.relative_to(repo_path).as_posix()
+                        except Exception:
+                            return resolved.as_posix()
+                    return resolved.as_posix()
+                except (OSError, RuntimeError):
                     return norm_posix
 
-        return norm_posix
+            return abs_posix
+        except (OSError, RuntimeError):
+            return norm_posix
 
     # --------------------------------------------------------------
     def get(self, name: str) -> int:
