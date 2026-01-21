@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import time
 from concurrent.futures import CancelledError, InvalidStateError
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
@@ -895,22 +896,85 @@ def discover_recursive_orphans(
         workers = int(workers_env) if workers_env is not None else os.cpu_count() or 1
     except ValueError:
         workers = os.cpu_count() or 1
+    timeout_env = os.getenv("SANDBOX_DISCOVERY_PARSE_TIMEOUT_SECONDS")
+    try:
+        parse_timeout = float(timeout_env) if timeout_env is not None else 30.0
+    except ValueError:
+        parse_timeout = 30.0
 
     module_paths = {mod: p for mod, p in candidates}
     parse_iter: Iterable[tuple[str, set[str]] | None]
+
+    def _shutdown_executor(executor: concurrent.futures.ProcessPoolExecutor) -> None:
+        try:
+            executor.shutdown(cancel_futures=True)
+        except TypeError:
+            executor.shutdown()
+
+    def _parse_with_pool(max_workers: int) -> list[tuple[str, set[str]] | None]:
+        cancelled = 0
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_parse_file, c): c for c in candidates}
+            start_times = {future: time.monotonic() for future in futures}
+            pending = set(futures)
+            results: list[tuple[str, set[str]] | None] = []
+            try:
+                while pending:
+                    try:
+                        for future in concurrent.futures.as_completed(
+                            pending, timeout=parse_timeout
+                        ):
+                            pending.remove(future)
+                            results.append(future.result())
+                    except concurrent.futures.TimeoutError as exc:
+                        now = time.monotonic()
+                        timed_out = [
+                            future
+                            for future in pending
+                            if now - start_times[future] > parse_timeout
+                        ]
+                        if timed_out:
+                            for future in timed_out:
+                                if future.cancel():
+                                    cancelled += 1
+                            logger.error(
+                                "discovery parse timed out after %.2fs; cancelled %s tasks",
+                                parse_timeout,
+                                cancelled,
+                            )
+                            _shutdown_executor(ex)
+                            raise TimeoutError("discovery parse timeout") from exc
+                return results
+            except (BrokenProcessPool, InvalidStateError, CancelledError) as exc:
+                for future in pending:
+                    if future.cancel():
+                        cancelled += 1
+                logger.error(
+                    "discovery parse pool failure after %.2fs; cancelled %s tasks: %s",
+                    parse_timeout,
+                    cancelled,
+                    exc,
+                )
+                _shutdown_executor(ex)
+                raise
+
     if workers <= 1:
         parse_iter = (_parse_file(c) for c in candidates)
     else:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as ex:
-            parse_iter = ex.map(_parse_file, candidates)
+        try:
+            parse_iter = _parse_with_pool(workers)
+        except (TimeoutError, BrokenProcessPool, InvalidStateError, CancelledError):
+            if _shutdown_in_progress():
+                logger.info("discovery cancelled due to shutdown")
+                return {}
+            logger.warning(
+                "discovery parse pool failed after %.2fs; falling back to serial parse",
+                parse_timeout,
+            )
             try:
-                results = list(parse_iter)
-            except (BrokenProcessPool, InvalidStateError, CancelledError):
-                if _shutdown_in_progress():
-                    logger.info("discovery cancelled due to shutdown")
-                    return {}
-                raise
-        parse_iter = results
+                parse_iter = _parse_with_pool(1)
+            except (TimeoutError, BrokenProcessPool, InvalidStateError, CancelledError):
+                parse_iter = [_parse_file(c) for c in candidates]
 
     for result in parse_iter:
         if not result:
