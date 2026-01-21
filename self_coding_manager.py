@@ -3994,6 +3994,14 @@ def internalize_coding_bot(
                 or getattr(data_bot, "event_bus", None)
             )
             module_resolution_timer = _start_step("module path resolution")
+            module_candidates: dict[str, str | None] = {
+                "graph_node": None,
+                "registry_known": None,
+                "modules_cache": None,
+                "importlib_spec": None,
+                "imported_module": None,
+                "dynamic_router": None,
+            }
             try:
                 node = bot_registry.graph.nodes.get(bot_name) if bot_registry else None
                 if node:
@@ -4001,6 +4009,7 @@ def internalize_coding_bot(
                     if module_str:
                         module_path = Path(module_str)
                         module_hint = str(module_str)
+                        module_candidates["graph_node"] = str(module_str)
             except Exception:
                 module_path = None
             if module_path is None or not module_path.exists():
@@ -4012,6 +4021,8 @@ def internalize_coding_bot(
                         module_entry = bot_registry.get_known_module_path(bot_name)
                 except Exception:
                     module_entry = None
+                if module_entry is not None:
+                    module_candidates["registry_known"] = str(module_entry)
                 if module_entry is None and bot_name in getattr(
                     bot_registry, "modules", {}
                 ):
@@ -4019,6 +4030,9 @@ def internalize_coding_bot(
                         module_entry = bot_registry.modules.get(bot_name)
                     except Exception:
                         module_entry = None
+                    else:
+                        if module_entry is not None:
+                            module_candidates["modules_cache"] = str(module_entry)
                 if module_entry:
                     if module_hint is None:
                         module_hint = str(module_entry)
@@ -4033,6 +4047,7 @@ def internalize_coding_bot(
                                 spec = None
                             if spec and getattr(spec, "origin", None):
                                 module_file = spec.origin
+                                module_candidates["importlib_spec"] = spec.origin
                             if module_file is None:
                                 try:
                                     imported_module = importlib.import_module(
@@ -4044,8 +4059,28 @@ def internalize_coding_bot(
                                     module_file = getattr(
                                         imported_module, "__file__", None
                                     )
+                                    module_candidates["imported_module"] = module_file
                             if module_file:
                                 dotted_module_path = Path(module_file)
+                            if module_file is None and hasattr(
+                                _path_router, "resolve_module_path"
+                            ):
+                                try:
+                                    resolved = _path_router.resolve_module_path(
+                                        str(module_entry)
+                                    )
+                                except FileNotFoundError:
+                                    resolved = None
+                                except Exception:
+                                    resolved = None
+                                    manager.logger.debug(
+                                        "dynamic_path_router failed to resolve %s",
+                                        module_entry,
+                                        exc_info=True,
+                                    )
+                                if resolved is not None:
+                                    module_candidates["dynamic_router"] = str(resolved)
+                                    dotted_module_path = Path(resolved)
                     module_path = dotted_module_path or Path(module_entry)
             if module_path is None or not (module_path and module_path.exists()):
                 try:
@@ -4060,6 +4095,16 @@ def internalize_coding_bot(
                             module_path = candidate
             if module_path is not None and module_path.exists():
                 module_path = module_path.resolve()
+                if node is not None:
+                    try:
+                        node["module"] = str(module_path)
+                    except Exception:
+                        pass
+                if bot_registry is not None and hasattr(bot_registry, "modules"):
+                    try:
+                        bot_registry.modules[bot_name] = str(module_path)
+                    except Exception:  # pragma: no cover - best effort
+                        pass
                 if bot_registry is not None and hasattr(
                     bot_registry, "clear_module_path_failures"
                 ):
@@ -4118,6 +4163,21 @@ def internalize_coding_bot(
                 )
                 if hasattr(manager, "logger"):
                     try:
+                        manager.logger.error(
+                            "module_path resolution candidates for %s: graph_node=%s registry=%s modules_cache=%s importlib_spec=%s imported_module=%s dynamic_router=%s",
+                            bot_name,
+                            module_candidates.get("graph_node"),
+                            module_candidates.get("registry_known"),
+                            module_candidates.get("modules_cache"),
+                            module_candidates.get("importlib_spec"),
+                            module_candidates.get("imported_module"),
+                            module_candidates.get("dynamic_router"),
+                            extra={
+                                "bot": bot_name,
+                                "module_path": module_hint,
+                                "module_candidates": module_candidates,
+                            },
+                        )
                         manager.logger.error(
                             "module_path resolution failed for %s; missing module path: %s",
                             bot_name,
