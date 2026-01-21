@@ -2202,10 +2202,6 @@ def start_self_improvement_cycle(
             return default
         return raw.lower() in {"1", "true", "yes", "on"}
 
-    loop_heartbeat_interval = _env_float(
-        "SELF_IMPROVEMENT_LOOP_HEARTBEAT_SECONDS", max(1.0, min(5.0, interval / 2.0))
-    )
-
     class _CycleThread:
         def __init__(self, stop_event: threading.Event) -> None:
             self._loop = asyncio.new_event_loop()
@@ -2232,9 +2228,7 @@ def start_self_improvement_cycle(
                     return
                 if not self._loop.is_running():
                     return
-                heartbeat_handle = self._loop.call_later(
-                    loop_heartbeat_interval, _loop_heartbeat
-                )
+                heartbeat_handle = self._loop.call_soon(_loop_heartbeat)
             kwargs: dict[str, Any] = {
                 "interval": interval,
                 "event_bus": event_bus,
@@ -2342,6 +2336,12 @@ def start_self_improvement_cycle(
                     ),
                 )
 
+        def request_stop(self) -> None:
+            self._stop_event.set()
+            self._loop.call_soon_threadsafe(
+                lambda: self._task.cancel() if self._task is not None else None
+            )
+
         def state(self) -> dict[str, Any]:
             task = self._task
             try:
@@ -2374,11 +2374,16 @@ def start_self_improvement_cycle(
         thread = _CycleThread(local_stop_event)
         return thread, local_stop_event
 
-    def _restart_cycle_thread(logger: logging.Logger, reason: str) -> None:
+    def _restart_cycle_thread(
+        logger: logging.Logger, reason: str, *, wait_on_stop: bool = True
+    ) -> None:
         current_thread = monitor_state.get("thread")
         if current_thread is not None:
             try:
-                current_thread.stop(timeout=stop_timeout)
+                if wait_on_stop:
+                    current_thread.stop(timeout=stop_timeout)
+                else:
+                    current_thread.request_stop()
             except Exception:
                 logger.exception(
                     "cycle stop failed during restart",
@@ -2483,38 +2488,46 @@ def start_self_improvement_cycle(
             stall_message = "self improvement cycle stalled"
             if stack_dump:
                 stall_message = f"{stall_message}\n{stack_dump}"
-            watchdog_logger.warning(
-                stall_message,
-                extra=log_record(
-                    last_tick_timestamp=last_tick,
-                    last_tick_age_seconds=last_tick_age,
-                    tick_count=snapshot.get("tick_count"),
-                    tick_thread_name=snapshot.get("last_tick_thread_name"),
-                    tick_thread_ident=snapshot.get("last_tick_thread_ident"),
-                    loop_heartbeat_timestamp=last_heartbeat,
-                    loop_heartbeat_age_seconds=last_heartbeat_age,
-                    loop_heartbeat_count=heartbeat_snapshot.get("heartbeat_count"),
-                    loop_heartbeat_thread_name=heartbeat_snapshot.get(
-                        "last_heartbeat_thread_name"
-                    ),
-                    loop_heartbeat_thread_ident=heartbeat_thread_ident,
-                    watchdog_threshold_seconds=watchdog_threshold,
-                    thread_state=thread_state,
-                    stalled_due_to_heartbeat=heartbeat_stalled,
-                    stall_stack_trace=stack_dump,
+            log_payload = log_record(
+                last_tick_timestamp=last_tick,
+                last_tick_age_seconds=last_tick_age,
+                tick_count=snapshot.get("tick_count"),
+                tick_thread_name=snapshot.get("last_tick_thread_name"),
+                tick_thread_ident=snapshot.get("last_tick_thread_ident"),
+                loop_heartbeat_timestamp=last_heartbeat,
+                loop_heartbeat_age_seconds=last_heartbeat_age,
+                loop_heartbeat_count=heartbeat_snapshot.get("heartbeat_count"),
+                loop_heartbeat_thread_name=heartbeat_snapshot.get(
+                    "last_heartbeat_thread_name"
                 ),
+                loop_heartbeat_thread_ident=heartbeat_thread_ident,
+                watchdog_threshold_seconds=watchdog_threshold,
+                thread_state=thread_state,
+                stalled_due_to_heartbeat=heartbeat_stalled,
+                stall_stack_trace=stack_dump,
             )
+            if heartbeat_stalled:
+                watchdog_logger.critical(stall_message, extra=log_payload)
+            else:
+                watchdog_logger.warning(stall_message, extra=log_payload)
             if watchdog_restart:
+                restart_reason = (
+                    "watchdog_restart_heartbeat" if heartbeat_stalled else "watchdog_restart"
+                )
                 watchdog_logger.warning(
                     "restarting self improvement cycle after stall",
                     extra=log_record(
-                        reason="watchdog_restart",
+                        reason=restart_reason,
                         last_tick_timestamp=last_tick,
                         last_tick_age_seconds=last_tick_age,
                         thread_state=thread_state,
                     ),
                 )
-                _restart_cycle_thread(watchdog_logger, "watchdog_restart")
+                _restart_cycle_thread(
+                    watchdog_logger,
+                    restart_reason,
+                    wait_on_stop=not heartbeat_stalled,
+                )
 
     watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
     watchdog_thread.start()
