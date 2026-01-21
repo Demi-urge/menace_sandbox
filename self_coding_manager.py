@@ -3725,7 +3725,11 @@ def internalize_coding_bot(
     def _log_internalize_stack(reason: str) -> None:
         if not logger_ref.isEnabledFor(logging.DEBUG):
             return
-        stack_trace = "".join(traceback.format_stack(limit=_stack_trace_limit()))
+        stack_entries = traceback.format_stack()
+        stack_limit = _stack_trace_limit()
+        if stack_limit is not None:
+            stack_entries = stack_entries[-stack_limit:]
+        stack_trace = "".join(stack_entries)
         call_source = None
         stack_summary = traceback.extract_stack(limit=3)
         if len(stack_summary) > 1:
@@ -3814,6 +3818,9 @@ def internalize_coding_bot(
             return _inflight_manager_fallback()
         internalize_lock = _get_internalize_lock(bot_name)
         if not internalize_lock.acquire(blocking=False):
+            if not logged_internalize_stack:
+                _log_internalize_stack("lock-in-progress")
+                logged_internalize_stack = True
             logger_ref.info(
                 "internalize_coding_bot already in progress for %s; skipping",
                 bot_name,
