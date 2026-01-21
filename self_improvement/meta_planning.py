@@ -2250,9 +2250,10 @@ def start_self_improvement_cycle(
 
     class _CycleThread:
         def __init__(self, stop_event: threading.Event) -> None:
-            self._loop = asyncio.new_event_loop()
+            self._loop: asyncio.AbstractEventLoop | None = None
             self._task: asyncio.Task[None] | None = None
             self._heartbeat_task: asyncio.Task[None] | None = None
+            self._stop_task: asyncio.Task[None] | None = None
             self._exc: queue.Queue[BaseException] = queue.Queue()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._stop_event = stop_event
@@ -2260,22 +2261,15 @@ def start_self_improvement_cycle(
             self._should_encode = should_encode
             self._evaluate_cycle = evaluate_cycle
             self._heartbeat_interval = max(1.0, min(5.0, interval / 2.0))
+            self._cancel_requested = threading.Event()
 
         # --------------------------------------------------
         def _run(self) -> None:
             from inspect import signature
 
             print("💡 SI-8: starting self-improvement event loop")
-            asyncio.set_event_loop(self._loop)
             monitor_state["loop_heartbeat_started"] = time.monotonic()
 
-            async def _loop_heartbeat() -> None:
-                while True:
-                    if self._stop_event.is_set():
-                        break
-                    monitor_state["last_loop_heartbeat"] = time.monotonic()
-                    loop_heartbeat_state.beat()
-                    await asyncio.sleep(self._heartbeat_interval)
             kwargs: dict[str, Any] = {
                 "interval": interval,
                 "event_bus": event_bus,
@@ -2291,48 +2285,72 @@ def start_self_improvement_cycle(
             if "evaluate_cycle" in signature(self_improvement_cycle).parameters:
                 kwargs["evaluate_cycle"] = self._evaluate_cycle
             print("💡 SI-9: scheduling self-improvement cycle coroutine")
-            self._task = self._loop.create_task(
-                self_improvement_cycle(workflow_plan, **kwargs)
-            )
-            self._task.add_done_callback(self._finished)
-            self._heartbeat_task = self._loop.create_task(_loop_heartbeat())
-            try:
-                self._loop.run_forever()
-            finally:
-                if self._heartbeat_task is not None:
-                    self._heartbeat_task.cancel()
-                    try:
-                        self._loop.run_until_complete(self._heartbeat_task)
-                    except asyncio.CancelledError:
-                        pass
-                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
-                self._loop.close()
 
-        def _finished(self, task: asyncio.Task[None]) -> None:
-            if task.cancelled():
-                msg = getattr(task, "_cancel_message", None)
-                reason = str(msg) if msg else "cancelled"
-                logger = get_logger(__name__)
-                logger.info(
-                    "self improvement cycle cancelled",
-                    extra=log_record(reason=reason),
+            async def _loop_heartbeat() -> None:
+                while True:
+                    if self._stop_event.is_set() or self._cancel_requested.is_set():
+                        break
+                    monitor_state["last_loop_heartbeat"] = time.monotonic()
+                    loop_heartbeat_state.beat()
+                    await asyncio.sleep(self._heartbeat_interval)
+
+            async def _run_cycle() -> None:
+                await self_improvement_cycle(workflow_plan, **kwargs)
+
+            async def _await_stop() -> None:
+                await asyncio.to_thread(self._stop_event.wait)
+
+            async def _main() -> None:
+                self._task = asyncio.create_task(_run_cycle())
+                self._heartbeat_task = asyncio.create_task(_loop_heartbeat())
+                self._stop_task = asyncio.create_task(_await_stop())
+                done, pending = await asyncio.wait(
+                    {self._task, self._stop_task},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                try:  # pragma: no cover - metrics are best effort
-                    from menace_sandbox.metrics_exporter import self_improvement_failure_total
+                if self._stop_task in done and self._task not in done:
+                    self._task.cancel()
+                for task in pending:
+                    task.cancel()
+                task_list = [self._task, self._heartbeat_task, self._stop_task]
+                results = await asyncio.gather(
+                    *task_list, return_exceptions=True  # type: ignore[arg-type]
+                )
+                for task, result in zip(task_list, results):
+                    if not isinstance(result, BaseException):
+                        continue
+                    if (
+                        task is self._task
+                        and isinstance(result, asyncio.CancelledError)
+                    ):
+                        msg = getattr(self._task, "_cancel_message", None)
+                        reason = str(msg) if msg else "cancelled"
+                        logger = get_logger(__name__)
+                        logger.info(
+                            "self improvement cycle cancelled",
+                            extra=log_record(reason=reason),
+                        )
+                        try:  # pragma: no cover - metrics are best effort
+                            from menace_sandbox.metrics_exporter import (
+                                self_improvement_failure_total,
+                            )
 
-                    self_improvement_failure_total.labels(reason=reason).inc()
-                except Exception as exc:
-                    logger.debug(
-                        "cancellation metric update failed",
-                        extra=log_record(reason=reason),
-                        exc_info=exc,
-                    )
-            else:
-                try:
-                    task.result()
-                except BaseException as exc:  # pragma: no cover - best effort
-                    self._exc.put(exc)
-            self._loop.call_soon_threadsafe(self._loop.stop)
+                            self_improvement_failure_total.labels(reason=reason).inc()
+                        except Exception as exc:
+                            logger.debug(
+                                "cancellation metric update failed",
+                                extra=log_record(reason=reason),
+                                exc_info=exc,
+                            )
+                    elif task is self._task:
+                        self._exc.put(result)
+
+            try:
+                with asyncio.Runner() as runner:
+                    self._loop = runner.get_loop()
+                    runner.run(_main())
+            except BaseException as exc:  # pragma: no cover - best effort
+                self._exc.put(exc)
 
         # --------------------------------------------------
         def start(self) -> None:
@@ -2360,13 +2378,15 @@ def start_self_improvement_cycle(
             print("💡 SI-12: stopping self-improvement thread")
             effective_timeout = stop_timeout if timeout is None else timeout
             self._stop_event.set()
-            self._loop.call_soon_threadsafe(
-                lambda: self._task.cancel() if self._task is not None else None
-            )
-            try:
-                self._loop.call_soon_threadsafe(self._loop.stop)
-            except RuntimeError:
-                pass
+            self._cancel_requested.set()
+            loop = self._loop
+            if loop is not None:
+                try:
+                    loop.call_soon_threadsafe(
+                        lambda: self._task.cancel() if self._task is not None else None
+                    )
+                except RuntimeError:
+                    pass
             self._thread.join(effective_timeout)
             if self._thread.is_alive():
                 heartbeat_snapshot = loop_heartbeat_state.snapshot()
@@ -2376,7 +2396,7 @@ def start_self_improvement_cycle(
                     (now - last_heartbeat) if last_heartbeat is not None else None
                 )
                 try:
-                    loop_running = self._loop.is_running()
+                    loop_running = self._loop.is_running() if self._loop else False
                 except Exception:
                     loop_running = False
                 stack_dump = _get_thread_stack(self._thread.ident)
@@ -2407,14 +2427,20 @@ def start_self_improvement_cycle(
 
         def request_stop(self) -> None:
             self._stop_event.set()
-            self._loop.call_soon_threadsafe(
-                lambda: self._task.cancel() if self._task is not None else None
-            )
+            self._cancel_requested.set()
+            loop = self._loop
+            if loop is not None:
+                try:
+                    loop.call_soon_threadsafe(
+                        lambda: self._task.cancel() if self._task is not None else None
+                    )
+                except RuntimeError:
+                    pass
 
         def state(self) -> dict[str, Any]:
             task = self._task
             try:
-                loop_running = self._loop.is_running()
+                loop_running = self._loop.is_running() if self._loop else False
             except Exception:
                 loop_running = False
             return {
@@ -2430,8 +2456,11 @@ def start_self_improvement_cycle(
             def _record_ping() -> None:
                 loop_ping_state.ping()
 
+            loop = self._loop
+            if loop is None:
+                return False
             try:
-                self._loop.call_soon_threadsafe(_record_ping)
+                loop.call_soon_threadsafe(_record_ping)
                 return True
             except RuntimeError:
                 return False
