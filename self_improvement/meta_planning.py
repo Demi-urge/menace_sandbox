@@ -2296,8 +2296,17 @@ def start_self_improvement_cycle(
 
         def join(self, timeout: float | None = None) -> None:
             print("💡 SI-11: joining self-improvement thread")
-            self._thread.join(timeout)
+            effective_timeout = join_timeout if timeout is None else timeout
+            self._thread.join(effective_timeout)
             if self._thread.is_alive():
+                logger = get_logger(__name__)
+                logger.warning(
+                    "self improvement cycle zombie loop detected; continuing without waiting",
+                    extra=log_record(
+                        thread_ident=self._thread.ident,
+                        join_timeout_seconds=effective_timeout,
+                    ),
+                )
                 return
             if not self._exc.empty():
                 raise self._exc.get()
@@ -2354,6 +2363,9 @@ def start_self_improvement_cycle(
     watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", True)
     watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
     stop_timeout = _env_float("SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS", 5.0)
+    join_timeout = _env_float(
+        "SELF_IMPROVEMENT_CYCLE_JOIN_TIMEOUT_SECONDS", max(1.0, stop_timeout)
+    )
 
     monitor_state: dict[str, Any] = {"thread": None, "stop_event": None}
 
