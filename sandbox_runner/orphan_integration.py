@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable, Dict, List, TYPE_CHECKING, Tuple
 
 import json
+import os
 from datetime import datetime
 import sys
 import threading
@@ -86,13 +87,31 @@ def integrate_and_graph_orphans(
             if recursive:
                 from .orphan_discovery import discover_recursive_orphans
 
-                try:
-                    mapping = discover_recursive_orphans(str(repo))
-                except BrokenProcessPool:
+                mapping = None
+                max_attempts = 2
+                for attempt in range(1, max_attempts + 1):
                     if _shutdown_in_progress():
-                        log.info("orphan discovery halted during shutdown")
                         return _default_orphan_result()
-                    log.exception("orphan discovery failed")
+                    try:
+                        mapping = discover_recursive_orphans(str(repo))
+                        break
+                    except (BrokenProcessPool, TimeoutError):
+                        if _shutdown_in_progress():
+                            log.info("orphan discovery halted during shutdown")
+                            return _default_orphan_result()
+                        log.exception(
+                            "orphan discovery failed on attempt %s/%s",
+                            attempt,
+                            max_attempts,
+                        )
+                        if attempt < max_attempts:
+                            log.warning(
+                                "downgrading orphan discovery to single-worker mode"
+                            )
+                            os.environ["SANDBOX_DISCOVERY_WORKERS"] = "1"
+                            continue
+                        return _default_orphan_result()
+                if mapping is None:
                     return _default_orphan_result()
                 names = mapping.keys()
             else:
