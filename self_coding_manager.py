@@ -3786,16 +3786,11 @@ def internalize_coding_bot(
 
     if bot_registry is not None:
         node = bot_registry.graph.nodes.get(bot_name)
-    with _INTERNALIZE_IN_FLIGHT_LOCK:
-        inflight = bot_name in _INTERNALIZE_IN_FLIGHT
-    if inflight or _recent_internalization():
-        _log_internalize_stack(
-            "in-flight" if inflight else "recent-internalization"
-        )
-        logged_internalize_stack = True
 
     with _INTERNALIZE_IN_FLIGHT_LOCK:
         if bot_name in _INTERNALIZE_IN_FLIGHT:
+            _log_internalize_stack("in-flight")
+            logged_internalize_stack = True
             logger_ref.info(
                 "internalize_coding_bot already in-flight for %s; skipping manager construction",
                 bot_name,
@@ -3804,7 +3799,19 @@ def internalize_coding_bot(
         _INTERNALIZE_IN_FLIGHT.add(bot_name)
         added_in_flight = True
 
+    if node is not None:
+        node["internalization_in_progress"] = True
+
     try:
+        if _recent_internalization():
+            if not logged_internalize_stack:
+                _log_internalize_stack("recent-internalization")
+                logged_internalize_stack = True
+            logger_ref.info(
+                "internalize_coding_bot skipping reinternalization for %s; recent internalization detected",
+                bot_name,
+            )
+            return _inflight_manager_fallback()
         internalize_lock = _get_internalize_lock(bot_name)
         if not internalize_lock.acquire(blocking=False):
             logger_ref.info(
@@ -3910,6 +3917,7 @@ def internalize_coding_bot(
                     )
             if manager.quick_fix is None:
                 raise ImportError("QuickFixEngine failed to initialise")
+            _mark_last_internalized()
             manager.evolution_orchestrator = evolution_orchestrator
             register_timer = _start_step("bot_registry.register_bot")
             bot_registry.register_bot(
@@ -4292,6 +4300,8 @@ def internalize_coding_bot(
         finally:
             internalize_lock.release()
     finally:
+        if node is not None:
+            node.pop("internalization_in_progress", None)
         if added_in_flight:
             with _INTERNALIZE_IN_FLIGHT_LOCK:
                 _INTERNALIZE_IN_FLIGHT.discard(bot_name)
