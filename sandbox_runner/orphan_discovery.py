@@ -738,7 +738,9 @@ def discover_orphan_modules(
     )
 
 
-def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
+def _parse_file(
+    args: tuple[str, str],
+) -> tuple[str, set[str]] | tuple[str, dict[str, str]] | None:
     """Parse *path* for imports and return mapping.
 
     Returns ``None`` if the file cannot be read, parsed or should be skipped
@@ -748,16 +750,22 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
     module, path = args
     try:
         text = open(path, "r", encoding="utf-8").read()
-    except Exception:
-        return None
+    except Exception as exc:
+        return (
+            module,
+            {"path": path, "error_type": type(exc).__name__, "error": str(exc)},
+        )
 
     if "if __name__ == '__main__'" in text or 'if __name__ == "__main__"' in text:
         return None
 
     try:
         tree = ast.parse(text)
-    except Exception:
-        return None
+    except Exception as exc:
+        return (
+            module,
+            {"path": path, "error_type": type(exc).__name__, "error": str(exc)},
+        )
 
     # Collect simple assignments for later resolution of import targets
     assignments: dict[str, list[tuple[int, ast.AST]]] = {}
@@ -774,49 +782,55 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
             if isinstance(node.target, ast.Name) and node.value is not None:
                 assignments.setdefault(node.target.id, []).append((node.lineno, node.value))
 
-    _AssignVisitor().visit(tree)
+    try:
+        _AssignVisitor().visit(tree)
 
-    nodes = list(ast.walk(tree))
-    importlib_aliases = {"importlib"}
-    import_module_aliases = {"import_module"}
-    for n in nodes:
-        if isinstance(n, ast.Import):
-            for alias in n.names:
-                if alias.name == "importlib":
-                    importlib_aliases.add(alias.asname or alias.name)
-        elif isinstance(n, ast.ImportFrom) and n.module == "importlib":
-            for alias in n.names:
-                if alias.name == "import_module":
-                    import_module_aliases.add(alias.asname or alias.name)
+        nodes = list(ast.walk(tree))
+        importlib_aliases = {"importlib"}
+        import_module_aliases = {"import_module"}
+        for n in nodes:
+            if isinstance(n, ast.Import):
+                for alias in n.names:
+                    if alias.name == "importlib":
+                        importlib_aliases.add(alias.asname or alias.name)
+            elif isinstance(n, ast.ImportFrom) and n.module == "importlib":
+                for alias in n.names:
+                    if alias.name == "import_module":
+                        import_module_aliases.add(alias.asname or alias.name)
 
-    imports: set[str] = set()
-    for node in nodes:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                imports.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            pkg_parts = module.split(".")[:-1]
-            if node.level:
-                if node.level - 1 <= len(pkg_parts):
-                    base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
-                else:
-                    base_prefix = []
-            else:
-                base_prefix = pkg_parts
-
-            if node.module:
-                name = ".".join(base_prefix + node.module.split("."))
-                imports.add(name)
-            elif node.names:
+        imports: set[str] = set()
+        for node in nodes:
+            if isinstance(node, ast.Import):
                 for alias in node.names:
-                    name = ".".join(base_prefix + alias.name.split("."))
+                    imports.add(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                pkg_parts = module.split(".")[:-1]
+                if node.level:
+                    if node.level - 1 <= len(pkg_parts):
+                        base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                    else:
+                        base_prefix = []
+                else:
+                    base_prefix = pkg_parts
+
+                if node.module:
+                    name = ".".join(base_prefix + node.module.split("."))
                     imports.add(name)
-        elif isinstance(node, ast.Call):
-            mod_name = _extract_module_from_call(
-                node, assignments, importlib_aliases, import_module_aliases
-            )
-            if mod_name:
-                imports.add(mod_name)
+                elif node.names:
+                    for alias in node.names:
+                        name = ".".join(base_prefix + alias.name.split("."))
+                        imports.add(name)
+            elif isinstance(node, ast.Call):
+                mod_name = _extract_module_from_call(
+                    node, assignments, importlib_aliases, import_module_aliases
+                )
+                if mod_name:
+                    imports.add(mod_name)
+    except Exception as exc:
+        return (
+            module,
+            {"path": path, "error_type": type(exc).__name__, "error": str(exc)},
+        )
 
     return module, imports
 
@@ -912,7 +926,7 @@ def discover_recursive_orphans(
         discovery_timeout = 30.0
 
     module_paths = {mod: p for mod, p in candidates}
-    parse_iter: Iterable[tuple[str, set[str]] | None]
+    parse_iter: Iterable[tuple[str, set[str]] | tuple[str, dict[str, str]] | None]
 
     def _shutdown_executor(executor: concurrent.futures.Executor) -> None:
         try:
@@ -921,8 +935,17 @@ def discover_recursive_orphans(
             executor.shutdown()
 
     def _log_pending_failure(
-        pending: set[concurrent.futures.Future[tuple[str, set[str]] | None]],
-        futures: Mapping[concurrent.futures.Future[tuple[str, set[str]] | None], tuple[str, str]],
+        pending: set[
+            concurrent.futures.Future[
+                tuple[str, set[str]] | tuple[str, dict[str, str]] | None
+            ]
+        ],
+        futures: Mapping[
+            concurrent.futures.Future[
+                tuple[str, set[str]] | tuple[str, dict[str, str]] | None
+            ],
+            tuple[str, str],
+        ],
         message: str,
     ) -> None:
         if not pending:
@@ -931,7 +954,11 @@ def discover_recursive_orphans(
         logger.error("%s for %s (%s)", message, module, path)
 
     def _cancel_pending(
-        pending: set[concurrent.futures.Future[tuple[str, set[str]] | None]],
+        pending: set[
+            concurrent.futures.Future[
+                tuple[str, set[str]] | tuple[str, dict[str, str]] | None
+            ]
+        ],
     ) -> int:
         cancelled = 0
         for future in pending:
@@ -942,13 +969,13 @@ def discover_recursive_orphans(
     def _parse_with_executor(
         executor_factory: type[concurrent.futures.Executor],
         max_workers: int,
-    ) -> list[tuple[str, set[str]] | None]:
+    ) -> list[tuple[str, set[str]] | tuple[str, dict[str, str]] | None]:
         if _shutdown_in_progress():
             return []
         executor = executor_factory(max_workers=max_workers)
         futures = {executor.submit(_parse_file, c): c for c in candidates}
         pending = set(futures)
-        results: list[tuple[str, set[str]] | None] = []
+        results: list[tuple[str, set[str]] | tuple[str, dict[str, str]] | None] = []
         shutdown_done = False
         try:
             while pending:
@@ -1061,16 +1088,32 @@ def discover_recursive_orphans(
         logger.info("discovery cancelled due to shutdown")
         return {}
 
+    parse_errors: list[tuple[str, dict[str, str]]] = []
     for result in parse_iter:
         if not result:
             continue
-        module, imported = result
+        module, payload = result
+        if isinstance(payload, dict):
+            parse_errors.append((module, payload))
+            continue
+        imported = payload
         path = module_paths[module]
         modules[module] = path
         if imported:
             for name in imported:
                 imports.setdefault(module, set()).add(name)
                 imported_by.setdefault(name, set()).add(module)
+    if parse_errors:
+        details = []
+        for module, info in parse_errors:
+            path = info.get("path") or module_paths.get(module, module)
+            err_type = info.get("error_type", "UnknownError")
+            details.append(f"{path} ({err_type})")
+        logger.warning(
+            "discovery parse failures for %d files: %s",
+            len(parse_errors),
+            "; ".join(details),
+        )
 
     orphans: set[str] = {m for m in modules if m not in imported_by}
     queue = list(orphans)
