@@ -292,6 +292,26 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "module_path": "menace_sandbox.task_validation_bot",
         "class_name": "TaskValidationBot",
     },
+    "TaskHandoffBot": {
+        "module_path": "menace_sandbox.task_handoff_bot",
+        "class_name": "TaskHandoffBot",
+    },
+    "BotCreationBot": {
+        "module_path": "menace_sandbox.bot_creation_bot",
+        "class_name": "BotCreationBot",
+    },
+    "BotDevelopmentBot": {
+        "module_path": "menace_sandbox.bot_development_bot",
+        "class_name": "BotDevelopmentBot",
+    },
+    "BotPlanningBot": {
+        "module_path": "menace_sandbox.bot_planning_bot",
+        "class_name": "BotPlanningBot",
+    },
+    "BotTestingBot": {
+        "module_path": "menace_sandbox.bot_testing_bot",
+        "class_name": "BotTestingBot",
+    },
     "FutureSynergyProfitBot": {
         "module_path": "menace_sandbox.future_prediction_bots",
         "class_name": "FutureSynergyProfitBot",
