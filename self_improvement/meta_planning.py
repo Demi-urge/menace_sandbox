@@ -171,6 +171,51 @@ class _CycleTickState:
             self.last_tick_thread_ident = None
 
 
+class _LoopHeartbeatState:
+    """Thread-safe tracking for event loop heartbeats."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.started_at = time.time()
+        self.last_heartbeat: float | None = None
+        self.heartbeat_count = 0
+        self.last_heartbeat_thread_name: str | None = None
+        self.last_heartbeat_thread_ident: int | None = None
+
+    def beat(self) -> dict[str, Any]:
+        now = time.time()
+        current_thread = threading.current_thread()
+        with self._lock:
+            self.last_heartbeat = now
+            self.heartbeat_count += 1
+            self.last_heartbeat_thread_name = current_thread.name
+            self.last_heartbeat_thread_ident = current_thread.ident
+            return {
+                "last_heartbeat": self.last_heartbeat,
+                "heartbeat_count": self.heartbeat_count,
+                "last_heartbeat_thread_name": self.last_heartbeat_thread_name,
+                "last_heartbeat_thread_ident": self.last_heartbeat_thread_ident,
+            }
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "started_at": self.started_at,
+                "last_heartbeat": self.last_heartbeat,
+                "heartbeat_count": self.heartbeat_count,
+                "last_heartbeat_thread_name": self.last_heartbeat_thread_name,
+                "last_heartbeat_thread_ident": self.last_heartbeat_thread_ident,
+            }
+
+    def reset(self) -> None:
+        with self._lock:
+            self.started_at = time.time()
+            self.last_heartbeat = None
+            self.heartbeat_count = 0
+            self.last_heartbeat_thread_name = None
+            self.last_heartbeat_thread_ident = None
+
+
 class _WorkflowROICycleController:
     """Track ROI deltas for a workflow across repeated iterations.
 
@@ -2140,6 +2185,26 @@ def start_self_improvement_cycle(
 
     print("💡 SI-7: preparing self-improvement cycle thread scaffold")
     tick_state = _CycleTickState()
+    loop_heartbeat_state = _LoopHeartbeatState()
+
+    def _env_float(name: str, default: float) -> float:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def _env_bool(name: str, default: bool = False) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.lower() in {"1", "true", "yes", "on"}
+
+    loop_heartbeat_interval = _env_float(
+        "SELF_IMPROVEMENT_LOOP_HEARTBEAT_SECONDS", max(1.0, min(5.0, interval / 2.0))
+    )
 
     class _CycleThread:
         def __init__(self, stop_event: threading.Event) -> None:
@@ -2158,6 +2223,18 @@ def start_self_improvement_cycle(
 
             print("💡 SI-8: starting self-improvement event loop")
             asyncio.set_event_loop(self._loop)
+            heartbeat_handle: asyncio.Handle | None = None
+
+            def _loop_heartbeat() -> None:
+                nonlocal heartbeat_handle
+                loop_heartbeat_state.beat()
+                if self._stop_event.is_set():
+                    return
+                if not self._loop.is_running():
+                    return
+                heartbeat_handle = self._loop.call_later(
+                    loop_heartbeat_interval, _loop_heartbeat
+                )
             kwargs: dict[str, Any] = {
                 "interval": interval,
                 "event_bus": event_bus,
@@ -2177,9 +2254,12 @@ def start_self_improvement_cycle(
                 self_improvement_cycle(workflow_plan, **kwargs)
             )
             self._task.add_done_callback(self._finished)
+            self._loop.call_soon(_loop_heartbeat)
             try:
                 self._loop.run_forever()
             finally:
+                if heartbeat_handle is not None:
+                    heartbeat_handle.cancel()
                 self._loop.run_until_complete(self._loop.shutdown_asyncgens())
                 self._loop.close()
 
@@ -2243,21 +2323,6 @@ def start_self_improvement_cycle(
                 "task_cancelled": task.cancelled() if task else None,
             }
 
-    def _env_float(name: str, default: float) -> float:
-        raw = os.getenv(name)
-        if raw is None:
-            return default
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            return default
-
-    def _env_bool(name: str, default: bool = False) -> bool:
-        raw = os.getenv(name)
-        if raw is None:
-            return default
-        return raw.lower() in {"1", "true", "yes", "on"}
-
     watchdog_threshold = _env_float(
         "SELF_IMPROVEMENT_CYCLE_WATCHDOG_SECONDS", max(120.0, interval * 3)
     )
@@ -2282,6 +2347,7 @@ def start_self_improvement_cycle(
                     extra=log_record(reason=reason),
                 )
         tick_state.reset()
+        loop_heartbeat_state.reset()
         new_thread, new_stop_event = _create_cycle_thread()
         monitor_state["thread"] = new_thread
         monitor_state["stop_event"] = new_stop_event
@@ -2340,24 +2406,40 @@ def start_self_improvement_cycle(
             if current_thread is None:
                 continue
             snapshot = tick_state.snapshot()
+            heartbeat_snapshot = loop_heartbeat_state.snapshot()
             now = time.time()
             last_tick = snapshot.get("last_tick")
             started_at = snapshot.get("started_at", now)
             last_tick_age = (now - last_tick) if last_tick is not None else None
             idle_since_start = now - started_at
+            last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
+            heartbeat_started_at = heartbeat_snapshot.get("started_at", now)
+            last_heartbeat_age = (
+                (now - last_heartbeat) if last_heartbeat is not None else None
+            )
+            heartbeat_idle_since_start = now - heartbeat_started_at
+            heartbeat_stalled = (
+                last_heartbeat_age is not None
+                and last_heartbeat_age > watchdog_threshold
+            ) or (
+                last_heartbeat is None
+                and heartbeat_idle_since_start > watchdog_threshold
+            )
             stalled = (
                 last_tick_age is not None and last_tick_age > watchdog_threshold
             ) or (last_tick is None and idle_since_start > watchdog_threshold)
-            if not stalled:
+            if not stalled and not heartbeat_stalled:
                 continue
             thread_state = current_thread.state()
-            tick_thread_ident = snapshot.get("last_tick_thread_ident") or thread_state.get(
-                "thread_ident"
+            tick_thread_ident = snapshot.get("last_tick_thread_ident")
+            heartbeat_thread_ident = heartbeat_snapshot.get("last_heartbeat_thread_ident")
+            stall_thread_ident = (
+                heartbeat_thread_ident or tick_thread_ident or thread_state.get("thread_ident")
             )
             stack_dump = None
-            if tick_thread_ident is not None:
+            if stall_thread_ident is not None:
                 frame_map = sys._current_frames()
-                frame = frame_map.get(tick_thread_ident)
+                frame = frame_map.get(stall_thread_ident)
                 if frame is not None:
                     stack_dump = "".join(traceback.format_stack(frame))
             stall_message = "self improvement cycle stalled"
@@ -2371,8 +2453,16 @@ def start_self_improvement_cycle(
                     tick_count=snapshot.get("tick_count"),
                     tick_thread_name=snapshot.get("last_tick_thread_name"),
                     tick_thread_ident=snapshot.get("last_tick_thread_ident"),
+                    loop_heartbeat_timestamp=last_heartbeat,
+                    loop_heartbeat_age_seconds=last_heartbeat_age,
+                    loop_heartbeat_count=heartbeat_snapshot.get("heartbeat_count"),
+                    loop_heartbeat_thread_name=heartbeat_snapshot.get(
+                        "last_heartbeat_thread_name"
+                    ),
+                    loop_heartbeat_thread_ident=heartbeat_thread_ident,
                     watchdog_threshold_seconds=watchdog_threshold,
                     thread_state=thread_state,
+                    stalled_due_to_heartbeat=heartbeat_stalled,
                     stall_stack_trace=stack_dump,
                 ),
             )
