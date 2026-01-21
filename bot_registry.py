@@ -37,6 +37,8 @@ import errno
 from dataclasses import asdict, dataclass, field, is_dataclass
 from types import SimpleNamespace
 
+from dynamic_path_router import resolve_module_path
+
 try:  # pragma: no cover - optional logging helper
     from .self_coding_policy import log_policy_state
 except Exception:  # pragma: no cover - support legacy layouts
@@ -519,6 +521,25 @@ def _is_probable_filesystem_path(value: str | os.PathLike[str] | None) -> bool:
         return True
 
     return False
+
+
+def _resolve_module_path_hint(module_path: str | None) -> str | None:
+    """Resolve dotted module names to file paths when possible."""
+
+    if not module_path:
+        return None
+    if _is_probable_filesystem_path(module_path):
+        return module_path
+    if "." not in module_path:
+        return module_path
+    try:
+        resolved = resolve_module_path(module_path)
+    except FileNotFoundError:
+        return module_path
+    except Exception:
+        logger.debug("Failed to resolve dotted module path %s", module_path, exc_info=True)
+        return module_path
+    return resolved.as_posix()
 
 
 def _iter_module_search_roots() -> list[tuple[Path, str | None]]:
@@ -1915,11 +1936,11 @@ class BotRegistry:
 
         module_path = self.modules.get(name)
         if module_path:
-            return module_path
+            return _resolve_module_path_hint(module_path)
         fallback = _REGISTERED_BOTS.get(name)
         if isinstance(fallback, dict):
             module_path = fallback.get("module_path") or fallback.get("module")
-        return module_path
+        return _resolve_module_path_hint(module_path)
 
     def _infer_module_path(
         self, name: str, bot_ref: Any | None
@@ -2599,6 +2620,7 @@ class BotRegistry:
                     resolved_path = os.fspath(module_path)
                 except TypeError:
                     resolved_path = str(module_path)
+                resolved_path = _resolve_module_path_hint(resolved_path)
                 node["module"] = resolved_path
                 self.modules[name] = resolved_path
             provenance_payload: Any | None = None
