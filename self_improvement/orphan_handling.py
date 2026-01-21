@@ -11,7 +11,6 @@ import os
 from typing import Any, Awaitable, Callable, Dict
 
 import asyncio
-import inspect
 
 import logging
 
@@ -28,6 +27,42 @@ from metrics_exporter import (
 )
 
 logger = logging.getLogger(__name__)
+_DEFAULT_ORPHAN_THREAD_TIMEOUT = 60.0
+
+
+async def _call_with_retries_threaded(
+    func: Callable[..., Any],
+    *args: object,
+    retries: int,
+    delay: float,
+    timeout: float,
+    operation: str,
+    **kwargs: object,
+) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _call_with_retries(
+            func, *args, retries=retries, delay=delay, **kwargs
+        )
+
+    thread_call = asyncio.to_thread(
+        _call_with_retries, func, *args, retries=retries, delay=delay, **kwargs
+    )
+    try:
+        return await asyncio.wait_for(thread_call, timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        logger.error(
+            "%s timed out after %.2f seconds; cancelling task",
+            operation,
+            timeout,
+        )
+        raise TimeoutError(
+            f"{operation} timed out after {timeout:.2f} seconds"
+        ) from exc
+    except asyncio.CancelledError:
+        logger.warning("%s cancelled while waiting for thread execution", operation)
+        raise
 
 
 def _load_orphan_module(attr: str) -> Callable[..., Any]:
@@ -51,6 +86,7 @@ async def integrate_orphans(
     retries: int | None = None,
     delay: float | None = None,
     context_builder: object | None = None,
+    thread_timeout: float | None = None,
     **kwargs: object,
 ) -> list[str]:
     """Invoke sandbox runner orphan integration with safeguards."""
@@ -66,13 +102,24 @@ async def integrate_orphans(
     kwargs.setdefault("context_builder", context_builder)
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
+    timeout = (
+        thread_timeout
+        if thread_timeout is not None
+        else getattr(
+            settings, "orphan_thread_timeout", _DEFAULT_ORPHAN_THREAD_TIMEOUT
+        )
+    )
     func = _load_orphan_module("integrate_orphans")
     try:
-        modules = _call_with_retries(
-            func, *args, retries=retries, delay=delay, **kwargs
+        modules = await _call_with_retries_threaded(
+            func,
+            *args,
+            retries=retries,
+            delay=delay,
+            timeout=timeout,
+            operation="orphan integration",
+            **kwargs,
         )
-        if inspect.isawaitable(modules):
-            modules = await modules
     except Exception:
         orphan_integration_failure_total.inc()
         logger.exception("orphan integration failed")
@@ -88,6 +135,7 @@ async def post_round_orphan_scan(
     retries: int | None = None,
     delay: float | None = None,
     context_builder: object | None = None,
+    thread_timeout: float | None = None,
     **kwargs: object,
 ) -> Dict[str, object]:
     """Trigger the sandbox post-round orphan scan."""
@@ -103,13 +151,24 @@ async def post_round_orphan_scan(
     kwargs.setdefault("context_builder", context_builder)
     retries = retries if retries is not None else settings.orphan_retry_attempts
     delay = delay if delay is not None else settings.orphan_retry_delay
+    timeout = (
+        thread_timeout
+        if thread_timeout is not None
+        else getattr(
+            settings, "orphan_thread_timeout", _DEFAULT_ORPHAN_THREAD_TIMEOUT
+        )
+    )
     func = _load_orphan_module("post_round_orphan_scan")
     try:
-        result = _call_with_retries(
-            func, *args, retries=retries, delay=delay, **kwargs
+        result = await _call_with_retries_threaded(
+            func,
+            *args,
+            retries=retries,
+            delay=delay,
+            timeout=timeout,
+            operation="post round orphan scan",
+            **kwargs,
         )
-        if inspect.isawaitable(result):
-            result = await result
     except Exception:
         orphan_integration_failure_total.inc()
         logger.exception("post round orphan scan failed")
@@ -137,6 +196,7 @@ def integrate_orphans_sync(
     retries: int | None = None,
     delay: float | None = None,
     context_builder: object | None = None,
+    thread_timeout: float | None = None,
     **kwargs: object,
 ) -> Any:
     """Run :func:`integrate_orphans` from sync contexts."""
@@ -146,6 +206,7 @@ def integrate_orphans_sync(
             retries=retries,
             delay=delay,
             context_builder=context_builder,
+            thread_timeout=thread_timeout,
             **kwargs,
         )
     )
@@ -156,6 +217,7 @@ def post_round_orphan_scan_sync(
     retries: int | None = None,
     delay: float | None = None,
     context_builder: object | None = None,
+    thread_timeout: float | None = None,
     **kwargs: object,
 ) -> Any:
     """Run :func:`post_round_orphan_scan` from sync contexts."""
@@ -165,6 +227,7 @@ def post_round_orphan_scan_sync(
             retries=retries,
             delay=delay,
             context_builder=context_builder,
+            thread_timeout=thread_timeout,
             **kwargs,
         )
     )
