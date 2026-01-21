@@ -2470,6 +2470,8 @@ def start_self_improvement_cycle(
     )
     watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", True)
     allow_zombie_restart = _env_bool("SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART", False)
+    force_restart = _env_bool("SELF_IMPROVEMENT_FORCE_RESTART", False)
+    force_exit_on_stuck = _env_bool("SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK", False)
     watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
     stop_timeout = _env_float("SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS", 5.0)
     join_timeout = _env_float(
@@ -2482,6 +2484,7 @@ def start_self_improvement_cycle(
         "last_loop_heartbeat": None,
         "loop_heartbeat_started": None,
         "stuck_thread": None,
+        "zombie_threads": [],
     }
 
     def _get_thread_stack(thread_ident: int | None) -> str | None:
@@ -2498,6 +2501,27 @@ def start_self_improvement_cycle(
         thread = _CycleThread(local_stop_event)
         return thread, local_stop_event
 
+    def _record_zombie_thread(
+        thread_state: Mapping[str, Any],
+        stack_dump: str | None,
+        reason: str,
+    ) -> dict[str, Any]:
+        zombie_info = {
+            "thread": thread_state.get("thread"),
+            "ident": thread_state.get("thread_ident"),
+            "detected_at": time.time(),
+            "stack": stack_dump,
+            "status": "zombie",
+            "reason": reason,
+        }
+        monitor_state["stuck_thread"] = zombie_info
+        zombie_threads = monitor_state.get("zombie_threads")
+        if isinstance(zombie_threads, list):
+            zombie_threads.append(zombie_info)
+        else:
+            monitor_state["zombie_threads"] = [zombie_info]
+        return zombie_info
+
     def _restart_cycle_thread(
         logger: logging.Logger, reason: str, *, wait_on_stop: bool = True
     ) -> None:
@@ -2505,7 +2529,20 @@ def start_self_improvement_cycle(
         if stuck_thread is not None:
             stuck_worker = stuck_thread.get("thread")
             if stuck_worker is not None and stuck_worker.is_alive():
-                if not allow_zombie_restart:
+                if force_exit_on_stuck:
+                    logger.critical(
+                        "exiting process because stuck thread is still alive",
+                        extra=log_record(
+                            reason=reason,
+                            thread_ident=stuck_thread.get("ident"),
+                            stuck_detected_at=stuck_thread.get("detected_at"),
+                            stuck_thread_stack=stuck_thread.get("stack"),
+                            forced_recovery="process_exit",
+                            override_env="SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK",
+                        ),
+                    )
+                    os._exit(1)
+                if not (allow_zombie_restart or force_restart):
                     logger.critical(
                         "refusing to restart self improvement cycle while stuck thread is alive",
                         extra=log_record(
@@ -2513,7 +2550,10 @@ def start_self_improvement_cycle(
                             thread_ident=stuck_thread.get("ident"),
                             stuck_detected_at=stuck_thread.get("detected_at"),
                             stuck_thread_stack=stuck_thread.get("stack"),
-                            override_env="SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                            override_envs=[
+                                "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                                "SELF_IMPROVEMENT_FORCE_RESTART",
+                            ],
                         ),
                     )
                     return
@@ -2524,7 +2564,13 @@ def start_self_improvement_cycle(
                         thread_ident=stuck_thread.get("ident"),
                         stuck_detected_at=stuck_thread.get("detected_at"),
                         stuck_thread_stack=stuck_thread.get("stack"),
-                        override_env="SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                        forced_recovery=(
+                            "force_restart" if force_restart else "allow_zombie_restart"
+                        ),
+                        override_envs=[
+                            "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                            "SELF_IMPROVEMENT_FORCE_RESTART",
+                        ],
                     ),
                 )
         current_thread = monitor_state.get("thread")
@@ -2540,12 +2586,6 @@ def start_self_improvement_cycle(
             thread_state = current_thread.state()
             if thread_state.get("thread_alive"):
                 stack_dump = _get_thread_stack(thread_state.get("thread_ident"))
-                monitor_state["stuck_thread"] = {
-                    "thread": current_thread._thread,
-                    "ident": thread_state.get("thread_ident"),
-                    "detected_at": time.time(),
-                    "stack": stack_dump,
-                }
                 stuck_message = "self improvement cycle thread stuck during restart"
                 if stack_dump:
                     stuck_message = f"{stuck_message}\n{stack_dump}"
@@ -2558,24 +2598,59 @@ def start_self_improvement_cycle(
                         stuck_thread_stack=stack_dump,
                     ),
                 )
-                if not allow_zombie_restart:
+                if force_exit_on_stuck:
+                    logger.critical(
+                        "exiting process because cycle thread failed to stop cleanly",
+                        extra=log_record(
+                            reason=reason,
+                            thread_ident=thread_state.get("thread_ident"),
+                            stop_timeout_seconds=stop_timeout,
+                            stuck_thread_stack=stack_dump,
+                            forced_recovery="process_exit",
+                            override_env="SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK",
+                        ),
+                    )
+                    os._exit(1)
+                if not (allow_zombie_restart or force_restart):
                     logger.critical(
                         "refusing to start replacement thread while stuck thread is alive",
                         extra=log_record(
                             reason=reason,
                             thread_ident=thread_state.get("thread_ident"),
                             stop_timeout_seconds=stop_timeout,
-                            override_env="SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                            override_envs=[
+                                "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                                "SELF_IMPROVEMENT_FORCE_RESTART",
+                            ],
                             stuck_thread_stack=stack_dump,
                         ),
                     )
                     return
+                _record_zombie_thread(
+                    {
+                        "thread": current_thread._thread,
+                        "thread_ident": thread_state.get("thread_ident"),
+                    },
+                    stack_dump,
+                    reason,
+                )
+                logger.warning(
+                    "forcing replacement cycle thread after stop timeout",
+                    extra=log_record(
+                        reason=reason,
+                        previous_thread_ident=thread_state.get("thread_ident"),
+                        stop_timeout_seconds=stop_timeout,
+                        forced_recovery=(
+                            "force_restart" if force_restart else "allow_zombie_restart"
+                        ),
+                        stuck_thread_stack=stack_dump,
+                    ),
+                )
         tick_state.reset()
         loop_heartbeat_state.reset()
         loop_ping_state.reset()
         monitor_state["last_loop_heartbeat"] = None
         monitor_state["loop_heartbeat_started"] = None
-        monitor_state["stuck_thread"] = None
         new_thread, new_stop_event = _create_cycle_thread()
         monitor_state["thread"] = new_thread
         monitor_state["stop_event"] = new_stop_event
