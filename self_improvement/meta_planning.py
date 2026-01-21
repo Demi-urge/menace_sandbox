@@ -2384,11 +2384,24 @@ def start_self_improvement_cycle(
                     current_thread.stop(timeout=stop_timeout)
                 else:
                     current_thread.request_stop()
+                    current_thread.join(timeout=stop_timeout)
             except Exception:
                 logger.exception(
                     "cycle stop failed during restart",
                     extra=log_record(reason=reason),
                 )
+            thread_state = current_thread.state()
+            if thread_state.get("thread_alive"):
+                logger.critical(
+                    "self improvement cycle failed to stop; forcing process exit for recovery",
+                    extra=log_record(
+                        reason=reason,
+                        stop_timeout_seconds=stop_timeout,
+                        recovery_action="process_exit",
+                        thread_state=thread_state,
+                    ),
+                )
+                os._exit(1)
         tick_state.reset()
         loop_heartbeat_state.reset()
         new_thread, new_stop_event = _create_cycle_thread()
@@ -2515,12 +2528,14 @@ def start_self_improvement_cycle(
                     "watchdog_restart_heartbeat" if heartbeat_stalled else "watchdog_restart"
                 )
                 watchdog_logger.warning(
-                    "restarting self improvement cycle after stall",
+                    "restarting self improvement cycle after stall; forcing process exit if stop timeout elapses",
                     extra=log_record(
                         reason=restart_reason,
                         last_tick_timestamp=last_tick,
                         last_tick_age_seconds=last_tick_age,
                         thread_state=thread_state,
+                        stop_timeout_seconds=stop_timeout,
+                        last_resort_recovery="process_exit",
                     ),
                 )
                 _restart_cycle_thread(
