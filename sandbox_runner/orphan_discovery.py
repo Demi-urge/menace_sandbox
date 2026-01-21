@@ -839,7 +839,8 @@ def discover_recursive_orphans(
     processing. Directories listed in ``skip_dirs`` or provided via the
     ``SANDBOX_SKIP_DIRS`` environment variable are ignored during the scan.
     Parallel AST parsing is controlled via the ``SANDBOX_DISCOVERY_WORKERS``
-    environment variable.
+    environment variable and the per-file timeout can be tuned with
+    ``SANDBOX_DISCOVERY_TIMEOUT_SECONDS``.
     """
 
     repo = Path(resolve_path(repo_path))
@@ -900,6 +901,15 @@ def discover_recursive_orphans(
         parse_timeout = float(timeout_env) if timeout_env is not None else 30.0
     except ValueError:
         parse_timeout = 30.0
+    discovery_timeout_env = os.getenv("SANDBOX_DISCOVERY_TIMEOUT_SECONDS")
+    try:
+        discovery_timeout = (
+            float(discovery_timeout_env)
+            if discovery_timeout_env is not None
+            else 30.0
+        )
+    except ValueError:
+        discovery_timeout = 30.0
 
     module_paths = {mod: p for mod, p in candidates}
     parse_iter: Iterable[tuple[str, set[str]] | None]
@@ -933,10 +943,13 @@ def discover_recursive_orphans(
         executor_factory: type[concurrent.futures.Executor],
         max_workers: int,
     ) -> list[tuple[str, set[str]] | None]:
+        if _shutdown_in_progress():
+            return []
         executor = executor_factory(max_workers=max_workers)
         futures = {executor.submit(_parse_file, c): c for c in candidates}
         pending = set(futures)
         results: list[tuple[str, set[str]] | None] = []
+        shutdown_done = False
         try:
             while pending:
                 if _shutdown_in_progress():
@@ -944,11 +957,27 @@ def discover_recursive_orphans(
                     return []
                 try:
                     for future in concurrent.futures.as_completed(
-                        pending, timeout=parse_timeout
+                        pending,
+                        timeout=parse_timeout,
                     ):
                         pending.remove(future)
+                        if _shutdown_in_progress():
+                            _cancel_pending(pending)
+                            return []
                         try:
-                            results.append(future.result())
+                            results.append(
+                                future.result(timeout=discovery_timeout)
+                            )
+                        except concurrent.futures.TimeoutError as exc:
+                            _log_pending_failure(
+                                {future},
+                                futures,
+                                "discovery parse result timeout",
+                            )
+                            _cancel_pending(pending)
+                            raise TimeoutError(
+                                "discovery parse result timeout"
+                            ) from exc
                         except CancelledError as exc:
                             _log_pending_failure(
                                 {future},
@@ -965,46 +994,66 @@ def discover_recursive_orphans(
                     )
                     _cancel_pending(pending)
                     raise TimeoutError("discovery parse timeout") from exc
-        except BrokenProcessPool as exc:
+        except CancelledError:
+            _log_pending_failure(
+                pending,
+                futures,
+                "discovery parse cancelled",
+            )
+            _cancel_pending(pending)
+            return []
+        except (TimeoutError, BrokenProcessPool):
             _log_pending_failure(
                 pending,
                 futures,
                 "discovery parse pool failure",
             )
+            remaining = [futures[future] for future in pending]
             _cancel_pending(pending)
-            raise
-        finally:
             _shutdown_executor(executor)
+            shutdown_done = True
+            if _shutdown_in_progress():
+                logger.info("discovery cancelled due to shutdown")
+                return []
+            logger.warning(
+                "discovery parse pool failed after %.2fs; falling back to serial parse for %d files",
+                parse_timeout,
+                len(remaining),
+            )
+            results.extend(_parse_file(c) for c in remaining)
+            return results
+        finally:
+            if not shutdown_done:
+                _shutdown_executor(executor)
         return results
+
+    if _shutdown_in_progress():
+        logger.info("discovery cancelled due to shutdown")
+        return {}
 
     if workers <= 1:
         parse_iter = (_parse_file(c) for c in candidates)
     else:
-        try:
-            parse_iter = _parse_with_executor(
-                concurrent.futures.ProcessPoolExecutor,
-                workers,
-            )
-        except (TimeoutError, BrokenProcessPool, CancelledError):
-            if _shutdown_in_progress():
-                logger.info("discovery cancelled due to shutdown")
-                return {}
+        parse_iter = _parse_with_executor(
+            concurrent.futures.ProcessPoolExecutor,
+            workers,
+        )
+        if _shutdown_in_progress():
+            logger.info("discovery cancelled due to shutdown")
+            return {}
+        if parse_iter or not candidates:
+            parse_iter = parse_iter
+        else:
             logger.warning(
-                "discovery parse pool failed after %.2fs; falling back to thread parse",
-                parse_timeout,
+                "discovery parse pool returned no results; falling back to thread parse",
             )
-            try:
-                parse_iter = _parse_with_executor(
-                    concurrent.futures.ThreadPoolExecutor,
-                    min(workers, 8),
-                )
-            except (TimeoutError, BrokenProcessPool, CancelledError):
-                if _shutdown_in_progress():
-                    logger.info("discovery cancelled due to shutdown")
-                    return {}
+            parse_iter = _parse_with_executor(
+                concurrent.futures.ThreadPoolExecutor,
+                min(workers, 8),
+            )
+            if not parse_iter:
                 logger.warning(
-                    "discovery parse pool failed after %.2fs; falling back to serial parse",
-                    parse_timeout,
+                    "discovery parse thread pool returned no results; falling back to serial parse",
                 )
                 parse_iter = [_parse_file(c) for c in candidates]
 
