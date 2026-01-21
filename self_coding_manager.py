@@ -3698,20 +3698,48 @@ def internalize_coding_bot(
     logger_ref = logging.getLogger(__name__)
     node: dict[str, Any] | None = None
     added_in_flight = False
-    if os.getenv("SELF_CODING_TRACE_INTERNALIZE") and logger_ref.isEnabledFor(
-        logging.DEBUG
-    ):
-        stack_trace = "".join(traceback.format_stack())
+    logged_internalize_stack = False
+
+    def _caller_metadata() -> Any | None:
+        for key in (
+            "caller_metadata",
+            "caller",
+            "caller_info",
+            "origin",
+            "request_id",
+            "trace_id",
+        ):
+            if key in manager_kwargs:
+                return manager_kwargs.get(key)
+        return None
+
+    def _stack_trace_limit() -> int | None:
+        if os.getenv("SELF_CODING_VERBOSE_INTERNALIZE_STACK"):
+            return None
+        raw_limit = os.getenv("SELF_CODING_INTERNALIZE_STACK_LIMIT", "6")
+        try:
+            return max(1, int(raw_limit))
+        except (TypeError, ValueError):
+            return 6
+
+    def _log_internalize_stack(reason: str) -> None:
+        if not logger_ref.isEnabledFor(logging.DEBUG):
+            return
+        stack_trace = "".join(traceback.format_stack(limit=_stack_trace_limit()))
         call_source = None
         stack_summary = traceback.extract_stack(limit=3)
         if len(stack_summary) > 1:
             caller = stack_summary[-2]
             call_source = f"{caller.filename}:{caller.lineno}:{caller.name}"
-        extra = {"bot": bot_name}
+        extra = {"bot": bot_name, "reason": reason}
         if call_source:
             extra["call_source"] = call_source
+        metadata = _caller_metadata()
+        if metadata is not None:
+            extra["caller_metadata"] = metadata
         logger_ref.debug(
-            "internalize_coding_bot entry stack trace:\n%s",
+            "internalize_coding_bot stack trace (%s):\n%s",
+            reason,
             stack_trace,
             extra=extra,
         )
@@ -3755,6 +3783,16 @@ def internalize_coding_bot(
         if existing_manager is not None and _manager_healthy(existing_manager):
             return existing_manager
         return _cooldown_disabled_manager(bot_registry, data_bot)
+
+    if bot_registry is not None:
+        node = bot_registry.graph.nodes.get(bot_name)
+    with _INTERNALIZE_IN_FLIGHT_LOCK:
+        inflight = bot_name in _INTERNALIZE_IN_FLIGHT
+    if inflight or _recent_internalization():
+        _log_internalize_stack(
+            "in-flight" if inflight else "recent-internalization"
+        )
+        logged_internalize_stack = True
 
     with _INTERNALIZE_IN_FLIGHT_LOCK:
         if bot_name in _INTERNALIZE_IN_FLIGHT:
@@ -3808,8 +3846,6 @@ def internalize_coding_bot(
             if _current_self_coding_import_depth() > 0:
                 print("Forcing manager despite depth lock")
 
-            if bot_registry is not None:
-                node = bot_registry.graph.nodes.get(bot_name)
             if node is not None:
                 disabled_state = node.get("self_coding_disabled")
                 if (
@@ -3827,11 +3863,8 @@ def internalize_coding_bot(
                 )
                 return existing_manager
             if existing_manager is not None and _recent_internalization():
-                logger_ref.debug(
-                    "internalize_coding_bot rapid re-invocation detected for %s; stack trace:\n%s",
-                    bot_name,
-                    "".join(traceback.format_stack()),
-                )
+                if not logged_internalize_stack:
+                    _log_internalize_stack("recent-internalization")
                 _mark_last_internalized()
                 logger_ref.info(
                     "internalize_coding_bot skipping reinternalization for %s; "
