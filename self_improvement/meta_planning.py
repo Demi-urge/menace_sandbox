@@ -2472,6 +2472,9 @@ def start_self_improvement_cycle(
     allow_zombie_restart = _env_bool("SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART", False)
     force_restart = _env_bool("SELF_IMPROVEMENT_FORCE_RESTART", False)
     force_exit_on_stuck = _env_bool("SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK", False)
+    zombie_restart_after_seconds = _env_float(
+        "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS", 300.0
+    )
     watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
     stop_timeout = _env_float("SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS", 5.0)
     join_timeout = _env_float(
@@ -2505,13 +2508,15 @@ def start_self_improvement_cycle(
         thread_state: Mapping[str, Any],
         stack_dump: str | None,
         reason: str,
+        *,
+        status: str = "zombie",
     ) -> dict[str, Any]:
         zombie_info = {
             "thread": thread_state.get("thread"),
             "ident": thread_state.get("thread_ident"),
             "detected_at": time.time(),
             "stack": stack_dump,
-            "status": "zombie",
+            "status": status,
             "reason": reason,
         }
         monitor_state["stuck_thread"] = zombie_info
@@ -2521,6 +2526,19 @@ def start_self_improvement_cycle(
         else:
             monitor_state["zombie_threads"] = [zombie_info]
         return zombie_info
+
+    def _should_allow_zombie_restart(stuck_info: Mapping[str, Any] | None) -> tuple[bool, str | None, float | None]:
+        if allow_zombie_restart or force_restart:
+            return True, "allow_zombie_restart" if allow_zombie_restart else "force_restart", None
+        if zombie_restart_after_seconds <= 0 or stuck_info is None:
+            return False, None, None
+        detected_at = stuck_info.get("detected_at")
+        if not isinstance(detected_at, (int, float)):
+            return False, None, None
+        elapsed = time.time() - detected_at
+        if elapsed >= zombie_restart_after_seconds:
+            return True, "zombie_restart_after_seconds", elapsed
+        return False, "zombie_restart_wait", elapsed
 
     def _restart_cycle_thread(
         logger: logging.Logger, reason: str, *, wait_on_stop: bool = True
@@ -2543,6 +2561,7 @@ def start_self_improvement_cycle(
         if stuck_thread is not None:
             stuck_worker = stuck_thread.get("thread")
             if stuck_worker is not None and stuck_worker.is_alive():
+                allow_restart, recovery_mode, elapsed = _should_allow_zombie_restart(stuck_thread)
                 if force_exit_on_stuck:
                     logger.critical(
                         "exiting process because stuck thread is still alive",
@@ -2560,7 +2579,7 @@ def start_self_improvement_cycle(
                     )
                     _record_recovery_metric("self_improvement_stuck_force_exit")
                     os._exit(1)
-                if not (allow_zombie_restart or force_restart):
+                if not allow_restart:
                     logger.critical(
                         "refusing to restart self improvement cycle while stuck thread is alive",
                         extra=log_record(
@@ -2570,9 +2589,13 @@ def start_self_improvement_cycle(
                             stuck_thread_stack=stuck_thread.get("stack"),
                             recovery_action="refuse_restart",
                             recovery_stage="pre_restart",
+                            recovery_mode=recovery_mode,
+                            stuck_elapsed_seconds=elapsed,
+                            zombie_restart_after_seconds=zombie_restart_after_seconds,
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
+                                "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                             ],
                         ),
                     )
@@ -2586,13 +2609,14 @@ def start_self_improvement_cycle(
                         stuck_thread_stack=stuck_thread.get("stack"),
                         recovery_action="zombie_restart",
                         recovery_stage="pre_restart",
-                        recovery_mode=(
-                            "force_restart" if force_restart else "allow_zombie_restart"
-                        ),
+                        recovery_mode=recovery_mode,
+                        stuck_elapsed_seconds=elapsed,
+                        zombie_restart_after_seconds=zombie_restart_after_seconds,
                         recovery_metric="self_improvement_stuck_zombie_restart",
                         override_envs=[
                             "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                             "SELF_IMPROVEMENT_FORCE_RESTART",
+                            "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                         ],
                     ),
                 )
@@ -2622,6 +2646,16 @@ def start_self_improvement_cycle(
                         stuck_thread_stack=stack_dump,
                     ),
                 )
+                stuck_info = _record_zombie_thread(
+                    {
+                        "thread": current_thread._thread,
+                        "thread_ident": thread_state.get("thread_ident"),
+                    },
+                    stack_dump,
+                    reason,
+                    status="stuck",
+                )
+                allow_restart, recovery_mode, elapsed = _should_allow_zombie_restart(stuck_info)
                 if force_exit_on_stuck:
                     logger.critical(
                         "exiting process because cycle thread failed to stop cleanly",
@@ -2639,7 +2673,7 @@ def start_self_improvement_cycle(
                     )
                     _record_recovery_metric("self_improvement_stop_timeout_force_exit")
                     os._exit(1)
-                if not (allow_zombie_restart or force_restart):
+                if not allow_restart:
                     logger.critical(
                         "refusing to start replacement thread while stuck thread is alive",
                         extra=log_record(
@@ -2648,22 +2682,18 @@ def start_self_improvement_cycle(
                             stop_timeout_seconds=stop_timeout,
                             recovery_action="refuse_restart",
                             recovery_stage="stop_timeout",
+                            recovery_mode=recovery_mode,
+                            stuck_elapsed_seconds=elapsed,
+                            zombie_restart_after_seconds=zombie_restart_after_seconds,
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
+                                "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                             ],
                             stuck_thread_stack=stack_dump,
                         ),
                     )
                     return
-                _record_zombie_thread(
-                    {
-                        "thread": current_thread._thread,
-                        "thread_ident": thread_state.get("thread_ident"),
-                    },
-                    stack_dump,
-                    reason,
-                )
                 logger.warning(
                     "forcing replacement cycle thread after stop timeout",
                     extra=log_record(
@@ -2672,9 +2702,9 @@ def start_self_improvement_cycle(
                         stop_timeout_seconds=stop_timeout,
                         recovery_action="zombie_restart",
                         recovery_stage="stop_timeout",
-                        recovery_mode=(
-                            "force_restart" if force_restart else "allow_zombie_restart"
-                        ),
+                        recovery_mode=recovery_mode,
+                        stuck_elapsed_seconds=elapsed,
+                        zombie_restart_after_seconds=zombie_restart_after_seconds,
                         recovery_metric="self_improvement_stop_timeout_zombie_restart",
                         stuck_thread_stack=stack_dump,
                     ),
