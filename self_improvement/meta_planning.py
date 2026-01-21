@@ -2305,7 +2305,7 @@ def start_self_improvement_cycle(
             if not self._exc.empty():
                 raise self._exc.get()
 
-        def stop(self, timeout: float | None = None) -> None:
+        def stop(self, timeout: float | None = 5.0) -> None:
             print("💡 SI-12: stopping self-improvement thread")
             effective_timeout = stop_timeout if timeout is None else timeout
             self._stop_event.set()
@@ -2380,11 +2380,8 @@ def start_self_improvement_cycle(
         current_thread = monitor_state.get("thread")
         if current_thread is not None:
             try:
-                if wait_on_stop:
-                    current_thread.stop(timeout=stop_timeout)
-                else:
-                    current_thread.request_stop()
-                    current_thread.join(timeout=stop_timeout)
+                effective_timeout = stop_timeout if wait_on_stop else 0.0
+                current_thread.stop(timeout=effective_timeout)
             except Exception:
                 logger.exception(
                     "cycle stop failed during restart",
@@ -2392,16 +2389,14 @@ def start_self_improvement_cycle(
                 )
             thread_state = current_thread.state()
             if thread_state.get("thread_alive"):
-                logger.critical(
-                    "self improvement cycle failed to stop; forcing process exit for recovery",
+                logger.warning(
+                    "self improvement cycle stop timed out; starting replacement thread",
                     extra=log_record(
                         reason=reason,
                         stop_timeout_seconds=stop_timeout,
-                        recovery_action="process_exit",
                         thread_state=thread_state,
                     ),
                 )
-                os._exit(1)
         tick_state.reset()
         loop_heartbeat_state.reset()
         new_thread, new_stop_event = _create_cycle_thread()
