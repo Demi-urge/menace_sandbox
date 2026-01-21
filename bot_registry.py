@@ -280,6 +280,18 @@ def _get_patch_provenance_service_cls() -> type | None:
     )
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _REGISTERED_BOTS: dict[str, dict[str, str]] = {
+    "HierarchyAssessmentBot": {
+        "module_path": "menace_sandbox.hierarchy_assessment_bot",
+        "class_name": "HierarchyAssessmentBot",
+    },
+    "InformationSynthesisBot": {
+        "module_path": "menace_sandbox.information_synthesis_bot",
+        "class_name": "InformationSynthesisBot",
+    },
+    "TaskValidationBot": {
+        "module_path": "menace_sandbox.task_validation_bot",
+        "class_name": "TaskValidationBot",
+    },
     "FutureSynergyProfitBot": {
         "module_path": "menace_sandbox.future_prediction_bots",
         "class_name": "FutureSynergyProfitBot",
@@ -1878,6 +1890,39 @@ class BotRegistry:
         with self._lock:
             self._transient_error_state.pop(name, None)
 
+    def get_known_module_path(self, name: str) -> str | None:
+        """Return the best-known module path for *name*."""
+
+        module_path = self.modules.get(name)
+        if module_path:
+            return module_path
+        fallback = _REGISTERED_BOTS.get(name)
+        if isinstance(fallback, dict):
+            module_path = fallback.get("module_path") or fallback.get("module")
+        return module_path
+
+    def _infer_module_path(
+        self, name: str, bot_ref: Any | None
+    ) -> tuple[str | None, str | None]:
+        """Infer a module path from available metadata."""
+
+        if bot_ref is not None:
+            module_name: str | None = None
+            if isinstance(bot_ref, type):
+                module_name = getattr(bot_ref, "__module__", None)
+            else:
+                module_name = getattr(bot_ref, "__module__", None)
+                if not module_name and hasattr(bot_ref, "__class__"):
+                    module_name = getattr(bot_ref.__class__, "__module__", None)
+            if module_name:
+                return module_name, "bot_reference"
+        fallback = _REGISTERED_BOTS.get(name)
+        if isinstance(fallback, dict):
+            module_name = fallback.get("module_path") or fallback.get("module")
+            if module_name:
+                return module_name, "registry_defaults"
+        return None, None
+
     def register_module_path_failure(
         self,
         name: str,
@@ -2457,6 +2502,7 @@ class BotRegistry:
         name: str,
         module_path: str | os.PathLike[str] | None = None,
         *,
+        bot_ref: Any | None = None,
         roi_threshold: float | None = None,
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
@@ -2519,9 +2565,14 @@ class BotRegistry:
             self.graph.add_node(name)
             node = self.graph.nodes[name]
             if module_path is None:
-                fallback = _REGISTERED_BOTS.get(name)
-                if isinstance(fallback, dict):
-                    module_path = fallback.get("module_path") or fallback.get("module")
+                module_path, inferred_source = self._infer_module_path(name, bot_ref)
+                if module_path is not None:
+                    logger.info(
+                        "Inferred module path for %s from %s: %s",
+                        name,
+                        inferred_source or "unknown",
+                        module_path,
+                    )
             resolved_path: str | None = None
             if module_path is not None:
                 try:
