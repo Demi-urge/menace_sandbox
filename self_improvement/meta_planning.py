@@ -2363,7 +2363,11 @@ def start_self_improvement_cycle(
             self._loop.call_soon_threadsafe(
                 lambda: self._task.cancel() if self._task is not None else None
             )
-            self.join(timeout=effective_timeout)
+            try:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            except RuntimeError:
+                pass
+            self._thread.join(effective_timeout)
             if self._thread.is_alive():
                 heartbeat_snapshot = loop_heartbeat_state.snapshot()
                 last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
@@ -2375,17 +2379,31 @@ def start_self_improvement_cycle(
                     loop_running = self._loop.is_running()
                 except Exception:
                     loop_running = False
+                stack_dump = _get_thread_stack(self._thread.ident)
+                monitor_state["stuck_thread"] = {
+                    "thread": self._thread,
+                    "ident": self._thread.ident,
+                    "detected_at": now,
+                    "stack": stack_dump,
+                }
                 logger = get_logger(__name__)
+                message = "self improvement loop unresponsive during stop; continuing without waiting"
+                if stack_dump:
+                    message = f"{message}\n{stack_dump}"
                 logger.critical(
-                    "self improvement loop unresponsive during stop; continuing without waiting",
+                    message,
                     extra=log_record(
                         thread_ident=self._thread.ident,
                         loop_running=loop_running,
                         last_heartbeat_timestamp=last_heartbeat,
                         last_heartbeat_age_seconds=last_heartbeat_age,
                         stop_timeout_seconds=effective_timeout,
+                        stuck_thread_stack=stack_dump,
                     ),
                 )
+                return
+            if not self._exc.empty():
+                raise self._exc.get()
 
         def request_stop(self) -> None:
             self._stop_event.set()
@@ -2422,6 +2440,7 @@ def start_self_improvement_cycle(
         "SELF_IMPROVEMENT_CYCLE_WATCHDOG_SECONDS", max(120.0, interval * 3)
     )
     watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", True)
+    allow_zombie_restart = _env_bool("SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART", False)
     watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
     stop_timeout = _env_float("SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS", 5.0)
     join_timeout = _env_float(
@@ -2433,7 +2452,17 @@ def start_self_improvement_cycle(
         "stop_event": None,
         "last_loop_heartbeat": None,
         "loop_heartbeat_started": None,
+        "stuck_thread": None,
     }
+
+    def _get_thread_stack(thread_ident: int | None) -> str | None:
+        if thread_ident is None:
+            return None
+        frame_map = sys._current_frames()
+        frame = frame_map.get(thread_ident)
+        if frame is None:
+            return None
+        return "".join(traceback.format_stack(frame))
 
     def _create_cycle_thread() -> tuple[_CycleThread, threading.Event]:
         local_stop_event = threading.Event()
@@ -2443,6 +2472,32 @@ def start_self_improvement_cycle(
     def _restart_cycle_thread(
         logger: logging.Logger, reason: str, *, wait_on_stop: bool = True
     ) -> None:
+        stuck_thread = monitor_state.get("stuck_thread")
+        if stuck_thread is not None:
+            stuck_worker = stuck_thread.get("thread")
+            if stuck_worker is not None and stuck_worker.is_alive():
+                if not allow_zombie_restart:
+                    logger.critical(
+                        "refusing to restart self improvement cycle while stuck thread is alive",
+                        extra=log_record(
+                            reason=reason,
+                            thread_ident=stuck_thread.get("ident"),
+                            stuck_detected_at=stuck_thread.get("detected_at"),
+                            stuck_thread_stack=stuck_thread.get("stack"),
+                            override_env="SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                        ),
+                    )
+                    return
+                logger.warning(
+                    "overriding stuck thread guard; restarting self improvement cycle while stuck thread is alive",
+                    extra=log_record(
+                        reason=reason,
+                        thread_ident=stuck_thread.get("ident"),
+                        stuck_detected_at=stuck_thread.get("detected_at"),
+                        stuck_thread_stack=stuck_thread.get("stack"),
+                        override_env="SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                    ),
+                )
         current_thread = monitor_state.get("thread")
         if current_thread is not None:
             try:
@@ -2455,19 +2510,43 @@ def start_self_improvement_cycle(
                 )
             thread_state = current_thread.state()
             if thread_state.get("thread_alive"):
+                stack_dump = _get_thread_stack(thread_state.get("thread_ident"))
+                monitor_state["stuck_thread"] = {
+                    "thread": current_thread._thread,
+                    "ident": thread_state.get("thread_ident"),
+                    "detected_at": time.time(),
+                    "stack": stack_dump,
+                }
+                stuck_message = "self improvement cycle thread stuck during restart"
+                if stack_dump:
+                    stuck_message = f"{stuck_message}\n{stack_dump}"
                 logger.warning(
-                    "self improvement cycle stop timed out; starting replacement thread",
+                    stuck_message,
                     extra=log_record(
                         reason=reason,
                         stop_timeout_seconds=stop_timeout,
                         thread_state=thread_state,
+                        stuck_thread_stack=stack_dump,
                     ),
                 )
+                if not allow_zombie_restart:
+                    logger.critical(
+                        "refusing to start replacement thread while stuck thread is alive",
+                        extra=log_record(
+                            reason=reason,
+                            thread_ident=thread_state.get("thread_ident"),
+                            stop_timeout_seconds=stop_timeout,
+                            override_env="SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                            stuck_thread_stack=stack_dump,
+                        ),
+                    )
+                    return
         tick_state.reset()
         loop_heartbeat_state.reset()
         loop_ping_state.reset()
         monitor_state["last_loop_heartbeat"] = None
         monitor_state["loop_heartbeat_started"] = None
+        monitor_state["stuck_thread"] = None
         new_thread, new_stop_event = _create_cycle_thread()
         monitor_state["thread"] = new_thread
         monitor_state["stop_event"] = new_stop_event
