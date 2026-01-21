@@ -39,6 +39,8 @@ from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
 _INTERNALIZE_THROTTLE_SECONDS = 1.5
 _INTERNALIZE_THROTTLE_LOCK = threading.Lock()
 _LAST_INTERNALIZE_AT = 0.0
+_INTERNALIZE_IN_FLIGHT_LOCK = threading.Lock()
+_INTERNALIZE_IN_FLIGHT: set[str] = set()
 _INTERNALIZE_REUSE_WINDOW_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_REUSE_WINDOW_SECONDS", "90")
 )
@@ -3715,6 +3717,24 @@ def internalize_coding_bot(
             return False
         return True
 
+    def _inflight_manager_fallback() -> SelfCodingManager:
+        inflight_node = bot_registry.graph.nodes.get(bot_name) if bot_registry else None
+        existing_manager = None
+        if inflight_node is not None:
+            existing_manager = inflight_node.get("selfcoding_manager") or inflight_node.get("manager")
+        if existing_manager is not None and _manager_healthy(existing_manager):
+            return existing_manager
+        return _cooldown_disabled_manager(bot_registry, data_bot)
+
+    with _INTERNALIZE_IN_FLIGHT_LOCK:
+        already_in_flight = bot_name in _INTERNALIZE_IN_FLIGHT
+    if already_in_flight:
+        logger_ref.info(
+            "internalize_coding_bot already in-flight for %s; skipping manager construction",
+            bot_name,
+        )
+        return _inflight_manager_fallback()
+
     if _internalize_in_cooldown(bot_name):
         return _cooldown_disabled_manager(bot_registry, data_bot)
 
@@ -3789,6 +3809,15 @@ def internalize_coding_bot(
         elapsed = time.monotonic() - started_at
         print(f"[debug] {bot_name}: finished {step} in {elapsed:.3f}s")
         return elapsed
+
+    with _INTERNALIZE_IN_FLIGHT_LOCK:
+        if bot_name in _INTERNALIZE_IN_FLIGHT:
+            logger_ref.info(
+                "internalize_coding_bot already in-flight for %s; skipping manager construction",
+                bot_name,
+            )
+            return _inflight_manager_fallback()
+        _INTERNALIZE_IN_FLIGHT.add(bot_name)
 
     try:
         manager_timer = _start_step("manager construction")
@@ -4122,6 +4151,9 @@ def internalize_coding_bot(
     except Exception as exc:
         _track_failure(str(exc))
         raise
+    finally:
+        with _INTERNALIZE_IN_FLIGHT_LOCK:
+            _INTERNALIZE_IN_FLIGHT.discard(bot_name)
 
 
 __all__ = [
