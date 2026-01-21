@@ -49,6 +49,10 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Lifecycle management and stall recovery
+
+The self-improvement loop now runs under a managed asyncio runner. A dedicated background thread invokes `asyncio.Runner` and schedules the cycle coroutine plus a heartbeat monitor via `asyncio.create_task`, while stop signals are handled with `asyncio.to_thread` so the event loop can exit cleanly. If the watchdog detects missed heartbeats or loop pings it triggers a controlled restart, allowing the system to recover from stalls without leaving orphaned event loops. Operators can still stop the cycle via `stop_self_improvement_cycle`, which cancels the in-flight task and waits for the runner thread to exit before returning.
+
 ## Snapshot Tracking
 
 `SnapshotTracker` records key metrics before and after each cycle so
