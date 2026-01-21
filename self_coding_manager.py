@@ -42,6 +42,8 @@ _INTERNALIZE_THROTTLE_LOCK = threading.Lock()
 _LAST_INTERNALIZE_AT = 0.0
 _INTERNALIZE_IN_FLIGHT_LOCK = threading.Lock()
 _INTERNALIZE_IN_FLIGHT: set[str] = set()
+_INTERNALIZE_BOT_LOCKS_LOCK = threading.Lock()
+_INTERNALIZE_BOT_LOCKS: dict[str, threading.Lock] = {}
 _INTERNALIZE_REUSE_WINDOW_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_REUSE_WINDOW_SECONDS", "90")
 )
@@ -194,6 +196,15 @@ def _current_self_coding_import_depth() -> int:
             return 0
 
     return 0
+
+
+def _get_internalize_lock(bot_name: str) -> threading.Lock:
+    with _INTERNALIZE_BOT_LOCKS_LOCK:
+        lock = _INTERNALIZE_BOT_LOCKS.get(bot_name)
+        if lock is None:
+            lock = threading.Lock()
+            _INTERNALIZE_BOT_LOCKS[bot_name] = lock
+    return lock
 
 
 def _internalize_in_cooldown(bot_name: str) -> bool:
@@ -3727,455 +3738,466 @@ def internalize_coding_bot(
             return existing_manager
         return _cooldown_disabled_manager(bot_registry, data_bot)
 
-    with _INTERNALIZE_IN_FLIGHT_LOCK:
-        already_in_flight = bot_name in _INTERNALIZE_IN_FLIGHT
-    if already_in_flight:
-        logger_ref.debug(
-            "internalize_coding_bot duplicate invocation detected for %s; stack trace:\n%s",
-            bot_name,
-            "".join(traceback.format_stack()),
-        )
+    internalize_lock = _get_internalize_lock(bot_name)
+    if not internalize_lock.acquire(blocking=False):
         logger_ref.info(
-            "internalize_coding_bot already in-flight for %s; skipping manager construction",
+            "internalize_coding_bot already in progress for %s; skipping",
             bot_name,
         )
         return _inflight_manager_fallback()
 
-    if _internalize_in_cooldown(bot_name):
-        return _cooldown_disabled_manager(bot_registry, data_bot)
-
-    if _current_self_coding_import_depth() > 0:
-        print("Forcing manager despite depth lock")
-
-    if bot_registry is not None:
-        node = bot_registry.graph.nodes.get(bot_name)
-    if node is not None:
-        disabled_state = node.get("self_coding_disabled")
-        if (
-            isinstance(disabled_state, dict)
-            and disabled_state.get("source") == "module_path_resolution"
-        ):
-            return _cooldown_disabled_manager(bot_registry, data_bot)
-    existing_manager = None
-    if node is not None:
-        existing_manager = node.get("selfcoding_manager") or node.get("manager")
-    if existing_manager is not None and _manager_healthy(existing_manager):
-        _mark_last_internalized()
-        logger_ref.info(
-            "internalize_coding_bot reusing existing manager for %s", bot_name
-        )
-        return existing_manager
-    if existing_manager is not None and _recent_internalization():
-        logger_ref.debug(
-            "internalize_coding_bot rapid re-invocation detected for %s; stack trace:\n%s",
-            bot_name,
-            "".join(traceback.format_stack()),
-        )
-        _mark_last_internalized()
-        logger_ref.info(
-            "internalize_coding_bot skipping reinternalization for %s; "
-            "recent internalization detected",
-            bot_name,
-        )
-        return existing_manager
-
-    delay = 0.0
-    if _INTERNALIZE_THROTTLE_SECONDS > 0:
-        with _INTERNALIZE_THROTTLE_LOCK:
-            now = time.monotonic()
-            elapsed = now - _LAST_INTERNALIZE_AT
-            if elapsed < _INTERNALIZE_THROTTLE_SECONDS:
-                delay = _INTERNALIZE_THROTTLE_SECONDS - elapsed
-                target = now + delay
-            else:
-                target = now
-            _LAST_INTERNALIZE_AT = target
-    if delay > 0:
-        time.sleep(delay)
-
-    print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
-
-    def _track_failure(reason: str) -> None:
-        nonlocal failure_recorded
-        if failure_recorded:
-            return
-        failure_recorded = True
-        path_value = (
-            str(module_path)
-            if module_path is not None
-            else module_hint
-        )
-        _record_internalize_failure(
-            bot_name,
-            module_path=path_value,
-            reason=reason,
-            logger=getattr(manager, "logger", None) or logger_ref,
-        )
-    
-    def _start_step(step: str) -> float:
-        print(f"[debug] {bot_name}: starting {step}")
-        return time.monotonic()
-
-    def _end_step(step: str, started_at: float) -> float:
-        elapsed = time.monotonic() - started_at
-        print(f"[debug] {bot_name}: finished {step} in {elapsed:.3f}s")
-        return elapsed
-
-    with _INTERNALIZE_IN_FLIGHT_LOCK:
-        if bot_name in _INTERNALIZE_IN_FLIGHT:
+    try:
+        with _INTERNALIZE_IN_FLIGHT_LOCK:
+            already_in_flight = bot_name in _INTERNALIZE_IN_FLIGHT
+        if already_in_flight:
+            logger_ref.debug(
+                "internalize_coding_bot duplicate invocation detected for %s; stack trace:\n%s",
+                bot_name,
+                "".join(traceback.format_stack()),
+            )
             logger_ref.info(
                 "internalize_coding_bot already in-flight for %s; skipping manager construction",
                 bot_name,
             )
             return _inflight_manager_fallback()
-        _INTERNALIZE_IN_FLIGHT.add(bot_name)
-
-    try:
-        manager_timer = _start_step("manager construction")
-        manager = SelfCodingManager(
-            engine,
-            pipeline,
-            bot_name=bot_name,
-            data_bot=data_bot,
-            bot_registry=bot_registry,
-            roi_drop_threshold=roi_threshold,
-            error_rate_threshold=error_threshold,
-            **manager_kwargs,
-        )
-        _end_step("manager construction", manager_timer)
-        if provenance_token:
-            try:
-                setattr(manager, "_bootstrap_provenance_token", provenance_token)
-            except Exception:
-                manager.logger.debug(
-                    "failed to persist bootstrap provenance token", exc_info=True
-                )
-        if manager.quick_fix is None:
-            raise ImportError("QuickFixEngine failed to initialise")
-        manager.evolution_orchestrator = evolution_orchestrator
-        register_timer = _start_step("bot_registry.register_bot")
-        bot_registry.register_bot(
-            bot_name,
-            roi_threshold=roi_threshold,
-            error_threshold=error_threshold,
-            test_failure_threshold=test_failure_threshold,
-            manager=manager,
-            data_bot=data_bot,
-            is_coding_bot=True,
-        )
-        _end_step("bot_registry.register_bot", register_timer)
-        schedule_timer = _start_step("data_bot.schedule_monitoring")
-        try:
-            data_bot.schedule_monitoring(bot_name)
-        except Exception:  # pragma: no cover - best effort
-            manager.logger.exception(
-                "failed to schedule monitoring for %s", bot_name
+    
+        if _internalize_in_cooldown(bot_name):
+            return _cooldown_disabled_manager(bot_registry, data_bot)
+    
+        if _current_self_coding_import_depth() > 0:
+            print("Forcing manager despite depth lock")
+    
+        if bot_registry is not None:
+            node = bot_registry.graph.nodes.get(bot_name)
+        if node is not None:
+            disabled_state = node.get("self_coding_disabled")
+            if (
+                isinstance(disabled_state, dict)
+                and disabled_state.get("source") == "module_path_resolution"
+            ):
+                return _cooldown_disabled_manager(bot_registry, data_bot)
+        existing_manager = None
+        if node is not None:
+            existing_manager = node.get("selfcoding_manager") or node.get("manager")
+        if existing_manager is not None and _manager_healthy(existing_manager):
+            _mark_last_internalized()
+            logger_ref.info(
+                "internalize_coding_bot reusing existing manager for %s", bot_name
             )
-        finally:
-            _end_step("data_bot.schedule_monitoring", schedule_timer)
-        settings = getattr(data_bot, "settings", None)
-        thresholds = getattr(settings, "bot_thresholds", {}) if settings else {}
-        if bot_name not in thresholds:
-            threshold_timer = _start_step("threshold persistence")
-            try:
-                persist_sc_thresholds(
+            return existing_manager
+        if existing_manager is not None and _recent_internalization():
+            logger_ref.debug(
+                "internalize_coding_bot rapid re-invocation detected for %s; stack trace:\n%s",
+                bot_name,
+                "".join(traceback.format_stack()),
+            )
+            _mark_last_internalized()
+            logger_ref.info(
+                "internalize_coding_bot skipping reinternalization for %s; "
+                "recent internalization detected",
+                bot_name,
+            )
+            return existing_manager
+    
+        delay = 0.0
+        if _INTERNALIZE_THROTTLE_SECONDS > 0:
+            with _INTERNALIZE_THROTTLE_LOCK:
+                now = time.monotonic()
+                elapsed = now - _LAST_INTERNALIZE_AT
+                if elapsed < _INTERNALIZE_THROTTLE_SECONDS:
+                    delay = _INTERNALIZE_THROTTLE_SECONDS - elapsed
+                    target = now + delay
+                else:
+                    target = now
+                _LAST_INTERNALIZE_AT = target
+        if delay > 0:
+            time.sleep(delay)
+    
+        print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
+    
+        def _track_failure(reason: str) -> None:
+            nonlocal failure_recorded
+            if failure_recorded:
+                return
+            failure_recorded = True
+            path_value = (
+                str(module_path)
+                if module_path is not None
+                else module_hint
+            )
+            _record_internalize_failure(
+                bot_name,
+                module_path=path_value,
+                reason=reason,
+                logger=getattr(manager, "logger", None) or logger_ref,
+            )
+        
+        def _start_step(step: str) -> float:
+            print(f"[debug] {bot_name}: starting {step}")
+            return time.monotonic()
+    
+        def _end_step(step: str, started_at: float) -> float:
+            elapsed = time.monotonic() - started_at
+            print(f"[debug] {bot_name}: finished {step} in {elapsed:.3f}s")
+            return elapsed
+    
+        with _INTERNALIZE_IN_FLIGHT_LOCK:
+            if bot_name in _INTERNALIZE_IN_FLIGHT:
+                logger_ref.info(
+                    "internalize_coding_bot already in-flight for %s; skipping manager construction",
                     bot_name,
-                    roi_drop=(
-                        roi_threshold
-                        if roi_threshold is not None
-                        else getattr(settings, "self_coding_roi_drop", None)
-                    ),
-                    error_increase=(
-                        error_threshold
-                        if error_threshold is not None
-                        else getattr(settings, "self_coding_error_increase", None)
-                    ),
-                    test_failure_increase=(
-                        test_failure_threshold
-                        if test_failure_threshold is not None
-                        else getattr(
-                            settings, "self_coding_test_failure_increase", None
-                        )
-                    ),
-                    event_bus=getattr(data_bot, "event_bus", None),
                 )
+                return _inflight_manager_fallback()
+            _INTERNALIZE_IN_FLIGHT.add(bot_name)
+    
+        try:
+            manager_timer = _start_step("manager construction")
+            manager = SelfCodingManager(
+                engine,
+                pipeline,
+                bot_name=bot_name,
+                data_bot=data_bot,
+                bot_registry=bot_registry,
+                roi_drop_threshold=roi_threshold,
+                error_rate_threshold=error_threshold,
+                **manager_kwargs,
+            )
+            _end_step("manager construction", manager_timer)
+            if provenance_token:
+                try:
+                    setattr(manager, "_bootstrap_provenance_token", provenance_token)
+                except Exception:
+                    manager.logger.debug(
+                        "failed to persist bootstrap provenance token", exc_info=True
+                    )
+            if manager.quick_fix is None:
+                raise ImportError("QuickFixEngine failed to initialise")
+            manager.evolution_orchestrator = evolution_orchestrator
+            register_timer = _start_step("bot_registry.register_bot")
+            bot_registry.register_bot(
+                bot_name,
+                roi_threshold=roi_threshold,
+                error_threshold=error_threshold,
+                test_failure_threshold=test_failure_threshold,
+                manager=manager,
+                data_bot=data_bot,
+                is_coding_bot=True,
+            )
+            _end_step("bot_registry.register_bot", register_timer)
+            schedule_timer = _start_step("data_bot.schedule_monitoring")
+            try:
+                data_bot.schedule_monitoring(bot_name)
             except Exception:  # pragma: no cover - best effort
                 manager.logger.exception(
-                    "failed to persist thresholds for %s", bot_name
+                    "failed to schedule monitoring for %s", bot_name
                 )
             finally:
-                _end_step("threshold persistence", threshold_timer)
-        if evolution_orchestrator is not None:
-            orchestrator_timer = _start_step("evolution orchestrator registration")
-            evolution_orchestrator.selfcoding_manager = manager
-            try:
-                evolution_orchestrator.register_bot(bot_name)
-            except Exception:  # pragma: no cover - best effort
-                manager.logger.exception(
-                    "failed to register %s with EvolutionOrchestrator", bot_name
-                )
-            bus = getattr(evolution_orchestrator, "event_bus", None)
-            if bus:
+                _end_step("data_bot.schedule_monitoring", schedule_timer)
+            settings = getattr(data_bot, "settings", None)
+            thresholds = getattr(settings, "bot_thresholds", {}) if settings else {}
+            if bot_name not in thresholds:
+                threshold_timer = _start_step("threshold persistence")
                 try:
-                    bus.subscribe(
-                        "degradation:detected",
-                        lambda _t, e: evolution_orchestrator.register_patch_cycle(e),
+                    persist_sc_thresholds(
+                        bot_name,
+                        roi_drop=(
+                            roi_threshold
+                            if roi_threshold is not None
+                            else getattr(settings, "self_coding_roi_drop", None)
+                        ),
+                        error_increase=(
+                            error_threshold
+                            if error_threshold is not None
+                            else getattr(settings, "self_coding_error_increase", None)
+                        ),
+                        test_failure_increase=(
+                            test_failure_threshold
+                            if test_failure_threshold is not None
+                            else getattr(
+                                settings, "self_coding_test_failure_increase", None
+                            )
+                        ),
+                        event_bus=getattr(data_bot, "event_bus", None),
                     )
                 except Exception:  # pragma: no cover - best effort
                     manager.logger.exception(
-                        "failed to subscribe degradation events for %s", bot_name
+                        "failed to persist thresholds for %s", bot_name
                     )
-            _end_step("evolution orchestrator registration", orchestrator_timer)
-        else:
-            print(
-                f"[debug] {bot_name}: skipping evolution orchestrator registration (not provided)"
-            )
-        event_bus = (
-            getattr(manager, "event_bus", None)
-            or getattr(evolution_orchestrator, "event_bus", None)
-            or getattr(data_bot, "event_bus", None)
-        )
-        module_resolution_timer = _start_step("module path resolution")
-        try:
-            node = bot_registry.graph.nodes.get(bot_name) if bot_registry else None
-            if node:
-                module_str = node.get("module")
-                if module_str:
-                    module_path = Path(module_str)
-                    module_hint = str(module_str)
-        except Exception:
-            module_path = None
-        if module_path is None or not module_path.exists():
-            module_entry: str | os.PathLike[str] | None = None
-            try:
-                if bot_registry is not None and hasattr(
-                    bot_registry, "get_known_module_path"
-                ):
-                    module_entry = bot_registry.get_known_module_path(bot_name)
-            except Exception:
-                module_entry = None
-            if module_entry is None and bot_name in getattr(
-                bot_registry, "modules", {}
-            ):
+                finally:
+                    _end_step("threshold persistence", threshold_timer)
+            if evolution_orchestrator is not None:
+                orchestrator_timer = _start_step("evolution orchestrator registration")
+                evolution_orchestrator.selfcoding_manager = manager
                 try:
-                    module_entry = bot_registry.modules.get(bot_name)
+                    evolution_orchestrator.register_bot(bot_name)
+                except Exception:  # pragma: no cover - best effort
+                    manager.logger.exception(
+                        "failed to register %s with EvolutionOrchestrator", bot_name
+                    )
+                bus = getattr(evolution_orchestrator, "event_bus", None)
+                if bus:
+                    try:
+                        bus.subscribe(
+                            "degradation:detected",
+                            lambda _t, e: evolution_orchestrator.register_patch_cycle(e),
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        manager.logger.exception(
+                            "failed to subscribe degradation events for %s", bot_name
+                        )
+                _end_step("evolution orchestrator registration", orchestrator_timer)
+            else:
+                print(
+                    f"[debug] {bot_name}: skipping evolution orchestrator registration (not provided)"
+                )
+            event_bus = (
+                getattr(manager, "event_bus", None)
+                or getattr(evolution_orchestrator, "event_bus", None)
+                or getattr(data_bot, "event_bus", None)
+            )
+            module_resolution_timer = _start_step("module path resolution")
+            try:
+                node = bot_registry.graph.nodes.get(bot_name) if bot_registry else None
+                if node:
+                    module_str = node.get("module")
+                    if module_str:
+                        module_path = Path(module_str)
+                        module_hint = str(module_str)
+            except Exception:
+                module_path = None
+            if module_path is None or not module_path.exists():
+                module_entry: str | os.PathLike[str] | None = None
+                try:
+                    if bot_registry is not None and hasattr(
+                        bot_registry, "get_known_module_path"
+                    ):
+                        module_entry = bot_registry.get_known_module_path(bot_name)
                 except Exception:
                     module_entry = None
-            if module_entry:
-                if module_hint is None:
-                    module_hint = str(module_entry)
-                dotted_module_path: Path | None = None
-                if isinstance(module_entry, (str, os.PathLike)):
-                    dotted_module_path = Path(module_entry)
-                    if "." in str(module_entry) and not dotted_module_path.exists():
-                        module_file = None
-                        try:
-                            spec = importlib.util.find_spec(str(module_entry))
-                        except Exception:
-                            spec = None
-                        if spec and getattr(spec, "origin", None):
-                            module_file = spec.origin
-                        if module_file is None:
+                if module_entry is None and bot_name in getattr(
+                    bot_registry, "modules", {}
+                ):
+                    try:
+                        module_entry = bot_registry.modules.get(bot_name)
+                    except Exception:
+                        module_entry = None
+                if module_entry:
+                    if module_hint is None:
+                        module_hint = str(module_entry)
+                    dotted_module_path: Path | None = None
+                    if isinstance(module_entry, (str, os.PathLike)):
+                        dotted_module_path = Path(module_entry)
+                        if "." in str(module_entry) and not dotted_module_path.exists():
+                            module_file = None
                             try:
-                                imported_module = importlib.import_module(
-                                    str(module_entry)
+                                spec = importlib.util.find_spec(str(module_entry))
+                            except Exception:
+                                spec = None
+                            if spec and getattr(spec, "origin", None):
+                                module_file = spec.origin
+                            if module_file is None:
+                                try:
+                                    imported_module = importlib.import_module(
+                                        str(module_entry)
+                                    )
+                                except Exception:
+                                    imported_module = None
+                                if imported_module is not None:
+                                    module_file = getattr(
+                                        imported_module, "__file__", None
+                                    )
+                            if module_file:
+                                dotted_module_path = Path(module_file)
+                    module_path = dotted_module_path or Path(module_entry)
+            if module_path is None or not (module_path and module_path.exists()):
+                try:
+                    module = importlib.import_module(bot_name)
+                except Exception:
+                    module = None
+                if module is not None:
+                    module_file = getattr(module, "__file__", "")
+                    if module_file:
+                        candidate = Path(module_file)
+                        if candidate.exists():
+                            module_path = candidate
+            if module_path is not None and module_path.exists():
+                module_path = module_path.resolve()
+                if bot_registry is not None and hasattr(
+                    bot_registry, "clear_module_path_failures"
+                ):
+                    try:
+                        bot_registry.clear_module_path_failures(bot_name)
+                    except Exception:  # pragma: no cover - best effort
+                        pass
+            _end_step("module path resolution", module_resolution_timer)
+            provenance_timer = _start_step("provenance token acquisition")
+            provenance_token = getattr(manager, "_bootstrap_provenance_token", None)
+            if getattr(manager, "evolution_orchestrator", None) is not None:
+                provenance_token = (
+                    getattr(manager.evolution_orchestrator, "provenance_token", None)
+                    or provenance_token
+                )
+            if provenance_token is None and evolution_orchestrator is not None:
+                provenance_token = getattr(evolution_orchestrator, "provenance_token", None)
+            _end_step("provenance token acquisition", provenance_timer)
+            description = f"internalize:{bot_name}"
+    
+            def _emit_failure(reason: str) -> None:
+                _track_failure(reason)
+                data_bot_ref = getattr(manager, "data_bot", None)
+                if data_bot_ref:
+                    try:
+                        data_bot_ref.collect(
+                            bot_name,
+                            post_patch_cycle_success=0.0,
+                            post_patch_cycle_error=reason,
+                        )
+                    except Exception:
+                        manager.logger.exception(
+                            "failed to record post patch failure metrics"
+                        )
+                if event_bus:
+                    payload = {
+                        "bot": bot_name,
+                        "description": description,
+                        "path": str(module_path) if module_path else None,
+                        "severity": 0.0,
+                        "success": False,
+                        "post_validation_success": False,
+                        "post_validation_error": reason,
+                    }
+                    try:
+                        event_bus.publish("self_coding:patch_attempt", payload)
+                    except Exception:
+                        manager.logger.exception(
+                            "failed to publish internalize patch_attempt for %s",
+                            bot_name,
+                        )
+    
+            if module_path is None or not module_path.exists():
+                print(
+                    f"[debug] Bootstrap failed at module_path resolution due to missing path for: {bot_name}"
+                )
+                if hasattr(manager, "logger"):
+                    try:
+                        manager.logger.error(
+                            "module_path resolution failed for %s; missing module path: %s",
+                            bot_name,
+                            module_hint,
+                            extra={"bot": bot_name, "module_path": module_hint},
+                        )
+                    except Exception:
+                        print(
+                            f"[debug] failed to log module_path resolution error for {bot_name}",
+                            file=sys.stderr,
+                        )
+                _emit_failure("module_path_missing")
+                if bot_registry is not None and hasattr(
+                    bot_registry, "register_module_path_failure"
+                ):
+                    try:
+                        _attempts, delay, disabled = (
+                            bot_registry.register_module_path_failure(
+                                bot_name,
+                                module_hint=module_hint,
+                                resolved_path=str(module_path) if module_path else None,
+                            )
+                        )
+                    except Exception:
+                        manager.logger.exception(
+                            "failed to register module_path resolution failure for %s",
+                            bot_name,
+                        )
+                    else:
+                        if disabled:
+                            try:
+                                manager.logger.error(
+                                    "self-coding disabled for %s after repeated module_path resolution failures",
+                                    bot_name,
                                 )
                             except Exception:
-                                imported_module = None
-                            if imported_module is not None:
-                                module_file = getattr(
-                                    imported_module, "__file__", None
+                                pass
+                        elif delay is not None:
+                            try:
+                                manager.logger.warning(
+                                    "retrying module_path resolution for %s in %.1fs",
+                                    bot_name,
+                                    delay,
                                 )
-                        if module_file:
-                            dotted_module_path = Path(module_file)
-                module_path = dotted_module_path or Path(module_entry)
-        if module_path is None or not (module_path and module_path.exists()):
-            try:
-                module = importlib.import_module(bot_name)
-            except Exception:
-                module = None
-            if module is not None:
-                module_file = getattr(module, "__file__", "")
-                if module_file:
-                    candidate = Path(module_file)
-                    if candidate.exists():
-                        module_path = candidate
-        if module_path is not None and module_path.exists():
-            module_path = module_path.resolve()
-            if bot_registry is not None and hasattr(
-                bot_registry, "clear_module_path_failures"
-            ):
-                try:
-                    bot_registry.clear_module_path_failures(bot_name)
-                except Exception:  # pragma: no cover - best effort
-                    pass
-        _end_step("module path resolution", module_resolution_timer)
-        provenance_timer = _start_step("provenance token acquisition")
-        provenance_token = getattr(manager, "_bootstrap_provenance_token", None)
-        if getattr(manager, "evolution_orchestrator", None) is not None:
-            provenance_token = (
-                getattr(manager.evolution_orchestrator, "provenance_token", None)
-                or provenance_token
-            )
-        if provenance_token is None and evolution_orchestrator is not None:
-            provenance_token = getattr(evolution_orchestrator, "provenance_token", None)
-        _end_step("provenance token acquisition", provenance_timer)
-        description = f"internalize:{bot_name}"
-
-        def _emit_failure(reason: str) -> None:
-            _track_failure(reason)
-            data_bot_ref = getattr(manager, "data_bot", None)
-            if data_bot_ref:
-                try:
-                    data_bot_ref.collect(
-                        bot_name,
-                        post_patch_cycle_success=0.0,
-                        post_patch_cycle_error=reason,
-                    )
-                except Exception:
-                    manager.logger.exception(
-                        "failed to record post patch failure metrics"
-                    )
-            if event_bus:
-                payload = {
-                    "bot": bot_name,
-                    "description": description,
-                    "path": str(module_path) if module_path else None,
-                    "severity": 0.0,
-                    "success": False,
-                    "post_validation_success": False,
-                    "post_validation_error": reason,
-                }
-                try:
-                    event_bus.publish("self_coding:patch_attempt", payload)
-                except Exception:
-                    manager.logger.exception(
-                        "failed to publish internalize patch_attempt for %s",
-                        bot_name,
-                    )
-
-        if module_path is None or not module_path.exists():
-            print(
-                f"[debug] Bootstrap failed at module_path resolution due to missing path for: {bot_name}"
-            )
-            if hasattr(manager, "logger"):
-                try:
-                    manager.logger.error(
-                        "module_path resolution failed for %s; missing module path: %s",
-                        bot_name,
-                        module_hint,
-                        extra={"bot": bot_name, "module_path": module_hint},
-                    )
-                except Exception:
-                    print(
-                        f"[debug] failed to log module_path resolution error for {bot_name}",
-                        file=sys.stderr,
-                    )
-            _emit_failure("module_path_missing")
-            if bot_registry is not None and hasattr(
-                bot_registry, "register_module_path_failure"
-            ):
-                try:
-                    _attempts, delay, disabled = (
-                        bot_registry.register_module_path_failure(
-                            bot_name,
-                            module_hint=module_hint,
-                            resolved_path=str(module_path) if module_path else None,
+                            except Exception:
+                                pass
+                if hasattr(manager, "logger"):
+                    try:
+                        manager.logger.warning(
+                            "skipping post patch cycle because module path is unavailable",
+                            extra={"bot": bot_name},
                         )
-                    )
-                except Exception:
-                    manager.logger.exception(
-                        "failed to register module_path resolution failure for %s",
-                        bot_name,
-                    )
-                else:
-                    if disabled:
-                        try:
-                            manager.logger.error(
-                                "self-coding disabled for %s after repeated module_path resolution failures",
-                                bot_name,
-                            )
-                        except Exception:
-                            pass
-                    elif delay is not None:
-                        try:
-                            manager.logger.warning(
-                                "retrying module_path resolution for %s in %.1fs",
-                                bot_name,
-                                delay,
-                            )
-                        except Exception:
-                            pass
-            if hasattr(manager, "logger"):
-                try:
-                    manager.logger.warning(
-                        "skipping post patch cycle because module path is unavailable",
-                        extra={"bot": bot_name},
-                    )
-                except Exception:
-                    # Fall back to stdout if structured logging fails during bootstrap
-                    print(
-                        f"[debug] failed to log missing module path for {bot_name}",
-                        file=sys.stderr,
-                    )
-            print(
-                f"[debug] internalize_coding_bot returning early without post patch cycle for bot: {bot_name}"
-            )
+                    except Exception:
+                        # Fall back to stdout if structured logging fails during bootstrap
+                        print(
+                            f"[debug] failed to log missing module path for {bot_name}",
+                            file=sys.stderr,
+                        )
+                print(
+                    f"[debug] internalize_coding_bot returning early without post patch cycle for bot: {bot_name}"
+                )
+                return manager
+            if provenance_token is None:
+                _emit_failure("missing_provenance")
+                raise PermissionError("missing provenance token for post patch validation")
+            post_cycle_timer = _start_step("run_post_patch_cycle")
+            try:
+                post_details = manager.run_post_patch_cycle(
+                    module_path,
+                    description,
+                    provenance_token=provenance_token,
+                    context_meta={"reason": "internalize"},
+                )
+            except Exception as exc:
+                if RollbackManager is not None:
+                    try:
+                        RollbackManager().rollback("internalize", requesting_bot=bot_name)
+                    except Exception:
+                        manager.logger.exception("rollback failed for %s", bot_name)
+                _emit_failure(str(exc))
+                raise
+            else:
+                if event_bus:
+                    payload = {
+                        "bot": bot_name,
+                        "description": description,
+                        "path": str(module_path),
+                        "severity": 0.0,
+                        "success": True,
+                        "post_validation_success": True,
+                        "post_validation_details": post_details,
+                    }
+                    tests_failed = post_details.get("self_tests", {}).get("failed")
+                    if tests_failed is not None:
+                        payload["post_validation_tests_failed"] = tests_failed
+                    try:
+                        event_bus.publish("self_coding:patch_attempt", payload)
+                    except Exception:
+                        manager.logger.exception(
+                            "failed to publish internalize patch_attempt for %s",
+                            bot_name,
+                        )
+            finally:
+                _end_step("run_post_patch_cycle", post_cycle_timer)
+            _record_internalize_success(bot_name)
+            _mark_last_internalized()
+            print(f"[debug] internalize_coding_bot returning manager for bot: {bot_name}")
             return manager
-        if provenance_token is None:
-            _emit_failure("missing_provenance")
-            raise PermissionError("missing provenance token for post patch validation")
-        post_cycle_timer = _start_step("run_post_patch_cycle")
-        try:
-            post_details = manager.run_post_patch_cycle(
-                module_path,
-                description,
-                provenance_token=provenance_token,
-                context_meta={"reason": "internalize"},
-            )
         except Exception as exc:
-            if RollbackManager is not None:
-                try:
-                    RollbackManager().rollback("internalize", requesting_bot=bot_name)
-                except Exception:
-                    manager.logger.exception("rollback failed for %s", bot_name)
-            _emit_failure(str(exc))
+            _track_failure(str(exc))
             raise
-        else:
-            if event_bus:
-                payload = {
-                    "bot": bot_name,
-                    "description": description,
-                    "path": str(module_path),
-                    "severity": 0.0,
-                    "success": True,
-                    "post_validation_success": True,
-                    "post_validation_details": post_details,
-                }
-                tests_failed = post_details.get("self_tests", {}).get("failed")
-                if tests_failed is not None:
-                    payload["post_validation_tests_failed"] = tests_failed
-                try:
-                    event_bus.publish("self_coding:patch_attempt", payload)
-                except Exception:
-                    manager.logger.exception(
-                        "failed to publish internalize patch_attempt for %s",
-                        bot_name,
-                    )
         finally:
-            _end_step("run_post_patch_cycle", post_cycle_timer)
-        _record_internalize_success(bot_name)
-        _mark_last_internalized()
-        print(f"[debug] internalize_coding_bot returning manager for bot: {bot_name}")
-        return manager
-    except Exception as exc:
-        _track_failure(str(exc))
-        raise
+            with _INTERNALIZE_IN_FLIGHT_LOCK:
+                _INTERNALIZE_IN_FLIGHT.discard(bot_name)
+    
+    
     finally:
-        with _INTERNALIZE_IN_FLIGHT_LOCK:
-            _INTERNALIZE_IN_FLIGHT.discard(bot_name)
-
-
+        internalize_lock.release()
 __all__ = [
     "SelfCodingManager",
     "PatchApprovalPolicy",
