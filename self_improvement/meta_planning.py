@@ -216,6 +216,51 @@ class _LoopHeartbeatState:
             self.last_heartbeat_thread_ident = None
 
 
+class _LoopPingState:
+    """Thread-safe tracking for event loop ping health."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.started_at = time.time()
+        self.last_ping: float | None = None
+        self.ping_count = 0
+        self.last_ping_thread_name: str | None = None
+        self.last_ping_thread_ident: int | None = None
+
+    def ping(self) -> dict[str, Any]:
+        now = time.time()
+        current_thread = threading.current_thread()
+        with self._lock:
+            self.last_ping = now
+            self.ping_count += 1
+            self.last_ping_thread_name = current_thread.name
+            self.last_ping_thread_ident = current_thread.ident
+            return {
+                "last_ping": self.last_ping,
+                "ping_count": self.ping_count,
+                "last_ping_thread_name": self.last_ping_thread_name,
+                "last_ping_thread_ident": self.last_ping_thread_ident,
+            }
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "started_at": self.started_at,
+                "last_ping": self.last_ping,
+                "ping_count": self.ping_count,
+                "last_ping_thread_name": self.last_ping_thread_name,
+                "last_ping_thread_ident": self.last_ping_thread_ident,
+            }
+
+    def reset(self) -> None:
+        with self._lock:
+            self.started_at = time.time()
+            self.last_ping = None
+            self.ping_count = 0
+            self.last_ping_thread_name = None
+            self.last_ping_thread_ident = None
+
+
 class _WorkflowROICycleController:
     """Track ROI deltas for a workflow across repeated iterations.
 
@@ -2186,6 +2231,7 @@ def start_self_improvement_cycle(
     print("💡 SI-7: preparing self-improvement cycle thread scaffold")
     tick_state = _CycleTickState()
     loop_heartbeat_state = _LoopHeartbeatState()
+    loop_ping_state = _LoopPingState()
 
     def _env_float(name: str, default: float) -> float:
         raw = os.getenv(name)
@@ -2206,12 +2252,14 @@ def start_self_improvement_cycle(
         def __init__(self, stop_event: threading.Event) -> None:
             self._loop = asyncio.new_event_loop()
             self._task: asyncio.Task[None] | None = None
+            self._heartbeat_task: asyncio.Task[None] | None = None
             self._exc: queue.Queue[BaseException] = queue.Queue()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._stop_event = stop_event
             self._error_log = error_log
             self._should_encode = should_encode
             self._evaluate_cycle = evaluate_cycle
+            self._heartbeat_interval = max(1.0, min(5.0, interval / 2.0))
 
         # --------------------------------------------------
         def _run(self) -> None:
@@ -2219,16 +2267,13 @@ def start_self_improvement_cycle(
 
             print("💡 SI-8: starting self-improvement event loop")
             asyncio.set_event_loop(self._loop)
-            heartbeat_handle: asyncio.Handle | None = None
 
-            def _loop_heartbeat() -> None:
-                nonlocal heartbeat_handle
-                loop_heartbeat_state.beat()
-                if self._stop_event.is_set():
-                    return
-                if not self._loop.is_running():
-                    return
-                heartbeat_handle = self._loop.call_soon(_loop_heartbeat)
+            async def _loop_heartbeat() -> None:
+                while True:
+                    if self._stop_event.is_set():
+                        break
+                    loop_heartbeat_state.beat()
+                    await asyncio.sleep(self._heartbeat_interval)
             kwargs: dict[str, Any] = {
                 "interval": interval,
                 "event_bus": event_bus,
@@ -2248,12 +2293,16 @@ def start_self_improvement_cycle(
                 self_improvement_cycle(workflow_plan, **kwargs)
             )
             self._task.add_done_callback(self._finished)
-            self._loop.call_soon(_loop_heartbeat)
+            self._heartbeat_task = self._loop.create_task(_loop_heartbeat())
             try:
                 self._loop.run_forever()
             finally:
-                if heartbeat_handle is not None:
-                    heartbeat_handle.cancel()
+                if self._heartbeat_task is not None:
+                    self._heartbeat_task.cancel()
+                    try:
+                        self._loop.run_until_complete(self._heartbeat_task)
+                    except asyncio.CancelledError:
+                        pass
                 self._loop.run_until_complete(self._loop.shutdown_asyncgens())
                 self._loop.close()
 
@@ -2357,6 +2406,16 @@ def start_self_improvement_cycle(
                 "task_cancelled": task.cancelled() if task else None,
             }
 
+        def schedule_loop_ping(self) -> bool:
+            def _record_ping() -> None:
+                loop_ping_state.ping()
+
+            try:
+                self._loop.call_soon_threadsafe(_record_ping)
+                return True
+            except RuntimeError:
+                return False
+
     watchdog_threshold = _env_float(
         "SELF_IMPROVEMENT_CYCLE_WATCHDOG_SECONDS", max(120.0, interval * 3)
     )
@@ -2399,6 +2458,7 @@ def start_self_improvement_cycle(
                 )
         tick_state.reset()
         loop_heartbeat_state.reset()
+        loop_ping_state.reset()
         new_thread, new_stop_event = _create_cycle_thread()
         monitor_state["thread"] = new_thread
         monitor_state["stop_event"] = new_stop_event
@@ -2456,8 +2516,10 @@ def start_self_improvement_cycle(
             current_thread = monitor_state.get("thread")
             if current_thread is None:
                 continue
+            loop_ping_scheduled = current_thread.schedule_loop_ping()
             snapshot = tick_state.snapshot()
             heartbeat_snapshot = loop_heartbeat_state.snapshot()
+            ping_snapshot = loop_ping_state.snapshot()
             now = time.time()
             last_tick = snapshot.get("last_tick")
             started_at = snapshot.get("started_at", now)
@@ -2476,16 +2538,29 @@ def start_self_improvement_cycle(
                 last_heartbeat is None
                 and heartbeat_idle_since_start > watchdog_threshold
             )
+            last_ping = ping_snapshot.get("last_ping")
+            ping_started_at = ping_snapshot.get("started_at", now)
+            last_ping_age = (now - last_ping) if last_ping is not None else None
+            ping_idle_since_start = now - ping_started_at
+            ping_stalled = (
+                not loop_ping_scheduled
+                or (last_ping_age is not None and last_ping_age > watchdog_threshold)
+                or (last_ping is None and ping_idle_since_start > watchdog_threshold)
+            )
             stalled = (
                 last_tick_age is not None and last_tick_age > watchdog_threshold
             ) or (last_tick is None and idle_since_start > watchdog_threshold)
-            if not stalled and not heartbeat_stalled:
+            if not stalled and not heartbeat_stalled and not ping_stalled:
                 continue
             thread_state = current_thread.state()
             tick_thread_ident = snapshot.get("last_tick_thread_ident")
             heartbeat_thread_ident = heartbeat_snapshot.get("last_heartbeat_thread_ident")
+            ping_thread_ident = ping_snapshot.get("last_ping_thread_ident")
             stall_thread_ident = (
-                heartbeat_thread_ident or tick_thread_ident or thread_state.get("thread_ident")
+                ping_thread_ident
+                or heartbeat_thread_ident
+                or tick_thread_ident
+                or thread_state.get("thread_ident")
             )
             stack_dump = None
             if stall_thread_ident is not None:
@@ -2509,18 +2584,35 @@ def start_self_improvement_cycle(
                     "last_heartbeat_thread_name"
                 ),
                 loop_heartbeat_thread_ident=heartbeat_thread_ident,
+                loop_ping_timestamp=last_ping,
+                loop_ping_age_seconds=last_ping_age,
+                loop_ping_count=ping_snapshot.get("ping_count"),
+                loop_ping_thread_name=ping_snapshot.get("last_ping_thread_name"),
+                loop_ping_thread_ident=ping_thread_ident,
                 watchdog_threshold_seconds=watchdog_threshold,
                 thread_state=thread_state,
                 stalled_due_to_heartbeat=heartbeat_stalled,
+                stalled_due_to_loop_ping=ping_stalled,
+                event_loop_unresponsive_seconds=(
+                    last_ping_age if last_ping_age is not None else ping_idle_since_start
+                )
+                if ping_stalled
+                else None,
                 stall_stack_trace=stack_dump,
             )
-            if heartbeat_stalled:
+            if ping_stalled:
+                watchdog_logger.critical(stall_message, extra=log_payload)
+            elif heartbeat_stalled:
                 watchdog_logger.critical(stall_message, extra=log_payload)
             else:
                 watchdog_logger.warning(stall_message, extra=log_payload)
             if watchdog_restart:
                 restart_reason = (
-                    "watchdog_restart_heartbeat" if heartbeat_stalled else "watchdog_restart"
+                    "watchdog_restart_loop_ping"
+                    if ping_stalled
+                    else "watchdog_restart_heartbeat"
+                    if heartbeat_stalled
+                    else "watchdog_restart"
                 )
                 watchdog_logger.warning(
                     "restarting self improvement cycle after stall; forcing process exit if stop timeout elapses",
