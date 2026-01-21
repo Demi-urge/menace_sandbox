@@ -3697,6 +3697,7 @@ def internalize_coding_bot(
     failure_recorded = False
     logger_ref = logging.getLogger(__name__)
     node: dict[str, Any] | None = None
+    added_in_flight = False
     if os.getenv("SELF_CODING_TRACE_INTERNALIZE") and logger_ref.isEnabledFor(
         logging.DEBUG
     ):
@@ -3755,119 +3756,106 @@ def internalize_coding_bot(
             return existing_manager
         return _cooldown_disabled_manager(bot_registry, data_bot)
 
-    internalize_lock = _get_internalize_lock(bot_name)
-    if not internalize_lock.acquire(blocking=False):
-        logger_ref.info(
-            "internalize_coding_bot already in progress for %s; skipping",
-            bot_name,
-        )
-        return _inflight_manager_fallback()
-
-    try:
-        with _INTERNALIZE_IN_FLIGHT_LOCK:
-            already_in_flight = bot_name in _INTERNALIZE_IN_FLIGHT
-        if already_in_flight:
-            logger_ref.debug(
-                "internalize_coding_bot duplicate invocation detected for %s; stack trace:\n%s",
-                bot_name,
-                "".join(traceback.format_stack()),
-            )
+    with _INTERNALIZE_IN_FLIGHT_LOCK:
+        if bot_name in _INTERNALIZE_IN_FLIGHT:
             logger_ref.info(
                 "internalize_coding_bot already in-flight for %s; skipping manager construction",
                 bot_name,
             )
             return _inflight_manager_fallback()
-    
-        if _internalize_in_cooldown(bot_name):
-            return _cooldown_disabled_manager(bot_registry, data_bot)
-    
-        if _current_self_coding_import_depth() > 0:
-            print("Forcing manager despite depth lock")
-    
-        if bot_registry is not None:
-            node = bot_registry.graph.nodes.get(bot_name)
-        if node is not None:
-            disabled_state = node.get("self_coding_disabled")
-            if (
-                isinstance(disabled_state, dict)
-                and disabled_state.get("source") == "module_path_resolution"
-            ):
+        _INTERNALIZE_IN_FLIGHT.add(bot_name)
+        added_in_flight = True
+
+    try:
+        internalize_lock = _get_internalize_lock(bot_name)
+        if not internalize_lock.acquire(blocking=False):
+            logger_ref.info(
+                "internalize_coding_bot already in progress for %s; skipping",
+                bot_name,
+            )
+            return _inflight_manager_fallback()
+
+        try:
+            def _track_failure(reason: str) -> None:
+                nonlocal failure_recorded
+                if failure_recorded:
+                    return
+                failure_recorded = True
+                path_value = (
+                    str(module_path)
+                    if module_path is not None
+                    else module_hint
+                )
+                _record_internalize_failure(
+                    bot_name,
+                    module_path=path_value,
+                    reason=reason,
+                    logger=getattr(manager, "logger", None) or logger_ref,
+                )
+
+            def _start_step(step: str) -> float:
+                print(f"[debug] {bot_name}: starting {step}")
+                return time.monotonic()
+
+            def _end_step(step: str, started_at: float) -> float:
+                elapsed = time.monotonic() - started_at
+                print(f"[debug] {bot_name}: finished {step} in {elapsed:.3f}s")
+                return elapsed
+
+            if _internalize_in_cooldown(bot_name):
                 return _cooldown_disabled_manager(bot_registry, data_bot)
-        existing_manager = None
-        if node is not None:
-            existing_manager = node.get("selfcoding_manager") or node.get("manager")
-        if existing_manager is not None and _manager_healthy(existing_manager):
-            _mark_last_internalized()
-            logger_ref.info(
-                "internalize_coding_bot reusing existing manager for %s", bot_name
-            )
-            return existing_manager
-        if existing_manager is not None and _recent_internalization():
-            logger_ref.debug(
-                "internalize_coding_bot rapid re-invocation detected for %s; stack trace:\n%s",
-                bot_name,
-                "".join(traceback.format_stack()),
-            )
-            _mark_last_internalized()
-            logger_ref.info(
-                "internalize_coding_bot skipping reinternalization for %s; "
-                "recent internalization detected",
-                bot_name,
-            )
-            return existing_manager
-    
-        delay = 0.0
-        if _INTERNALIZE_THROTTLE_SECONDS > 0:
-            with _INTERNALIZE_THROTTLE_LOCK:
-                now = time.monotonic()
-                elapsed = now - _LAST_INTERNALIZE_AT
-                if elapsed < _INTERNALIZE_THROTTLE_SECONDS:
-                    delay = _INTERNALIZE_THROTTLE_SECONDS - elapsed
-                    target = now + delay
-                else:
-                    target = now
-                _LAST_INTERNALIZE_AT = target
-        if delay > 0:
-            time.sleep(delay)
-    
-        print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
-    
-        def _track_failure(reason: str) -> None:
-            nonlocal failure_recorded
-            if failure_recorded:
-                return
-            failure_recorded = True
-            path_value = (
-                str(module_path)
-                if module_path is not None
-                else module_hint
-            )
-            _record_internalize_failure(
-                bot_name,
-                module_path=path_value,
-                reason=reason,
-                logger=getattr(manager, "logger", None) or logger_ref,
-            )
-        
-        def _start_step(step: str) -> float:
-            print(f"[debug] {bot_name}: starting {step}")
-            return time.monotonic()
-    
-        def _end_step(step: str, started_at: float) -> float:
-            elapsed = time.monotonic() - started_at
-            print(f"[debug] {bot_name}: finished {step} in {elapsed:.3f}s")
-            return elapsed
-    
-        with _INTERNALIZE_IN_FLIGHT_LOCK:
-            if bot_name in _INTERNALIZE_IN_FLIGHT:
+
+            if _current_self_coding_import_depth() > 0:
+                print("Forcing manager despite depth lock")
+
+            if bot_registry is not None:
+                node = bot_registry.graph.nodes.get(bot_name)
+            if node is not None:
+                disabled_state = node.get("self_coding_disabled")
+                if (
+                    isinstance(disabled_state, dict)
+                    and disabled_state.get("source") == "module_path_resolution"
+                ):
+                    return _cooldown_disabled_manager(bot_registry, data_bot)
+            existing_manager = None
+            if node is not None:
+                existing_manager = node.get("selfcoding_manager") or node.get("manager")
+            if existing_manager is not None and _manager_healthy(existing_manager):
+                _mark_last_internalized()
                 logger_ref.info(
-                    "internalize_coding_bot already in-flight for %s; skipping manager construction",
+                    "internalize_coding_bot reusing existing manager for %s", bot_name
+                )
+                return existing_manager
+            if existing_manager is not None and _recent_internalization():
+                logger_ref.debug(
+                    "internalize_coding_bot rapid re-invocation detected for %s; stack trace:\n%s",
+                    bot_name,
+                    "".join(traceback.format_stack()),
+                )
+                _mark_last_internalized()
+                logger_ref.info(
+                    "internalize_coding_bot skipping reinternalization for %s; "
+                    "recent internalization detected",
                     bot_name,
                 )
-                return _inflight_manager_fallback()
-            _INTERNALIZE_IN_FLIGHT.add(bot_name)
-    
-        try:
+                return existing_manager
+
+            delay = 0.0
+            if _INTERNALIZE_THROTTLE_SECONDS > 0:
+                with _INTERNALIZE_THROTTLE_LOCK:
+                    now = time.monotonic()
+                    elapsed = now - _LAST_INTERNALIZE_AT
+                    if elapsed < _INTERNALIZE_THROTTLE_SECONDS:
+                        delay = _INTERNALIZE_THROTTLE_SECONDS - elapsed
+                        target = now + delay
+                    else:
+                        target = now
+                    _LAST_INTERNALIZE_AT = target
+            if delay > 0:
+                time.sleep(delay)
+
+            print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
+
             manager_timer = _start_step("manager construction")
             manager = SelfCodingManager(
                 engine,
@@ -4209,12 +4197,11 @@ def internalize_coding_bot(
             _track_failure(str(exc))
             raise
         finally:
+            internalize_lock.release()
+    finally:
+        if added_in_flight:
             with _INTERNALIZE_IN_FLIGHT_LOCK:
                 _INTERNALIZE_IN_FLIGHT.discard(bot_name)
-    
-    
-    finally:
-        internalize_lock.release()
 __all__ = [
     "SelfCodingManager",
     "PatchApprovalPolicy",
