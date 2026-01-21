@@ -2297,16 +2297,41 @@ def start_self_improvement_cycle(
         def join(self, timeout: float | None = None) -> None:
             print("💡 SI-11: joining self-improvement thread")
             self._thread.join(timeout)
+            if self._thread.is_alive():
+                return
             if not self._exc.empty():
                 raise self._exc.get()
 
-        def stop(self) -> None:
+        def stop(self, timeout: float | None = None) -> None:
             print("💡 SI-12: stopping self-improvement thread")
+            effective_timeout = stop_timeout if timeout is None else timeout
             self._stop_event.set()
             self._loop.call_soon_threadsafe(
                 lambda: self._task.cancel() if self._task is not None else None
             )
-            self.join()
+            self.join(timeout=effective_timeout)
+            if self._thread.is_alive():
+                heartbeat_snapshot = loop_heartbeat_state.snapshot()
+                last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
+                now = time.time()
+                last_heartbeat_age = (
+                    (now - last_heartbeat) if last_heartbeat is not None else None
+                )
+                try:
+                    loop_running = self._loop.is_running()
+                except Exception:
+                    loop_running = False
+                logger = get_logger(__name__)
+                logger.critical(
+                    "self improvement loop unresponsive during stop; continuing without waiting",
+                    extra=log_record(
+                        thread_ident=self._thread.ident,
+                        loop_running=loop_running,
+                        last_heartbeat_timestamp=last_heartbeat,
+                        last_heartbeat_age_seconds=last_heartbeat_age,
+                        stop_timeout_seconds=effective_timeout,
+                    ),
+                )
 
         def state(self) -> dict[str, Any]:
             task = self._task
@@ -2328,6 +2353,7 @@ def start_self_improvement_cycle(
     )
     watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", True)
     watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
+    stop_timeout = _env_float("SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS", 5.0)
 
     monitor_state: dict[str, Any] = {"thread": None, "stop_event": None}
 
@@ -2340,7 +2366,7 @@ def start_self_improvement_cycle(
         current_thread = monitor_state.get("thread")
         if current_thread is not None:
             try:
-                current_thread.stop()
+                current_thread.stop(timeout=stop_timeout)
             except Exception:
                 logger.exception(
                     "cycle stop failed during restart",
