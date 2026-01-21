@@ -3697,6 +3697,23 @@ def internalize_coding_bot(
     failure_recorded = False
     logger_ref = logging.getLogger(__name__)
     node: dict[str, Any] | None = None
+    if os.getenv("SELF_CODING_TRACE_INTERNALIZE") and logger_ref.isEnabledFor(
+        logging.DEBUG
+    ):
+        stack_trace = "".join(traceback.format_stack())
+        call_source = None
+        stack_summary = traceback.extract_stack(limit=3)
+        if len(stack_summary) > 1:
+            caller = stack_summary[-2]
+            call_source = f"{caller.filename}:{caller.lineno}:{caller.name}"
+        extra = {"bot": bot_name}
+        if call_source:
+            extra["call_source"] = call_source
+        logger_ref.debug(
+            "internalize_coding_bot entry stack trace:\n%s",
+            stack_trace,
+            extra=extra,
+        )
 
     def _mark_last_internalized() -> None:
         if node is None:
