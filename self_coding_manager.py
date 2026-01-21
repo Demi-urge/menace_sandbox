@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 import re
 import json
 import uuid
@@ -3729,6 +3730,11 @@ def internalize_coding_bot(
     with _INTERNALIZE_IN_FLIGHT_LOCK:
         already_in_flight = bot_name in _INTERNALIZE_IN_FLIGHT
     if already_in_flight:
+        logger_ref.debug(
+            "internalize_coding_bot duplicate invocation detected for %s; stack trace:\n%s",
+            bot_name,
+            "".join(traceback.format_stack()),
+        )
         logger_ref.info(
             "internalize_coding_bot already in-flight for %s; skipping manager construction",
             bot_name,
@@ -3760,6 +3766,11 @@ def internalize_coding_bot(
         )
         return existing_manager
     if existing_manager is not None and _recent_internalization():
+        logger_ref.debug(
+            "internalize_coding_bot rapid re-invocation detected for %s; stack trace:\n%s",
+            bot_name,
+            "".join(traceback.format_stack()),
+        )
         _mark_last_internalized()
         logger_ref.info(
             "internalize_coding_bot skipping reinternalization for %s; "
