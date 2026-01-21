@@ -2525,6 +2525,20 @@ def start_self_improvement_cycle(
     def _restart_cycle_thread(
         logger: logging.Logger, reason: str, *, wait_on_stop: bool = True
     ) -> None:
+        def _record_recovery_metric(action: str) -> None:
+            try:  # pragma: no cover - metrics are best effort
+                from menace_sandbox.metrics_exporter import (
+                    self_improvement_failure_total,
+                )
+
+                self_improvement_failure_total.labels(reason=action).inc()
+            except Exception as exc:
+                logger.debug(
+                    "recovery metric update failed",
+                    extra=log_record(reason=reason, recovery_action=action),
+                    exc_info=exc,
+                )
+
         stuck_thread = monitor_state.get("stuck_thread")
         if stuck_thread is not None:
             stuck_worker = stuck_thread.get("thread")
@@ -2537,10 +2551,14 @@ def start_self_improvement_cycle(
                             thread_ident=stuck_thread.get("ident"),
                             stuck_detected_at=stuck_thread.get("detected_at"),
                             stuck_thread_stack=stuck_thread.get("stack"),
-                            forced_recovery="process_exit",
+                            recovery_action="process_exit",
+                            recovery_stage="pre_restart",
+                            recovery_mode="force_exit_on_stuck",
+                            recovery_metric="self_improvement_stuck_force_exit",
                             override_env="SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK",
                         ),
                     )
+                    _record_recovery_metric("self_improvement_stuck_force_exit")
                     os._exit(1)
                 if not (allow_zombie_restart or force_restart):
                     logger.critical(
@@ -2550,6 +2568,8 @@ def start_self_improvement_cycle(
                             thread_ident=stuck_thread.get("ident"),
                             stuck_detected_at=stuck_thread.get("detected_at"),
                             stuck_thread_stack=stuck_thread.get("stack"),
+                            recovery_action="refuse_restart",
+                            recovery_stage="pre_restart",
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
@@ -2564,15 +2584,19 @@ def start_self_improvement_cycle(
                         thread_ident=stuck_thread.get("ident"),
                         stuck_detected_at=stuck_thread.get("detected_at"),
                         stuck_thread_stack=stuck_thread.get("stack"),
-                        forced_recovery=(
+                        recovery_action="zombie_restart",
+                        recovery_stage="pre_restart",
+                        recovery_mode=(
                             "force_restart" if force_restart else "allow_zombie_restart"
                         ),
+                        recovery_metric="self_improvement_stuck_zombie_restart",
                         override_envs=[
                             "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                             "SELF_IMPROVEMENT_FORCE_RESTART",
                         ],
                     ),
                 )
+                _record_recovery_metric("self_improvement_stuck_zombie_restart")
         current_thread = monitor_state.get("thread")
         if current_thread is not None:
             try:
@@ -2606,10 +2630,14 @@ def start_self_improvement_cycle(
                             thread_ident=thread_state.get("thread_ident"),
                             stop_timeout_seconds=stop_timeout,
                             stuck_thread_stack=stack_dump,
-                            forced_recovery="process_exit",
+                            recovery_action="process_exit",
+                            recovery_stage="stop_timeout",
+                            recovery_mode="force_exit_on_stuck",
+                            recovery_metric="self_improvement_stop_timeout_force_exit",
                             override_env="SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK",
                         ),
                     )
+                    _record_recovery_metric("self_improvement_stop_timeout_force_exit")
                     os._exit(1)
                 if not (allow_zombie_restart or force_restart):
                     logger.critical(
@@ -2618,6 +2646,8 @@ def start_self_improvement_cycle(
                             reason=reason,
                             thread_ident=thread_state.get("thread_ident"),
                             stop_timeout_seconds=stop_timeout,
+                            recovery_action="refuse_restart",
+                            recovery_stage="stop_timeout",
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
@@ -2640,12 +2670,16 @@ def start_self_improvement_cycle(
                         reason=reason,
                         previous_thread_ident=thread_state.get("thread_ident"),
                         stop_timeout_seconds=stop_timeout,
-                        forced_recovery=(
+                        recovery_action="zombie_restart",
+                        recovery_stage="stop_timeout",
+                        recovery_mode=(
                             "force_restart" if force_restart else "allow_zombie_restart"
                         ),
+                        recovery_metric="self_improvement_stop_timeout_zombie_restart",
                         stuck_thread_stack=stack_dump,
                     ),
                 )
+                _record_recovery_metric("self_improvement_stop_timeout_zombie_restart")
         tick_state.reset()
         loop_heartbeat_state.reset()
         loop_ping_state.reset()
