@@ -2471,6 +2471,7 @@ def start_self_improvement_cycle(
     watchdog_restart = _env_bool("SELF_IMPROVEMENT_CYCLE_WATCHDOG_RESTART", True)
     allow_zombie_restart = _env_bool("SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART", False)
     force_restart = _env_bool("SELF_IMPROVEMENT_FORCE_RESTART", False)
+    watchdog_force_restart = _env_bool("SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART", False)
     force_exit_on_stuck = _env_bool("SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK", False)
     zombie_restart_after_seconds = _env_float(
         "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS", 300.0
@@ -2527,9 +2528,15 @@ def start_self_improvement_cycle(
             monitor_state["zombie_threads"] = [zombie_info]
         return zombie_info
 
-    def _should_allow_zombie_restart(stuck_info: Mapping[str, Any] | None) -> tuple[bool, str | None, float | None]:
+    def _should_allow_zombie_restart(
+        stuck_info: Mapping[str, Any] | None,
+        *,
+        watchdog_triggered: bool = False,
+    ) -> tuple[bool, str | None, float | None]:
         if allow_zombie_restart or force_restart:
             return True, "allow_zombie_restart" if allow_zombie_restart else "force_restart", None
+        if watchdog_triggered and watchdog_force_restart:
+            return True, "watchdog_force_restart", None
         if zombie_restart_after_seconds <= 0 or stuck_info is None:
             return False, None, None
         detected_at = stuck_info.get("detected_at")
@@ -2541,7 +2548,11 @@ def start_self_improvement_cycle(
         return False, "zombie_restart_wait", elapsed
 
     def _restart_cycle_thread(
-        logger: logging.Logger, reason: str, *, wait_on_stop: bool = True
+        logger: logging.Logger,
+        reason: str,
+        *,
+        wait_on_stop: bool = True,
+        watchdog_triggered: bool = False,
     ) -> None:
         def _record_recovery_metric(action: str) -> None:
             try:  # pragma: no cover - metrics are best effort
@@ -2561,7 +2572,10 @@ def start_self_improvement_cycle(
         if stuck_thread is not None:
             stuck_worker = stuck_thread.get("thread")
             if stuck_worker is not None and stuck_worker.is_alive():
-                allow_restart, recovery_mode, elapsed = _should_allow_zombie_restart(stuck_thread)
+                allow_restart, recovery_mode, elapsed = _should_allow_zombie_restart(
+                    stuck_thread,
+                    watchdog_triggered=watchdog_triggered,
+                )
                 if force_exit_on_stuck:
                     logger.critical(
                         "exiting process because stuck thread is still alive",
@@ -2595,8 +2609,10 @@ def start_self_improvement_cycle(
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
+                                "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                                 "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                             ],
+                            watchdog_restart_triggered=watchdog_triggered,
                         ),
                     )
                     return
@@ -2616,8 +2632,10 @@ def start_self_improvement_cycle(
                         override_envs=[
                             "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                             "SELF_IMPROVEMENT_FORCE_RESTART",
+                            "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                             "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                         ],
+                        watchdog_restart_triggered=watchdog_triggered,
                     ),
                 )
                 _record_recovery_metric("self_improvement_stuck_zombie_restart")
@@ -2637,13 +2655,16 @@ def start_self_improvement_cycle(
                 stuck_message = "self improvement cycle thread stuck during restart"
                 if stack_dump:
                     stuck_message = f"{stuck_message}\n{stack_dump}"
-                logger.warning(
+                logger.critical(
                     stuck_message,
                     extra=log_record(
                         reason=reason,
                         stop_timeout_seconds=stop_timeout,
                         thread_state=thread_state,
                         stuck_thread_stack=stack_dump,
+                        recovery_stage="stop_timeout",
+                        recovery_action="zombie_detected",
+                        watchdog_restart_triggered=watchdog_triggered,
                     ),
                 )
                 stuck_info = _record_zombie_thread(
@@ -2655,7 +2676,10 @@ def start_self_improvement_cycle(
                     reason,
                     status="stuck",
                 )
-                allow_restart, recovery_mode, elapsed = _should_allow_zombie_restart(stuck_info)
+                allow_restart, recovery_mode, elapsed = _should_allow_zombie_restart(
+                    stuck_info,
+                    watchdog_triggered=watchdog_triggered,
+                )
                 if force_exit_on_stuck:
                     logger.critical(
                         "exiting process because cycle thread failed to stop cleanly",
@@ -2688,11 +2712,38 @@ def start_self_improvement_cycle(
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
+                                "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                                 "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                             ],
                             stuck_thread_stack=stack_dump,
+                            watchdog_restart_triggered=watchdog_triggered,
                         ),
                     )
+                    if watchdog_triggered and watchdog_restart:
+                        logger.critical(
+                            "exiting process because cycle thread failed to stop during watchdog restart",
+                            extra=log_record(
+                                reason=reason,
+                                thread_ident=thread_state.get("thread_ident"),
+                                stop_timeout_seconds=stop_timeout,
+                                stuck_thread_stack=stack_dump,
+                                recovery_action="process_exit",
+                                recovery_stage="stop_timeout",
+                                recovery_mode="watchdog_restart_fail_fast",
+                                recovery_metric="self_improvement_watchdog_stop_timeout_exit",
+                                override_envs=[
+                                    "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                                    "SELF_IMPROVEMENT_FORCE_RESTART",
+                                    "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
+                                    "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
+                                ],
+                                watchdog_restart_triggered=watchdog_triggered,
+                            ),
+                        )
+                        _record_recovery_metric(
+                            "self_improvement_watchdog_stop_timeout_exit"
+                        )
+                        os._exit(1)
                     return
                 logger.warning(
                     "forcing replacement cycle thread after stop timeout",
@@ -2707,6 +2758,7 @@ def start_self_improvement_cycle(
                         zombie_restart_after_seconds=zombie_restart_after_seconds,
                         recovery_metric="self_improvement_stop_timeout_zombie_restart",
                         stuck_thread_stack=stack_dump,
+                        watchdog_restart_triggered=watchdog_triggered,
                     ),
                 )
                 _record_recovery_metric("self_improvement_stop_timeout_zombie_restart")
@@ -2917,6 +2969,7 @@ def start_self_improvement_cycle(
                     watchdog_logger,
                     restart_reason,
                     wait_on_stop=not (heartbeat_stalled or loop_heartbeat_stalled),
+                    watchdog_triggered=True,
                 )
 
     watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
