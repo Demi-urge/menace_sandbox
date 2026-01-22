@@ -79,11 +79,10 @@ _qfe_log("threading imported")
 import asyncio
 _qfe_log("asyncio imported")
 
-import concurrent.futures
-_qfe_log("concurrent.futures imported")
-
 import traceback
 _qfe_log("traceback imported")
+import concurrent.futures
+_qfe_log("concurrent.futures imported")
 
 import os
 _qfe_log("os imported")
@@ -10155,7 +10154,8 @@ def launch_autonomous_sandbox(
             runner.main(args)
         except Exception as exc:  # pragma: no cover - diagnostic only
             _qfe_log(
-                f"run_autonomous.main() raised {exc!r}; see traceback for details"
+                "run_autonomous.main() raised "
+                f"{exc!r}; traceback:\n{traceback.format_exc()}"
             )
             logger.exception("manual run_autonomous execution failed", exc_info=exc)
 
