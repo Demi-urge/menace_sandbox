@@ -611,23 +611,13 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
             from . import meta_planning
 
         print("💡 SI-6: reloading meta-planning settings")
-        reload_settings_fn = getattr(meta_planning, "reload_settings", None)
-        if callable(reload_settings_fn):
-            reload_settings_fn(settings)
+        if hasattr(meta_planning, "reload_settings"):
+            meta_planning.reload_settings(settings)
         else:
-            fallback_fn = (
-                getattr(meta_planning, "refresh_settings", None)
-                or getattr(meta_planning, "apply_settings", None)
+            logger.warning(
+                "meta_planning.reload_settings missing; meta-planning defaults may be in effect",
+                extra=log_record(component="meta_planning"),
             )
-            if callable(fallback_fn):
-                logger.warning(
-                    "meta_planning.reload_settings missing; using %s fallback",
-                    getattr(fallback_fn, "__name__", "unknown"),
-                    extra=log_record(component="meta_planning", fallback=True),
-                )
-                fallback_fn(settings)
-            else:
-                raise AttributeError("meta_planning.reload_settings not available")
     except Exception as exc:  # pragma: no cover - best effort
         logging.getLogger(__name__).exception(
             "failed to reload meta_planning settings",
