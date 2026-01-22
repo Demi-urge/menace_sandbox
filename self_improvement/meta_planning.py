@@ -2345,12 +2345,37 @@ def start_self_improvement_cycle(
                     elif task is self._task:
                         self._exc.put(result)
 
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
             try:
-                with asyncio.Runner() as runner:
-                    self._loop = runner.get_loop()
-                    runner.run(_main())
+                self._loop.run_until_complete(_main())
             except BaseException as exc:  # pragma: no cover - best effort
                 self._exc.put(exc)
+            finally:
+                try:
+                    if self._loop is not None:
+                        shutdown_task = self._loop.shutdown_default_executor()
+                        self._loop.run_until_complete(
+                            asyncio.wait_for(
+                                shutdown_task,
+                                timeout=stop_timeout,
+                            )
+                        )
+                except asyncio.TimeoutError:
+                    logger = get_logger(__name__)
+                    logger.critical(
+                        "timed out shutting down default executor for self improvement loop",
+                        extra=log_record(timeout_seconds=stop_timeout),
+                    )
+                    if self._loop is not None:
+                        try:
+                            self._loop.stop()
+                        except Exception:
+                            pass
+                finally:
+                    if self._loop is not None:
+                        self._loop.close()
+                    asyncio.set_event_loop(None)
 
         # --------------------------------------------------
         def start(self) -> None:
@@ -2389,6 +2414,11 @@ def start_self_improvement_cycle(
                     pass
             self._thread.join(effective_timeout)
             if self._thread.is_alive():
+                if loop is not None:
+                    try:
+                        loop.call_soon_threadsafe(loop.stop)
+                    except RuntimeError:
+                        pass
                 heartbeat_snapshot = loop_heartbeat_state.snapshot()
                 last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
                 now = time.time()
