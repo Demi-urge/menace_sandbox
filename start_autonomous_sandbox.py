@@ -342,48 +342,101 @@ from self_improvement.orphan_handling import (
     integrate_orphans_sync,
     post_round_orphan_scan,
 )
-try:  # pragma: no cover - optional dependency / stubs may be incomplete
-    import self_improvement.meta_planning as meta_planning
-except Exception as exc:  # pragma: no cover - allow sandbox startup without meta_planning
-    meta_planning = None
-    logging.getLogger(__name__).warning(
-        "Meta planning module unavailable; disabling workflow controller status. (%s)",
-        exc,
-    )
 
-try:  # pragma: no cover - allow sandbox startup without meta_planning
-    from self_improvement.meta_planning import record_workflow_iteration
-except ImportError as exc:
-    logging.getLogger(__name__).warning(
-        "Meta planning record_workflow_iteration unavailable; using no-op. (%s)",
-        exc,
-    )
-    # Canonical implementation lives in self_improvement/meta_planning.py; revisit after refactor/import fix.
-    record_workflow_iteration = lambda *_args, **_kwargs: {}  # type: ignore[assignment]
+LOGGER = logging.getLogger(__name__)
+
+_META_PLANNING_MODULE: Any | None = None
+_META_PLANNING_LOADED = False
+_RECORD_WORKFLOW_ITERATION: Callable[..., Mapping[str, Any]] | None = None
+_WORKFLOW_CONTROLLER_STATUS: Callable[..., Any] | None = None
+
+
+def _load_meta_planning_module(logger: logging.Logger) -> Any | None:
+    global _META_PLANNING_MODULE, _META_PLANNING_LOADED
+
+    if _META_PLANNING_LOADED:
+        return _META_PLANNING_MODULE
+
+    _META_PLANNING_LOADED = True
+    spec = importlib.util.find_spec("self_improvement.meta_planning")
+    if spec is None or spec.loader is None:
+        logger.warning(
+            "Meta planning module unavailable; disabling workflow controller status.",
+        )
+        _META_PLANNING_MODULE = None
+        return None
+
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        logger.warning(
+            "Meta planning module failed to load; disabling workflow controller status. (%s)",
+            exc,
+        )
+        _META_PLANNING_MODULE = None
+        return None
+
+    sys.modules["self_improvement.meta_planning"] = module
+    _META_PLANNING_MODULE = module
+    return module
+
+
+def _noop_record_workflow_iteration(*_args: Any, **_kwargs: Any) -> Mapping[str, Any]:
+    return {}
 
 
 def _noop_workflow_controller_status(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
-if meta_planning is None:
-    workflow_controller_status = _noop_workflow_controller_status
-else:
-    workflow_controller_status = getattr(
-        meta_planning, "workflow_controller_status", None
-    )
-    if workflow_controller_status is None:
-        logging.getLogger(__name__).warning(
+def _load_meta_planning_hooks() -> None:
+    global _RECORD_WORKFLOW_ITERATION, _WORKFLOW_CONTROLLER_STATUS
+
+    if _RECORD_WORKFLOW_ITERATION is not None and _WORKFLOW_CONTROLLER_STATUS is not None:
+        return
+
+    meta_planning = _load_meta_planning_module(LOGGER)
+    if meta_planning is None:
+        LOGGER.warning(
+            "Meta planning record_workflow_iteration unavailable; using no-op.",
+        )
+        _RECORD_WORKFLOW_ITERATION = _noop_record_workflow_iteration
+        _WORKFLOW_CONTROLLER_STATUS = _noop_workflow_controller_status
+        return
+
+    record_workflow = getattr(meta_planning, "record_workflow_iteration", None)
+    if record_workflow is None:
+        LOGGER.warning(
+            "Meta planning module missing record_workflow_iteration; using no-op.",
+        )
+        record_workflow = _noop_record_workflow_iteration
+
+    controller_status = getattr(meta_planning, "workflow_controller_status", None)
+    if controller_status is None:
+        LOGGER.warning(
             "Meta planning module missing workflow_controller_status; using no-op.",
         )
-        workflow_controller_status = _noop_workflow_controller_status
+        controller_status = _noop_workflow_controller_status
+
+    _RECORD_WORKFLOW_ITERATION = record_workflow
+    _WORKFLOW_CONTROLLER_STATUS = controller_status
+
+
+def record_workflow_iteration(*args: Any, **kwargs: Any) -> Mapping[str, Any]:
+    _load_meta_planning_hooks()
+    return _RECORD_WORKFLOW_ITERATION(*args, **kwargs)  # type: ignore[operator]
+
+
+def workflow_controller_status(*args: Any, **kwargs: Any) -> Any:
+    _load_meta_planning_hooks()
+    return _WORKFLOW_CONTROLLER_STATUS(*args, **kwargs)  # type: ignore[operator]
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
 except Exception:  # pragma: no cover - allow sandbox startup without WorkflowDB
     WorkflowDB = None  # type: ignore
 
-LOGGER = logging.getLogger(__name__)
 SHUTDOWN_EVENT = threading.Event()
 SIGNAL_SHUTDOWN_REQUESTED = threading.Event()
 
