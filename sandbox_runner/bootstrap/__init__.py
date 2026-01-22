@@ -894,13 +894,21 @@ def _initialize_autonomous_sandbox(
             print("🧱 SI-7: cycle thread created")
 
             if thread is None:
+                context = {
+                    "start_self_improvement": start_self_improvement,
+                    "start_services": start_services,
+                    "self_improvement_heartbeat_enabled": getattr(
+                        settings, "self_improvement_heartbeat_enabled", None
+                    ),
+                }
                 _SELF_IMPROVEMENT_LAST_ERROR = (
-                    "self-improvement thread creation returned None; startup skipped"
+                    "self-improvement thread creation returned None; startup skipped; "
+                    f"context={context}"
                 )
                 logger.warning(
-                    "self-improvement thread creation returned None (start_self_improvement=%s); "
-                    "startup skipped; check self-improvement import errors",
-                    start_self_improvement,
+                    "self-improvement thread creation returned None; startup skipped; "
+                    "context=%s; check self-improvement import errors",
+                    context,
                 )
                 print("🧱 SI-8: cycle thread missing; startup skipped")
                 return settings
