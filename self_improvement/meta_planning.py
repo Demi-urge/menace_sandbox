@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Sequence
 from importlib import import_module
 
 from statistics import fmean
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import json
 import logging
@@ -1446,10 +1447,19 @@ async def self_improvement_cycle(
     | None = None,
     evaluate_cycle: Callable[["BaselineTracker", Any | None], tuple[str, Mapping[str, Any]]]
     = _evaluate_cycle,
+    meta_executor: ThreadPoolExecutor | None = None,
 ) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
     cfg = _init.settings
+    loop = asyncio.get_running_loop()
+    owns_executor = meta_executor is None
+    executor = (
+        meta_executor
+        if meta_executor is not None
+        else ThreadPoolExecutor(thread_name_prefix="meta-planning")
+    )
+    pending_executor_futures: set[asyncio.Future[Any]] = set()
     planner_cls = resolve_meta_workflow_planner()
     if planner_cls is None:
         if getattr(cfg, "enable_meta_planner", False):
@@ -1550,6 +1560,21 @@ async def self_improvement_cycle(
             super().__init__(f"meta planning stage timed out: {stage}")
             self.stage = stage
 
+    def _run_in_executor(func: Callable[..., Any], *args: Any) -> asyncio.Future[Any]:
+        future = loop.run_in_executor(executor, func, *args)
+        pending_executor_futures.add(future)
+
+        def _discard(done: asyncio.Future[Any]) -> None:
+            pending_executor_futures.discard(done)
+
+        future.add_done_callback(_discard)
+        return future
+
+    def _cancel_pending_executor_futures() -> None:
+        for future in list(pending_executor_futures):
+            if not future.done():
+                future.cancel()
+
     async def _run_stage(stage: str, action: Awaitable[Any], *, workflow_id: str) -> Any:
         start = time.perf_counter()
         logger.info(
@@ -1564,6 +1589,7 @@ async def self_improvement_cycle(
         try:
             result = await asyncio.wait_for(action, timeout=stage_timeout)
         except asyncio.TimeoutError:
+            _cancel_pending_executor_futures()
             elapsed = time.perf_counter() - start
             logger.warning(
                 "meta planning stage timeout",
@@ -1729,71 +1755,72 @@ async def self_improvement_cycle(
     if evaluate_cycle is None:
         raise ValueError("evaluate_cycle callable required")
 
-    while True:
-        if stop_event is not None and stop_event.is_set():
-            _debug_cycle("skipped", reason="stop_event")
-            break
-        if tick_state is not None:
-            tick_snapshot = tick_state.tick()
-            logger.info(
-                "cycle tick",
-                extra=log_record(
-                    tick_timestamp=tick_snapshot["last_tick"],
-                    tick_count=tick_snapshot["tick_count"],
-                    tick_thread_name=tick_snapshot["last_tick_thread_name"],
-                    tick_thread_ident=tick_snapshot["last_tick_thread_ident"],
-                ),
-            )
-        cycle_ok = False
-        try:
-            decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
-            if info.get("reason") == "missing_metrics":
-                _debug_cycle(
-                    "run",
-                    reason="missing_metrics",
-                    missing_metrics=",".join(info.get("missing", [])),
+    try:
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                _debug_cycle("skipped", reason="stop_event")
+                break
+            if tick_state is not None:
+                tick_snapshot = tick_state.tick()
+                logger.info(
+                    "cycle tick",
+                    extra=log_record(
+                        tick_timestamp=tick_snapshot["last_tick"],
+                        tick_count=tick_snapshot["tick_count"],
+                        tick_thread_name=tick_snapshot["last_tick_thread_name"],
+                        tick_thread_ident=tick_snapshot["last_tick_thread_ident"],
+                    ),
                 )
-            if decision == "skip":
-                traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
-                    error_log,
-                    BASELINE_TRACKER,
-                    getattr(cfg, "error_window", 5),
-                )
-                max_errors, z_threshold = _get_overfit_thresholds(cfg, BASELINE_TRACKER)
-                z_score = (
-                    abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
-                )
-                if err_count > max_errors or z_score > z_threshold:
-                    logger.debug(
-                        "fallback_overfitting",
-                        extra=log_record(
-                            decision="run",
-                            reason="fallback_overfitting",
+            cycle_ok = False
+            try:
+                decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
+                if info.get("reason") == "missing_metrics":
+                    _debug_cycle(
+                        "run",
+                        reason="missing_metrics",
+                        missing_metrics=",".join(info.get("missing", [])),
+                    )
+                if decision == "skip":
+                    traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
+                        error_log,
+                        BASELINE_TRACKER,
+                        getattr(cfg, "error_window", 5),
+                    )
+                    max_errors, z_threshold = _get_overfit_thresholds(cfg, BASELINE_TRACKER)
+                    z_score = (
+                        abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
+                    )
+                    if err_count > max_errors or z_score > z_threshold:
+                        logger.debug(
+                            "fallback_overfitting",
+                            extra=log_record(
+                                decision="run",
+                                reason="fallback_overfitting",
+                                entropy_delta=ent_delta,
+                                entropy_z=z_score,
+                                errors=err_count,
+                                max_allowed_errors=max_errors,
+                                entropy_overfit_threshold=z_threshold,
+                            ),
+                        )
+                        decision = "run"
+                        _debug_cycle(
+                            "fallback",
+                            reason="overfitting",
+                            errors=err_count,
                             entropy_delta=ent_delta,
                             entropy_z=z_score,
-                            errors=err_count,
-                            max_allowed_errors=max_errors,
                             entropy_overfit_threshold=z_threshold,
-                        ),
-                    )
-                    decision = "run"
-                    _debug_cycle(
-                        "fallback",
-                        reason="overfitting",
-                        errors=err_count,
-                        entropy_delta=ent_delta,
-                        entropy_z=z_score,
-                        entropy_overfit_threshold=z_threshold,
-                        error_traces=traces,
-                    )
-                else:
-                    _debug_cycle("skipped", reason=info.get("reason"))
-                    continue
+                            error_traces=traces,
+                        )
+                    else:
+                        _debug_cycle("skipped", reason=info.get("reason"))
+                        continue
 
             if snapshot_tracker is not None:
                 await _run_stage(
                     "snapshot_before",
-                    asyncio.to_thread(
+                    _run_in_executor(
                         snapshot_tracker.capture,
                         "before",
                         {
@@ -1809,7 +1836,7 @@ async def self_improvement_cycle(
                 )
             records = await _run_stage(
                 "discover_and_persist",
-                asyncio.to_thread(planner.discover_and_persist, workflows),
+                _run_in_executor(planner.discover_and_persist, workflows),
                 workflow_id=cycle_workflow_id,
             )
             active: list[list[str]] = []
@@ -2081,7 +2108,7 @@ async def self_improvement_cycle(
             if snapshot_tracker is not None:
                 await _run_stage(
                     "snapshot_after",
-                    asyncio.to_thread(
+                    _run_in_executor(
                         snapshot_tracker.capture,
                         "after",
                         {
@@ -2139,6 +2166,10 @@ async def self_improvement_cycle(
                     ),
                 )
             await asyncio.sleep(interval)
+    finally:
+        _cancel_pending_executor_futures()
+        if owns_executor:
+            executor.shutdown(wait=False, cancel_futures=True)
 
 
 def start_self_improvement_cycle(
@@ -2270,6 +2301,7 @@ def start_self_improvement_cycle(
             print("💡 SI-8: starting self-improvement event loop")
             monitor_state["loop_heartbeat_started"] = time.monotonic()
 
+            meta_executor = ThreadPoolExecutor(thread_name_prefix="meta-planning")
             kwargs: dict[str, Any] = {
                 "interval": interval,
                 "event_bus": event_bus,
@@ -2284,6 +2316,8 @@ def start_self_improvement_cycle(
                 kwargs["should_encode"] = self._should_encode
             if "evaluate_cycle" in signature(self_improvement_cycle).parameters:
                 kwargs["evaluate_cycle"] = self._evaluate_cycle
+            if "meta_executor" in signature(self_improvement_cycle).parameters:
+                kwargs["meta_executor"] = meta_executor
             print("💡 SI-9: scheduling self-improvement cycle coroutine")
 
             async def _loop_heartbeat() -> None:
@@ -2298,7 +2332,8 @@ def start_self_improvement_cycle(
                 await self_improvement_cycle(workflow_plan, **kwargs)
 
             async def _await_stop() -> None:
-                await asyncio.to_thread(self._stop_event.wait)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(meta_executor, self._stop_event.wait)
 
             async def _main() -> None:
                 self._task = asyncio.create_task(_run_cycle())
@@ -2354,6 +2389,7 @@ def start_self_improvement_cycle(
                 self._exc.put(exc)
             finally:
                 try:
+                    meta_executor.shutdown(wait=False, cancel_futures=True)
                     loop.run_until_complete(
                         asyncio.wait_for(
                             loop.shutdown_default_executor(),
