@@ -948,6 +948,13 @@ def discover_recursive_orphans(
                 message = f"{message} after {reason}"
             logger.warning(message)
 
+    def _get_worker_pids(executor: concurrent.futures.Executor) -> list[int]:
+        processes = getattr(executor, "_processes", None)
+        if not processes:
+            return []
+        pids = [proc.pid for proc in processes.values() if proc and proc.pid]
+        return sorted(pids)
+
     def _log_pending_failure(
         pending: set[
             concurrent.futures.Future[
@@ -1023,14 +1030,23 @@ def discover_recursive_orphans(
                             )
                             raise
                 except concurrent.futures.TimeoutError as exc:
+                    worker_pids = _get_worker_pids(executor)
+                    pid_note = f"; worker_pids={worker_pids}" if worker_pids else ""
                     logger.critical(
-                        "discovery parse timed out after %.2fs (SANDBOX_DISCOVERY_TIMEOUT_SECONDS=%s); %d/%d futures outstanding",
+                        "discovery parse timed out after %.2fs (SANDBOX_DISCOVERY_TIMEOUT_SECONDS=%s); %d/%d futures outstanding%s",
                         discovery_timeout,
                         discovery_timeout_env or "default",
                         len(pending),
                         len(futures),
+                        pid_note,
                     )
                     _cancel_pending(pending)
+                    _shutdown_executor(
+                        executor,
+                        log_non_blocking=True,
+                        reason="timeout",
+                    )
+                    shutdown_done = True
                     raise TimeoutError("discovery parse timeout") from exc
         except CancelledError:
             _log_pending_failure(
@@ -1053,12 +1069,13 @@ def discover_recursive_orphans(
                 if isinstance(exc, TimeoutError)
                 else "process pool failure"
             )
-            _shutdown_executor(
-                executor,
-                log_non_blocking=True,
-                reason=shutdown_reason,
-            )
-            shutdown_done = True
+            if not shutdown_done:
+                _shutdown_executor(
+                    executor,
+                    log_non_blocking=True,
+                    reason=shutdown_reason,
+                )
+                shutdown_done = True
             if _shutdown_in_progress():
                 logger.info("discovery cancelled due to shutdown")
                 return []
