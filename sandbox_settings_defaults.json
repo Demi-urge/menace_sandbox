@@ -199,6 +199,7 @@
     "quick_fix_engine": "1.0.0",
     "relevancy_radar": "1.0.0"
   },
+  "orphan_discovery_timeout": 30.0,
   "orphan_retry_attempts": 3,
   "orphan_retry_delay": 0.1,
   "orphan_reuse_threshold": 0.0,

@@ -79,6 +79,9 @@ _qfe_log("threading imported")
 import asyncio
 _qfe_log("asyncio imported")
 
+import concurrent.futures
+_qfe_log("concurrent.futures imported")
+
 import os
 _qfe_log("os imported")
 
@@ -615,6 +618,42 @@ _qfe_log("typing aliases imported")
 
 from datetime import datetime
 _qfe_log("datetime imported")
+
+
+def _discover_orphans_with_timeout(
+    repo: Path,
+    module_map: Path,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+    stage: str,
+) -> dict[str, Any]:
+    timeout = getattr(settings, "orphan_discovery_timeout", None)
+
+    def _run_discovery() -> dict[str, Any]:
+        from sandbox_runner import discover_recursive_orphans as _discover
+
+        return _discover(str(repo), module_map=module_map)
+
+    if timeout is None or timeout <= 0:
+        return _run_discovery()
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="orphan-discovery"
+    ) as executor:
+        future = executor.submit(_run_discovery)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            logger.warning(
+                "orphan discovery timed out; skipping cycle",
+                extra=log_record(
+                    timeout=timeout,
+                    orphan_discovery_timeout=True,
+                    orphan_discovery_stage=stage,
+                ),
+            )
+            return {}
 try:  # pragma: no cover - optional dependency
     from dynamic_module_mapper import build_module_map, discover_module_groups
     _MODULE_MAPPER_ERROR: ImportError | None = None
@@ -6686,9 +6725,13 @@ class SelfImprovementEngine:
                 self.logger.exception("isolated module discovery failed: %s", exc)
 
             try:
-                from sandbox_runner import discover_recursive_orphans as _discover
-
-                trace = _discover(str(repo), module_map=data_dir / "module_map.json")
+                trace = _discover_orphans_with_timeout(
+                    repo=repo,
+                    module_map=data_dir / "module_map.json",
+                    settings=settings,
+                    logger=self.logger,
+                    stage="post_patch_orphan_discovery",
+                )
                 for k, v in trace.items():
                     info: dict[str, Any] = {
                         "parents": [
@@ -6830,9 +6873,13 @@ class SelfImprovementEngine:
             self.logger.exception("isolated module discovery failed: %s", exc)
 
         try:
-            from sandbox_runner import discover_recursive_orphans as _discover
-
-            trace = _discover(str(repo), module_map=data_dir / "module_map.json")
+            trace = _discover_orphans_with_timeout(
+                repo=repo,
+                module_map=data_dir / "module_map.json",
+                settings=settings,
+                logger=self.logger,
+                stage="orphan_discovery",
+            )
             for mod, info in trace.items():
                 parents = [
                     str(resolve_path(str(Path(*p.split(".")).with_suffix(".py"))))

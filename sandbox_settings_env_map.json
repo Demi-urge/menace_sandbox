@@ -162,6 +162,7 @@
   "openai_api_key": "OPENAI_API_KEY",
   "optional_python_packages": "SANDBOX_OPTIONAL_PYTHON_PKGS",
   "optional_service_versions": "OPTIONAL_SERVICE_VERSIONS",
+  "orphan_discovery_timeout": "ORPHAN_DISCOVERY_TIMEOUT",
   "orphan_retry_attempts": "ORPHAN_RETRY_ATTEMPTS",
   "orphan_retry_delay": "ORPHAN_RETRY_DELAY",
   "orphan_reuse_threshold": "ORPHAN_REUSE_THRESHOLD",
