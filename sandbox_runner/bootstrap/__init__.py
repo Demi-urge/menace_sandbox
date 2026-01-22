@@ -902,12 +902,13 @@ def _initialize_autonomous_sandbox(
                     ),
                 }
                 _SELF_IMPROVEMENT_LAST_ERROR = (
-                    "self-improvement thread creation returned None; startup skipped; "
+                    "self-improvement thread creation failed; see earlier logs for "
+                    "import/initialization errors; "
                     f"context={context}"
                 )
                 logger.warning(
-                    "self-improvement thread creation returned None; startup skipped; "
-                    "context=%s; check self-improvement import errors",
+                    "self-improvement thread creation failed; see earlier logs for "
+                    "import/initialization errors; context=%s",
                     context,
                 )
                 print("🧱 SI-8: cycle thread missing; startup skipped")
