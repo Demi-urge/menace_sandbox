@@ -82,6 +82,9 @@ _qfe_log("asyncio imported")
 import concurrent.futures
 _qfe_log("concurrent.futures imported")
 
+import traceback
+_qfe_log("traceback imported")
+
 import os
 _qfe_log("os imported")
 
@@ -390,7 +393,11 @@ except Exception as exc:  # pragma: no cover - simplified environments
     import sys
     import types
 
-    _qfe_log("meta_planning import failed; using fallback stubs")
+    _qfe_log(f"meta_planning import failed; using fallback stubs: {exc!r}")
+    _qfe_log(traceback.format_exc().strip())
+    if getattr(settings, "menace_mode", "").lower() == "autonomous":
+        _qfe_log("meta_planning import failed in autonomous mode; re-raising")
+        raise
 
     PLANNER_INTERVAL = 1  # type: ignore[assignment]
 
