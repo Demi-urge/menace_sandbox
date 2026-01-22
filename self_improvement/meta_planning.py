@@ -1820,7 +1820,6 @@ async def self_improvement_cycle(
                 logger.exception("evaluate_cycle failed", exc_info=exc)
                 _debug_cycle("error", reason=str(exc))
                 continue
-
             try:
                 if snapshot_tracker is not None:
                     await _run_stage(
