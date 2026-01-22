@@ -2389,18 +2389,32 @@ def start_self_improvement_cycle(
                 self._exc.put(exc)
             finally:
                 try:
+                    pending_tasks = asyncio.all_tasks(loop)
+                    for task in pending_tasks:
+                        task.cancel()
+                    if pending_tasks:
+                        loop.run_until_complete(
+                            asyncio.gather(
+                                *pending_tasks,
+                                return_exceptions=True,
+                            )
+                        )
                     meta_executor.shutdown(wait=False, cancel_futures=True)
                     loop.run_until_complete(
                         asyncio.wait_for(
                             loop.shutdown_default_executor(),
-                            timeout=10,
+                            timeout=stop_timeout,
                         )
                     )
                 except asyncio.TimeoutError:
                     logger = get_logger(__name__)
                     logger.critical(
                         "timed out shutting down default executor for self improvement loop",
-                        extra=log_record(timeout_seconds=10),
+                        extra=log_record(
+                            timeout_seconds=stop_timeout,
+                            thread_ident=self._thread.ident,
+                            loop_running=loop.is_running(),
+                        ),
                     )
                     try:
                         loop.stop()
