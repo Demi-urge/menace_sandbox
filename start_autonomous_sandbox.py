@@ -303,10 +303,44 @@ from self_improvement.orphan_handling import (
     integrate_orphans_sync,
     post_round_orphan_scan,
 )
-from self_improvement.meta_planning import (
-    record_workflow_iteration,
-    workflow_controller_status,
-)
+try:  # pragma: no cover - optional dependency / stubs may be incomplete
+    import self_improvement.meta_planning as meta_planning
+except Exception as exc:  # pragma: no cover - allow sandbox startup without meta_planning
+    meta_planning = None
+    logging.getLogger(__name__).warning(
+        "Meta planning module unavailable; disabling workflow iteration tracking. (%s)",
+        exc,
+    )
+
+
+def _noop_record_workflow_iteration(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
+
+def _noop_workflow_controller_status(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
+
+if meta_planning is None:
+    record_workflow_iteration = _noop_record_workflow_iteration
+    workflow_controller_status = _noop_workflow_controller_status
+else:
+    record_workflow_iteration = getattr(
+        meta_planning, "record_workflow_iteration", None
+    )
+    workflow_controller_status = getattr(
+        meta_planning, "workflow_controller_status", None
+    )
+    if record_workflow_iteration is None:
+        logging.getLogger(__name__).warning(
+            "Meta planning module missing record_workflow_iteration; using no-op.",
+        )
+        record_workflow_iteration = _noop_record_workflow_iteration
+    if workflow_controller_status is None:
+        logging.getLogger(__name__).warning(
+            "Meta planning module missing workflow_controller_status; using no-op.",
+        )
+        workflow_controller_status = _noop_workflow_controller_status
 
 try:  # pragma: no cover - optional dependency
     from task_handoff_bot import WorkflowDB  # type: ignore
