@@ -138,12 +138,13 @@ class _CycleTickState:
         self.last_tick_thread_name: str | None = None
         self.last_tick_thread_ident: int | None = None
 
-    def tick(self) -> dict[str, Any]:
+    def tick(self, *, increment: bool = True) -> dict[str, Any]:
         now = time.time()
         current_thread = threading.current_thread()
         with self._lock:
             self.last_tick = now
-            self.tick_count += 1
+            if increment:
+                self.tick_count += 1
             self.last_tick_thread_name = current_thread.name
             self.last_tick_thread_ident = current_thread.ident
             return {
@@ -2404,6 +2405,7 @@ def start_self_improvement_cycle(
                     if self._stop_event.is_set() or self._cancel_requested.is_set():
                         break
                     monitor_state["last_loop_heartbeat"] = time.monotonic()
+                    tick_state.tick(increment=False)
                     loop_heartbeat_state.beat()
                     await asyncio.sleep(self._heartbeat_interval)
 
@@ -3138,14 +3140,17 @@ def start_self_improvement_cycle(
                 or (last_ping_age is not None and last_ping_age > watchdog_threshold)
                 or (last_ping is None and ping_idle_since_start > watchdog_threshold)
             )
-            stalled = (
+            tick_stalled = (
                 last_tick_age is not None and last_tick_age > watchdog_threshold
             ) or (last_tick is None and idle_since_start > watchdog_threshold)
+            stalled = (
+                tick_stalled
+                or heartbeat_stalled
+                or ping_stalled
+                or loop_heartbeat_stalled
+            )
             if (
                 not stalled
-                and not heartbeat_stalled
-                and not ping_stalled
-                and not loop_heartbeat_stalled
             ):
                 continue
             thread_state = current_thread.state()
@@ -3193,6 +3198,7 @@ def start_self_improvement_cycle(
                 stalled_due_to_heartbeat=heartbeat_stalled,
                 stalled_due_to_loop_heartbeat=loop_heartbeat_stalled,
                 stalled_due_to_loop_ping=ping_stalled,
+                stalled_due_to_tick=tick_stalled,
                 event_loop_unresponsive_seconds=(
                     last_ping_age if last_ping_age is not None else ping_idle_since_start
                 )
@@ -3204,9 +3210,12 @@ def start_self_improvement_cycle(
                 watchdog_logger.critical(stall_message, extra=log_payload)
             elif heartbeat_stalled:
                 watchdog_logger.critical(stall_message, extra=log_payload)
+            elif loop_heartbeat_stalled:
+                watchdog_logger.critical(stall_message, extra=log_payload)
             else:
                 watchdog_logger.warning(stall_message, extra=log_payload)
-            if watchdog_restart:
+            restart_allowed = heartbeat_stalled or loop_heartbeat_stalled or ping_stalled
+            if watchdog_restart and restart_allowed:
                 restart_reason = (
                     "watchdog_restart_loop_ping"
                     if ping_stalled
