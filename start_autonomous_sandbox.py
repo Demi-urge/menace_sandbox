@@ -106,26 +106,45 @@ LOGGER.info(
         sys_path_total=len(sys.path),
     ),
 )
+_META_PLANNING_IMPORT_CANDIDATES = (
+    "menace_sandbox.self_improvement.meta_planning",
+    "self_improvement.meta_planning",
+)
+
+
+def _resolve_meta_planning_candidate() -> str | None:
+    for candidate in _META_PLANNING_IMPORT_CANDIDATES:
+        if importlib.util.find_spec(candidate) is not None:
+            return candidate
+    return None
+
+
 try:
-    _meta_planning = importlib.import_module("self_improvement.meta_planning")
+    _meta_planning_candidate = _resolve_meta_planning_candidate()
+    if _meta_planning_candidate is None:
+        raise ModuleNotFoundError(
+            "No meta_planning module candidate found in known locations.",
+        )
+    _meta_planning = importlib.import_module(_meta_planning_candidate)
     print(
-        f"🔎 self_improvement.meta_planning.__file__: {_meta_planning.__file__}",
+        f"🔎 {_meta_planning_candidate}.__file__: {_meta_planning.__file__}",
         flush=True,
     )
     LOGGER.info(
-        "Import guard resolved self_improvement.meta_planning",
+        "Import guard resolved meta_planning",
         extra=log_record(
             event="import-guard-meta-planning",
+            module=_meta_planning_candidate,
             module_file=getattr(_meta_planning, "__file__", None),
         ),
     )
 except Exception as exc:
     print(
-        f"⚠️ Failed to import self_improvement.meta_planning early: {exc}",
+        f"⚠️ Failed to import meta_planning early: {exc}",
         flush=True,
     )
     LOGGER.exception(
-        "Import guard failed to import self_improvement.meta_planning",
+        "Import guard failed to import meta_planning",
         extra=log_record(
             event="import-guard-meta-planning-error",
             error_type=type(exc).__name__,
@@ -382,7 +401,14 @@ def _load_meta_planning_module(logger: logging.Logger) -> Any | None:
         return _META_PLANNING_MODULE
 
     _META_PLANNING_LOADED = True
-    spec = importlib.util.find_spec("self_improvement.meta_planning")
+    module_name = _resolve_meta_planning_candidate()
+    if module_name is None:
+        logger.warning(
+            "Meta planning module unavailable; disabling workflow controller status.",
+        )
+        _META_PLANNING_MODULE = None
+        return None
+    spec = importlib.util.find_spec(module_name)
     if spec is None or spec.loader is None:
         logger.warning(
             "Meta planning module unavailable; disabling workflow controller status.",
@@ -401,7 +427,8 @@ def _load_meta_planning_module(logger: logging.Logger) -> Any | None:
         _META_PLANNING_MODULE = None
         return None
 
-    sys.modules["self_improvement.meta_planning"] = module
+    for alias in _META_PLANNING_IMPORT_CANDIDATES:
+        sys.modules.setdefault(alias, module)
     _META_PLANNING_MODULE = module
     return module
 
@@ -3349,8 +3376,12 @@ def main(argv: list[str] | None = None) -> None:
                         interval=os.environ.get("META_PLANNING_INTERVAL"),
                         improvement_threshold=os.environ.get("META_IMPROVEMENT_THRESHOLD"),
                     )
-                    last_pre_meta_trace_step = "importing self_improvement.meta_planning"
-                    from self_improvement import meta_planning
+                    last_pre_meta_trace_step = "importing meta_planning"
+                    meta_planning_module = (
+                        _resolve_meta_planning_candidate()
+                        or "self_improvement.meta_planning"
+                    )
+                    meta_planning = importlib.import_module(meta_planning_module)
                     print(
                         "[META-TRACE] meta_planning module import completed; capturing module attributes",
                         flush=True,
@@ -3378,8 +3409,9 @@ def main(argv: list[str] | None = None) -> None:
                         meta_planning_interval=os.environ.get("META_PLANNING_INTERVAL"),
                     )
                     last_pre_meta_trace_step = "importing self_improvement_cycle"
-                    from self_improvement.meta_planning import (  # noqa: F401
-                        self_improvement_cycle,
+                    self_improvement_cycle = getattr(  # noqa: F401
+                        meta_planning,
+                        "self_improvement_cycle",
                     )
                     print(
                         "[META-TRACE] self_improvement_cycle imported; meta planner wiring begins",
