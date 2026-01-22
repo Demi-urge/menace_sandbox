@@ -15,6 +15,7 @@ from pathlib import Path
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import sys
+import importlib
 
 # Resolve the repository root from this file's location instead of assuming a
 # hard-coded home directory. The sandbox may live outside ``~/menace_sandbox``
@@ -27,6 +28,15 @@ ROOT = str(Path(__file__).resolve().parent)
 sys.path = [p for p in sys.path if "menace_sandbox" not in p or p == ROOT]
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+_existing_pythonpath = os.environ.get("PYTHONPATH", "")
+if _existing_pythonpath:
+    _pythonpath_entries = [
+        path for path in _existing_pythonpath.split(os.pathsep) if path and path != ROOT
+    ]
+    os.environ["PYTHONPATH"] = os.pathsep.join([ROOT, *_pythonpath_entries])
+else:
+    os.environ["PYTHONPATH"] = ROOT
 
 import subprocess
 import time
@@ -80,6 +90,35 @@ for _path in (_HERE, _HERE.parent):
         sys.path.insert(0, _str_path)
 
 print("🧭 Import roots normalized.", flush=True)
+
+print("🔎 sys.path (early):", sys.path, flush=True)
+try:
+    _meta_planning = importlib.import_module("self_improvement.meta_planning")
+    print(
+        f"🔎 self_improvement.meta_planning.__file__: {_meta_planning.__file__}",
+        flush=True,
+    )
+except Exception as exc:
+    print(
+        f"⚠️ Failed to import self_improvement.meta_planning early: {exc}",
+        flush=True,
+    )
+
+_duplicate_meta_planning_paths = []
+for _path in list(sys.path):
+    if not _path:
+        continue
+    _candidate = Path(_path) / "self_improvement" / "meta_planning.py"
+    if _candidate.is_file() and str(Path(_path).resolve()) != str(Path(ROOT).resolve()):
+        _duplicate_meta_planning_paths.append(str(_candidate))
+        sys.path.remove(_path)
+
+if _duplicate_meta_planning_paths:
+    print(
+        "⚠️ Removed duplicate self_improvement.meta_planning module paths: "
+        f"{_duplicate_meta_planning_paths}",
+        flush=True,
+    )
 
 # --- AUTO-START BOOTSTRAP WATCHDOG ---
 WATCHDOG_PATH = os.path.join(_HERE, "sandbox", "bootstrap_watchdog.py")
