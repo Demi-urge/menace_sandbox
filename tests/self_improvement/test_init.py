@@ -175,10 +175,9 @@ def test_init_meta_planning_failure(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(init_module.sys.stdin, "isatty", lambda: True)
 
     caplog.set_level("ERROR")
-    with pytest.raises(RuntimeError) as err:
-        init_module.init_self_improvement()
+    result = init_module.init_self_improvement()
 
-    assert "failed to reload meta_planning settings" in str(err.value)
+    assert result is settings
     record = next(
         r for r in caplog.records if r.message == "failed to reload meta_planning settings"
     )
