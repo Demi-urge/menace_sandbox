@@ -1816,9 +1816,15 @@ async def self_improvement_cycle(
                     else:
                         _debug_cycle("skipped", reason=info.get("reason"))
                         continue
+            except Exception as exc:
+                logger.exception("evaluate_cycle failed", exc_info=exc)
+                decision = "skip"
+                info = {"reason": "evaluate_cycle_failed"}
+                _debug_cycle("skipped", reason=info.get("reason"))
+                continue
 
-                if snapshot_tracker is not None:
-                    await _run_stage(
+            if snapshot_tracker is not None:
+                await _run_stage(
                         "snapshot_before",
                         _run_in_executor(
                             snapshot_tracker.capture,
