@@ -2503,6 +2503,9 @@ def start_self_improvement_cycle(
     force_restart = _env_bool("SELF_IMPROVEMENT_FORCE_RESTART", False)
     watchdog_force_restart = _env_bool("SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART", False)
     force_exit_on_stuck = _env_bool("SELF_IMPROVEMENT_FORCE_EXIT_ON_STUCK", False)
+    watchdog_exit_on_stuck = _env_bool(
+        "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK", False
+    )
     zombie_restart_after_seconds = _env_float(
         "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS", 300.0
     )
@@ -2639,6 +2642,7 @@ def start_self_improvement_cycle(
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
+                                "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
                                 "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                                 "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                             ],
@@ -2662,6 +2666,7 @@ def start_self_improvement_cycle(
                         override_envs=[
                             "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                             "SELF_IMPROVEMENT_FORCE_RESTART",
+                            "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
                             "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                             "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                         ],
@@ -2742,6 +2747,7 @@ def start_self_improvement_cycle(
                             override_envs=[
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
+                                "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
                                 "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                                 "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                             ],
@@ -2750,30 +2756,48 @@ def start_self_improvement_cycle(
                         ),
                     )
                     if watchdog_triggered and watchdog_restart:
+                        if watchdog_exit_on_stuck:
+                            logger.critical(
+                                "exiting process because cycle thread failed to stop during watchdog restart",
+                                extra=log_record(
+                                    reason=reason,
+                                    thread_ident=thread_state.get("thread_ident"),
+                                    stop_timeout_seconds=stop_timeout,
+                                    stuck_thread_stack=stack_dump,
+                                    recovery_action="process_exit",
+                                    recovery_stage="stop_timeout",
+                                    recovery_mode="watchdog_restart_fail_fast",
+                                    recovery_metric="self_improvement_watchdog_stop_timeout_exit",
+                                    override_envs=[
+                                        "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
+                                        "SELF_IMPROVEMENT_FORCE_RESTART",
+                                        "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
+                                        "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
+                                        "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
+                                    ],
+                                    watchdog_exit_on_stuck=watchdog_exit_on_stuck,
+                                    watchdog_restart_triggered=watchdog_triggered,
+                                ),
+                            )
+                            _record_recovery_metric(
+                                "self_improvement_watchdog_stop_timeout_exit"
+                            )
+                            os._exit(1)
                         logger.critical(
-                            "exiting process because cycle thread failed to stop during watchdog restart",
+                            "watchdog restart detected stuck thread; process exit disabled",
                             extra=log_record(
                                 reason=reason,
                                 thread_ident=thread_state.get("thread_ident"),
                                 stop_timeout_seconds=stop_timeout,
                                 stuck_thread_stack=stack_dump,
-                                recovery_action="process_exit",
+                                recovery_action="process_exit_suppressed",
                                 recovery_stage="stop_timeout",
                                 recovery_mode="watchdog_restart_fail_fast",
-                                recovery_metric="self_improvement_watchdog_stop_timeout_exit",
-                                override_envs=[
-                                    "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
-                                    "SELF_IMPROVEMENT_FORCE_RESTART",
-                                    "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
-                                    "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
-                                ],
+                                override_env="SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
+                                watchdog_exit_on_stuck=watchdog_exit_on_stuck,
                                 watchdog_restart_triggered=watchdog_triggered,
                             ),
                         )
-                        _record_recovery_metric(
-                            "self_improvement_watchdog_stop_timeout_exit"
-                        )
-                        os._exit(1)
                     return
                 logger.warning(
                     "forcing replacement cycle thread after stop timeout",
