@@ -1773,55 +1773,55 @@ async def self_improvement_cycle(
                 )
             cycle_ok = False
             try:
-                try:
-                    decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
-                    if info.get("reason") == "missing_metrics":
-                        _debug_cycle(
-                            "run",
-                            reason="missing_metrics",
-                            missing_metrics=",".join(info.get("missing", [])),
-                        )
-                    if decision == "skip":
-                        traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
-                            error_log,
-                            BASELINE_TRACKER,
-                            getattr(cfg, "error_window", 5),
-                        )
-                        max_errors, z_threshold = _get_overfit_thresholds(cfg, BASELINE_TRACKER)
-                        z_score = (
-                            abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
-                        )
-                        if err_count > max_errors or z_score > z_threshold:
-                            logger.debug(
-                                "fallback_overfitting",
-                                extra=log_record(
-                                    decision="run",
-                                    reason="fallback_overfitting",
-                                    entropy_delta=ent_delta,
-                                    entropy_z=z_score,
-                                    errors=err_count,
-                                    max_allowed_errors=max_errors,
-                                    entropy_overfit_threshold=z_threshold,
-                                ),
-                            )
-                            decision = "run"
-                            _debug_cycle(
-                                "fallback",
-                                reason="overfitting",
-                                errors=err_count,
+                decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
+                if info.get("reason") == "missing_metrics":
+                    _debug_cycle(
+                        "run",
+                        reason="missing_metrics",
+                        missing_metrics=",".join(info.get("missing", [])),
+                    )
+                if decision == "skip":
+                    traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
+                        error_log,
+                        BASELINE_TRACKER,
+                        getattr(cfg, "error_window", 5),
+                    )
+                    max_errors, z_threshold = _get_overfit_thresholds(cfg, BASELINE_TRACKER)
+                    z_score = (
+                        abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
+                    )
+                    if err_count > max_errors or z_score > z_threshold:
+                        logger.debug(
+                            "fallback_overfitting",
+                            extra=log_record(
+                                decision="run",
+                                reason="fallback_overfitting",
                                 entropy_delta=ent_delta,
                                 entropy_z=z_score,
+                                errors=err_count,
+                                max_allowed_errors=max_errors,
                                 entropy_overfit_threshold=z_threshold,
-                                error_traces=traces,
-                            )
-                        else:
-                            _debug_cycle("skipped", reason=info.get("reason"))
-                            continue
-                except Exception as exc:
-                    logger.exception("evaluate_cycle failed", exc_info=exc)
-                    _debug_cycle("error", reason=str(exc))
-                    continue
+                            ),
+                        )
+                        decision = "run"
+                        _debug_cycle(
+                            "fallback",
+                            reason="overfitting",
+                            errors=err_count,
+                            entropy_delta=ent_delta,
+                            entropy_z=z_score,
+                            entropy_overfit_threshold=z_threshold,
+                            error_traces=traces,
+                        )
+                    else:
+                        _debug_cycle("skipped", reason=info.get("reason"))
+                        continue
+            except Exception as exc:
+                logger.exception("evaluate_cycle failed", exc_info=exc)
+                _debug_cycle("error", reason=str(exc))
+                continue
 
+            try:
                 if snapshot_tracker is not None:
                     await _run_stage(
                         "snapshot_before",
