@@ -1476,6 +1476,8 @@ async def self_improvement_cycle(
     threshold = ROI_BACKOFF_THRESHOLD if ROI_BACKOFF_THRESHOLD != 0 else 0.0
     streak_required = max(1, ROI_BACKOFF_CONSECUTIVE)
     controller: WorkflowCycleController | None = None
+    tick_log_interval = max(1.0, float(getattr(cfg, "cycle_tick_log_interval", interval)))
+    last_tick_log = 0.0
 
     def _controller_status(
         workflow_id: str, status: str, stats: Mapping[str, Any]
@@ -1762,15 +1764,18 @@ async def self_improvement_cycle(
                 break
             if tick_state is not None:
                 tick_snapshot = tick_state.tick()
-                logger.info(
-                    "cycle tick",
-                    extra=log_record(
-                        tick_timestamp=tick_snapshot["last_tick"],
-                        tick_count=tick_snapshot["tick_count"],
-                        tick_thread_name=tick_snapshot["last_tick_thread_name"],
-                        tick_thread_ident=tick_snapshot["last_tick_thread_ident"],
-                    ),
-                )
+                tick_timestamp = float(tick_snapshot["last_tick"] or time.time())
+                if tick_timestamp - last_tick_log >= tick_log_interval:
+                    last_tick_log = tick_timestamp
+                    logger.info(
+                        "cycle tick",
+                        extra=log_record(
+                            tick_timestamp=tick_snapshot["last_tick"],
+                            tick_count=tick_snapshot["tick_count"],
+                            tick_thread_name=tick_snapshot["last_tick_thread_name"],
+                            tick_thread_ident=tick_snapshot["last_tick_thread_ident"],
+                        ),
+                    )
             cycle_ok = False
             try:
                 decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
