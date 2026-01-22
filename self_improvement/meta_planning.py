@@ -2345,36 +2345,33 @@ def start_self_improvement_cycle(
                     elif task is self._task:
                         self._exc.put(result)
 
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
+            loop = asyncio.new_event_loop()
+            self._loop = loop
+            asyncio.set_event_loop(loop)
             try:
-                self._loop.run_until_complete(_main())
+                loop.run_until_complete(_main())
             except BaseException as exc:  # pragma: no cover - best effort
                 self._exc.put(exc)
             finally:
                 try:
-                    if self._loop is not None:
-                        shutdown_task = self._loop.shutdown_default_executor()
-                        self._loop.run_until_complete(
-                            asyncio.wait_for(
-                                shutdown_task,
-                                timeout=stop_timeout,
-                            )
+                    loop.run_until_complete(
+                        asyncio.wait_for(
+                            loop.shutdown_default_executor(),
+                            timeout=10,
                         )
+                    )
                 except asyncio.TimeoutError:
                     logger = get_logger(__name__)
                     logger.critical(
                         "timed out shutting down default executor for self improvement loop",
-                        extra=log_record(timeout_seconds=stop_timeout),
+                        extra=log_record(timeout_seconds=10),
                     )
-                    if self._loop is not None:
-                        try:
-                            self._loop.stop()
-                        except Exception:
-                            pass
+                    try:
+                        loop.stop()
+                    except Exception:
+                        pass
                 finally:
-                    if self._loop is not None:
-                        self._loop.close()
+                    loop.close()
                     asyncio.set_event_loop(None)
 
         # --------------------------------------------------
@@ -2405,6 +2402,17 @@ def start_self_improvement_cycle(
             self._stop_event.set()
             self._cancel_requested.set()
             loop = self._loop
+            stop_timer: threading.Timer | None = None
+            if loop is not None:
+                def _force_stop() -> None:
+                    try:
+                        loop.call_soon_threadsafe(loop.stop)
+                    except RuntimeError:
+                        pass
+
+                stop_timer = threading.Timer(effective_timeout, _force_stop)
+                stop_timer.daemon = True
+                stop_timer.start()
             if loop is not None:
                 try:
                     loop.call_soon_threadsafe(
@@ -2413,6 +2421,8 @@ def start_self_improvement_cycle(
                 except RuntimeError:
                     pass
             self._thread.join(effective_timeout)
+            if stop_timer is not None:
+                stop_timer.cancel()
             if self._thread.is_alive():
                 if loop is not None:
                     try:
