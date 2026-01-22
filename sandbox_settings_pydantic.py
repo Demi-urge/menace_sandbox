@@ -2296,6 +2296,11 @@ class SandboxSettings(BaseSettings):
         env="ORPHAN_REUSE_THRESHOLD",
         description="Minimum reuse score required for orphan modules.",
     )
+    orphan_discovery_timeout: float = Field(
+        30.0,
+        env="ORPHAN_DISCOVERY_TIMEOUT",
+        description="Timeout in seconds for orphan discovery scans.",
+    )
     clean_orphans: bool = Field(
         False,
         env="SANDBOX_CLEAN_ORPHANS",
