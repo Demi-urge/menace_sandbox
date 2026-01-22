@@ -923,11 +923,30 @@ def discover_recursive_orphans(
     module_paths = {mod: p for mod, p in candidates}
     parse_iter: Iterable[tuple[str, set[str]] | tuple[str, dict[str, str]] | None]
 
-    def _shutdown_executor(executor: concurrent.futures.Executor) -> None:
+    def _shutdown_executor(
+        executor: concurrent.futures.Executor,
+        *,
+        log_non_blocking: bool = False,
+        reason: str | None = None,
+    ) -> None:
+        used_non_blocking = False
         try:
-            executor.shutdown(cancel_futures=True)
+            executor.shutdown(wait=False, cancel_futures=True)
+            used_non_blocking = True
         except TypeError:
-            executor.shutdown()
+            try:
+                executor.shutdown(wait=False)
+                used_non_blocking = True
+            except TypeError:
+                try:
+                    executor.shutdown(cancel_futures=True)
+                except TypeError:
+                    executor.shutdown()
+        if log_non_blocking and used_non_blocking:
+            message = "discovery parse pool shutdown without waiting"
+            if reason:
+                message = f"{message} after {reason}"
+            logger.warning(message)
 
     def _log_pending_failure(
         pending: set[
@@ -1029,7 +1048,16 @@ def discover_recursive_orphans(
             )
             remaining = [futures[future] for future in pending]
             _cancel_pending(pending)
-            _shutdown_executor(executor)
+            shutdown_reason = (
+                "timeout"
+                if isinstance(exc, TimeoutError)
+                else "process pool failure"
+            )
+            _shutdown_executor(
+                executor,
+                log_non_blocking=True,
+                reason=shutdown_reason,
+            )
             shutdown_done = True
             if _shutdown_in_progress():
                 logger.info("discovery cancelled due to shutdown")
