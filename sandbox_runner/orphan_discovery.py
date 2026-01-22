@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import sys
-from concurrent.futures import CancelledError
+from concurrent.futures import CancelledError, InvalidStateError
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
@@ -910,11 +910,6 @@ def discover_recursive_orphans(
         workers = int(workers_env) if workers_env is not None else os.cpu_count() or 1
     except ValueError:
         workers = os.cpu_count() or 1
-    timeout_env = os.getenv("SANDBOX_DISCOVERY_PARSE_TIMEOUT_SECONDS")
-    try:
-        parse_timeout = float(timeout_env) if timeout_env is not None else 30.0
-    except ValueError:
-        parse_timeout = 30.0
     discovery_timeout_env = os.getenv("SANDBOX_DISCOVERY_TIMEOUT_SECONDS")
     try:
         discovery_timeout = (
@@ -985,27 +980,15 @@ def discover_recursive_orphans(
                 try:
                     for future in concurrent.futures.as_completed(
                         pending,
-                        timeout=parse_timeout,
+                        timeout=discovery_timeout,
                     ):
                         pending.remove(future)
                         if _shutdown_in_progress():
                             _cancel_pending(pending)
                             return []
                         try:
-                            results.append(
-                                future.result(timeout=discovery_timeout)
-                            )
-                        except concurrent.futures.TimeoutError as exc:
-                            _log_pending_failure(
-                                {future},
-                                futures,
-                                "discovery parse result timeout",
-                            )
-                            _cancel_pending(pending)
-                            raise TimeoutError(
-                                "discovery parse result timeout"
-                            ) from exc
-                        except CancelledError as exc:
+                            results.append(future.result())
+                        except (CancelledError, InvalidStateError) as exc:
                             _log_pending_failure(
                                 {future},
                                 futures,
@@ -1013,11 +996,20 @@ def discover_recursive_orphans(
                             )
                             _cancel_pending(pending)
                             raise
+                        except BrokenProcessPool as exc:
+                            _log_pending_failure(
+                                {future},
+                                futures,
+                                "discovery parse pool failure",
+                            )
+                            raise
                 except concurrent.futures.TimeoutError as exc:
-                    _log_pending_failure(
-                        pending,
-                        futures,
-                        f"discovery parse timed out after {parse_timeout:.2f}s",
+                    logger.critical(
+                        "discovery parse timed out after %.2fs (SANDBOX_DISCOVERY_TIMEOUT_SECONDS=%s); %d/%d futures outstanding",
+                        discovery_timeout,
+                        discovery_timeout_env or "default",
+                        len(pending),
+                        len(futures),
                     )
                     _cancel_pending(pending)
                     raise TimeoutError("discovery parse timeout") from exc
@@ -1029,7 +1021,7 @@ def discover_recursive_orphans(
             )
             _cancel_pending(pending)
             return []
-        except (TimeoutError, BrokenProcessPool):
+        except (TimeoutError, BrokenProcessPool, InvalidStateError) as exc:
             _log_pending_failure(
                 pending,
                 futures,
@@ -1042,11 +1034,17 @@ def discover_recursive_orphans(
             if _shutdown_in_progress():
                 logger.info("discovery cancelled due to shutdown")
                 return []
-            logger.warning(
-                "discovery parse pool failed after %.2fs; falling back to serial parse for %d files",
-                parse_timeout,
-                len(remaining),
-            )
+            if isinstance(exc, TimeoutError):
+                logger.warning(
+                    "discovery parse timeout (SANDBOX_DISCOVERY_TIMEOUT_SECONDS=%s); falling back to serial parse for %d files",
+                    discovery_timeout_env or "default",
+                    len(remaining),
+                )
+            else:
+                logger.warning(
+                    "discovery parse pool failed; falling back to serial parse for %d files",
+                    len(remaining),
+                )
             results.extend(_parse_file(c) for c in remaining)
             return results
         finally:
