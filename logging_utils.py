@@ -2,12 +2,19 @@ from __future__ import annotations
 
 """Shared logging utilities for Menace."""
 
+import atexit
 import json
 import logging
 import logging.config
 import os
+import queue
 import sys
-from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from logging.handlers import (
+    QueueHandler,
+    QueueListener,
+    RotatingFileHandler,
+    TimedRotatingFileHandler,
+)
 from pathlib import Path
 from typing import Any, Dict
 from datetime import datetime
@@ -295,9 +302,31 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
         )
         logging.getLogger().addHandler(handler)
 
+    _configure_queue_logging(["SelfImprovementCycle", "SelfImprovementCycleWatchdog"])
+
     bus = getattr(cfg_mod, "_EVENT_BUS", None)
     if bus:
         bus.subscribe("config.reload", lambda *_: _apply_log_level())
+
+
+def _configure_queue_logging(logger_names: list[str]) -> None:
+    """Attach queue handlers to specified loggers to avoid blocking IO."""
+    root_handlers = list(logging.getLogger().handlers)
+    if not root_handlers:
+        return
+    for name in logger_names:
+        logger = logging.getLogger(name)
+        if any(isinstance(handler, QueueHandler) for handler in logger.handlers):
+            continue
+        target_handlers = logger.handlers or root_handlers
+        q: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
+        queue_handler = QueueHandler(q)
+        listener = QueueListener(q, *target_handlers, respect_handler_level=True)
+        listener.start()
+        atexit.register(listener.stop)
+        _queue_listeners.append(listener)
+        logger.handlers = [queue_handler]
+        logger.propagate = False
 
 
 def _apply_log_level() -> None:
@@ -309,6 +338,7 @@ def _apply_log_level() -> None:
 
 
 _def_configured = False
+_queue_listeners: list[QueueListener] = []
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -393,4 +423,3 @@ def _get_config_or_fallback(cfg_mod: ModuleType):
             "configuration module unavailable (%s); using defaults", exc
         )
         return _fallback_config()
-
