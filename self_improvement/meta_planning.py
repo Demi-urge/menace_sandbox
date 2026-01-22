@@ -2552,6 +2552,9 @@ def start_self_improvement_cycle(
     watchdog_exit_on_stuck = _env_bool(
         "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK", False
     )
+    watchdog_exit_on_stop_timeout = _env_bool(
+        "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STOP_TIMEOUT", True
+    )
     zombie_restart_after_seconds = _env_float(
         "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS", 300.0
     )
@@ -2794,6 +2797,7 @@ def start_self_improvement_cycle(
                                 "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                 "SELF_IMPROVEMENT_FORCE_RESTART",
                                 "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
+                                "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STOP_TIMEOUT",
                                 "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                                 "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                             ],
@@ -2802,7 +2806,7 @@ def start_self_improvement_cycle(
                         ),
                     )
                     if watchdog_triggered and watchdog_restart:
-                        if watchdog_exit_on_stuck:
+                        if watchdog_exit_on_stuck and watchdog_exit_on_stop_timeout:
                             logger.critical(
                                 "exiting process because cycle thread failed to stop during watchdog restart",
                                 extra=log_record(
@@ -2818,10 +2822,12 @@ def start_self_improvement_cycle(
                                         "SELF_IMPROVEMENT_ALLOW_ZOMBIE_RESTART",
                                         "SELF_IMPROVEMENT_FORCE_RESTART",
                                         "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
+                                        "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STOP_TIMEOUT",
                                         "SELF_IMPROVEMENT_WATCHDOG_FORCE_RESTART",
                                         "SELF_IMPROVEMENT_ZOMBIE_RESTART_AFTER_SECONDS",
                                     ],
                                     watchdog_exit_on_stuck=watchdog_exit_on_stuck,
+                                    watchdog_exit_on_stop_timeout=watchdog_exit_on_stop_timeout,
                                     watchdog_restart_triggered=watchdog_triggered,
                                 ),
                             )
@@ -2839,8 +2845,11 @@ def start_self_improvement_cycle(
                                 recovery_action="process_exit_suppressed",
                                 recovery_stage="stop_timeout",
                                 recovery_mode="watchdog_restart_fail_fast",
-                                override_env="SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
+                                override_env="SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STOP_TIMEOUT"
+                                if not watchdog_exit_on_stop_timeout
+                                else "SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STUCK",
                                 watchdog_exit_on_stuck=watchdog_exit_on_stuck,
+                                watchdog_exit_on_stop_timeout=watchdog_exit_on_stop_timeout,
                                 watchdog_restart_triggered=watchdog_triggered,
                             ),
                         )
@@ -3055,7 +3064,7 @@ def start_self_improvement_cycle(
                     else "watchdog_restart"
                 )
                 watchdog_logger.warning(
-                    "restarting self improvement cycle after stall; forcing process exit if stop timeout elapses",
+                    "restarting self improvement cycle after stall; watchdog may force process exit if stop timeout elapses",
                     extra=log_record(
                         reason=restart_reason,
                         last_tick_timestamp=last_tick,
@@ -3063,6 +3072,7 @@ def start_self_improvement_cycle(
                         thread_state=thread_state,
                         stop_timeout_seconds=stop_timeout,
                         last_resort_recovery="process_exit",
+                        watchdog_exit_on_stop_timeout=watchdog_exit_on_stop_timeout,
                     ),
                 )
                 _restart_cycle_thread(
