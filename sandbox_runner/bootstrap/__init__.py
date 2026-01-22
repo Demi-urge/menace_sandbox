@@ -893,6 +893,18 @@ def _initialize_autonomous_sandbox(
             thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
             print("🧱 SI-7: cycle thread created")
 
+            if thread is None:
+                _SELF_IMPROVEMENT_LAST_ERROR = (
+                    "self-improvement thread creation returned None; startup skipped"
+                )
+                logger.warning(
+                    "self-improvement thread creation returned None (start_self_improvement=%s); "
+                    "startup skipped; check self-improvement import errors",
+                    start_self_improvement,
+                )
+                print("🧱 SI-8: cycle thread missing; startup skipped")
+                return settings
+
             print("🧱 SI-8: starting cycle thread")
             thread.start()
             print("🧱 SI-9: cycle thread started")
