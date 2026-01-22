@@ -2194,8 +2194,51 @@ def start_self_improvement_cycle(
     coroutine.
     """
 
+    logger = get_logger(__name__)
+
     if evaluate_cycle is None:
+        logger.error(
+            "evaluate_cycle callable required for self-improvement cycle start",
+            extra=log_record(component=__name__, reason="missing_evaluate_cycle"),
+        )
         raise ValueError("evaluate_cycle callable required")
+
+    if not callable(self_improvement_cycle):
+        logger.error(
+            "self_improvement_cycle target is not callable",
+            extra=log_record(
+                component=__name__,
+                reason="invalid_cycle_target",
+                target=repr(self_improvement_cycle),
+            ),
+        )
+        raise RuntimeError("self_improvement_cycle target is not callable")
+
+    if not isinstance(workflows, Mapping):
+        logger.error(
+            "workflows mapping required to start self-improvement cycle",
+            extra=log_record(
+                component=__name__,
+                reason="invalid_workflow_mapping",
+                workflows_type=type(workflows).__name__,
+            ),
+        )
+        raise TypeError("workflows mapping required to start self-improvement cycle")
+
+    invalid_workflows = [name for name, fn in workflows.items() if not callable(fn)]
+    if invalid_workflows:
+        logger.error(
+            "workflows contains non-callable entries",
+            extra=log_record(
+                component=__name__,
+                reason="invalid_workflow_targets",
+                workflow_names=invalid_workflows,
+            ),
+        )
+        raise TypeError(
+            "workflows contains non-callable entries: "
+            + ", ".join(sorted(map(str, invalid_workflows)))
+        )
 
     def _env_flag(name: str) -> bool | None:
         val = os.getenv(name)
@@ -2205,8 +2248,26 @@ def start_self_improvement_cycle(
 
     try:
         settings = SandboxSettings()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "SandboxSettings unavailable; proceeding with defaults",
+            extra=log_record(component=__name__, reason="settings_unavailable"),
+            exc_info=exc,
+        )
         settings = None
+
+    if settings is not None:
+        enabled_flag = getattr(settings, "self_improvement_enabled", None)
+        if enabled_flag is False:
+            logger.warning(
+                "self-improvement cycle disabled by settings",
+                extra=log_record(
+                    component=__name__,
+                    reason="self_improvement_disabled",
+                    setting="self_improvement_enabled",
+                ),
+            )
+            raise RuntimeError("self-improvement cycle disabled by settings")
 
     include_env = _env_flag("SANDBOX_INCLUDE_ORPHANS")
     recursive_env = _env_flag("SANDBOX_RECURSIVE_ORPHANS")
@@ -2965,7 +3026,27 @@ def start_self_improvement_cycle(
             )
         raise RuntimeError("WorkflowStabilityDB initialisation failed") from exc
 
-    thread, stop_event = _create_cycle_thread()
+    try:
+        thread, stop_event = _create_cycle_thread()
+    except Exception as exc:
+        logger.exception(
+            "failed to create self-improvement cycle thread",
+            extra=log_record(component=__name__, reason="thread_create_failed"),
+        )
+        raise RuntimeError("failed to create self-improvement cycle thread") from exc
+
+    if not hasattr(thread, "start") or not hasattr(thread, "join"):
+        logger.error(
+            "self-improvement cycle thread missing required methods",
+            extra=log_record(
+                component=__name__,
+                reason="invalid_thread_interface",
+                thread_type=type(thread).__name__,
+            ),
+        )
+        raise RuntimeError(
+            "self-improvement cycle thread missing required start/join methods"
+        )
     monitor_state["thread"] = thread
     monitor_state["stop_event"] = stop_event
     global _cycle_thread, _stop_event, _cycle_watchdog_stop
