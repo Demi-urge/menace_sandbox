@@ -91,17 +91,46 @@ for _path in (_HERE, _HERE.parent):
 
 print("🧭 Import roots normalized.", flush=True)
 
+import logging
+
+from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
+
+LOGGER = logging.getLogger(__name__)
+
 print("🔎 sys.path (early):", sys.path, flush=True)
+LOGGER.info(
+    "Import guard sys.path snapshot",
+    extra=log_record(
+        event="import-guard-syspath",
+        sys_path=sys.path[:5],
+        sys_path_total=len(sys.path),
+    ),
+)
 try:
     _meta_planning = importlib.import_module("self_improvement.meta_planning")
     print(
         f"🔎 self_improvement.meta_planning.__file__: {_meta_planning.__file__}",
         flush=True,
     )
+    LOGGER.info(
+        "Import guard resolved self_improvement.meta_planning",
+        extra=log_record(
+            event="import-guard-meta-planning",
+            module_file=getattr(_meta_planning, "__file__", None),
+        ),
+    )
 except Exception as exc:
     print(
         f"⚠️ Failed to import self_improvement.meta_planning early: {exc}",
         flush=True,
+    )
+    LOGGER.exception(
+        "Import guard failed to import self_improvement.meta_planning",
+        extra=log_record(
+            event="import-guard-meta-planning-error",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        ),
     )
 
 _duplicate_meta_planning_paths = []
@@ -166,7 +195,6 @@ print("✅ Environment helpers ready.", flush=True)
 import argparse
 import faulthandler
 import json
-import logging
 import random
 import signal
 import threading
@@ -299,8 +327,6 @@ BOOTSTRAP_TIMEOUT_POLICY = enforce_bootstrap_timeout_policy(logger=logging.getLo
 
 WATCHER_ROOTS_ENV = "MENACE_BOOTSTRAP_WATCH_ROOTS"
 WATCHER_EXCLUDES_ENV = "MENACE_BOOTSTRAP_WATCH_EXCLUDES"
-
-from logging_utils import get_logger, setup_logging, set_correlation_id, log_record
 from sandbox_settings import SandboxSettings
 from dependency_health import DependencyMode, resolve_dependency_mode
 from sandbox.preseed_bootstrap import (
@@ -342,8 +368,6 @@ from self_improvement.orphan_handling import (
     integrate_orphans_sync,
     post_round_orphan_scan,
 )
-
-LOGGER = logging.getLogger(__name__)
 
 _META_PLANNING_MODULE: Any | None = None
 _META_PLANNING_LOADED = False
