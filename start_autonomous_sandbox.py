@@ -347,13 +347,19 @@ try:  # pragma: no cover - optional dependency / stubs may be incomplete
 except Exception as exc:  # pragma: no cover - allow sandbox startup without meta_planning
     meta_planning = None
     logging.getLogger(__name__).warning(
-        "Meta planning module unavailable; disabling workflow iteration tracking. (%s)",
+        "Meta planning module unavailable; disabling workflow controller status. (%s)",
         exc,
     )
 
-
-def _noop_record_workflow_iteration(*_args: Any, **_kwargs: Any) -> None:
-    return None
+try:  # pragma: no cover - allow sandbox startup without meta_planning
+    from self_improvement.meta_planning import record_workflow_iteration
+except ImportError as exc:
+    logging.getLogger(__name__).warning(
+        "Meta planning record_workflow_iteration unavailable; using no-op. (%s)",
+        exc,
+    )
+    # Canonical implementation lives in self_improvement/meta_planning.py; revisit after refactor/import fix.
+    record_workflow_iteration = lambda *_args, **_kwargs: {}  # type: ignore[assignment]
 
 
 def _noop_workflow_controller_status(*_args: Any, **_kwargs: Any) -> None:
@@ -361,20 +367,11 @@ def _noop_workflow_controller_status(*_args: Any, **_kwargs: Any) -> None:
 
 
 if meta_planning is None:
-    record_workflow_iteration = _noop_record_workflow_iteration
     workflow_controller_status = _noop_workflow_controller_status
 else:
-    record_workflow_iteration = getattr(
-        meta_planning, "record_workflow_iteration", None
-    )
     workflow_controller_status = getattr(
         meta_planning, "workflow_controller_status", None
     )
-    if record_workflow_iteration is None:
-        logging.getLogger(__name__).warning(
-            "Meta planning module missing record_workflow_iteration; using no-op.",
-        )
-        record_workflow_iteration = _noop_record_workflow_iteration
     if workflow_controller_status is None:
         logging.getLogger(__name__).warning(
             "Meta planning module missing workflow_controller_status; using no-op.",
