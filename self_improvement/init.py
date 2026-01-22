@@ -605,10 +605,29 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
     print("💡 SI-5: loading synergy weights")
     reload_synergy_weights()
     try:
-        from . import meta_planning
+        try:  # pragma: no cover - prefer package-stable import
+            from menace_sandbox.self_improvement import meta_planning
+        except ImportError:  # pragma: no cover - fallback to local module
+            from . import meta_planning
 
         print("💡 SI-6: reloading meta-planning settings")
-        meta_planning.reload_settings(settings)
+        reload_settings_fn = getattr(meta_planning, "reload_settings", None)
+        if callable(reload_settings_fn):
+            reload_settings_fn(settings)
+        else:
+            fallback_fn = (
+                getattr(meta_planning, "refresh_settings", None)
+                or getattr(meta_planning, "apply_settings", None)
+            )
+            if callable(fallback_fn):
+                logger.warning(
+                    "meta_planning.reload_settings missing; using %s fallback",
+                    getattr(fallback_fn, "__name__", "unknown"),
+                    extra=log_record(component="meta_planning", fallback=True),
+                )
+                fallback_fn(settings)
+            else:
+                raise AttributeError("meta_planning.reload_settings not available")
     except Exception as exc:  # pragma: no cover - best effort
         logging.getLogger(__name__).exception(
             "failed to reload meta_planning settings",
