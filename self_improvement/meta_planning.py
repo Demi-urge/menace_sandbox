@@ -1817,209 +1817,157 @@ async def self_improvement_cycle(
                         _debug_cycle("skipped", reason=info.get("reason"))
                         continue
 
-            if snapshot_tracker is not None:
-                await _run_stage(
-                    "snapshot_before",
-                    _run_in_executor(
-                        snapshot_tracker.capture,
-                        "before",
-                        {
-                            "files": list(repo_path.rglob("*.py")),
-                            "roi": BASELINE_TRACKER.current("roi"),
-                            "sandbox_score": get_latest_sandbox_score(
-                                SandboxSettings().sandbox_score_db
-                            ),
-                        },
-                        repo_path=repo_path,
-                    ),
-                    workflow_id=cycle_workflow_id,
-                )
-            records = await _run_stage(
-                "discover_and_persist",
-                _run_in_executor(planner.discover_and_persist, workflows),
-                workflow_id=cycle_workflow_id,
-            )
-            active: list[list[str]] = []
-            orphan_workflows: list[str] = []
-            if DISCOVER_ORPHANS:
-                try:
-                    integrate_result = await _run_stage(
-                        "integrate_orphans",
-                        integrate_orphans(recursive=RECURSIVE_ORPHANS),
+                if snapshot_tracker is not None:
+                    await _run_stage(
+                        "snapshot_before",
+                        _run_in_executor(
+                            snapshot_tracker.capture,
+                            "before",
+                            {
+                                "files": list(repo_path.rglob("*.py")),
+                                "roi": BASELINE_TRACKER.current("roi"),
+                                "sandbox_score": get_latest_sandbox_score(
+                                    SandboxSettings().sandbox_score_db
+                                ),
+                            },
+                            repo_path=repo_path,
+                        ),
                         workflow_id=cycle_workflow_id,
                     )
-                    if integrate_result:
-                        orphan_workflows.extend(
-                            w for w in integrate_result if isinstance(w, str)
-                        )
-                except _StageTimeoutError:
-                    raise
-                except Exception:
-                    logger.exception("orphan integration failed")
-
-                if RECURSIVE_ORPHANS:
+                records = await _run_stage(
+                    "discover_and_persist",
+                    _run_in_executor(planner.discover_and_persist, workflows),
+                    workflow_id=cycle_workflow_id,
+                )
+                active: list[list[str]] = []
+                orphan_workflows: list[str] = []
+                if DISCOVER_ORPHANS:
                     try:
-                        scan_result = await _run_stage(
-                            "post_round_orphan_scan",
-                            post_round_orphan_scan(recursive=True),
+                        integrate_result = await _run_stage(
+                            "integrate_orphans",
+                            integrate_orphans(recursive=RECURSIVE_ORPHANS),
                             workflow_id=cycle_workflow_id,
                         )
-                        integrated = (
-                            scan_result.get("integrated")
-                            if isinstance(scan_result, dict)
-                            else None
-                        )
-                        if integrated:
+                        if integrate_result:
                             orphan_workflows.extend(
-                                w for w in integrated if isinstance(w, str)
+                                w for w in integrate_result if isinstance(w, str)
                             )
                     except _StageTimeoutError:
                         raise
                     except Exception:
-                        logger.exception("recursive orphan discovery failed")
+                        logger.exception("orphan integration failed")
 
-            if orphan_workflows:
-                unique_orphans: list[str] = []
-                seen_orphans: set[str] = set()
-                for wf in orphan_workflows:
-                    if wf not in seen_orphans:
-                        seen_orphans.add(wf)
-                        unique_orphans.append(wf)
-                for wid in unique_orphans:
-                    chain = [wid]
-                    if tuple(chain) not in planner.cluster_map:
-                        planner.cluster_map[tuple(chain)] = {
-                            "last_roi": 0.0,
-                            "last_entropy": 0.0,
-                            "score": 0.0,
-                            "failures": 0,
-                            "ts": time.time(),
-                        }
+                    if RECURSIVE_ORPHANS:
                         try:
-                            planner._save_state()
+                            scan_result = await _run_stage(
+                                "post_round_orphan_scan",
+                                post_round_orphan_scan(recursive=True),
+                                workflow_id=cycle_workflow_id,
+                            )
+                            integrated = (
+                                scan_result.get("integrated")
+                                if isinstance(scan_result, dict)
+                                else None
+                            )
+                            if integrated:
+                                orphan_workflows.extend(
+                                    w for w in integrated if isinstance(w, str)
+                                )
+                        except _StageTimeoutError:
+                            raise
                         except Exception:
-                            logger.exception("failed to persist orphan workflows")
-                    active.append(chain)
-            outcome_logged = False
-            for rec in records:
-                await _log(rec)
-                roi = float(rec.get("roi_gain", 0.0))
-                failures = int(rec.get("failures", 0))
-                entropy = float(rec.get("entropy", 0.0))
-                pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
-                repo = _init._repo_path()
-                try:
-                    from .metrics import compute_call_graph_complexity
-                    call_complexity = compute_call_graph_complexity(repo)
-                except Exception:
-                    call_complexity = 0.0
-                try:
-                    from .metrics import compute_entropy_metrics
-                    _, _, token_div = compute_entropy_metrics(
-                        list(repo.rglob("*.py")), settings=cfg
+                            logger.exception("recursive orphan discovery failed")
+
+                if orphan_workflows:
+                    unique_orphans: list[str] = []
+                    seen_orphans: set[str] = set()
+                    for wf in orphan_workflows:
+                        if wf not in seen_orphans:
+                            seen_orphans.add(wf)
+                            unique_orphans.append(wf)
+                    for wid in unique_orphans:
+                        chain = [wid]
+                        if tuple(chain) not in planner.cluster_map:
+                            planner.cluster_map[tuple(chain)] = {
+                                "last_roi": 0.0,
+                                "last_entropy": 0.0,
+                                "score": 0.0,
+                                "failures": 0,
+                                "ts": time.time(),
+                            }
+                            try:
+                                planner._save_state()
+                            except Exception:
+                                logger.exception("failed to persist orphan workflows")
+                        active.append(chain)
+                outcome_logged = False
+                for rec in records:
+                    await _log(rec)
+                    roi = float(rec.get("roi_gain", 0.0))
+                    failures = int(rec.get("failures", 0))
+                    entropy = float(rec.get("entropy", 0.0))
+                    pass_rate = float(
+                        rec.get("pass_rate", 1.0 if failures == 0 else 0.0)
                     )
-                except Exception:
-                    token_div = 0.0
-                BASELINE_TRACKER.update(
-                    roi=roi,
-                    pass_rate=pass_rate,
-                    entropy=entropy,
-                    call_graph_complexity=call_complexity,
-                    token_diversity=token_div,
-                )
-                tracker = BASELINE_TRACKER
-                encode_fn = should_encode
-                chain_id = "->".join(rec.get("chain", [])) if rec.get("chain") else None
-                stagnant_stats: dict[str, float] = {}
-                controller_state: Mapping[str, Any] | None = None
-                if chain_id:
-                    stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
-                    controller_state = record_workflow_iteration(
-                        chain_id,
-                        roi_gain=roi,
-                        roi_delta=float(stagnant_stats.get("delta_roi", roi)),
-                        threshold=ROI_BACKOFF_THRESHOLD,
-                        patience=max(1, ROI_BACKOFF_CONSECUTIVE),
+                    repo = _init._repo_path()
+                    try:
+                        from .metrics import compute_call_graph_complexity
+                        call_complexity = compute_call_graph_complexity(repo)
+                    except Exception:
+                        call_complexity = 0.0
+                    try:
+                        from .metrics import compute_entropy_metrics
+                        _, _, token_div = compute_entropy_metrics(
+                            list(repo.rglob("*.py")), settings=cfg
+                        )
+                    except Exception:
+                        token_div = 0.0
+                    BASELINE_TRACKER.update(
+                        roi=roi,
+                        pass_rate=pass_rate,
+                        entropy=entropy,
+                        call_graph_complexity=call_complexity,
+                        token_diversity=token_div,
                     )
-                    if controller_state.get("status") == "halted":
-                        _debug_cycle(
-                            "skipped",
-                            reason="controller_threshold",
-                            roi_delta=controller_state.get("last_delta", 0.0),
-                            workflow_id=chain_id,
-                            controller_threshold=controller_state.get("threshold", 0.0),
-                        )
-                        outcome_logged = True
-                        logger.info(
-                            "workflow %s halted by ROI controller",
+                    tracker = BASELINE_TRACKER
+                    encode_fn = should_encode
+                    chain_id = "->".join(rec.get("chain", [])) if rec.get("chain") else None
+                    stagnant_stats: dict[str, float] = {}
+                    controller_state: Mapping[str, Any] | None = None
+                    if chain_id:
+                        stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
+                        controller_state = record_workflow_iteration(
                             chain_id,
-                            extra=log_record(
-                                workflow_id=chain_id,
-                                roi_delta=controller_state.get("last_delta", 0.0),
-                                non_positive_streak=stagnant_stats.get(
-                                    "non_positive_streak", 0
-                                ),
-                                decision="controller_halt",
-                                controller_threshold=controller_state.get(
-                                    "threshold", 0.0
-                                ),
-                            ),
+                            roi_gain=roi,
+                            roi_delta=float(stagnant_stats.get("delta_roi", roi)),
+                            threshold=ROI_BACKOFF_THRESHOLD,
+                            patience=max(1, ROI_BACKOFF_CONSECUTIVE),
                         )
-                        continue
-                    if stagnant:
-                        _debug_cycle(
-                            "skipped",
-                            reason="roi_stagnation",
-                            roi_delta=stagnant_stats.get("delta_roi", 0.0),
-                            stagnation_streak=stagnant_stats.get("non_positive_streak", 0),
-                            workflow_id=chain_id,
-                        )
-                        outcome_logged = True
-                        logger.info(
-                            "workflow %s paused due to ROI stagnation",
-                            chain_id,
-                            extra=log_record(
-                                workflow_id=chain_id,
-                                roi_delta=stagnant_stats.get("delta_roi", 0.0),
-                                non_positive_streak=stagnant_stats.get(
-                                    "non_positive_streak", 0
-                                ),
-                                decision="pause",
-                            ),
-                        )
-                        continue
-                    if controller is not None:
-                        active_chain, stats = controller.record(chain_id, roi_delta=roi)
-                        stagnant_stats = {k: float(v) for k, v in stats.items()}
-                        if not active_chain:
-                            stagnated_workflows[chain_id] = stagnant_stats
+                        if controller_state.get("status") == "halted":
                             _debug_cycle(
                                 "skipped",
-                                reason="roi_stagnation",
-                                roi_delta=stagnant_stats.get("delta_roi", 0.0),
-                                stagnation_streak=stagnant_stats.get(
-                                    "non_positive_streak", 0
-                                ),
+                                reason="controller_threshold",
+                                roi_delta=controller_state.get("last_delta", 0.0),
                                 workflow_id=chain_id,
+                                controller_threshold=controller_state.get("threshold", 0.0),
                             )
                             outcome_logged = True
                             logger.info(
-                                "workflow %s paused due to ROI stagnation",
+                                "workflow %s halted by ROI controller",
                                 chain_id,
                                 extra=log_record(
                                     workflow_id=chain_id,
-                                    roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                    roi_delta=controller_state.get("last_delta", 0.0),
                                     non_positive_streak=stagnant_stats.get(
                                         "non_positive_streak", 0
                                     ),
-                                    decision="pause",
+                                    decision="controller_halt",
+                                    controller_threshold=controller_state.get(
+                                        "threshold", 0.0
+                                    ),
                                 ),
                             )
                             continue
-                        else:
-                            stagnated_workflows.pop(chain_id, None)
-                    else:
-                        stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
                         if stagnant:
                             _debug_cycle(
                                 "skipped",
@@ -2042,130 +1990,190 @@ async def self_improvement_cycle(
                                 ),
                             )
                             continue
-                if encode_fn is None:
-                    momentum = getattr(tracker, "momentum", 1.0) or 1.0
-                    roi_delta = tracker.delta("roi") * momentum
-                    if roi_delta <= 0:
-                        should_encode, reason = False, "no_delta"
-                    else:
-                        skip_reason = None
-                        for metric in tracker._history:
-                            if metric.endswith("_delta") or metric in {
-                                "roi",
-                                "momentum",
-                                "entropy",
-                            }:
+                        if controller is not None:
+                            active_chain, stats = controller.record(chain_id, roi_delta=roi)
+                            stagnant_stats = {k: float(v) for k, v in stats.items()}
+                            if not active_chain:
+                                stagnated_workflows[chain_id] = stagnant_stats
+                                _debug_cycle(
+                                    "skipped",
+                                    reason="roi_stagnation",
+                                    roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                    stagnation_streak=stagnant_stats.get(
+                                        "non_positive_streak", 0
+                                    ),
+                                    workflow_id=chain_id,
+                                )
+                                outcome_logged = True
+                                logger.info(
+                                    "workflow %s paused due to ROI stagnation",
+                                    chain_id,
+                                    extra=log_record(
+                                        workflow_id=chain_id,
+                                        roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                        non_positive_streak=stagnant_stats.get(
+                                            "non_positive_streak", 0
+                                        ),
+                                        decision="pause",
+                                    ),
+                                )
                                 continue
-                            if tracker.delta(metric) <= 0:
-                                skip_reason = "no_delta"
-                                break
-                        if skip_reason is not None:
-                            should_encode, reason = False, skip_reason
-                        elif abs(tracker.delta("entropy")) > float(
-                            cfg.overfitting_entropy_threshold
-                        ):
-                            should_encode, reason = False, "entropy_spike"
-                        elif failures > 0:
-                            should_encode, reason = False, "errors_present"
+                            else:
+                                stagnated_workflows.pop(chain_id, None)
                         else:
-                            should_encode, reason = True, "improved"
-                else:
-                    should_encode, reason = encode_fn(
-                        rec,
-                        tracker,
-                        cfg.overfitting_entropy_threshold,
-                    )
-                if not should_encode:
-                    outcome = (
-                        "fallback" if reason in {"entropy_spike", "errors_present"} else "skipped"
-                    )
-                    _debug_cycle(outcome, reason=reason)
-                    outcome_logged = True
-                    continue
-                else:
-                    _debug_cycle("improved")
-                    outcome_logged = True
-                chain = rec.get("chain", [])
-                if chain and roi > 0:
-                    active.append(chain)
-                    chain_id = "->".join(chain)
-                    try:
-                        stability_db.record_metrics(
-                            chain_id, roi, failures, entropy, roi_delta=roi
+                            stagnant, stagnant_stats = _is_stagnant(chain_id, roi_delta=roi)
+                            if stagnant:
+                                _debug_cycle(
+                                    "skipped",
+                                    reason="roi_stagnation",
+                                    roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                    stagnation_streak=stagnant_stats.get("non_positive_streak", 0),
+                                    workflow_id=chain_id,
+                                )
+                                outcome_logged = True
+                                logger.info(
+                                    "workflow %s paused due to ROI stagnation",
+                                    chain_id,
+                                    extra=log_record(
+                                        workflow_id=chain_id,
+                                        roi_delta=stagnant_stats.get("delta_roi", 0.0),
+                                        non_positive_streak=stagnant_stats.get(
+                                            "non_positive_streak", 0
+                                        ),
+                                        decision="pause",
+                                    ),
+                                )
+                                continue
+                    if encode_fn is None:
+                        momentum = getattr(tracker, "momentum", 1.0) or 1.0
+                        roi_delta = tracker.delta("roi") * momentum
+                        if roi_delta <= 0:
+                            should_encode, reason = False, "no_delta"
+                        else:
+                            skip_reason = None
+                            for metric in tracker._history:
+                                if metric.endswith("_delta") or metric in {
+                                    "roi",
+                                    "momentum",
+                                    "entropy",
+                                }:
+                                    continue
+                                if tracker.delta(metric) <= 0:
+                                    skip_reason = "no_delta"
+                                    break
+                            if skip_reason is not None:
+                                should_encode, reason = False, skip_reason
+                            elif abs(tracker.delta("entropy")) > float(
+                                cfg.overfitting_entropy_threshold
+                            ):
+                                should_encode, reason = False, "entropy_spike"
+                            elif failures > 0:
+                                should_encode, reason = False, "errors_present"
+                            else:
+                                should_encode, reason = True, "improved"
+                    else:
+                        should_encode, reason = encode_fn(
+                            rec,
+                            tracker,
+                            cfg.overfitting_entropy_threshold,
                         )
-                    except Exception as exc:  # pragma: no cover - best effort
-                        logger.exception(
-                            "global stability logging failed",
-                            extra=log_record(workflow_id=chain_id),
-                            exc_info=exc,
+                    if not should_encode:
+                        outcome = (
+                            "fallback"
+                            if reason in {"entropy_spike", "errors_present"}
+                            else "skipped"
                         )
-            if not outcome_logged:
-                _debug_cycle("skipped", reason="no_records")
+                        _debug_cycle(outcome, reason=reason)
+                        outcome_logged = True
+                        continue
+                    else:
+                        _debug_cycle("improved")
+                        outcome_logged = True
+                    chain = rec.get("chain", [])
+                    if chain and roi > 0:
+                        active.append(chain)
+                        chain_id = "->".join(chain)
+                        try:
+                            stability_db.record_metrics(
+                                chain_id, roi, failures, entropy, roi_delta=roi
+                            )
+                        except Exception as exc:  # pragma: no cover - best effort
+                            logger.exception(
+                                "global stability logging failed",
+                                extra=log_record(workflow_id=chain_id),
+                                exc_info=exc,
+                            )
+                if not outcome_logged:
+                    _debug_cycle("skipped", reason="no_records")
 
-            for chain in list(active):
-                planner.cluster_map.pop(tuple(chain), None)
+                for chain in list(active):
+                    planner.cluster_map.pop(tuple(chain), None)
 
-            if snapshot_tracker is not None:
-                await _run_stage(
-                    "snapshot_after",
-                    _run_in_executor(
-                        snapshot_tracker.capture,
-                        "after",
-                        {
-                            "files": list(repo_path.rglob("*.py")),
-                            "roi": BASELINE_TRACKER.current("roi"),
-                            "sandbox_score": get_latest_sandbox_score(
-                                SandboxSettings().sandbox_score_db
-                            ),
-                        },
-                        repo_path=repo_path,
-                    ),
-                    workflow_id=cycle_workflow_id,
+                if snapshot_tracker is not None:
+                    await _run_stage(
+                        "snapshot_after",
+                        _run_in_executor(
+                            snapshot_tracker.capture,
+                            "after",
+                            {
+                                "files": list(repo_path.rglob("*.py")),
+                                "roi": BASELINE_TRACKER.current("roi"),
+                                "sandbox_score": get_latest_sandbox_score(
+                                    SandboxSettings().sandbox_score_db
+                                ),
+                            },
+                            repo_path=repo_path,
+                        ),
+                        workflow_id=cycle_workflow_id,
+                    )
+                    delta = snapshot_tracker.delta()
+                    _debug_cycle(
+                        "snapshot",
+                        roi_delta=delta.get("roi", 0.0),
+                        entropy_delta=delta.get("entropy", 0.0),
+                    )
+                cycle_ok = True
+            except _StageTimeoutError as exc:
+                _debug_cycle("timeout", reason=exc.stage)
+                logger.warning(
+                    "meta planning stage timed out; deferring to next tick",
+                    extra=log_record(stage=exc.stage, workflow_id=cycle_workflow_id),
                 )
-                delta = snapshot_tracker.delta()
-                _debug_cycle(
-                    "snapshot",
-                    roi_delta=delta.get("roi", 0.0),
-                    entropy_delta=delta.get("entropy", 0.0),
-                )
-            cycle_ok = True
-        except _StageTimeoutError as exc:
-            _debug_cycle("timeout", reason=exc.stage)
-            logger.warning(
-                "meta planning stage timed out; deferring to next tick",
-                extra=log_record(stage=exc.stage, workflow_id=cycle_workflow_id),
-            )
-        except Exception as exc:  # pragma: no cover - planner is best effort
-            _debug_cycle("error", reason=str(exc))
-            logger.debug("error", extra=log_record(err=str(exc)))
-            logger.exception("meta planner execution failed", exc_info=exc)
-        finally:
-            tick_snapshot = tick_state.snapshot() if tick_state is not None else None
-            if cycle_ok:
-                logger.info(
-                    "cycle tick completed; scheduling next run in %ss",
-                    interval,
-                    extra=log_record(
-                        tick_count=tick_snapshot.get("tick_count")
-                        if tick_snapshot
-                        else None,
-                        last_tick=tick_snapshot.get("last_tick") if tick_snapshot else None,
-                        sleep_interval=interval,
-                    ),
-                )
-            else:
-                logger.info(
-                    "cycle tick completed after error; scheduling next run in %ss",
-                    interval,
-                    extra=log_record(
-                        tick_count=tick_snapshot.get("tick_count")
-                        if tick_snapshot
-                        else None,
-                        last_tick=tick_snapshot.get("last_tick") if tick_snapshot else None,
-                        sleep_interval=interval,
-                    ),
-                )
-            await asyncio.sleep(interval)
+            except Exception as exc:  # pragma: no cover - planner is best effort
+                _debug_cycle("error", reason=str(exc))
+                logger.debug("error", extra=log_record(err=str(exc)))
+                logger.exception("meta planner execution failed", exc_info=exc)
+            finally:
+                tick_snapshot = tick_state.snapshot() if tick_state is not None else None
+                if cycle_ok:
+                    logger.info(
+                        "cycle tick completed; scheduling next run in %ss",
+                        interval,
+                        extra=log_record(
+                            tick_count=tick_snapshot.get("tick_count")
+                            if tick_snapshot
+                            else None,
+                            last_tick=tick_snapshot.get("last_tick")
+                            if tick_snapshot
+                            else None,
+                            sleep_interval=interval,
+                        ),
+                    )
+                else:
+                    logger.info(
+                        "cycle tick completed after error; scheduling next run in %ss",
+                        interval,
+                        extra=log_record(
+                            tick_count=tick_snapshot.get("tick_count")
+                            if tick_snapshot
+                            else None,
+                            last_tick=tick_snapshot.get("last_tick")
+                            if tick_snapshot
+                            else None,
+                            sleep_interval=interval,
+                        ),
+                    )
+                await asyncio.sleep(interval)
     finally:
         _cancel_pending_executor_futures()
         if owns_executor:
