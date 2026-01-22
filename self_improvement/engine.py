@@ -426,8 +426,18 @@ except Exception as exc:  # pragma: no cover - simplified environments
     async def _self_improvement_cycle(*_args: object, **_kwargs: object) -> None:
         return None
 
-    def _start_cycle(*_args: object, **_kwargs: object) -> None:
-        return None
+    class _FallbackCycle:
+        def start(self) -> None:
+            return None
+
+        def join(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    def _start_cycle(*_args: object, **_kwargs: object) -> _FallbackCycle:
+        return _FallbackCycle()
 
     def _stop_cycle(*_args: object, **_kwargs: object) -> None:
         return None
