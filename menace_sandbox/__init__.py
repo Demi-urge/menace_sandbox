@@ -6,6 +6,7 @@ by delegating to the top-level package.
 """
 
 from importlib import import_module
+import importlib.util
 from pathlib import Path
 import sys
 
@@ -23,3 +24,8 @@ except ModuleNotFoundError:  # pragma: no cover - defensive shim
     _ctx_builder_mod = None
 else:  # pragma: no cover - lightweight module registration
     sys.modules.setdefault("context_builder_util", _ctx_builder_mod)
+
+_self_improvement_spec = importlib.util.find_spec(f"{__name__}.self_improvement")
+if _self_improvement_spec is not None:
+    _self_improvement_mod = import_module(f"{__name__}.self_improvement")
+    sys.modules.setdefault("self_improvement", _self_improvement_mod)
