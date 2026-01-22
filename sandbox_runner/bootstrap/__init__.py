@@ -893,23 +893,37 @@ def _initialize_autonomous_sandbox(
             thread = start_self_improvement_cycle({"bootstrap": _self_improvement_warmup})
             print("🧱 SI-7: cycle thread created")
 
+            gating_context = {
+                "start_self_improvement": start_self_improvement,
+                "start_services": start_services,
+                "self_improvement_enabled": getattr(
+                    settings, "self_improvement_enabled", None
+                ),
+                "self_improvement_heartbeat_enabled": getattr(
+                    settings, "self_improvement_heartbeat_enabled", None
+                ),
+            }
+            logger.debug(
+                "self-improvement cycle thread created: %s; gating=%s",
+                thread,
+                gating_context,
+            )
+
             if thread is None:
-                context = {
-                    "start_self_improvement": start_self_improvement,
-                    "start_services": start_services,
-                    "self_improvement_heartbeat_enabled": getattr(
-                        settings, "self_improvement_heartbeat_enabled", None
-                    ),
-                }
                 _SELF_IMPROVEMENT_LAST_ERROR = (
                     "self-improvement thread creation failed; see earlier logs for "
                     "import/initialization errors; "
-                    f"context={context}"
+                    f"context={gating_context}"
+                )
+                logger.critical(
+                    "self-improvement startup skipped; thread=%s; gating=%s",
+                    thread,
+                    gating_context,
                 )
                 logger.warning(
                     "self-improvement thread creation failed; see earlier logs for "
                     "import/initialization errors; context=%s",
-                    context,
+                    gating_context,
                 )
                 print("🧱 SI-8: cycle thread missing; startup skipped")
                 return settings
