@@ -2474,11 +2474,32 @@ def start_self_improvement_cycle(
             if stop_timer is not None:
                 stop_timer.cancel()
             if self._thread.is_alive():
+                logger = get_logger(__name__)
+                logger.warning(
+                    "soft stop timed out for self improvement loop; attempting hard stop",
+                    extra=log_record(
+                        thread_ident=self._thread.ident,
+                        stop_timeout_seconds=effective_timeout,
+                    ),
+                )
                 if loop is not None:
+                    def _close_if_safe() -> None:
+                        try:
+                            if not loop.is_running():
+                                loop.close()
+                        except RuntimeError:
+                            pass
+                        except Exception:
+                            pass
+
                     try:
                         loop.call_soon_threadsafe(loop.stop)
+                        loop.call_soon_threadsafe(_close_if_safe)
                     except RuntimeError:
                         pass
+                hard_stop_grace_seconds = 2.0
+                self._thread.join(hard_stop_grace_seconds)
+            if self._thread.is_alive():
                 heartbeat_snapshot = loop_heartbeat_state.snapshot()
                 last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
                 now = time.time()
@@ -2495,9 +2516,10 @@ def start_self_improvement_cycle(
                     "ident": self._thread.ident,
                     "detected_at": now,
                     "stack": stack_dump,
+                    "status": "hard_stop_failed",
+                    "allow_restart": True,
                 }
-                logger = get_logger(__name__)
-                message = "self improvement loop unresponsive during stop; continuing without waiting"
+                message = "hard stop failed for self improvement loop; continuing without waiting"
                 if stack_dump:
                     message = f"{message}\n{stack_dump}"
                 logger.critical(
@@ -2508,7 +2530,9 @@ def start_self_improvement_cycle(
                         last_heartbeat_timestamp=last_heartbeat,
                         last_heartbeat_age_seconds=last_heartbeat_age,
                         stop_timeout_seconds=effective_timeout,
+                        hard_stop_grace_seconds=hard_stop_grace_seconds,
                         stuck_thread_stack=stack_dump,
+                        recovery_stage="hard_stop_failed",
                     ),
                 )
                 return
@@ -2629,6 +2653,8 @@ def start_self_improvement_cycle(
         *,
         watchdog_triggered: bool = False,
     ) -> tuple[bool, str | None, float | None]:
+        if stuck_info and stuck_info.get("allow_restart"):
+            return True, "hard_stop_failed", None
         if allow_zombie_restart or force_restart:
             return True, "allow_zombie_restart" if allow_zombie_restart else "force_restart", None
         if watchdog_triggered and watchdog_force_restart:
