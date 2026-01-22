@@ -743,13 +743,46 @@ except ImportError as exc:
     _ORCHESTRATION_ERROR = exc
     _qfe_log("self_improvement.orchestration import failed; using stubs")
 
+    class _NoOpSelfImprovementCycle:
+        def start(self) -> None:
+            logger.warning(
+                "self-improvement disabled due to orchestration import failure",
+                extra=log_record(module=__name__, dependency="self_improvement.orchestration"),
+                exc_info=_ORCHESTRATION_ERROR,
+            )
+
+        def join(self, *_args: object, **_kwargs: object) -> None:
+            logger.warning(
+                "self-improvement disabled due to orchestration import failure",
+                extra=log_record(module=__name__, dependency="self_improvement.orchestration"),
+                exc_info=_ORCHESTRATION_ERROR,
+            )
+
+        def stop(self) -> None:
+            return None
+
+        def state(self) -> dict[str, object]:
+            return {
+                "status": "disabled",
+                "reason": "orchestration import failure",
+            }
+
     async def self_improvement_cycle(*_a: object, **_k: object) -> None:
         return None
 
-    def start_self_improvement_cycle(*_a: object, **_k: object) -> None:
-        return None
+    def start_self_improvement_cycle(*_a: object, **_k: object) -> _NoOpSelfImprovementCycle:
+        return _NoOpSelfImprovementCycle()
 
-    def stop_self_improvement_cycle(*_a: object, **_k: object) -> None:
+    def stop_self_improvement_cycle(cycle: object | None = None, *_a: object, **_k: object) -> None:
+        stop_method = getattr(cycle, "stop", None)
+        if callable(stop_method):
+            try:
+                stop_method()
+            except Exception:
+                logger.warning(
+                    "failed to stop self-improvement cycle cleanly",
+                    extra=log_record(module=__name__, dependency="self_improvement.orchestration"),
+                )
         return None
 
     def integrate_orphans(*_a: object, **_k: object) -> None:
