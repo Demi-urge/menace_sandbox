@@ -442,12 +442,16 @@ except Exception as exc:  # pragma: no cover - simplified environments
     def _stop_cycle(*_args: object, **_kwargs: object) -> None:
         return None
 
+    def _record_workflow_iteration(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {}
+
     meta_planning._FallbackPlanner = _FallbackPlanner  # type: ignore[attr-defined]
     meta_planning._recent_error_entropy = _recent_error_entropy  # type: ignore[attr-defined]
     meta_planning.PLANNER_INTERVAL = PLANNER_INTERVAL  # type: ignore[attr-defined]
     meta_planning.self_improvement_cycle = _self_improvement_cycle  # type: ignore[attr-defined]
     meta_planning.start_self_improvement_cycle = _start_cycle  # type: ignore[attr-defined]
     meta_planning.stop_self_improvement_cycle = _stop_cycle  # type: ignore[attr-defined]
+    meta_planning.record_workflow_iteration = _record_workflow_iteration  # type: ignore[attr-defined]
     sys.modules.setdefault("self_improvement.meta_planning", meta_planning)
     sys.modules.setdefault("menace_sandbox.self_improvement.meta_planning", meta_planning)
     _META_PLANNING_ERROR = exc
