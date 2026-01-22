@@ -1839,6 +1839,7 @@ async def self_improvement_cycle(
                         ),
                         workflow_id=cycle_workflow_id,
                     )
+
                 records = await _run_stage(
                     "discover_and_persist",
                     _run_in_executor(planner.discover_and_persist, workflows),
