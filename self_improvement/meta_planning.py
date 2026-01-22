@@ -1818,7 +1818,7 @@ async def self_improvement_cycle(
                         continue
             except Exception as exc:
                 logger.exception("evaluate_cycle failed", exc_info=exc)
-                _debug_cycle("skipped", reason="evaluate_cycle_error")
+                _debug_cycle("error", reason=str(exc))
                 continue
 
             if snapshot_tracker is not None:
