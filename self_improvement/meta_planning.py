@@ -2895,7 +2895,7 @@ def start_self_improvement_cycle(
                                 thread_ident=thread_state.get("thread_ident"),
                                 stop_timeout_seconds=stop_timeout,
                                 stuck_thread_stack=stack_dump,
-                                recovery_action="process_exit_suppressed",
+                                recovery_action="zombie_restart_without_exit",
                                 recovery_stage="stop_timeout",
                                 recovery_mode="watchdog_restart_fail_fast",
                                 override_env="SELF_IMPROVEMENT_WATCHDOG_EXIT_ON_STOP_TIMEOUT"
@@ -2906,7 +2906,8 @@ def start_self_improvement_cycle(
                                 watchdog_restart_triggered=watchdog_triggered,
                             ),
                         )
-                    return
+                    if not (watchdog_triggered and watchdog_restart and not watchdog_exit_on_stop_timeout):
+                        return
                 logger.warning(
                     "forcing replacement cycle thread after stop timeout",
                     extra=log_record(
