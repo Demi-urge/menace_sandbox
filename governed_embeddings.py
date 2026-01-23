@@ -564,11 +564,11 @@ def _bundled_model_archive() -> Path | None:
     return archive if archive.exists() else None
 
 
-def _prepare_bundled_model_dir() -> Path | None:
+def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
     archive = _bundled_model_archive()
     if archive is None:
         logger.debug("bundled embedder archive missing")
-        return None
+        return None, "bundled_embedder_archive_missing", None
 
     cache_dir = _cache_base()
     if cache_dir is None:
@@ -577,7 +577,7 @@ def _prepare_bundled_model_dir() -> Path | None:
         cache_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:  # pragma: no cover - best effort
         logger.debug("failed to prepare cache directory for bundled embedder: %s", exc)
-        return None
+        return None, "bundled_embedder_cache_unavailable", str(exc)
 
     target_dir = cache_dir / "menace-bundled" / "tiny-distilroberta-base"
     sentinel = target_dir / "config.json"
@@ -610,8 +610,8 @@ def _prepare_bundled_model_dir() -> Path | None:
             )
             with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            return None
-    return target_dir
+            return None, "bundled_embedder_extract_failed", str(exc)
+    return target_dir, None, None
 
 
 def _bundled_extract_timeout() -> float:
@@ -639,7 +639,11 @@ def _signal_vector_readiness_failure(reason: str, *, error: str | None = None) -
 
 
 def _signal_vector_readiness_warning(reason: str, *, error: str | None = None) -> None:
-    _update_vector_readiness_status("degraded", reason=reason, error=error)
+    _update_vector_readiness_status(
+        "vector_seeding_degraded",
+        reason=reason,
+        error=error,
+    )
 
 
 def _update_vector_readiness_status(
@@ -672,8 +676,12 @@ def _update_vector_readiness_status(
                 component_readiness[str(key)] = dict(state)
 
     now = time.time()
-    components["vector_seeding"] = status
-    detail: MutableMapping[str, object] = {"status": status, "ts": now}
+    component_status = status
+    detail_status = status
+    if status == "vector_seeding_degraded":
+        component_status = "degraded"
+    components["vector_seeding"] = component_status
+    detail: MutableMapping[str, object] = {"status": detail_status, "ts": now}
     if reason:
         detail["reason"] = reason
     if error:
@@ -928,6 +936,13 @@ def _guard_bootstrap_budget(
     return None
 
 
+def _remote_fallback_model() -> str:
+    raw = os.getenv("EMBEDDER_REMOTE_FALLBACK_MODEL", "").strip()
+    if raw:
+        return canonical_model_id(raw)
+    return DEFAULT_SENTENCE_TRANSFORMER_MODEL
+
+
 def _try_remote_sentence_transformer_fallback(reason: str) -> Any | None:
     if SentenceTransformer is None:
         return None
@@ -944,11 +959,12 @@ def _try_remote_sentence_transformer_fallback(reason: str) -> Any | None:
         kwargs: dict[str, object] = {}
         if SENTENCE_TRANSFORMER_DEVICE:
             kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
-        fallback = SentenceTransformer("all-MiniLM-L6-v2", **kwargs)
+        model_name = _remote_fallback_model()
+        fallback = SentenceTransformer(model_name, **kwargs)
         _clamp_embedder_max_seq_length(fallback)
         logger.warning(
             "using remote sentence transformer fallback",
-            extra={"model": "all-MiniLM-L6-v2", "reason": reason},
+            extra={"model": model_name, "reason": reason},
         )
         return fallback
     except Exception as exc:  # pragma: no cover - diagnostics only
@@ -992,8 +1008,26 @@ def _load_bundled_embedder() -> Any | None:
         if _BUNDLED_EMBEDDER is not None:
             return _BUNDLED_EMBEDDER
         try:
-            model_dir = _prepare_bundled_model_dir()
+            model_dir, prep_reason, prep_error = _prepare_bundled_model_dir()
             if model_dir is None:
+                if prep_reason == "bundled_embedder_extract_failed":
+                    remote_fallback = _try_remote_sentence_transformer_fallback(
+                        "bundled_embedder_extract_failed"
+                    )
+                    if remote_fallback is not None:
+                        fallback_model = _remote_fallback_model()
+                        logger.warning(
+                            "bundled embedder extraction failed; falling back to remote download",
+                            extra={
+                                "reason": prep_reason,
+                                "error": prep_error,
+                                "fallback": "remote_sentence_transformer",
+                                "model": fallback_model,
+                            },
+                        )
+                        _signal_vector_readiness_warning("bundled_embedder_extract_failed")
+                        _BUNDLED_EMBEDDER = remote_fallback
+                        return _BUNDLED_EMBEDDER
                 raise RuntimeError("bundled embedder directory unavailable")
             tokenizer = AutoTokenizer.from_pretrained(model_dir)
             model = AutoModel.from_pretrained(model_dir)
