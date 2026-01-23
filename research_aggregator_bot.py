@@ -83,6 +83,18 @@ from snippet_compressor import compress_snippets
 from .research_storage import InfoDB, ResearchItem
 
 logger = logging.getLogger(__name__)
+_VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
+_VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
+
+
+def _vector_bootstrap_disabled() -> bool:
+    raw_skip = os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV, "").strip().lower()
+    if raw_skip in {"1", "true", "yes", "on"}:
+        return True
+    raw_strict = os.getenv(_VECTOR_SEEDING_STRICT_ENV, "").strip().lower()
+    if raw_strict in {"0", "false", "no", "off"}:
+        return True
+    return False
 _BOOTSTRAP_READINESS = readiness_signal()
 
 _BOOTSTRAP_PLACEHOLDER: object | None = None
@@ -295,6 +307,18 @@ def _ensure_bootstrap_ready(
 ) -> bool:
     """Block until bootstrap readiness clears unless degraded mode is allowed."""
 
+    if _vector_bootstrap_disabled():
+        logger.critical(
+            "%s bootstrap readiness bypassed because vector seeding is disabled; "
+            "continuing with embeddings stubbed/disabled",
+            component,
+            extra={
+                "event": "bootstrap-vector-seeding-disabled",
+                "skip_env": os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV),
+                "strict_env": os.getenv(_VECTOR_SEEDING_STRICT_ENV),
+            },
+        )
+        return False
     resolved_timeout = _bootstrap_gate_timeout(
         vector_heavy=True, fallback=timeout if timeout is not None else 180.0
     )

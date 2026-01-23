@@ -30,6 +30,7 @@ Example
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Mapping, Tuple
 
@@ -68,6 +69,18 @@ _BOOTSTRAP_PLACEHOLDER_MANAGER: object | None = None
 _BOOTSTRAP_PLACEHOLDER_BROKER: object | None = None
 _BOOTSTRAP_READINESS = readiness_signal()
 logger = logging.getLogger(__name__)
+_VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
+_VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
+
+
+def _vector_bootstrap_disabled() -> bool:
+    raw_skip = os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV, "").strip().lower()
+    if raw_skip in {"1", "true", "yes", "on"}:
+        return True
+    raw_strict = os.getenv(_VECTOR_SEEDING_STRICT_ENV, "").strip().lower()
+    if raw_strict in {"0", "false", "no", "off"}:
+        return True
+    return False
 
 
 def _bootstrap_gate_timeout(*, vector_heavy: bool = True, fallback: float | None = None) -> float:
@@ -82,6 +95,18 @@ _BOOTSTRAP_GATE_TIMEOUT = _bootstrap_gate_timeout(vector_heavy=True)
 
 
 def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> None:
+    if _vector_bootstrap_disabled():
+        logger.critical(
+            "%s bootstrap readiness bypassed because vector seeding is disabled; "
+            "continuing with embeddings stubbed/disabled",
+            component,
+            extra={
+                "event": "bootstrap-vector-seeding-disabled",
+                "skip_env": os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV),
+                "strict_env": os.getenv(_VECTOR_SEEDING_STRICT_ENV),
+            },
+        )
+        return
     try:
         resolved_timeout = _bootstrap_gate_timeout(vector_heavy=True, fallback=timeout)
         overall_budget = min(max(resolved_timeout, 120.0), 180.0)

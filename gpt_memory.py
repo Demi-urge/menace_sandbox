@@ -274,6 +274,18 @@ else:
 STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}
 
 logger = logging.getLogger(__name__)
+_VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
+_VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
+
+
+def _vector_bootstrap_disabled() -> bool:
+    raw_skip = os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV, "").strip().lower()
+    if raw_skip in {"1", "true", "yes", "on"}:
+        return True
+    raw_strict = os.getenv(_VECTOR_SEEDING_STRICT_ENV, "").strip().lower()
+    if raw_strict in {"0", "false", "no", "off"}:
+        return True
+    return False
 
 
 def _bootstrap_failure_detail(probe) -> str | None:
@@ -306,6 +318,18 @@ def _bootstrap_failure_detail(probe) -> str | None:
 
 
 def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> None:
+    if _vector_bootstrap_disabled():
+        logger.critical(
+            "%s bootstrap readiness bypassed because vector seeding is disabled; "
+            "continuing with embeddings stubbed/disabled",
+            component,
+            extra={
+                "event": "bootstrap-vector-seeding-disabled",
+                "skip_env": os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV),
+                "strict_env": os.getenv(_VECTOR_SEEDING_STRICT_ENV),
+            },
+        )
+        return
     env_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     try:
         parsed_timeout = float(env_timeout) if env_timeout else None

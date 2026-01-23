@@ -22,7 +22,12 @@ except Exception:  # pragma: no cover - fallback when vectorizer import fails
             raise RuntimeError("SharedVectorService unavailable")
 
 
-def _emit_local_seed_readiness(*, elapsed: float, logger: logging.Logger) -> None:
+def _emit_local_seed_readiness(
+    *,
+    elapsed: float,
+    logger: logging.Logger,
+    reason: str = "fallback_local_seed",
+) -> None:
     try:  # pragma: no cover - best effort
         from menace_sandbox.bootstrap_timeout_policy import (
             emit_bootstrap_heartbeat,
@@ -57,7 +62,7 @@ def _emit_local_seed_readiness(*, elapsed: float, logger: logging.Logger) -> Non
         {
             "status": "ready",
             "ts": now,
-            "reason": "fallback_local_seed",
+            "reason": reason,
             "elapsed": elapsed,
         }
     )
@@ -75,8 +80,22 @@ def _emit_local_seed_readiness(*, elapsed: float, logger: logging.Logger) -> Non
     emit_bootstrap_heartbeat(enriched)
     logger.debug(
         "emitted local vector seeding readiness heartbeat",
-        extra={"reason": "fallback_local_seed", "elapsed": elapsed},
+        extra={"reason": reason, "elapsed": elapsed},
     )
+
+
+_VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
+_VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
+
+
+def _vector_seeding_disabled() -> bool:
+    raw_skip = os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV, "").strip().lower()
+    if raw_skip in {"1", "true", "yes", "on"}:
+        return True
+    raw_strict = os.getenv(_VECTOR_SEEDING_STRICT_ENV, "").strip().lower()
+    if raw_strict in {"0", "false", "no", "off"}:
+        return True
+    return False
 
 
 def _seed_direct(store: VectorStore, *, logger: logging.Logger) -> None:
@@ -341,6 +360,17 @@ def seed_initial_vectors(
     """Warm baseline embeddings for the configured vector store."""
 
     seed_start = time.monotonic()
+    if _vector_seeding_disabled():
+        logger.critical(
+            "vector seeding disabled; continuing with embeddings stubbed/disabled",
+            extra={
+                "event": "vector-seeding-disabled",
+                "skip_env": os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV),
+                "strict_env": os.getenv(_VECTOR_SEEDING_STRICT_ENV),
+            },
+        )
+        _emit_local_seed_readiness(elapsed=0.0, logger=logger, reason="vector_seeding_disabled")
+        return {"status": "skipped", "elapsed": 0.0, "attempts": 0}
     store = get_default_vector_store(lazy=False)
     if store is None:
         logger.warning("vector store unavailable; skipping vector seeding")
