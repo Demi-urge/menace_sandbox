@@ -2600,30 +2600,15 @@ def start_self_improvement_cycle(
             if not graceful_completed:
                 logger = get_logger(__name__)
                 logger.warning(
-                    "soft stop timed out for self improvement loop; attempting hard stop",
+                    "soft stop timed out for self improvement loop; leaving cleanup to loop shutdown",
                     extra=log_record(
                         thread_ident=self._thread.ident,
                         stop_timeout_seconds=effective_timeout,
                     ),
                 )
                 if loop is not None:
-
-                    def _hard_stop() -> None:
-                        if loop.is_running():
-                            loop.stop()
-
-                    def _close_if_safe() -> None:
-                        try:
-                            if not loop.is_running():
-                                loop.close()
-                        except RuntimeError:
-                            pass
-                        except Exception:
-                            pass
-
                     try:
-                        loop.call_soon_threadsafe(_hard_stop)
-                        loop.call_soon_threadsafe(_close_if_safe)
+                        loop.call_soon_threadsafe(_cancel_tasks)
                     except RuntimeError:
                         pass
                 hard_stop_grace_seconds = 2.0
