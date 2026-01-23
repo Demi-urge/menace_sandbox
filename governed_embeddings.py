@@ -12,6 +12,7 @@ import threading
 import time
 import traceback
 import weakref
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Mapping, MutableMapping, Optional, TYPE_CHECKING, cast, Set
 
@@ -1487,6 +1488,58 @@ def _purge_corrupted_snapshot(snapshot_path: Path) -> None:
         )
 
 
+def _purge_corrupted_model_cache(model_cache: Path) -> None:
+    """Remove a corrupted model cache directory after an extraction failure."""
+
+    try:
+        exists = model_cache.exists()
+    except FileNotFoundError:
+        return
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.debug(
+            "failed to inspect corrupted model cache %s: %s", model_cache, exc
+        )
+        return
+
+    if not exists:
+        return
+
+    try:
+        shutil.rmtree(model_cache)
+    except FileNotFoundError:
+        return
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.warning(
+            "failed to remove corrupted model cache %s: %s", model_cache, exc
+        )
+    else:
+        logger.info(
+            "removed corrupted sentence transformer cache directory",
+            extra={"cache_dir": str(model_cache)},
+        )
+
+
+def _is_archive_extraction_error(exc: Exception) -> bool:
+    """Return True when an exception suggests a corrupt archive extraction."""
+
+    if isinstance(exc, (tarfile.TarError, zipfile.BadZipFile, EOFError)):
+        return True
+    message = str(exc).lower()
+    extraction_markers = (
+        "tarfile",
+        "tar",
+        "gzip",
+        "zip",
+        "archive",
+        "extract",
+        "unexpected end",
+        "end of data",
+        "checksum",
+        "crc",
+    )
+    return any(marker in message for marker in extraction_markers)
+
+
 def _cleanup_hf_locks(cache_dir: Path, *, focus: Path | None = None) -> None:
     """Remove stale Hugging Face lock files left behind by crashed downloads.
 
@@ -2335,10 +2388,12 @@ def _load_embedder(
         return model
 
     cache_dir = _cache_base()
+    model_cache: Path | None = None
     local_kwargs: dict[str, object] = {}
     bootstrap_force_local = False
     prefer_local = bootstrap_mode
     start = time.perf_counter()
+    cache_cleanup_attempted = False
     _trace(
         "load.start",
         cache_dir=str(cache_dir) if cache_dir is not None else None,
@@ -2555,6 +2610,68 @@ def _load_embedder(
         _trace("load.cancelled", stage="hub")
         return None
 
+    def _retry_after_cache_cleanup(
+        exc: Exception,
+        *,
+        stage: str,
+    ) -> SentenceTransformer | None:
+        nonlocal cache_cleanup_attempted
+        if cache_cleanup_attempted:
+            return None
+        if cache_dir is None or model_cache is None:
+            return None
+        if offline_env or force_local or bootstrap_force_local:
+            return None
+        if not _is_archive_extraction_error(exc):
+            return None
+        cache_cleanup_attempted = True
+        logger.warning(
+            "embedder cache cleanup triggered by extraction error; retrying",
+            extra={
+                "model": _MODEL_NAME,
+                "cache_dir": str(model_cache),
+                "stage": stage,
+                "error": str(exc),
+            },
+        )
+        _trace(
+            "load.cache.cleanup.retry",
+            stage=stage,
+            cache_dir=str(model_cache),
+            error=str(exc),
+        )
+        _purge_corrupted_model_cache(model_cache)
+        retry_kwargs = dict(local_kwargs)
+        retry_kwargs.pop("local_files_only", None)
+        if SENTENCE_TRANSFORMER_DEVICE and "device" not in retry_kwargs:
+            retry_kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
+        try:
+            model_retry = initialise_sentence_transformer(
+                _MODEL_ID, prefer_local=False, **retry_kwargs
+            )
+            _clamp_embedder_max_seq_length(model_retry)
+            duration = time.perf_counter() - start
+            logger.info(
+                "loaded sentence transformer after cache cleanup retry",
+                extra={"model": _MODEL_NAME, "duration": round(duration, 3)},
+            )
+            _trace(
+                "load.cache.cleanup.retry.success",
+                duration=round(duration, 3),
+            )
+            return model_retry
+        except Exception as retry_exc:
+            logger.error(
+                "cache cleanup retry failed for sentence transformer: %s",
+                retry_exc,
+            )
+            _trace(
+                "load.cache.cleanup.retry.error",
+                error=str(retry_exc),
+                exc_type=type(retry_exc).__name__,
+            )
+            return None
+
     try:
         logger.info(
             "loading sentence transformer via hub",
@@ -2594,6 +2711,9 @@ def _load_embedder(
         )
         return model
     except Exception as exc:
+        retry_model = _retry_after_cache_cleanup(exc, stage="hub")
+        if retry_model is not None:
+            return retry_model
         if local_kwargs.pop("local_files_only", None):
             if offline_env or bootstrap_force_local or force_local:
                 logger.warning(
@@ -2635,12 +2755,15 @@ def _load_embedder(
                     duration=round(duration, 3),
                 )
                 return model
-            except Exception:
-                logger.warning("failed to initialise sentence transformer: %s", exc)
+            except Exception as retry_exc:
+                retry_model = _retry_after_cache_cleanup(retry_exc, stage="hub_retry")
+                if retry_model is not None:
+                    return retry_model
+                logger.warning("failed to initialise sentence transformer: %s", retry_exc)
                 _trace(
                     "load.hub.retry.error",
-                    error=str(exc),
-                    exc_type=type(exc).__name__,
+                    error=str(retry_exc),
+                    exc_type=type(retry_exc).__name__,
                 )
                 fallback = _load_bundled_embedder()
                 if fallback is not None:
