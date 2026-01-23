@@ -2538,22 +2538,6 @@ def start_self_improvement_cycle(
             self._stop_event.set()
             self._cancel_requested.set()
             loop = self._loop
-            stop_timer: threading.Timer | None = None
-            if loop is not None:
-                try:
-                    loop.call_soon_threadsafe(loop.stop)
-                except RuntimeError:
-                    pass
-
-                def _force_stop() -> None:
-                    try:
-                        loop.call_soon_threadsafe(loop.stop)
-                    except RuntimeError:
-                        pass
-
-                stop_timer = threading.Timer(effective_timeout, _force_stop)
-                stop_timer.daemon = True
-                stop_timer.start()
             if loop is not None:
                 try:
                     loop.call_soon_threadsafe(
@@ -2562,8 +2546,6 @@ def start_self_improvement_cycle(
                 except RuntimeError:
                     pass
             self._thread.join(effective_timeout)
-            if stop_timer is not None:
-                stop_timer.cancel()
             if self._thread.is_alive():
                 logger = get_logger(__name__)
                 logger.warning(
