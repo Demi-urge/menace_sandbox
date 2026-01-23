@@ -591,7 +591,19 @@ def _prepare_bundled_model_dir() -> Path | None:
                 shutil.rmtree(target_dir, ignore_errors=True)
             tmp_dir.rename(target_dir)
         except Exception as exc:
-            logger.warning("failed to extract bundled embedder archive: %s", exc)
+            logger.exception(
+                "bundled_embedder_extract_failed: %s",
+                exc,
+                extra={
+                    "archive": str(archive),
+                    "archive_name": archive.name,
+                    "cache_dir": str(cache_dir),
+                    "target_dir": str(target_dir),
+                    "tmp_dir": str(tmp_dir),
+                    "env_transformers_cache": os.getenv("TRANSFORMERS_CACHE"),
+                    "env_hf_home": os.getenv("HF_HOME"),
+                },
+            )
             _signal_vector_readiness_failure(
                 "bundled_embedder_extract_failed", error=str(exc)
             )
