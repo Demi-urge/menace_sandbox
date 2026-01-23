@@ -112,8 +112,33 @@ except Exception:  # pragma: no cover - fallback when service missing
     class ErrorResult(Exception):
         """Fallback placeholder when vector service is unavailable."""
 
+_VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
+_VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
+
+
+def _vector_bootstrap_disabled() -> bool:
+    raw_skip = os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV, "").strip().lower()
+    if raw_skip in {"1", "true", "yes", "on"}:
+        return True
+    raw_strict = os.getenv(_VECTOR_SEEDING_STRICT_ENV, "").strip().lower()
+    if raw_strict in {"0", "false", "no", "off"}:
+        return True
+    return False
+
 
 def _ensure_bootstrap_ready(component: str, *, timeout: float | None = None) -> None:
+    if _vector_bootstrap_disabled():
+        logger.critical(
+            "%s bootstrap readiness bypassed because vector seeding is disabled; "
+            "continuing with embeddings stubbed/disabled",
+            component,
+            extra={
+                "event": "bootstrap-vector-seeding-disabled",
+                "skip_env": os.getenv(_VECTOR_BOOTSTRAP_SKIP_ENV),
+                "strict_env": os.getenv(_VECTOR_SEEDING_STRICT_ENV),
+            },
+        )
+        return
     resolved_timeout = _bootstrap_gate_timeout(fallback=timeout)
     overall_budget = min(max(resolved_timeout, 120.0), 180.0)
     initial_timeout = min(resolved_timeout, max(overall_budget - 30.0, 30.0))
