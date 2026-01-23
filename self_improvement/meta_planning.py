@@ -2470,27 +2470,55 @@ def start_self_improvement_cycle(
             except BaseException as exc:  # pragma: no cover - best effort
                 self._exc.put(exc)
             finally:
-                try:
-                    pending_tasks = asyncio.all_tasks(loop)
-                    for task in pending_tasks:
-                        task.cancel()
-                    if pending_tasks:
-                        loop.run_until_complete(
-                            asyncio.gather(
-                                *pending_tasks,
-                                return_exceptions=True,
-                            )
+                logger = get_logger(__name__)
+
+                def _run_loop_cleanup(coro: Awaitable[Any], *, step: str) -> bool:
+                    if loop.is_closed() or loop.is_running():
+                        logger.warning(
+                            "self improvement loop unavailable for cleanup; skipping",
+                            extra=log_record(
+                                step=step,
+                                loop_running=loop.is_running(),
+                                loop_closed=loop.is_closed(),
+                                thread_ident=self._thread.ident,
+                            ),
                         )
+                        return False
+                    loop.run_until_complete(coro)
+                    return True
+
+                try:
+                    if loop.is_closed():
+                        logger.warning(
+                            "self improvement loop closed before cleanup; skipping pending tasks",
+                            extra=log_record(
+                                loop_closed=True,
+                                thread_ident=self._thread.ident,
+                            ),
+                        )
+                        pending_tasks = set()
+                    else:
+                        pending_tasks = asyncio.all_tasks(loop)
+                        for task in pending_tasks:
+                            task.cancel()
+                        if pending_tasks:
+                            _run_loop_cleanup(
+                                asyncio.gather(
+                                    *pending_tasks,
+                                    return_exceptions=True,
+                                ),
+                                step="pending_tasks",
+                            )
                     meta_executor.shutdown(wait=False, cancel_futures=True)
                     try:
-                        loop.run_until_complete(
+                        _run_loop_cleanup(
                             asyncio.wait_for(
                                 loop.shutdown_default_executor(),
                                 timeout=loop_shutdown_timeout,
-                            )
+                            ),
+                            step="shutdown_default_executor",
                         )
                     except asyncio.TimeoutError:
-                        logger = get_logger(__name__)
                         logger.critical(
                             "timed out shutting down default executor for self improvement loop",
                             extra=log_record(
