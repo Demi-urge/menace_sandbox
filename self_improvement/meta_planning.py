@@ -2368,6 +2368,7 @@ def start_self_improvement_cycle(
             self._exc: queue.Queue[BaseException] = queue.Queue()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._stop_event = stop_event
+            self._shutdown_complete = threading.Event()
             self._error_log = error_log
             self._should_encode = should_encode
             self._evaluate_cycle = evaluate_cycle
@@ -2553,6 +2554,7 @@ def start_self_improvement_cycle(
                     except Exception:
                         pass
                     asyncio.set_event_loop(None)
+                    self._shutdown_complete.set()
 
         # --------------------------------------------------
         def start(self) -> None:
@@ -2595,8 +2597,9 @@ def start_self_improvement_cycle(
                     loop.call_soon_threadsafe(_cancel_tasks)
                 except RuntimeError:
                     pass
-            self._thread.join(effective_timeout)
-            graceful_completed = not self._thread.is_alive()
+            graceful_completed = self._shutdown_complete.wait(effective_timeout)
+            if graceful_completed:
+                self._thread.join(timeout=0.1)
             if not graceful_completed:
                 logger = get_logger(__name__)
                 logger.warning(
@@ -2612,8 +2615,8 @@ def start_self_improvement_cycle(
                     except RuntimeError:
                         pass
                 hard_stop_grace_seconds = 2.0
-                self._thread.join(hard_stop_grace_seconds)
-            if self._thread.is_alive():
+                self._shutdown_complete.wait(hard_stop_grace_seconds)
+            if self._thread.is_alive() or not self._shutdown_complete.is_set():
                 heartbeat_snapshot = loop_heartbeat_state.snapshot()
                 last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
                 now = time.time()
