@@ -401,7 +401,9 @@ class GPTMemoryManager(GPTMemoryInterface):
         vector_service: SharedVectorService | None = None,
         router: "DBRouter | None" = None,
     ) -> None:
-        _ensure_bootstrap_ready("GPTMemoryManager")
+        self.degraded = False
+        self.degraded_reason: str | None = None
+        self._bootstrap_checked = False
         self.db_path = Path(db_path)
         self.router = router or _db_router.GLOBAL_ROUTER
         if self.router is None:
@@ -419,6 +421,36 @@ class GPTMemoryManager(GPTMemoryInterface):
         self._ensure_schema()
 
     # ------------------------------------------------------------------ utils
+    def _mark_degraded(self, reason: str) -> None:
+        if self.degraded:
+            return
+        self.degraded = True
+        self.degraded_reason = reason
+        logger.warning(
+            "GPTMemoryManager entering degraded mode: %s",
+            reason,
+            extra={"event": "gpt-memory-degraded"},
+        )
+
+    def _ensure_vector_ready(self, *, raise_on_failure: bool = True) -> bool:
+        if self.degraded:
+            if raise_on_failure:
+                raise RuntimeError(self.degraded_reason or "vector service unavailable")
+            return False
+        if not self._bootstrap_checked:
+            self._bootstrap_checked = True
+            try:
+                _ensure_bootstrap_ready("GPTMemoryManager")
+            except RuntimeError as exc:
+                self._mark_degraded(str(exc))
+                if raise_on_failure:
+                    raise RuntimeError(
+                        "GPTMemoryManager vector services unavailable: "
+                        f"{self.degraded_reason}"
+                    ) from exc
+                return False
+        return True
+
     def _ensure_schema(self) -> None:
         self.conn.execute(
             """
@@ -470,6 +502,8 @@ class GPTMemoryManager(GPTMemoryInterface):
         wall_time = 0.0
         if self.vector_service is not None and not alerts:
             try:
+                if not self._ensure_vector_ready(raise_on_failure=False):
+                    raise RuntimeError("vector service unavailable")
                 start = perf_counter()
                 vec = self.vector_service.vectorise_and_store(
                     "text", timestamp, {"text": original_prompt}
@@ -567,6 +601,7 @@ class GPTMemoryManager(GPTMemoryInterface):
 
         if use_embeddings and self.vector_service is not None:
             try:
+                self._ensure_vector_ready(raise_on_failure=True)
                 q_emb = self.vector_service.vectorise("text", {"text": query})
                 scored: list[tuple[float, MemoryEntry]] = []
                 for prompt, response, tag_str, ts, emb_json in rows:

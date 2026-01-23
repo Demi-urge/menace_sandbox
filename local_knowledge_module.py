@@ -203,9 +203,10 @@ class LocalKnowledgeModule:
                 return ""
 
         sections: list[str] = []
+        use_embeddings = not getattr(self.memory, "degraded", False)
         try:
             fb = self.memory.search_context(
-                key, tags=[FEEDBACK], limit=limit, use_embeddings=True
+                key, tags=[FEEDBACK], limit=limit, use_embeddings=use_embeddings
             )
             ctx = self._fmt(fb, "Feedback")
             if ctx:
@@ -214,7 +215,7 @@ class LocalKnowledgeModule:
             pass
         try:
             fixes = self.memory.search_context(
-                key, tags=[ERROR_FIX], limit=limit, use_embeddings=True
+                key, tags=[ERROR_FIX], limit=limit, use_embeddings=use_embeddings
             )
             ctx = self._fmt(fixes, "Error fixes")
             if ctx:
@@ -223,7 +224,7 @@ class LocalKnowledgeModule:
             pass
         try:
             improv = self.memory.search_context(
-                key, tags=[IMPROVEMENT_PATH], limit=limit, use_embeddings=True
+                key, tags=[IMPROVEMENT_PATH], limit=limit, use_embeddings=use_embeddings
             )
             ctx = self._fmt(improv, "Improvement paths")
             if ctx:
@@ -265,6 +266,14 @@ def _attach_embedder(module: "LocalKnowledgeModule", embedder: "SentenceTransfor
     except Exception:
         logger.exception("failed to attach embedder to memory manager")
         _trace("attach_embedder.memory.error", module_id=id(module))
+        return
+
+    if getattr(module.memory, "degraded", False):
+        logger.warning(
+            "memory manager degraded; skipping vector service attach",
+            extra={"event": "local-knowledge-degraded"},
+        )
+        _trace("attach_embedder.degraded", module_id=id(module))
         return
 
     try:
