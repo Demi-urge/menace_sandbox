@@ -2467,6 +2467,22 @@ def start_self_improvement_cycle(
             asyncio.set_event_loop(loop)
             try:
                 loop.run_until_complete(_main())
+            except RuntimeError as exc:  # pragma: no cover - best effort
+                msg = str(exc)
+                if (
+                    "Event loop stopped before Future completed" in msg
+                    and (self._stop_event.is_set() or self._cancel_requested.is_set())
+                ):
+                    logger = get_logger(__name__)
+                    logger.info(
+                        "self improvement loop stopped after stop request",
+                        extra=log_record(
+                            reason="stop_requested",
+                            thread_ident=self._thread.ident,
+                        ),
+                    )
+                else:
+                    raise
             except BaseException as exc:  # pragma: no cover - best effort
                 self._exc.put(exc)
             finally:
