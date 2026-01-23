@@ -605,7 +605,7 @@ def _prepare_bundled_model_dir() -> Path | None:
                     "env_hf_home": os.getenv("HF_HOME"),
                 },
             )
-            _signal_vector_readiness_failure(
+            _signal_vector_readiness_warning(
                 "bundled_embedder_extract_failed", error=str(exc)
             )
             with contextlib.suppress(Exception):
@@ -636,6 +636,10 @@ def _bundled_extract_timeout() -> float:
 
 def _signal_vector_readiness_failure(reason: str, *, error: str | None = None) -> None:
     _update_vector_readiness_status("failed", reason=reason, error=error)
+
+
+def _signal_vector_readiness_warning(reason: str, *, error: str | None = None) -> None:
+    _update_vector_readiness_status("degraded", reason=reason, error=error)
 
 
 def _update_vector_readiness_status(
@@ -754,7 +758,7 @@ def _extract_bundled_archive(archive: Path, dest: Path) -> None:
             "bundled embedder extraction exceeded timeout; cancelling background task",
             extra={"archive": str(archive), "timeout": timeout},
         )
-        _signal_vector_readiness_failure("bundled_embedder_extract_timeout")
+        _signal_vector_readiness_warning("bundled_embedder_extract_timeout")
         raise TimeoutError("bundled embedder extraction timed out")
 
     done_event.wait(2.0)
@@ -924,6 +928,38 @@ def _guard_bootstrap_budget(
     return None
 
 
+def _try_remote_sentence_transformer_fallback(reason: str) -> Any | None:
+    if SentenceTransformer is None:
+        return None
+
+    if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
+        logger.warning(
+            "remote embedder fallback skipped due to offline mode",
+            extra={"reason": reason},
+        )
+        return None
+
+    try:
+        _ensure_hf_timeouts()
+        kwargs: dict[str, object] = {}
+        if SENTENCE_TRANSFORMER_DEVICE:
+            kwargs["device"] = SENTENCE_TRANSFORMER_DEVICE
+        fallback = SentenceTransformer("all-MiniLM-L6-v2", **kwargs)
+        _clamp_embedder_max_seq_length(fallback)
+        logger.warning(
+            "using remote sentence transformer fallback",
+            extra={"model": "all-MiniLM-L6-v2", "reason": reason},
+        )
+        return fallback
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.warning(
+            "remote sentence transformer fallback failed: %s",
+            exc,
+            extra={"reason": reason},
+        )
+        return None
+
+
 def _load_bundled_embedder() -> Any | None:
     global _BUNDLED_EMBEDDER
     if _BUNDLED_EMBEDDER is not None:
@@ -937,31 +973,46 @@ def _load_bundled_embedder() -> Any | None:
             logger.warning(
                 "bundled embedder archive missing; using stub sentence transformer"
             )
+        _signal_vector_readiness_warning("bundled_embedder_archive_missing")
+        remote_fallback = _try_remote_sentence_transformer_fallback(
+            "bundled_embedder_archive_missing"
+        )
+        if remote_fallback is not None:
+            _BUNDLED_EMBEDDER = remote_fallback
+            return _BUNDLED_EMBEDDER
         _BUNDLED_EMBEDDER = _build_stub_embedder()
         return _BUNDLED_EMBEDDER
     if torch is None or AutoModel is None or AutoTokenizer is None:  # pragma: no cover - optional deps
         logger.warning("bundled embedder unavailable because transformers stack is missing; using stub sentence transformer")
-        _BUNDLED_EMBEDDER = _build_stub_embedder()
-        return _BUNDLED_EMBEDDER
-
-    model_dir = _prepare_bundled_model_dir()
-    if model_dir is None:
-        logger.warning(
-            "failed to prepare bundled embedder directory; using stub sentence transformer"
-        )
+        _signal_vector_readiness_warning("bundled_embedder_dependencies_missing")
         _BUNDLED_EMBEDDER = _build_stub_embedder()
         return _BUNDLED_EMBEDDER
 
     with _BUNDLED_EMBEDDER_LOCK:
         if _BUNDLED_EMBEDDER is not None:
             return _BUNDLED_EMBEDDER
-
         try:
+            model_dir = _prepare_bundled_model_dir()
+            if model_dir is None:
+                raise RuntimeError("bundled embedder directory unavailable")
             tokenizer = AutoTokenizer.from_pretrained(model_dir)
             model = AutoModel.from_pretrained(model_dir)
             model.eval()
         except Exception as exc:  # pragma: no cover - diagnostics only
-            logger.warning("failed to load bundled fallback embedder: %s; using stub sentence transformer", exc)
+            logger.warning(
+                "bundled embedder initialisation failed: %s; using fallback",
+                exc,
+            )
+            _signal_vector_readiness_warning(
+                "bundled_embedder_init_failed",
+                error=str(exc),
+            )
+            remote_fallback = _try_remote_sentence_transformer_fallback(
+                "bundled_embedder_init_failed"
+            )
+            if remote_fallback is not None:
+                _BUNDLED_EMBEDDER = remote_fallback
+                return _BUNDLED_EMBEDDER
             _BUNDLED_EMBEDDER = _build_stub_embedder()
             return _BUNDLED_EMBEDDER
 
