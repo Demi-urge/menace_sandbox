@@ -2574,7 +2574,8 @@ def start_self_improvement_cycle(
                 except RuntimeError:
                     pass
             self._thread.join(effective_timeout)
-            if self._thread.is_alive():
+            graceful_completed = not self._thread.is_alive()
+            if not graceful_completed:
                 logger = get_logger(__name__)
                 logger.warning(
                     "soft stop timed out for self improvement loop; attempting hard stop",
@@ -2584,6 +2585,7 @@ def start_self_improvement_cycle(
                     ),
                 )
                 if loop is not None:
+
                     def _close_if_safe() -> None:
                         try:
                             if not loop.is_running():
