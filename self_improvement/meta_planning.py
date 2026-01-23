@@ -2370,6 +2370,8 @@ def start_self_improvement_cycle(
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._stop_event = stop_event
             self._shutdown_complete = threading.Event()
+            self._loop_finished = threading.Event()
+            self._run_until_complete = threading.Event()
             self._error_log = error_log
             self._should_encode = should_encode
             self._evaluate_cycle = evaluate_cycle
@@ -2483,6 +2485,7 @@ def start_self_improvement_cycle(
             asyncio.set_event_loop(loop)
             self._async_stop_event = asyncio.Event()
             try:
+                self._run_until_complete.set()
                 loop.run_until_complete(_main())
             except RuntimeError as exc:  # pragma: no cover - best effort
                 msg = str(exc)
@@ -2503,6 +2506,7 @@ def start_self_improvement_cycle(
             except BaseException as exc:  # pragma: no cover - best effort
                 self._exc.put(exc)
             finally:
+                self._run_until_complete.clear()
                 logger = get_logger(__name__)
 
                 def _run_loop_cleanup(coro: Awaitable[Any], *, step: str) -> bool:
@@ -2565,6 +2569,7 @@ def start_self_improvement_cycle(
                         loop.stop()
                     except Exception:
                         pass
+                    self._loop_finished.set()
                     try:
                         loop.close()
                     except Exception:
@@ -2600,6 +2605,11 @@ def start_self_improvement_cycle(
             self._stop_event.set()
             self._cancel_requested.set()
             loop = self._loop
+            def _cancel_running_tasks() -> None:
+                if self._task is not None:
+                    self._task.cancel()
+                if self._heartbeat_task is not None:
+                    self._heartbeat_task.cancel()
             if loop is not None:
                 try:
                     def _cancel_tasks() -> None:
@@ -2627,7 +2637,7 @@ def start_self_improvement_cycle(
                 )
                 if loop is not None:
                     try:
-                        loop.call_soon_threadsafe(_cancel_tasks)
+                        loop.call_soon_threadsafe(_cancel_running_tasks)
                     except RuntimeError:
                         pass
                 hard_stop_grace_seconds = 2.0
@@ -2643,10 +2653,26 @@ def start_self_improvement_cycle(
                             stop_timeout_seconds=effective_timeout,
                         ),
                     )
-                    try:
-                        loop.call_soon_threadsafe(loop.stop)
-                    except RuntimeError:
-                        pass
+                    if loop.is_running():
+                        try:
+                            loop.call_soon_threadsafe(_cancel_running_tasks)
+                        except RuntimeError:
+                            pass
+                    loop_finished = self._loop_finished.wait(0.5)
+                    if loop_finished or not self._run_until_complete.is_set():
+                        try:
+                            loop.call_soon_threadsafe(loop.stop)
+                        except RuntimeError:
+                            pass
+                    else:
+                        logger.critical(
+                            "forced shutdown skipped loop.stop while run_until_complete active",
+                            extra=log_record(
+                                thread_ident=self._thread.ident,
+                                recovery_stage="forced_shutdown",
+                                run_until_complete_active=True,
+                            ),
+                        )
                 heartbeat_snapshot = loop_heartbeat_state.snapshot()
                 last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
                 now = time.time()
