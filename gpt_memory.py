@@ -276,6 +276,7 @@ STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}
 logger = logging.getLogger(__name__)
 _VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
 _VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
+_VECTOR_DEGRADED_BOOT_ENV = "ALLOW_VECTOR_DEGRADED_BOOT"
 
 
 def _vector_bootstrap_disabled() -> bool:
@@ -286,6 +287,11 @@ def _vector_bootstrap_disabled() -> bool:
     if raw_strict in {"0", "false", "no", "off"}:
         return True
     return False
+
+
+def _vector_degraded_boot_allowed() -> bool:
+    raw_allow = os.getenv(_VECTOR_DEGRADED_BOOT_ENV, "").strip().lower()
+    return raw_allow in {"1", "true", "yes", "on"}
 
 
 def _bootstrap_failure_detail(probe) -> str | None:
@@ -317,7 +323,7 @@ def _bootstrap_failure_detail(probe) -> str | None:
     return None
 
 
-def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> None:
+def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> str | None:
     if _vector_bootstrap_disabled():
         logger.critical(
             "%s bootstrap readiness bypassed because vector seeding is disabled; "
@@ -329,7 +335,7 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> None:
                 "strict_env": os.getenv(_VECTOR_SEEDING_STRICT_ENV),
             },
         )
-        return
+        return "vector seeding disabled"
     env_timeout = os.getenv("MENACE_BOOTSTRAP_WAIT_SECS")
     try:
         parsed_timeout = float(env_timeout) if env_timeout else None
@@ -341,6 +347,18 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> None:
     probe = readiness.probe()
     failure_detail = _bootstrap_failure_detail(probe)
     if failure_detail:
+        if _vector_degraded_boot_allowed():
+            logger.critical(
+                "%s degraded mode enabled: vectors are unavailable (%s); downstream "
+                "retrieval may be incomplete",
+                component,
+                failure_detail,
+                extra={
+                    "event": "bootstrap-vector-degraded",
+                    "degraded_env": os.getenv(_VECTOR_DEGRADED_BOOT_ENV),
+                },
+            )
+            return failure_detail
         raise RuntimeError(
             f"{component} cannot start because bootstrap failed: {failure_detail}"
         )
@@ -351,6 +369,18 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> None:
         probe = readiness.probe()
         failure_detail = _bootstrap_failure_detail(probe)
         if failure_detail:
+            if _vector_degraded_boot_allowed():
+                logger.critical(
+                    "%s degraded mode enabled: vectors are unavailable (%s); downstream "
+                    "retrieval may be incomplete",
+                    component,
+                    failure_detail,
+                    extra={
+                        "event": "bootstrap-vector-degraded",
+                        "degraded_env": os.getenv(_VECTOR_DEGRADED_BOOT_ENV),
+                    },
+                )
+                return failure_detail
             raise RuntimeError(
                 f"{component} cannot start because bootstrap failed: {failure_detail}"
             ) from exc
@@ -363,6 +393,18 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> None:
                 extra={"event": "bootstrap-readiness-missing-heartbeat"},
             )
             return
+
+        if _vector_degraded_boot_allowed():
+            logger.critical(
+                "%s degraded mode enabled: vectors are unavailable (bootstrap timed out); "
+                "downstream retrieval may be incomplete",
+                component,
+                extra={
+                    "event": "bootstrap-vector-degraded",
+                    "degraded_env": os.getenv(_VECTOR_DEGRADED_BOOT_ENV),
+                },
+            )
+            return "bootstrap timed out"
 
         raise RuntimeError(
             f"{component} cannot start until bootstrap readiness clears: "
@@ -464,7 +506,7 @@ class GPTMemoryManager(GPTMemoryInterface):
         if not self._bootstrap_checked:
             self._bootstrap_checked = True
             try:
-                _ensure_bootstrap_ready("GPTMemoryManager")
+                degraded_reason = _ensure_bootstrap_ready("GPTMemoryManager")
             except RuntimeError as exc:
                 self._mark_degraded(str(exc))
                 if raise_on_failure:
@@ -472,6 +514,9 @@ class GPTMemoryManager(GPTMemoryInterface):
                         "GPTMemoryManager vector services unavailable: "
                         f"{self.degraded_reason}"
                     ) from exc
+                return False
+            if degraded_reason:
+                self._mark_degraded(degraded_reason)
                 return False
         return True
 
@@ -625,7 +670,8 @@ class GPTMemoryManager(GPTMemoryInterface):
 
         if use_embeddings and self.vector_service is not None:
             try:
-                self._ensure_vector_ready(raise_on_failure=True)
+                if not self._ensure_vector_ready(raise_on_failure=True):
+                    raise RuntimeError("vector service unavailable")
                 q_emb = self.vector_service.vectorise("text", {"text": query})
                 scored: list[tuple[float, MemoryEntry]] = []
                 for prompt, response, tag_str, ts, emb_json in rows:
