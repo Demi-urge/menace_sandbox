@@ -2568,9 +2568,15 @@ def start_self_improvement_cycle(
             loop = self._loop
             if loop is not None:
                 try:
-                    loop.call_soon_threadsafe(
-                        lambda: self._task.cancel() if self._task is not None else None
-                    )
+                    def _cancel_tasks() -> None:
+                        if self._task is not None:
+                            self._task.cancel()
+                        if self._stop_task is not None:
+                            self._stop_task.cancel()
+                        if self._heartbeat_task is not None:
+                            self._heartbeat_task.cancel()
+
+                    loop.call_soon_threadsafe(_cancel_tasks)
                 except RuntimeError:
                     pass
             self._thread.join(effective_timeout)
@@ -2586,6 +2592,10 @@ def start_self_improvement_cycle(
                 )
                 if loop is not None:
 
+                    def _hard_stop() -> None:
+                        if loop.is_running():
+                            loop.stop()
+
                     def _close_if_safe() -> None:
                         try:
                             if not loop.is_running():
@@ -2596,7 +2606,7 @@ def start_self_improvement_cycle(
                             pass
 
                     try:
-                        loop.call_soon_threadsafe(loop.stop)
+                        loop.call_soon_threadsafe(_hard_stop)
                         loop.call_soon_threadsafe(_close_if_safe)
                     except RuntimeError:
                         pass
