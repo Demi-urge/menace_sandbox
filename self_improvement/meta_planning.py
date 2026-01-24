@@ -2555,6 +2555,26 @@ def start_self_improvement_cycle(
             finally:
                 self._run_until_complete.clear()
                 logger = get_logger(__name__)
+                cleanup_timeout = (
+                    loop_shutdown_timeout
+                    if loop_shutdown_timeout > 0
+                    else (stop_timeout if stop_timeout > 0 else 5.0)
+                )
+                cleanup_deadline = time.monotonic() + cleanup_timeout
+
+                def _remaining_cleanup_timeout(step: str) -> float | None:
+                    remaining = cleanup_deadline - time.monotonic()
+                    if remaining <= 0:
+                        logger.warning(
+                            "cleanup budget exhausted; skipping remaining shutdown steps",
+                            extra=log_record(
+                                step=step,
+                                cleanup_timeout_seconds=cleanup_timeout,
+                                thread_ident=self._thread.ident,
+                            ),
+                        )
+                        return None
+                    return remaining
 
                 def _run_loop_cleanup(
                     make_coro: Callable[[], Awaitable[Any]],
@@ -2654,19 +2674,22 @@ def start_self_improvement_cycle(
                             task.cancel()
                         if pending_tasks:
                             try:
+                                pending_timeout = _remaining_cleanup_timeout("pending_tasks")
+                                if pending_timeout is None:
+                                    raise asyncio.TimeoutError
                                 _run_loop_cleanup(
                                     lambda: asyncio.gather(
                                         *pending_tasks,
                                         return_exceptions=True,
                                     ),
                                     step="pending_tasks",
-                                    timeout=loop_shutdown_timeout,
+                                    timeout=pending_timeout,
                                 )
                             except asyncio.TimeoutError:
                                 logger.warning(
                                     "timed out awaiting pending self improvement tasks during cleanup",
                                     extra=log_record(
-                                        timeout_seconds=loop_shutdown_timeout,
+                                        timeout_seconds=cleanup_timeout,
                                         thread_ident=self._thread.ident,
                                         loop_running=loop.is_running(),
                                     ),
@@ -2674,10 +2697,15 @@ def start_self_improvement_cycle(
                     meta_executor.shutdown(wait=False, cancel_futures=True)
                     try:
                         try:
+                            executor_timeout = _remaining_cleanup_timeout(
+                                "shutdown_default_executor"
+                            )
+                            if executor_timeout is None:
+                                raise asyncio.TimeoutError
                             _run_loop_cleanup(
                                 loop.shutdown_default_executor,
                                 step="shutdown_default_executor",
-                                timeout=loop_shutdown_timeout,
+                                timeout=executor_timeout,
                             )
                         except (asyncio.CancelledError, RuntimeError) as exc:
                             logger.info(
@@ -2694,7 +2722,7 @@ def start_self_improvement_cycle(
                         logger.critical(
                             "timed out shutting down default executor for self improvement loop",
                             extra=log_record(
-                                timeout_seconds=loop_shutdown_timeout,
+                                timeout_seconds=cleanup_timeout,
                                 thread_ident=self._thread.ident,
                                 loop_running=loop.is_running(),
                             ),
@@ -2749,6 +2777,7 @@ def start_self_improvement_cycle(
         def stop(self, timeout: float | None = 5.0) -> None:
             print("💡 SI-12: stopping self-improvement thread")
             effective_timeout = stop_timeout if timeout is None else timeout
+            effective_timeout = max(effective_timeout, loop_shutdown_timeout)
             self._stop_event.set()
             self._cancel_requested.set()
             loop = self._loop
