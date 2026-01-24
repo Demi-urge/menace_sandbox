@@ -2541,19 +2541,21 @@ def start_self_improvement_cycle(
                     coro = make_coro()
                     try:
                         loop.run_until_complete(coro)
-                    except (asyncio.CancelledError, RuntimeError):
+                    except (asyncio.CancelledError, RuntimeError) as exc:
                         if inspect.iscoroutine(coro) and coro.cr_frame is not None:
                             coro.close()
-                        logger.info(
-                            "cleanup cancelled during shutdown; ignoring",
-                            extra=log_record(
-                                step=step,
-                                loop_running=loop.is_running(),
-                                loop_closed=loop.is_closed(),
-                                thread_ident=self._thread.ident,
-                            ),
-                        )
-                        return False
+                        if self._stop_event.is_set() or self._cancel_requested.is_set():
+                            logger.info(
+                                "cleanup cancelled after stop request; ignoring",
+                                extra=log_record(
+                                    step=step,
+                                    loop_running=loop.is_running(),
+                                    loop_closed=loop.is_closed(),
+                                    thread_ident=self._thread.ident,
+                                ),
+                            )
+                            return False
+                        raise
                     return True
 
                 try:
