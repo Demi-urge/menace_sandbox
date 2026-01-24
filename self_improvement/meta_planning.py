@@ -2724,7 +2724,20 @@ def start_self_improvement_cycle(
                 )
                 return
             if not self._exc.empty():
-                raise self._exc.get()
+                exc = self._exc.get()
+                if isinstance(exc, asyncio.CancelledError) and (
+                    self._stop_event.is_set() or self._cancel_requested.is_set()
+                ):
+                    logger = get_logger(__name__)
+                    logger.info(
+                        "self improvement loop cancelled after stop request",
+                        extra=log_record(
+                            thread_ident=self._thread.ident,
+                            reason="stop_requested",
+                        ),
+                    )
+                    return
+                raise exc
 
         def request_stop(self) -> None:
             self._stop_event.set()
