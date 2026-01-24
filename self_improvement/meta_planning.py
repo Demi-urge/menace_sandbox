@@ -12,6 +12,7 @@ from importlib import import_module
 from statistics import fmean
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -2537,9 +2538,12 @@ def start_self_improvement_cycle(
                             ),
                         )
                         return False
+                    coro = make_coro()
                     try:
-                        loop.run_until_complete(make_coro())
+                        loop.run_until_complete(coro)
                     except (asyncio.CancelledError, RuntimeError):
+                        if inspect.iscoroutine(coro) and coro.cr_frame is not None:
+                            coro.close()
                         logger.info(
                             "cleanup cancelled during shutdown; ignoring",
                             extra=log_record(
