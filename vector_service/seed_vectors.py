@@ -41,6 +41,7 @@ def _emit_local_seed_readiness(
 
     components: MutableMapping[str, str] = {}
     component_readiness: MutableMapping[str, Mapping[str, object]] = {}
+    core_components: Iterable[str] = ()
 
     if isinstance(readiness, Mapping):
         raw_components = readiness.get("components")
@@ -52,6 +53,15 @@ def _emit_local_seed_readiness(
             for key, value in raw_component_readiness.items():
                 state = value if isinstance(value, Mapping) else {"status": value}
                 component_readiness[str(key)] = dict(state)
+
+    try:  # pragma: no cover - best effort
+        try:
+            from menace_sandbox.bootstrap_readiness import CORE_COMPONENTS
+        except Exception:  # pragma: no cover - fallback for flat execution
+            from bootstrap_readiness import CORE_COMPONENTS  # type: ignore
+        core_components = tuple(CORE_COMPONENTS)
+    except Exception:
+        core_components = ()
 
     now = time.time()
     components["vector_seeding"] = "ready"
@@ -68,11 +78,22 @@ def _emit_local_seed_readiness(
     )
     component_readiness["vector_seeding"] = dict(readiness_entry)
 
+    all_ready = (
+        all(components.get(name) == "ready" for name in core_components)
+        if core_components
+        else False
+    )
     readiness_payload: dict[str, object] = {
         "components": dict(components),
         "component_readiness": dict(component_readiness),
-        "ready": readiness.get("ready") if isinstance(readiness, Mapping) else False,
-        "online": readiness.get("online") if isinstance(readiness, Mapping) else False,
+        "ready": bool(
+            all_ready
+            or (readiness.get("ready") if isinstance(readiness, Mapping) else False)
+        ),
+        "online": bool(
+            all_ready
+            or (readiness.get("online") if isinstance(readiness, Mapping) else False)
+        ),
     }
 
     enriched = dict(heartbeat)
