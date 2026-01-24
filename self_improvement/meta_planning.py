@@ -2521,7 +2521,11 @@ def start_self_improvement_cycle(
                 self._run_until_complete.clear()
                 logger = get_logger(__name__)
 
-                def _run_loop_cleanup(coro: Awaitable[Any], *, step: str) -> bool:
+                def _run_loop_cleanup(
+                    coro_factory: Callable[[], Awaitable[Any]],
+                    *,
+                    step: str,
+                ) -> bool:
                     if loop.is_closed() or loop.is_running():
                         logger.warning(
                             "self improvement loop unavailable for cleanup; skipping",
@@ -2533,7 +2537,7 @@ def start_self_improvement_cycle(
                             ),
                         )
                         return False
-                    loop.run_until_complete(coro)
+                    loop.run_until_complete(coro_factory())
                     return True
 
                 try:
@@ -2552,7 +2556,7 @@ def start_self_improvement_cycle(
                             task.cancel()
                         if pending_tasks:
                             _run_loop_cleanup(
-                                asyncio.gather(
+                                lambda: asyncio.gather(
                                     *pending_tasks,
                                     return_exceptions=True,
                                 ),
@@ -2561,7 +2565,7 @@ def start_self_improvement_cycle(
                     meta_executor.shutdown(wait=False, cancel_futures=True)
                     try:
                         _run_loop_cleanup(
-                            asyncio.wait_for(
+                            lambda: asyncio.wait_for(
                                 loop.shutdown_default_executor(),
                                 timeout=loop_shutdown_timeout,
                             ),
