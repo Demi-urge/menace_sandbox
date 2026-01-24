@@ -570,9 +570,8 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
         logger.debug("bundled embedder archive missing")
         return None, "bundled_embedder_archive_missing", None
 
-    cache_dir = _cache_base()
-    if cache_dir is None:
-        cache_dir = Path.home() / ".cache" / "huggingface"
+    cache_base = _cache_base()
+    cache_dir = cache_base or (Path.home() / ".cache" / "huggingface")
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:  # pragma: no cover - best effort
@@ -596,6 +595,15 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
                 "Check write permissions for the cache directory or clear the cache at "
                 f"{cache_dir / 'menace-bundled'}."
             )
+            error_parts = [
+                str(exc),
+                f"archive={archive}",
+                f"target_dir={target_dir}",
+            ]
+            if cache_base is not None:
+                error_parts.append(f"cache_base={cache_base}")
+            error_parts.append(f"hint={remediation_hint}")
+            error_detail = "; ".join(error_parts)
             logger.exception(
                 "bundled_embedder_extract_failed: %s (source=%s dest_cache=%s). Hint: %s",
                 exc,
@@ -616,7 +624,7 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
             )
             with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            return None, "bundled_embedder_extract_failed", str(exc)
+            return None, "bundled_embedder_extract_failed", error_detail
     return target_dir, None, None
 
 
@@ -643,6 +651,13 @@ def _bundled_extract_timeout() -> float:
 def _signal_vector_readiness_failure(
     reason: str, *, error: str | None = None, details: Mapping[str, object] | None = None
 ) -> None:
+    if details:
+        detail_items = [f"{key}={value}" for key, value in details.items()]
+        detail_text = ", ".join(detail_items)
+        if error:
+            error = f"{error} ({detail_text})"
+        else:
+            error = detail_text
     _update_vector_readiness_status("failed", reason=reason, error=error, details=details)
 
 def _signal_vector_readiness_warning(
