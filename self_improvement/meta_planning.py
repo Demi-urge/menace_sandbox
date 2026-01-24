@@ -2754,14 +2754,28 @@ def start_self_improvement_cycle(
             self._thread.join(effective_timeout)
             if self._thread.is_alive():
                 logger = get_logger(__name__)
+                stop_requested = (
+                    self._stop_event.is_set()
+                    or self._cancel_requested.is_set()
+                    or self._shutdown_complete.is_set()
+                )
                 if self._loop_started.is_set():
-                    logger.warning(
-                        "self improvement cycle zombie loop detected; continuing without waiting",
-                        extra=log_record(
-                            thread_ident=self._thread.ident,
-                            join_timeout_seconds=effective_timeout,
-                        ),
-                    )
+                    if stop_requested:
+                        logger.warning(
+                            "self improvement cycle zombie loop detected; continuing without waiting",
+                            extra=log_record(
+                                thread_ident=self._thread.ident,
+                                join_timeout_seconds=effective_timeout,
+                            ),
+                        )
+                    else:
+                        logger.info(
+                            "self improvement cycle still running during non-blocking join",
+                            extra=log_record(
+                                thread_ident=self._thread.ident,
+                                join_timeout_seconds=effective_timeout,
+                            ),
+                        )
                 else:
                     logger.info(
                         "self improvement cycle still starting; join timed out before loop start",
