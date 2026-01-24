@@ -614,18 +614,6 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
                     "exception": repr(exc),
                 },
             )
-            _signal_vector_readiness_warning(
-                "bundled_embedder_extract_failed",
-                error=str(exc),
-                details={
-                    "source_path": str(archive),
-                    "cache_dir": str(cache_dir),
-                    "target_dir": str(target_dir),
-                    "tmp_dir": str(tmp_dir),
-                    "remediation_hint": remediation_hint,
-                    "exception": repr(exc),
-                },
-            )
             with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             return None, "bundled_embedder_extract_failed", str(exc)
@@ -1054,9 +1042,20 @@ def _load_bundled_embedder() -> Any | None:
                                 "model": fallback_model,
                             },
                         )
-                        _signal_vector_readiness_warning("bundled_embedder_extract_failed")
+                        _update_vector_readiness_status(
+                            "ready",
+                            reason="bundled_embedder_fallback",
+                            error=prep_error,
+                        )
                         _BUNDLED_EMBEDDER = remote_fallback
                         return _BUNDLED_EMBEDDER
+                    _update_vector_readiness_status(
+                        "ready",
+                        reason="bundled_embedder_fallback",
+                        error=prep_error,
+                    )
+                    _BUNDLED_EMBEDDER = _build_stub_embedder()
+                    return _BUNDLED_EMBEDDER
                 raise RuntimeError("bundled embedder directory unavailable")
             tokenizer = AutoTokenizer.from_pretrained(model_dir)
             model = AutoModel.from_pretrained(model_dir)
@@ -1221,6 +1220,11 @@ def _activate_bundled_fallback(reason: str) -> bool:
         if _EMBEDDER is None:
             _EMBEDDER = cast("SentenceTransformer", fallback)
             _EMBEDDER_INIT_EVENT.set()
+            _update_vector_readiness_status(
+                "ready",
+                reason="bundled_embedder_fallback",
+                error=None,
+            )
             if not _FALLBACK_ANNOUNCED:
                 _FALLBACK_ANNOUNCED = True
                 logger.warning(
