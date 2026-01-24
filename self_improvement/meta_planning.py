@@ -2449,10 +2449,42 @@ def start_self_improvement_cycle(
                 for task in pending:
                     task.cancel()
                 task_list = [self._task, self._heartbeat_task, self._stop_task]
-                results = await asyncio.gather(
-                    *task_list, return_exceptions=True  # type: ignore[arg-type]
-                )
-                for task, result in zip(task_list, results):
+                timeout = loop_shutdown_timeout if loop_shutdown_timeout > 0 else None
+                if timeout is None:
+                    completed = set(task_list)
+                    results = await asyncio.gather(
+                        *task_list, return_exceptions=True  # type: ignore[arg-type]
+                    )
+                    task_results = dict(zip(task_list, results))
+                else:
+                    completed, pending = await asyncio.wait(
+                        task_list,
+                        timeout=timeout,
+                    )
+                    if pending:
+                        logger = get_logger(__name__)
+                        for task in pending:
+                            task.cancel()
+                        logger.warning(
+                            "timed out awaiting self improvement tasks during shutdown; continuing cleanup",
+                            extra=log_record(
+                                timeout_seconds=timeout,
+                                thread_ident=self._thread.ident,
+                                pending_task_count=len(pending),
+                            ),
+                        )
+                    if completed:
+                        results = await asyncio.gather(
+                            *completed,
+                            return_exceptions=True,  # type: ignore[arg-type]
+                        )
+                        task_results = dict(zip(completed, results))
+                    else:
+                        task_results = {}
+                for task in task_list:
+                    result = task_results.get(task)
+                    if result is None:
+                        continue
                     if not isinstance(result, BaseException):
                         continue
                     if (
