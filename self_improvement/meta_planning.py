@@ -2373,6 +2373,7 @@ def start_self_improvement_cycle(
             self._shutdown_complete = threading.Event()
             self._loop_finished = threading.Event()
             self._run_until_complete = threading.Event()
+            self._loop_started = threading.Event()
             self._error_log = error_log
             self._should_encode = should_encode
             self._evaluate_cycle = evaluate_cycle
@@ -2486,6 +2487,7 @@ def start_self_improvement_cycle(
             asyncio.set_event_loop(loop)
             self._async_stop_event = asyncio.Event()
             try:
+                loop.call_soon(self._loop_started.set)
                 self._run_until_complete.set()
                 loop.run_until_complete(_main())
             except RuntimeError as exc:  # pragma: no cover - best effort
@@ -2667,16 +2669,28 @@ def start_self_improvement_cycle(
         def join(self, timeout: float | None = None) -> None:
             print("💡 SI-11: joining self-improvement thread")
             effective_timeout = join_timeout if timeout is None else timeout
+            if not self._loop_started.is_set():
+                wait_timeout = 2.0 if effective_timeout is None else min(2.0, effective_timeout)
+                self._loop_started.wait(timeout=wait_timeout)
             self._thread.join(effective_timeout)
             if self._thread.is_alive():
                 logger = get_logger(__name__)
-                logger.warning(
-                    "self improvement cycle zombie loop detected; continuing without waiting",
-                    extra=log_record(
-                        thread_ident=self._thread.ident,
-                        join_timeout_seconds=effective_timeout,
-                    ),
-                )
+                if self._loop_started.is_set():
+                    logger.warning(
+                        "self improvement cycle zombie loop detected; continuing without waiting",
+                        extra=log_record(
+                            thread_ident=self._thread.ident,
+                            join_timeout_seconds=effective_timeout,
+                        ),
+                    )
+                else:
+                    logger.info(
+                        "self improvement cycle still starting; join timed out before loop start",
+                        extra=log_record(
+                            thread_ident=self._thread.ident,
+                            join_timeout_seconds=effective_timeout,
+                        ),
+                    )
                 return
             if not self._exc.empty():
                 raise self._exc.get()
