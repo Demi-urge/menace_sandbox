@@ -2991,29 +2991,29 @@ def start_self_improvement_cycle(
                 else:
                     effective_timeout = 0.0
                 current_thread.stop(timeout=effective_timeout)
-            except BaseException as exc:
-                if isinstance(exc, asyncio.CancelledError):
-                    logger.info(
-                        "cycle stop cancelled during watchdog restart (reason=%s)",
-                        reason,
-                        extra=log_record(
-                            reason=reason,
-                            stop_timeout_seconds=effective_timeout,
-                            configured_stop_timeout_seconds=stop_timeout,
-                            watchdog_stop_timeout_seconds=watchdog_stop_timeout,
-                        ),
-                    )
-                else:
-                    logger.exception(
-                        "cycle stop failed during restart",
-                        extra=log_record(
-                            reason=reason,
-                            configured_stop_timeout_seconds=stop_timeout,
-                            watchdog_stop_timeout_seconds=watchdog_stop_timeout,
-                        ),
-                        exc_info=exc,
-                    )
-                    raise
+            except asyncio.CancelledError:
+                logger.info(
+                    "stop requested / cancellation expected while stopping cycle thread",
+                    extra=log_record(
+                        reason=reason,
+                        stop_reason=reason,
+                        stop_timeout_seconds=effective_timeout,
+                        configured_stop_timeout_seconds=stop_timeout,
+                        watchdog_stop_timeout_seconds=watchdog_stop_timeout,
+                        watchdog_restart_triggered=watchdog_triggered,
+                    ),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "cycle stop failed during restart",
+                    extra=log_record(
+                        reason=reason,
+                        configured_stop_timeout_seconds=stop_timeout,
+                        watchdog_stop_timeout_seconds=watchdog_stop_timeout,
+                    ),
+                    exc_info=exc,
+                )
+                raise
             thread_state = current_thread.state()
             if thread_state.get("thread_alive"):
                 stack_dump = _get_thread_stack(thread_state.get("thread_ident"))
