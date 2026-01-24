@@ -2504,7 +2504,19 @@ def start_self_improvement_cycle(
                 else:
                     raise
             except BaseException as exc:  # pragma: no cover - best effort
-                self._exc.put(exc)
+                if isinstance(exc, asyncio.CancelledError) and (
+                    self._stop_event.is_set() or self._cancel_requested.is_set()
+                ):
+                    logger = get_logger(__name__)
+                    logger.info(
+                        "self improvement loop cancelled after stop request",
+                        extra=log_record(
+                            reason="stop_requested",
+                            thread_ident=self._thread.ident,
+                        ),
+                    )
+                else:
+                    self._exc.put(exc)
             finally:
                 self._run_until_complete.clear()
                 logger = get_logger(__name__)
