@@ -2437,6 +2437,7 @@ def start_self_improvement_cycle(
                     async_event.set()
 
             async def _main() -> None:
+                self._loop_started.set()
                 self._task = asyncio.create_task(_run_cycle())
                 self._heartbeat_task = asyncio.create_task(_loop_heartbeat())
                 self._stop_task = asyncio.create_task(_await_stop())
@@ -2519,7 +2520,6 @@ def start_self_improvement_cycle(
             asyncio.set_event_loop(loop)
             self._async_stop_event = asyncio.Event()
             try:
-                loop.call_soon(self._loop_started.set)
                 self._run_until_complete.set()
                 loop.run_until_complete(_main())
             except RuntimeError as exc:  # pragma: no cover - best effort
