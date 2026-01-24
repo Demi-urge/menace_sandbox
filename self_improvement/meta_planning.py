@@ -2537,7 +2537,19 @@ def start_self_improvement_cycle(
                             ),
                         )
                         return False
-                    loop.run_until_complete(make_coro())
+                    try:
+                        loop.run_until_complete(make_coro())
+                    except (asyncio.CancelledError, RuntimeError):
+                        logger.info(
+                            "cleanup cancelled during shutdown; ignoring",
+                            extra=log_record(
+                                step=step,
+                                loop_running=loop.is_running(),
+                                loop_closed=loop.is_closed(),
+                                thread_ident=self._thread.ident,
+                            ),
+                        )
+                        return False
                     return True
 
                 try:
