@@ -2785,6 +2785,9 @@ def start_self_improvement_cycle(
     )
     watchdog_interval = max(5.0, min(30.0, watchdog_threshold / 2.0))
     stop_timeout = _env_float("SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS", 5.0)
+    watchdog_stop_timeout = _env_float(
+        "SELF_IMPROVEMENT_WATCHDOG_STOP_TIMEOUT_SECONDS", stop_timeout
+    )
     loop_shutdown_timeout = _env_float(
         "SELF_IMPROVEMENT_LOOP_SHUTDOWN_TIMEOUT_SECONDS", stop_timeout
     )
@@ -2956,7 +2959,12 @@ def start_self_improvement_cycle(
         current_thread = monitor_state.get("thread")
         if current_thread is not None:
             try:
-                effective_timeout = stop_timeout if wait_on_stop else 0.0
+                if wait_on_stop:
+                    effective_timeout = (
+                        watchdog_stop_timeout if watchdog_triggered else stop_timeout
+                    )
+                else:
+                    effective_timeout = 0.0
                 current_thread.stop(timeout=effective_timeout)
             except asyncio.CancelledError:
                 logger.info(
@@ -2964,12 +2972,18 @@ def start_self_improvement_cycle(
                     extra=log_record(
                         reason=reason,
                         stop_timeout_seconds=effective_timeout,
+                        configured_stop_timeout_seconds=stop_timeout,
+                        watchdog_stop_timeout_seconds=watchdog_stop_timeout,
                     ),
                 )
             except Exception:
                 logger.exception(
                     "cycle stop failed during restart",
-                    extra=log_record(reason=reason),
+                    extra=log_record(
+                        reason=reason,
+                        configured_stop_timeout_seconds=stop_timeout,
+                        watchdog_stop_timeout_seconds=watchdog_stop_timeout,
+                    ),
                 )
             thread_state = current_thread.state()
             if thread_state.get("thread_alive"):
@@ -2981,7 +2995,9 @@ def start_self_improvement_cycle(
                     stuck_message,
                     extra=log_record(
                         reason=reason,
-                        stop_timeout_seconds=stop_timeout,
+                        stop_timeout_seconds=effective_timeout,
+                        configured_stop_timeout_seconds=stop_timeout,
+                        watchdog_stop_timeout_seconds=watchdog_stop_timeout,
                         thread_state=thread_state,
                         stuck_thread_stack=stack_dump,
                         recovery_stage="stop_timeout",
@@ -3008,7 +3024,9 @@ def start_self_improvement_cycle(
                         extra=log_record(
                             reason=reason,
                             thread_ident=thread_state.get("thread_ident"),
-                            stop_timeout_seconds=stop_timeout,
+                            stop_timeout_seconds=effective_timeout,
+                            configured_stop_timeout_seconds=stop_timeout,
+                            watchdog_stop_timeout_seconds=watchdog_stop_timeout,
                             stuck_thread_stack=stack_dump,
                             recovery_action="process_exit",
                             recovery_stage="stop_timeout",
@@ -3025,7 +3043,9 @@ def start_self_improvement_cycle(
                         extra=log_record(
                             reason=reason,
                             thread_ident=thread_state.get("thread_ident"),
-                            stop_timeout_seconds=stop_timeout,
+                            stop_timeout_seconds=effective_timeout,
+                            configured_stop_timeout_seconds=stop_timeout,
+                            watchdog_stop_timeout_seconds=watchdog_stop_timeout,
                             recovery_action="refuse_restart",
                             recovery_stage="stop_timeout",
                             recovery_mode=recovery_mode,
@@ -3050,7 +3070,9 @@ def start_self_improvement_cycle(
                                 extra=log_record(
                                     reason=reason,
                                     thread_ident=thread_state.get("thread_ident"),
-                                    stop_timeout_seconds=stop_timeout,
+                                    stop_timeout_seconds=effective_timeout,
+                                    configured_stop_timeout_seconds=stop_timeout,
+                                    watchdog_stop_timeout_seconds=watchdog_stop_timeout,
                                     stuck_thread_stack=stack_dump,
                                     recovery_action="process_exit",
                                     recovery_stage="stop_timeout",
@@ -3078,7 +3100,9 @@ def start_self_improvement_cycle(
                             extra=log_record(
                                 reason=reason,
                                 thread_ident=thread_state.get("thread_ident"),
-                                stop_timeout_seconds=stop_timeout,
+                                stop_timeout_seconds=effective_timeout,
+                                configured_stop_timeout_seconds=stop_timeout,
+                                watchdog_stop_timeout_seconds=watchdog_stop_timeout,
                                 stuck_thread_stack=stack_dump,
                                 recovery_action="zombie_restart_without_exit",
                                 recovery_stage="stop_timeout",
@@ -3098,7 +3122,9 @@ def start_self_improvement_cycle(
                     extra=log_record(
                         reason=reason,
                         previous_thread_ident=thread_state.get("thread_ident"),
-                        stop_timeout_seconds=stop_timeout,
+                        stop_timeout_seconds=effective_timeout,
+                        configured_stop_timeout_seconds=stop_timeout,
+                        watchdog_stop_timeout_seconds=watchdog_stop_timeout,
                         recovery_action="zombie_restart",
                         recovery_stage="stop_timeout",
                         recovery_mode=recovery_mode,
