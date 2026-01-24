@@ -81,6 +81,18 @@ When timeouts persist, audit the host before retrying:
 - Inspect filesystem watchers from editors or sync tools and scope them to the active repository root only (e.g., VS Code workspace folders pointing at this repo with `files.watcherExclude` enabled for `sandbox_data`, checkpoints, and virtualenvs instead of watching `$HOME`).
 - If multiple operators share the host, set `MENACE_BOOTSTRAP_STAGGER_SECS=30` (optionally `MENACE_BOOTSTRAP_STAGGER_JITTER_SECS=30` for randomised spacing) in the startup environment so launches wait briefly instead of competing for disk/CPU.
 
+If bootstrap stalls while unpacking model assets or tokenizers, clear corrupted caches and verify the filesystem can write large files. The most common offender is the Hugging Face cache at `~/.cache/huggingface/hub` (or `$HF_HOME` if you override it); purge it and retry:
+
+```bash
+rm -rf ~/.cache/huggingface/hub
+```
+
+Quick extraction checklist before retrying:
+
+- Confirm free disk space on the target volume (`df -h`).
+- Ensure the cache directory is writable (`ls -ld ~/.cache/huggingface` or `ls -ld "$HF_HOME"`).
+- Verify the host filesystem isn't mounted read-only and that the sandbox user can create and delete large files in the cache path.
+
 Avoid running multiple bootstraps concurrently on the same machine and keep filesystem watchers (e.g., editors or sync tools) pointed at small directories during preflight; both patterns add I/O pressure that can stretch bootstrap durations past the defaults.
 
 Operational safeguards baked into `start_autonomous_sandbox.py` help enforce these recommendations. Each launch now waits for a stagger window (when `MENACE_BOOTSTRAP_STAGGER_SECS`/`MENACE_BOOTSTRAP_STAGGER_JITTER_SECS` are set) and then takes a host-level lock at `MENACE_BOOTSTRAP_LOCK_FILE` (default `/tmp/menace_bootstrap.lock`) for up to `MENACE_BOOTSTRAP_LOCK_TIMEOUT` (default 300s) before bootstrapping. If the lock cannot be acquired, the run exits early rather than competing for disk/CPU. Before launching, make sure editors or sync daemons only watch the repository root and explicitly exclude `sandbox_data`, checkpoints, and any virtual environments so their file watchers do not override the guardrails.
