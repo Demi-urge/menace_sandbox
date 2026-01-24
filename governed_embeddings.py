@@ -658,7 +658,20 @@ def _signal_vector_readiness_failure(
             error = f"{error} ({detail_text})"
         else:
             error = detail_text
+    degraded_reasons = {
+        "bundled_embedder_extract_failed",
+        "bundled_embedder_extract_timeout",
+    }
+    if reason in degraded_reasons:
+        _update_vector_readiness_status(
+            "partial",
+            reason=reason,
+            error=error,
+            details=details,
+        )
+        return
     _update_vector_readiness_status("failed", reason=reason, error=error, details=details)
+
 
 def _signal_vector_readiness_warning(
     reason: str, *, error: str | None = None, details: Mapping[str, object] | None = None
@@ -710,6 +723,12 @@ def _update_vector_readiness_status(
     detail_status = status
     if status == "vector_seeding_degraded":
         component_status = "degraded"
+    if status == "failed" and reason in {
+        "bundled_embedder_extract_failed",
+        "bundled_embedder_extract_timeout",
+    }:
+        component_status = "partial"
+        detail_status = "partial"
     components["vector_seeding"] = component_status
     detail: MutableMapping[str, object] = {"status": detail_status, "ts": now}
     if reason:
