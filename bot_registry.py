@@ -351,7 +351,7 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "class_name": "FutureSynergyResilienceBot",
     },
     "ResourcePredictionBot": {
-        "module_path": "menace_sandbox.resource_prediction_bot",
+        "module_path": "resource_prediction_bot.py",
         "class_name": "ResourcePredictionBot",
     },
     "FutureSynergyShannonEntropyBot": {

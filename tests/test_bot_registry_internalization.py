@@ -22,8 +22,8 @@ def test_resource_prediction_bot_uses_registry_defaults(caplog):
         reg.register_bot("ResourcePredictionBot")
 
     node = reg.graph.nodes["ResourcePredictionBot"]
-    assert node["module"] == "menace_sandbox.resource_prediction_bot"
-    assert reg.modules["ResourcePredictionBot"] == "menace_sandbox.resource_prediction_bot"
+    assert node["module"] == "resource_prediction_bot.py"
+    assert reg.modules["ResourcePredictionBot"] == "resource_prediction_bot.py"
     assert not any(
         "module path" in record.message and "ResourcePredictionBot" in record.message
         for record in caplog.records
