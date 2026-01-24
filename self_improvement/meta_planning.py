@@ -2621,13 +2621,24 @@ def start_self_improvement_cycle(
                         for task in pending_tasks:
                             task.cancel()
                         if pending_tasks:
-                            _run_loop_cleanup(
-                                lambda: asyncio.gather(
-                                    *pending_tasks,
-                                    return_exceptions=True,
-                                ),
-                                step="pending_tasks",
-                            )
+                            try:
+                                _run_loop_cleanup(
+                                    lambda: asyncio.gather(
+                                        *pending_tasks,
+                                        return_exceptions=True,
+                                    ),
+                                    step="pending_tasks",
+                                    timeout=loop_shutdown_timeout,
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "timed out awaiting pending self improvement tasks during cleanup",
+                                    extra=log_record(
+                                        timeout_seconds=loop_shutdown_timeout,
+                                        thread_ident=self._thread.ident,
+                                        loop_running=loop.is_running(),
+                                    ),
+                                )
                     meta_executor.shutdown(wait=False, cancel_futures=True)
                     try:
                         try:
