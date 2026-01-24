@@ -387,7 +387,7 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "class_name": "FutureSynergyRecoveryTimeBot",
     },
     "ResearchAggregatorBot": {
-        "module_path": "menace_sandbox.research_aggregator_bot",
+        "module_path": "research_aggregator_bot",
         "class_name": "ResearchAggregatorBot",
     },
     "FutureSynergyDiscrepancyCountBot": {
