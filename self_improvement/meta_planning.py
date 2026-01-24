@@ -2572,18 +2572,26 @@ def start_self_improvement_cycle(
                     except (asyncio.CancelledError, RuntimeError) as exc:
                         if inspect.iscoroutine(coro) and coro.cr_frame is not None:
                             coro.close()
-                        if self._stop_event.is_set() or self._cancel_requested.is_set():
-                            logger.info(
-                                "cleanup cancelled after stop request; ignoring",
-                                extra=log_record(
-                                    step=step,
-                                    loop_running=loop.is_running(),
-                                    loop_closed=loop.is_closed(),
-                                    thread_ident=self._thread.ident,
-                                ),
-                            )
-                            return False
-                        raise
+                        log_fn = logger.info
+                        reason = "stop_requested"
+                        if not (
+                            self._stop_event.is_set()
+                            or self._cancel_requested.is_set()
+                        ):
+                            log_fn = logger.debug
+                            reason = "cleanup_cancelled"
+                        log_fn(
+                            "cleanup cancelled during stop request; ignoring",
+                            extra=log_record(
+                                step=step,
+                                loop_running=loop.is_running(),
+                                loop_closed=loop.is_closed(),
+                                thread_ident=self._thread.ident,
+                                reason=reason,
+                                error=str(exc),
+                            ),
+                        )
+                        return False
                     return True
 
                 try:
@@ -2610,13 +2618,25 @@ def start_self_improvement_cycle(
                             )
                     meta_executor.shutdown(wait=False, cancel_futures=True)
                     try:
-                        _run_loop_cleanup(
-                            lambda: asyncio.wait_for(
-                                loop.shutdown_default_executor(),
-                                timeout=loop_shutdown_timeout,
-                            ),
-                            step="shutdown_default_executor",
-                        )
+                        try:
+                            _run_loop_cleanup(
+                                lambda: asyncio.wait_for(
+                                    loop.shutdown_default_executor(),
+                                    timeout=loop_shutdown_timeout,
+                                ),
+                                step="shutdown_default_executor",
+                            )
+                        except (asyncio.CancelledError, RuntimeError) as exc:
+                            logger.info(
+                                "shutdown default executor cancelled during stop request; ignoring",
+                                extra=log_record(
+                                    loop_running=loop.is_running(),
+                                    loop_closed=loop.is_closed(),
+                                    thread_ident=self._thread.ident,
+                                    reason="stop_requested",
+                                    error=str(exc),
+                                ),
+                            )
                     except asyncio.TimeoutError:
                         logger.critical(
                             "timed out shutting down default executor for self improvement loop",
