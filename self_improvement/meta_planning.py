@@ -2373,7 +2373,7 @@ def start_self_improvement_cycle(
             self._shutdown_complete = threading.Event()
             self._loop_finished = threading.Event()
             self._run_until_complete = threading.Event()
-            self._loop_started = threading.Event()
+            self._loop_ready = threading.Event()
             self._error_log = error_log
             self._should_encode = should_encode
             self._evaluate_cycle = evaluate_cycle
@@ -2517,7 +2517,7 @@ def start_self_improvement_cycle(
             loop = runner.get_loop()
             self._loop = loop
             asyncio.set_event_loop(loop)
-            loop.call_soon(self._loop_started.set)
+            loop.call_soon(self._loop_ready.set)
             self._async_stop_event = asyncio.Event()
             try:
                 self._run_until_complete.set()
@@ -2748,13 +2748,13 @@ def start_self_improvement_cycle(
         def join(self, timeout: float | None = None) -> None:
             print("💡 SI-11: joining self-improvement thread")
             effective_timeout = join_timeout if timeout is None else timeout
-            if not self._loop_started.is_set():
+            if not self._loop_ready.is_set():
                 wait_timeout = 2.0 if effective_timeout is None else min(2.0, effective_timeout)
-                self._loop_started.wait(timeout=wait_timeout)
+                self._loop_ready.wait(timeout=wait_timeout)
             self._thread.join(effective_timeout)
             if self._thread.is_alive():
                 logger = get_logger(__name__)
-                if self._loop_started.is_set():
+                if self._loop_ready.is_set():
                     logger.warning(
                         "self improvement cycle zombie loop detected; continuing without waiting",
                         extra=log_record(
