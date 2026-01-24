@@ -2612,6 +2612,18 @@ def start_self_improvement_cycle(
                     self._heartbeat_task.cancel()
             if loop is not None:
                 try:
+                    def _cancel_all_tasks() -> None:
+                        try:
+                            current = asyncio.current_task()
+                        except RuntimeError:
+                            current = None
+                        for task in asyncio.all_tasks(loop):
+                            if task is current:
+                                continue
+                            task.cancel()
+                        if self._async_stop_event is not None:
+                            self._async_stop_event.set()
+
                     def _cancel_tasks() -> None:
                         if self._task is not None:
                             self._task.cancel()
@@ -2621,6 +2633,7 @@ def start_self_improvement_cycle(
                             self._async_stop_event.set()
 
                     loop.call_soon_threadsafe(_cancel_tasks)
+                    loop.call_soon_threadsafe(_cancel_all_tasks)
                 except RuntimeError:
                     pass
             graceful_completed = self._shutdown_complete.wait(effective_timeout)
@@ -2638,6 +2651,7 @@ def start_self_improvement_cycle(
                 if loop is not None:
                     try:
                         loop.call_soon_threadsafe(_cancel_running_tasks)
+                        loop.call_soon_threadsafe(_cancel_all_tasks)
                     except RuntimeError:
                         pass
                 hard_stop_grace_seconds = 2.0
@@ -2656,23 +2670,23 @@ def start_self_improvement_cycle(
                     if loop.is_running():
                         try:
                             loop.call_soon_threadsafe(_cancel_running_tasks)
+                            loop.call_soon_threadsafe(_cancel_all_tasks)
                         except RuntimeError:
                             pass
                     loop_finished = self._loop_finished.wait(0.5)
-                    if loop_finished or not self._run_until_complete.is_set():
-                        try:
-                            loop.call_soon_threadsafe(loop.stop)
-                        except RuntimeError:
-                            pass
-                    else:
+                    if not loop_finished and self._run_until_complete.is_set():
                         logger.critical(
-                            "forced shutdown skipped loop.stop while run_until_complete active",
+                            "forced shutdown requesting loop.stop while run_until_complete active",
                             extra=log_record(
                                 thread_ident=self._thread.ident,
                                 recovery_stage="forced_shutdown",
                                 run_until_complete_active=True,
                             ),
                         )
+                    try:
+                        loop.call_soon_threadsafe(loop.stop)
+                    except RuntimeError:
+                        pass
                 heartbeat_snapshot = loop_heartbeat_state.snapshot()
                 last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
                 now = time.time()
