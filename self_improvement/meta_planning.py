@@ -2522,7 +2522,7 @@ def start_self_improvement_cycle(
                 logger = get_logger(__name__)
 
                 def _run_loop_cleanup(
-                    coro_factory: Callable[[], Awaitable[Any]],
+                    make_coro: Callable[[], Awaitable[Any]],
                     *,
                     step: str,
                 ) -> bool:
@@ -2537,7 +2537,7 @@ def start_self_improvement_cycle(
                             ),
                         )
                         return False
-                    loop.run_until_complete(coro_factory())
+                    loop.run_until_complete(make_coro())
                     return True
 
                 try:
