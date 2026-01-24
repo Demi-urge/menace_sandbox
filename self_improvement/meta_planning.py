@@ -3618,6 +3618,19 @@ def stop_self_improvement_cycle() -> None:
     """Signal the background self improvement cycle to stop and wait for it."""
     global _cycle_thread, _stop_event, _cycle_watchdog_stop
     logger = get_logger(__name__)
+    caller_stack = None
+    try:
+        caller_stack = "".join(traceback.format_stack(limit=6))
+    except Exception:
+        caller_stack = None
+    logger.info(
+        "self improvement stop requested",
+        extra=log_record(
+            thread_alive=_cycle_thread is not None,
+            stop_event_set=_stop_event.is_set() if _stop_event is not None else None,
+            caller_stack=caller_stack,
+        ),
+    )
     if _cycle_watchdog_stop is not None:
         _cycle_watchdog_stop.set()
     if _stop_event is not None:
