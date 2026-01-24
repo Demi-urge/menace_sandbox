@@ -2788,10 +2788,27 @@ def start_self_improvement_cycle(
             if not self._exc.empty():
                 raise self._exc.get()
 
-        def stop(self, timeout: float | None = 5.0) -> None:
+        def stop(self, timeout: float | None = 5.0, *, reason: str | None = None) -> None:
             print("💡 SI-12: stopping self-improvement thread")
             effective_timeout = stop_timeout if timeout is None else timeout
             effective_timeout = max(effective_timeout, loop_shutdown_timeout)
+            logger = get_logger(__name__)
+            if reason is None:
+                reason = "unspecified"
+            caller_stack = None
+            try:
+                caller_stack = "".join(traceback.format_stack(limit=6))
+            except Exception:
+                caller_stack = None
+            logger.info(
+                "self improvement loop stop requested",
+                extra=log_record(
+                    reason=reason,
+                    thread_ident=self._thread.ident,
+                    stop_timeout_seconds=effective_timeout,
+                    caller_stack=caller_stack,
+                ),
+            )
             self._stop_event.set()
             self._cancel_requested.set()
             loop = self._loop
@@ -2830,7 +2847,6 @@ def start_self_improvement_cycle(
             if graceful_completed:
                 self._thread.join(timeout=0.1)
             if not graceful_completed:
-                logger = get_logger(__name__)
                 logger.warning(
                     "soft stop timed out for self improvement loop; leaving cleanup to loop shutdown",
                     extra=log_record(
@@ -2860,7 +2876,6 @@ def start_self_improvement_cycle(
                 )
                 log_as_critical = not stop_requested or not heartbeat_recent
                 if loop is not None:
-                    logger = get_logger(__name__)
                     log_fn = logger.critical if log_as_critical else logger.warning
                     log_fn(
                         "forced shutdown for self improvement loop",
@@ -2911,7 +2926,6 @@ def start_self_improvement_cycle(
                 message = "hard stop failed for self improvement loop; continuing without waiting"
                 if stack_dump:
                     message = f"{message}\n{stack_dump}"
-                logger = get_logger(__name__)
                 log_fn = logger.critical if log_as_critical else logger.warning
                 log_fn(
                     message,
@@ -2933,7 +2947,6 @@ def start_self_improvement_cycle(
                 if isinstance(exc, asyncio.CancelledError) and (
                     self._stop_event.is_set() or self._cancel_requested.is_set()
                 ):
-                    logger = get_logger(__name__)
                     logger.info(
                         "self improvement loop cancelled after stop request",
                         extra=log_record(
@@ -3183,7 +3196,7 @@ def start_self_improvement_cycle(
                     )
                 else:
                     effective_timeout = 0.0
-                current_thread.stop(timeout=effective_timeout)
+                current_thread.stop(timeout=effective_timeout, reason=reason)
             except asyncio.CancelledError:
                 logger.info(
                     "stop requested / cancellation expected while stopping cycle thread",
@@ -3612,7 +3625,7 @@ def stop_self_improvement_cycle() -> None:
     if _cycle_thread is None:
         logger.info("No active self-improvement cycle thread to stop.")
         return
-    _cycle_thread.stop()
+    _cycle_thread.stop(reason="api_stop_self_improvement_cycle")
     _cycle_thread = None
     _stop_event = None
 
