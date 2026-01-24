@@ -2528,6 +2528,7 @@ def start_self_improvement_cycle(
                     make_coro: Callable[[], Awaitable[Any]],
                     *,
                     step: str,
+                    timeout: float | None = None,
                 ) -> bool:
                     def _close_or_cancel(awaitable: Awaitable[Any]) -> None:
                         if asyncio.iscoroutine(awaitable):
@@ -2568,12 +2569,16 @@ def start_self_improvement_cycle(
                             ),
                         )
                         return False
-                    coro = make_coro()
+                    base_awaitable = make_coro()
+                    awaitable = base_awaitable
+                    if timeout is not None:
+                        awaitable = asyncio.wait_for(base_awaitable, timeout=timeout)
                     try:
-                        loop.run_until_complete(coro)
+                        loop.run_until_complete(awaitable)
                     except (asyncio.CancelledError, RuntimeError) as exc:
-                        if inspect.iscoroutine(coro) and coro.cr_frame is not None:
-                            coro.close()
+                        _close_or_cancel(base_awaitable)
+                        if awaitable is not base_awaitable:
+                            _close_or_cancel(awaitable)
                         log_fn = logger.info
                         reason = "stop_requested"
                         if not (
@@ -2594,6 +2599,11 @@ def start_self_improvement_cycle(
                             ),
                         )
                         return False
+                    except Exception:
+                        _close_or_cancel(base_awaitable)
+                        if awaitable is not base_awaitable:
+                            _close_or_cancel(awaitable)
+                        raise
                     return True
 
                 try:
@@ -2622,11 +2632,9 @@ def start_self_improvement_cycle(
                     try:
                         try:
                             _run_loop_cleanup(
-                                lambda: asyncio.wait_for(
-                                    loop.shutdown_default_executor(),
-                                    timeout=loop_shutdown_timeout,
-                                ),
+                                loop.shutdown_default_executor,
                                 step="shutdown_default_executor",
+                                timeout=loop_shutdown_timeout,
                             )
                         except (asyncio.CancelledError, RuntimeError) as exc:
                             logger.info(
