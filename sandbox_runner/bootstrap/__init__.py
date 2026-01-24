@@ -139,6 +139,14 @@ def _candidate_optional_module_names(name: str) -> list[str]:
 
     candidates: list[str] = []
     seen: set[str] = set()
+    if name == "quick_fix_engine_service":
+        for candidate in (
+            "menace_sandbox.quick_fix_engine.quick_fix_engine_service",
+            "quick_fix_engine.quick_fix_engine_service",
+        ):
+            if candidate not in seen:
+                candidates.append(candidate)
+                seen.add(candidate)
     for prefix in prefixes:
         qualified = f"{prefix}.{name}"
         if qualified not in seen:
