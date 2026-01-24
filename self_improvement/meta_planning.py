@@ -2673,14 +2673,30 @@ def start_self_improvement_cycle(
                 hard_stop_grace_seconds = 2.0
                 self._shutdown_complete.wait(hard_stop_grace_seconds)
             if self._thread.is_alive() or not self._shutdown_complete.is_set():
+                heartbeat_snapshot = loop_heartbeat_state.snapshot()
+                last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
+                now = time.time()
+                last_heartbeat_age = (
+                    (now - last_heartbeat) if last_heartbeat is not None else None
+                )
+                stop_requested = self._stop_event.is_set() or self._cancel_requested.is_set()
+                heartbeat_recent = (
+                    last_heartbeat_age is not None
+                    and last_heartbeat_age < (self._heartbeat_interval * 2.0)
+                )
+                log_as_critical = not stop_requested or not heartbeat_recent
                 if loop is not None:
                     logger = get_logger(__name__)
-                    logger.critical(
+                    log_fn = logger.critical if log_as_critical else logger.warning
+                    log_fn(
                         "forced shutdown for self improvement loop",
                         extra=log_record(
                             thread_ident=self._thread.ident,
                             recovery_stage="forced_shutdown",
                             stop_timeout_seconds=effective_timeout,
+                            stop_requested=stop_requested,
+                            last_heartbeat_timestamp=last_heartbeat,
+                            last_heartbeat_age_seconds=last_heartbeat_age,
                         ),
                     )
                     if loop.is_running():
@@ -2691,7 +2707,7 @@ def start_self_improvement_cycle(
                             pass
                     loop_finished = self._loop_finished.wait(0.5)
                     if not loop_finished and self._run_until_complete.is_set():
-                        logger.critical(
+                        log_fn(
                             "forced shutdown requesting loop.stop while run_until_complete active",
                             extra=log_record(
                                 thread_ident=self._thread.ident,
@@ -2703,17 +2719,13 @@ def start_self_improvement_cycle(
                         loop.call_soon_threadsafe(loop.stop)
                     except RuntimeError:
                         pass
-                heartbeat_snapshot = loop_heartbeat_state.snapshot()
-                last_heartbeat = heartbeat_snapshot.get("last_heartbeat")
-                now = time.time()
-                last_heartbeat_age = (
-                    (now - last_heartbeat) if last_heartbeat is not None else None
-                )
                 try:
                     loop_running = self._loop.is_running() if self._loop else False
                 except Exception:
                     loop_running = False
-                stack_dump = _get_thread_stack(self._thread.ident)
+                stack_dump = None
+                if log_as_critical:
+                    stack_dump = _get_thread_stack(self._thread.ident)
                 monitor_state["stuck_thread"] = {
                     "thread": self._thread,
                     "ident": self._thread.ident,
@@ -2725,7 +2737,9 @@ def start_self_improvement_cycle(
                 message = "hard stop failed for self improvement loop; continuing without waiting"
                 if stack_dump:
                     message = f"{message}\n{stack_dump}"
-                logger.critical(
+                logger = get_logger(__name__)
+                log_fn = logger.critical if log_as_critical else logger.warning
+                log_fn(
                     message,
                     extra=log_record(
                         thread_ident=self._thread.ident,
@@ -2735,6 +2749,7 @@ def start_self_improvement_cycle(
                         stop_timeout_seconds=effective_timeout,
                         hard_stop_grace_seconds=hard_stop_grace_seconds,
                         stuck_thread_stack=stack_dump,
+                        stop_requested=stop_requested,
                         recovery_stage="hard_stop_failed",
                     ),
                 )
