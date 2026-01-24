@@ -564,11 +564,13 @@ def _bundled_model_archive() -> Path | None:
     return archive if archive.exists() else None
 
 
-def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
+def _prepare_bundled_model_dir() -> tuple[
+    Path | None, str | None, str | None, Mapping[str, object] | None
+]:
     archive = _bundled_model_archive()
     if archive is None:
         logger.debug("bundled embedder archive missing")
-        return None, "bundled_embedder_archive_missing", None
+        return None, "bundled_embedder_archive_missing", None, None
 
     cache_base = _cache_base()
     cache_dir = cache_base or (Path.home() / ".cache" / "huggingface")
@@ -576,13 +578,29 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
         cache_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:  # pragma: no cover - best effort
         logger.debug("failed to prepare cache directory for bundled embedder: %s", exc)
-        return None, "bundled_embedder_cache_unavailable", str(exc)
+        return None, "bundled_embedder_cache_unavailable", str(exc), None
 
     target_dir = cache_dir / "menace-bundled" / "tiny-distilroberta-base"
     sentinel = target_dir / "config.json"
     if not sentinel.exists():
         tmp_dir = target_dir.with_suffix(".tmp")
         try:
+            if target_dir.exists():
+                logger.warning(
+                    "bundled embedder cache missing sentinel; clearing invalid directory",
+                    extra={
+                        "archive": str(archive),
+                        "target_dir": str(target_dir),
+                        "sentinel": str(sentinel),
+                    },
+                )
+                _trace(
+                    "bundled_embedder.cache_invalid",
+                    archive=str(archive),
+                    target_dir=str(target_dir),
+                    sentinel=str(sentinel),
+                )
+                shutil.rmtree(target_dir, ignore_errors=True)
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -599,11 +617,23 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
                 str(exc),
                 f"archive={archive}",
                 f"target_dir={target_dir}",
+                f"sentinel={sentinel}",
             ]
             if cache_base is not None:
                 error_parts.append(f"cache_base={cache_base}")
             error_parts.append(f"hint={remediation_hint}")
             error_detail = "; ".join(error_parts)
+            logger.warning(
+                "bundled embedder extraction failed; archive=%s target_dir=%s sentinel=%s",
+                archive,
+                target_dir,
+                sentinel,
+                extra={
+                    "archive": str(archive),
+                    "target_dir": str(target_dir),
+                    "sentinel": str(sentinel),
+                },
+            )
             logger.exception(
                 "bundled_embedder_extract_failed: %s (source=%s dest_cache=%s). Hint: %s",
                 exc,
@@ -616,16 +646,31 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
                     "cache_dir": str(cache_dir),
                     "target_dir": str(target_dir),
                     "tmp_dir": str(tmp_dir),
+                    "sentinel": str(sentinel),
                     "env_transformers_cache": os.getenv("TRANSFORMERS_CACHE"),
                     "env_hf_home": os.getenv("HF_HOME"),
                     "remediation_hint": remediation_hint,
                     "exception": repr(exc),
                 },
             )
+            _trace(
+                "bundled_embedder.extract_failed",
+                archive=str(archive),
+                target_dir=str(target_dir),
+                sentinel=str(sentinel),
+                error=str(exc),
+            )
             with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            return None, "bundled_embedder_extract_failed", error_detail
-    return target_dir, None, None
+            error_details = {
+                "archive": str(archive),
+                "target_dir": str(target_dir),
+                "sentinel": str(sentinel),
+                "cache_dir": str(cache_dir),
+                "tmp_dir": str(tmp_dir),
+            }
+            return None, "bundled_embedder_extract_failed", error_detail, error_details
+    return target_dir, None, None, None
 
 
 def _bundled_extract_timeout() -> float:
@@ -1059,7 +1104,7 @@ def _load_bundled_embedder() -> Any | None:
         if _BUNDLED_EMBEDDER is not None:
             return _BUNDLED_EMBEDDER
         try:
-            model_dir, prep_reason, prep_error = _prepare_bundled_model_dir()
+            model_dir, prep_reason, prep_error, prep_details = _prepare_bundled_model_dir()
             if model_dir is None:
                 if prep_reason == "bundled_embedder_extract_failed":
                     remote_fallback = _try_remote_sentence_transformer_fallback(
@@ -1080,6 +1125,7 @@ def _load_bundled_embedder() -> Any | None:
                             "ready",
                             reason="bundled_embedder_fallback",
                             error=prep_error,
+                            details=prep_details,
                         )
                         _BUNDLED_EMBEDDER = remote_fallback
                         return _BUNDLED_EMBEDDER
@@ -1087,6 +1133,7 @@ def _load_bundled_embedder() -> Any | None:
                         "ready",
                         reason="bundled_embedder_fallback",
                         error=prep_error,
+                        details=prep_details,
                     )
                     _BUNDLED_EMBEDDER = _build_stub_embedder()
                     return _BUNDLED_EMBEDDER
