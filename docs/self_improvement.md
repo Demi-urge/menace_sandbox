@@ -40,6 +40,26 @@ and exits with a non-zero status when initialisation fails.
 | `ADAPTIVE_ROI_RETRAIN_INTERVAL` | cycles between adaptive ROI model retraining | `20` |
 | `METRICS_PORT` | start metrics server on this port when set | unset (disabled) |
 
+### Self-improvement stop/shutdown timeouts
+
+Use these to control how long the orchestrator waits for a cycle to stop and
+for the loop to shut down cleanly. Increase them when shutdown involves heavy
+cleanup, slow I/O, or long-running background tasks.
+
+| Variable | Controls | Default |
+| --- | --- | --- |
+| `SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS` | seconds to wait for a cycle stop signal to be honored before treating it as slow/stuck | `5` |
+| `SELF_IMPROVEMENT_LOOP_SHUTDOWN_TIMEOUT_SECONDS` | seconds to wait for the self-improvement loop to shut down after requesting stop | `5` (inherits stop timeout) |
+| `SELF_IMPROVEMENT_CYCLE_JOIN_TIMEOUT_SECONDS` | seconds to wait when joining cycle threads during shutdown | `5` (max of `1` and stop timeout) |
+
+Example: tune soft-stop behavior for a slower shutdown.
+
+```bash
+export SELF_IMPROVEMENT_CYCLE_STOP_TIMEOUT_SECONDS=15
+export SELF_IMPROVEMENT_LOOP_SHUTDOWN_TIMEOUT_SECONDS=30
+export SELF_IMPROVEMENT_CYCLE_JOIN_TIMEOUT_SECONDS=20
+```
+
 ## Monitoring metrics and logs
 
 Set `METRICS_PORT` to expose Prometheus gauges via
@@ -75,4 +95,3 @@ validation passes. This allows rapid remediation without a full restart.
 
 See [self_coding_engine](self_coding_engine.md) and
 [sandbox_self_improvement](sandbox_self_improvement.md) for more details.
-
