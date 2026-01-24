@@ -2437,6 +2437,7 @@ def start_self_improvement_cycle(
                     async_event.set()
 
             async def _main() -> None:
+                self._loop_started.set()
                 self._task = asyncio.create_task(_run_cycle())
                 self._heartbeat_task = asyncio.create_task(_loop_heartbeat())
                 self._stop_task = asyncio.create_task(_await_stop())
@@ -2517,7 +2518,6 @@ def start_self_improvement_cycle(
             loop = runner.get_loop()
             self._loop = loop
             asyncio.set_event_loop(loop)
-            loop.call_soon(self._loop_started.set)
             self._async_stop_event = asyncio.Event()
             try:
                 self._run_until_complete.set()
