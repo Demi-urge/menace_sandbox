@@ -2958,6 +2958,14 @@ def start_self_improvement_cycle(
             try:
                 effective_timeout = stop_timeout if wait_on_stop else 0.0
                 current_thread.stop(timeout=effective_timeout)
+            except asyncio.CancelledError:
+                logger.info(
+                    "cycle stop cancelled during watchdog restart",
+                    extra=log_record(
+                        reason=reason,
+                        stop_timeout_seconds=effective_timeout,
+                    ),
+                )
             except Exception:
                 logger.exception(
                     "cycle stop failed during restart",
