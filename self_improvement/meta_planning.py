@@ -2527,7 +2527,35 @@ def start_self_improvement_cycle(
                     *,
                     step: str,
                 ) -> bool:
+                    def _close_or_cancel(awaitable: Awaitable[Any]) -> None:
+                        if asyncio.iscoroutine(awaitable):
+                            awaitable.close()
+                            return
+                        if isinstance(awaitable, asyncio.Future):
+                            awaitable.cancel()
+                            return
+                        try:
+                            task = asyncio.ensure_future(awaitable, loop=loop)
+                        except (RuntimeError, ValueError):
+                            return
+                        task.cancel()
+
                     if loop.is_closed() or loop.is_running():
+                        try:
+                            awaitable = make_coro()
+                        except Exception as exc:
+                            logger.warning(
+                                "self improvement cleanup coroutine failed to materialize",
+                                extra=log_record(
+                                    step=step,
+                                    loop_running=loop.is_running(),
+                                    loop_closed=loop.is_closed(),
+                                    thread_ident=self._thread.ident,
+                                    error=str(exc),
+                                ),
+                            )
+                            return False
+                        _close_or_cancel(awaitable)
                         logger.warning(
                             "self improvement loop unavailable for cleanup; skipping",
                             extra=log_record(
