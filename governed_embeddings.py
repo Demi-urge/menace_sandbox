@@ -592,9 +592,16 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
                 shutil.rmtree(target_dir, ignore_errors=True)
             tmp_dir.rename(target_dir)
         except Exception as exc:
+            remediation_hint = (
+                "Check write permissions for the cache directory or clear the cache at "
+                f"{cache_dir / 'menace-bundled'}."
+            )
             logger.exception(
-                "bundled_embedder_extract_failed: %s",
+                "bundled_embedder_extract_failed: %s (source=%s dest_cache=%s). Hint: %s",
                 exc,
+                archive,
+                target_dir,
+                remediation_hint,
                 extra={
                     "archive": str(archive),
                     "archive_name": archive.name,
@@ -603,10 +610,21 @@ def _prepare_bundled_model_dir() -> tuple[Path | None, str | None, str | None]:
                     "tmp_dir": str(tmp_dir),
                     "env_transformers_cache": os.getenv("TRANSFORMERS_CACHE"),
                     "env_hf_home": os.getenv("HF_HOME"),
+                    "remediation_hint": remediation_hint,
+                    "exception": repr(exc),
                 },
             )
             _signal_vector_readiness_warning(
-                "bundled_embedder_extract_failed", error=str(exc)
+                "bundled_embedder_extract_failed",
+                error=str(exc),
+                details={
+                    "source_path": str(archive),
+                    "cache_dir": str(cache_dir),
+                    "target_dir": str(target_dir),
+                    "tmp_dir": str(tmp_dir),
+                    "remediation_hint": remediation_hint,
+                    "exception": repr(exc),
+                },
             )
             with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -634,20 +652,29 @@ def _bundled_extract_timeout() -> float:
     return parsed
 
 
-def _signal_vector_readiness_failure(reason: str, *, error: str | None = None) -> None:
-    _update_vector_readiness_status("failed", reason=reason, error=error)
+def _signal_vector_readiness_failure(
+    reason: str, *, error: str | None = None, details: Mapping[str, object] | None = None
+) -> None:
+    _update_vector_readiness_status("failed", reason=reason, error=error, details=details)
 
-
-def _signal_vector_readiness_warning(reason: str, *, error: str | None = None) -> None:
+def _signal_vector_readiness_warning(
+    reason: str, *, error: str | None = None, details: Mapping[str, object] | None = None
+) -> None:
     _update_vector_readiness_status(
         "vector_seeding_degraded",
         reason=reason,
         error=error,
+        details=details,
     )
 
 
 def _update_vector_readiness_status(
-    status: str, *, remaining: float | None = None, reason: str | None = None, error: str | None = None
+    status: str,
+    *,
+    remaining: float | None = None,
+    reason: str | None = None,
+    error: str | None = None,
+    details: Mapping[str, object] | None = None,
 ) -> None:
     try:  # pragma: no cover - defensive best effort
         from bootstrap_timeout_policy import emit_bootstrap_heartbeat, read_bootstrap_heartbeat
@@ -686,6 +713,8 @@ def _update_vector_readiness_status(
         detail["reason"] = reason
     if error:
         detail["error"] = error
+    if details:
+        detail["details"] = dict(details)
     if remaining is not None:
         detail["remaining"] = max(0.0, remaining)
     component_readiness["vector_seeding"] = dict(detail)
