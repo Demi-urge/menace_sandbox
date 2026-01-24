@@ -277,6 +277,7 @@ logger = logging.getLogger(__name__)
 _VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
 _VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
 _VECTOR_DEGRADED_BOOT_ENV = "ALLOW_VECTOR_DEGRADED_BOOT"
+_EMBEDDER_DEGRADED_BOOT_ENV = "MENACE_ALLOW_EMBEDDER_DEGRADED"
 
 
 def _vector_bootstrap_disabled() -> bool:
@@ -291,7 +292,11 @@ def _vector_bootstrap_disabled() -> bool:
 
 def _vector_degraded_boot_allowed() -> bool:
     raw_allow = os.getenv(_VECTOR_DEGRADED_BOOT_ENV, "").strip().lower()
-    return raw_allow in {"1", "true", "yes", "on"}
+    raw_embedder_allow = os.getenv(_EMBEDDER_DEGRADED_BOOT_ENV, "").strip().lower()
+    return (
+        raw_allow in {"1", "true", "yes", "on"}
+        or raw_embedder_allow in {"1", "true", "yes", "on"}
+    )
 
 
 def _bootstrap_failure_detail(probe) -> str | None:
@@ -356,6 +361,7 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> str | 
                 extra={
                     "event": "bootstrap-vector-degraded",
                     "degraded_env": os.getenv(_VECTOR_DEGRADED_BOOT_ENV),
+                    "embedder_degraded_env": os.getenv(_EMBEDDER_DEGRADED_BOOT_ENV),
                 },
             )
             return failure_detail
@@ -378,6 +384,7 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> str | 
                     extra={
                         "event": "bootstrap-vector-degraded",
                         "degraded_env": os.getenv(_VECTOR_DEGRADED_BOOT_ENV),
+                        "embedder_degraded_env": os.getenv(_EMBEDDER_DEGRADED_BOOT_ENV),
                     },
                 )
                 return failure_detail
@@ -402,6 +409,7 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> str | 
                 extra={
                     "event": "bootstrap-vector-degraded",
                     "degraded_env": os.getenv(_VECTOR_DEGRADED_BOOT_ENV),
+                    "embedder_degraded_env": os.getenv(_EMBEDDER_DEGRADED_BOOT_ENV),
                 },
             )
             return "bootstrap timed out"
@@ -484,6 +492,17 @@ class GPTMemoryManager(GPTMemoryInterface):
         self.vector_service = vector_service
         if self.vector_service is None and embedder is not None:
             self.vector_service = SharedVectorService(embedder)
+        requires_vectors = embedder is not None or self.vector_service is not None
+        if requires_vectors:
+            degraded_reason = _ensure_bootstrap_ready("GPTMemoryManager")
+            self._bootstrap_checked = True
+            if degraded_reason:
+                self._mark_degraded(degraded_reason)
+        else:
+            logger.warning(
+                "GPTMemoryManager proceeding without embeddings; vector seeding unavailable",
+                extra={"event": "gpt-memory-embeddings-disabled"},
+            )
         self._ensure_schema()
 
     # ------------------------------------------------------------------ utils
