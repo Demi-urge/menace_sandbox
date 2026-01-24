@@ -319,9 +319,12 @@ def _bootstrap_failure_detail(probe) -> str | None:
         if isinstance(component_readiness, Mapping):
             meta = component_readiness.get(component)
             if isinstance(meta, Mapping):
-                reason = meta.get("reason") or meta.get("error")
-                if reason:
-                    detail = str(reason)
+                reason = meta.get("reason")
+                error = meta.get("error")
+                if reason and error:
+                    detail = f"{reason}: {error}"
+                elif reason or error:
+                    detail = str(reason or error)
         detail = detail or "bootstrap component reported failure"
         return f"{component} unavailable: {detail}"
 
@@ -389,7 +392,8 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> str | 
                 )
                 return failure_detail
             raise RuntimeError(
-                f"{component} cannot start because bootstrap failed: {failure_detail}"
+                f"{component} cannot start because bootstrap failed: {failure_detail} "
+                f"(error: {exc})"
             ) from exc
         if probe.heartbeat is None:
             logger.warning(
@@ -416,7 +420,7 @@ def _ensure_bootstrap_ready(component: str, *, timeout: float = 150.0) -> str | 
 
         raise RuntimeError(
             f"{component} cannot start until bootstrap readiness clears: "
-            f"{readiness.describe()}"
+            f"{readiness.describe()} (error: {exc})"
         ) from exc
 
 
