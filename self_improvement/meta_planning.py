@@ -2405,14 +2405,27 @@ def start_self_improvement_cycle(
             if "meta_executor" in signature(self_improvement_cycle).parameters:
                 kwargs["meta_executor"] = meta_executor
             print("💡 SI-9: scheduling self-improvement cycle coroutine")
+            heartbeat_log_interval = 180.0
+            last_heartbeat_log = 0.0
 
             async def _loop_heartbeat() -> None:
+                nonlocal last_heartbeat_log
                 while True:
                     if self._stop_event.is_set() or self._cancel_requested.is_set():
                         break
-                    monitor_state["last_loop_heartbeat"] = time.monotonic()
+                    monotonic_now = time.monotonic()
+                    monitor_state["last_loop_heartbeat"] = monotonic_now
                     tick_state.tick(increment=False)
                     loop_heartbeat_state.beat()
+                    if monotonic_now - last_heartbeat_log >= heartbeat_log_interval:
+                        last_heartbeat_log = monotonic_now
+                        logger.info(
+                            "Self-improvement loop heartbeat alive.",
+                            extra=log_record(
+                                component=__name__,
+                                last_loop_heartbeat=monotonic_now,
+                            ),
+                        )
                     await asyncio.sleep(self._heartbeat_interval)
 
             async def _run_cycle() -> None:
