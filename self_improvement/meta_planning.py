@@ -2455,6 +2455,19 @@ def start_self_improvement_cycle(
                 self._loop_started.set()
                 self._task = asyncio.create_task(_run_cycle())
                 self._heartbeat_task = asyncio.create_task(_loop_heartbeat())
+                heartbeat_level = (
+                    logging.INFO
+                    if logger.isEnabledFor(logging.INFO)
+                    else logging.WARNING
+                )
+                logger.log(
+                    heartbeat_level,
+                    "Self-improvement loop heartbeat task started.",
+                    extra=log_record(
+                        component=__name__,
+                        heartbeat_interval=self._heartbeat_interval,
+                    ),
+                )
                 self._stop_task = asyncio.create_task(_await_stop())
                 done, pending = await asyncio.wait(
                     {self._task, self._stop_task},
