@@ -2420,7 +2420,7 @@ def start_self_improvement_cycle(
                     if monotonic_now - last_heartbeat_log >= heartbeat_log_interval:
                         last_heartbeat_log = monotonic_now
                         wall_clock_now = time.time()
-                        logger.info(
+                        logger.warning(
                             "Self-improvement loop heartbeat alive.",
                             extra=log_record(
                                 component=__name__,
@@ -2455,13 +2455,7 @@ def start_self_improvement_cycle(
                 self._loop_started.set()
                 self._task = asyncio.create_task(_run_cycle())
                 self._heartbeat_task = asyncio.create_task(_loop_heartbeat())
-                heartbeat_level = (
-                    logging.INFO
-                    if logger.isEnabledFor(logging.INFO)
-                    else logging.WARNING
-                )
-                logger.log(
-                    heartbeat_level,
+                logger.warning(
                     "Self-improvement loop heartbeat task started.",
                     extra=log_record(
                         component=__name__,
