@@ -3189,6 +3189,37 @@ def start_self_improvement_cycle(
                 _record_recovery_metric("self_improvement_stuck_zombie_restart")
         current_thread = monitor_state.get("thread")
         if current_thread is not None:
+            stop_source = "watchdog" if watchdog_triggered else "scheduler"
+            allow_watchdog_stop = _env_bool(
+                "SELF_IMPROVEMENT_ALLOW_WATCHDOG_STOP", False
+            )
+            caller_stack = None
+            try:
+                caller_stack = "".join(traceback.format_stack(limit=6))
+            except Exception:
+                caller_stack = None
+            if not allow_watchdog_stop:
+                logger.warning(
+                    "self improvement cycle stop blocked; explicit user request or shutdown required",
+                    extra=log_record(
+                        reason=reason,
+                        stop_source=stop_source,
+                        stop_allowed=False,
+                        caller_stack=caller_stack,
+                        watchdog_restart_triggered=watchdog_triggered,
+                    ),
+                )
+                return
+            logger.info(
+                "self improvement cycle stop requested by restart controller",
+                extra=log_record(
+                    reason=reason,
+                    stop_source=stop_source,
+                    stop_allowed=True,
+                    caller_stack=caller_stack,
+                    watchdog_restart_triggered=watchdog_triggered,
+                ),
+            )
             try:
                 if wait_on_stop:
                     effective_timeout = (
