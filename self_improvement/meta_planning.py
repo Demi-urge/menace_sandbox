@@ -2419,11 +2419,13 @@ def start_self_improvement_cycle(
                     loop_heartbeat_state.beat()
                     if monotonic_now - last_heartbeat_log >= heartbeat_log_interval:
                         last_heartbeat_log = monotonic_now
+                        wall_clock_now = time.time()
                         logger.info(
                             "Self-improvement loop heartbeat alive.",
                             extra=log_record(
                                 component=__name__,
                                 last_loop_heartbeat=monotonic_now,
+                                last_loop_heartbeat_timestamp=wall_clock_now,
                             ),
                         )
                     await asyncio.sleep(self._heartbeat_interval)
