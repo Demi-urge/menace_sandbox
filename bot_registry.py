@@ -283,15 +283,15 @@ def _get_patch_provenance_service_cls() -> type | None:
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _REGISTERED_BOTS: dict[str, dict[str, str]] = {
     "HierarchyAssessmentBot": {
-        "module_path": "menace_sandbox.hierarchy_assessment_bot",
+        "module_path": "menace.hierarchy_assessment_bot",
         "class_name": "HierarchyAssessmentBot",
     },
     "InformationSynthesisBot": {
-        "module_path": "menace_sandbox.information_synthesis_bot",
+        "module_path": "menace.information_synthesis_bot",
         "class_name": "InformationSynthesisBot",
     },
     "TaskValidationBot": {
-        "module_path": "menace_sandbox.task_validation_bot",
+        "module_path": "menace.task_validation_bot",
         "class_name": "TaskValidationBot",
     },
     "TaskHandoffBot": {
@@ -307,7 +307,7 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "class_name": "BotDevelopmentBot",
     },
     "BotPlanningBot": {
-        "module_path": "menace_sandbox.bot_planning_bot",
+        "module_path": "menace.bot_planning_bot",
         "class_name": "BotPlanningBot",
     },
     "BotTestingBot": {
@@ -375,8 +375,16 @@ _REGISTERED_BOTS: dict[str, dict[str, str]] = {
         "class_name": "FutureSynergySafetyRatingBot",
     },
     "WorkflowEvolutionBot": {
-        "module_path": "menace_sandbox.workflow_evolution_bot",
+        "module_path": "menace.workflow_evolution_bot",
         "class_name": "WorkflowEvolutionBot",
+    },
+    "ChatGPTEnhancementBot": {
+        "module_path": "menace.chatgpt_enhancement_bot",
+        "class_name": "ChatGPTEnhancementBot",
+    },
+    "_CapitalManagementBot": {
+        "module_path": "menace.capital_management_bot",
+        "class_name": "_CapitalManagementBot",
     },
     "FutureSynergyRiskIndexBot": {
         "module_path": "menace_sandbox.prediction_manager_bot",
