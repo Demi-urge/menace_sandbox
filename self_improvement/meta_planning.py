@@ -2384,6 +2384,10 @@ def start_self_improvement_cycle(
         def _run(self) -> None:
             from inspect import signature
 
+            logger = get_logger(__name__)
+            if logger.level == logging.NOTSET or logger.level > logging.WARNING:
+                logger.setLevel(logging.WARNING)
+
             print("💡 SI-8: starting self-improvement event loop")
             monitor_state["loop_heartbeat_started"] = time.monotonic()
 
@@ -2410,25 +2414,32 @@ def start_self_improvement_cycle(
 
             async def _loop_heartbeat() -> None:
                 nonlocal last_heartbeat_log
-                while True:
-                    if self._stop_event.is_set() or self._cancel_requested.is_set():
-                        break
-                    monotonic_now = time.monotonic()
-                    monitor_state["last_loop_heartbeat"] = monotonic_now
-                    tick_state.tick(increment=False)
-                    loop_heartbeat_state.beat()
-                    if monotonic_now - last_heartbeat_log >= heartbeat_log_interval:
-                        last_heartbeat_log = monotonic_now
-                        wall_clock_now = time.time()
-                        logger.warning(
-                            "Self-improvement loop heartbeat alive.",
-                            extra=log_record(
-                                component=__name__,
-                                last_loop_heartbeat=monotonic_now,
-                                last_loop_heartbeat_timestamp=wall_clock_now,
-                            ),
-                        )
-                    await asyncio.sleep(self._heartbeat_interval)
+                try:
+                    while True:
+                        if self._stop_event.is_set() or self._cancel_requested.is_set():
+                            break
+                        monotonic_now = time.monotonic()
+                        monitor_state["last_loop_heartbeat"] = monotonic_now
+                        tick_state.tick(increment=False)
+                        loop_heartbeat_state.beat()
+                        if monotonic_now - last_heartbeat_log >= heartbeat_log_interval:
+                            last_heartbeat_log = monotonic_now
+                            wall_clock_now = time.time()
+                            logger.warning(
+                                "Self-improvement loop heartbeat alive.",
+                                extra=log_record(
+                                    component=__name__,
+                                    last_loop_heartbeat=monotonic_now,
+                                    last_loop_heartbeat_timestamp=wall_clock_now,
+                                ),
+                            )
+                        await asyncio.sleep(self._heartbeat_interval)
+                except Exception:
+                    logger.exception(
+                        "Self-improvement loop heartbeat terminated due to exception.",
+                        extra=log_record(component=__name__),
+                    )
+                    raise
 
             async def _run_cycle() -> None:
                 await self_improvement_cycle(workflow_plan, **kwargs)
@@ -2455,6 +2466,13 @@ def start_self_improvement_cycle(
                 self._loop_started.set()
                 self._task = asyncio.create_task(_run_cycle())
                 self._heartbeat_task = asyncio.create_task(_loop_heartbeat())
+                logger.warning(
+                    "Self-improvement loop heartbeat task created.",
+                    extra=log_record(
+                        component=__name__,
+                        heartbeat_task_id=id(self._heartbeat_task),
+                    ),
+                )
                 logger.warning(
                     "Self-improvement loop heartbeat task started.",
                     extra=log_record(
