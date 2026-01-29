@@ -256,6 +256,7 @@ def run_generation(task: dict[str, object]) -> str:
     banned_base_names = {"builtins", "__builtins__"}
     banned_dynamic_call_names = {"__import__", "import_module"}
     banned_module_attrs = {"import_module", "reload"}
+    banned_symbol_names = banned_builtins | banned_dynamic_call_names | banned_module_attrs
     banned_reflection_calls = {"getattr", "setattr", "globals", "locals", "vars", "dir"}
     banned_aliases: set[str] = set()
     banned_module_aliases: set[str] = set()
@@ -279,6 +280,12 @@ def run_generation(task: dict[str, object]) -> str:
             if module_base in denied_modules:
                 return fallback_script
             for alias in node.names:
+                if alias.name in banned_symbol_names:
+                    return fallback_script
+                if alias.asname and alias.asname in banned_symbol_names:
+                    return fallback_script
+                if module_name in banned_base_names and alias.name in banned_builtins:
+                    return fallback_script
                 if alias.asname and module_base in banned_base_names:
                     banned_aliases.add(alias.asname)
                     banned_module_aliases.add(alias.asname)
@@ -315,7 +322,7 @@ def run_generation(task: dict[str, object]) -> str:
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
-                if func.id in banned_dynamic_call_names:
+                if func.id in banned_symbol_names:
                     return fallback_script
                 if func.id in banned_aliases:
                     return fallback_script
