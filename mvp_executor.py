@@ -8,6 +8,64 @@ import sys
 import tempfile
 from typing import Tuple
 
+DENIED_IMPORTS: frozenset[str] = frozenset(
+    {
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "pathlib",
+        "importlib",
+        "ctypes",
+        "inspect",
+        "signal",
+        "resource",
+        "multiprocessing",
+        "asyncio",
+        "threading",
+    }
+)
+
+
+def _blocked_import_message(module_name: str) -> str:
+    """Return a deterministic stderr message for blocked imports."""
+    return f"Blocked import: {module_name}. Execution was not attempted."
+
+
+def _is_denied_module(module_name: str, denied: frozenset[str]) -> bool:
+    """Return True when the module is denied or a submodule of a denied module."""
+    return any(
+        module_name == denied_name or module_name.startswith(f"{denied_name}.")
+        for denied_name in denied
+    )
+
+
+def _parse_and_reject_dangerous_imports(code: str) -> Tuple[ast.Module | None, str | None]:
+    """Parse code and detect dangerous imports via ast.Import/ast.ImportFrom.
+
+    Returns a tuple of (parsed_module, stderr_message). The stderr message is
+    populated for syntax errors or blocked imports, and execution should not
+    be attempted when it is present.
+    """
+    try:
+        parsed = ast.parse(code, filename="generated.py")
+    except SyntaxError as exc:
+        message = f"SyntaxError: {exc.msg} (line {exc.lineno}, column {exc.offset})"
+        return None, message
+
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_denied_module(alias.name, DENIED_IMPORTS):
+                    return None, _blocked_import_message(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is None:
+                continue
+            if _is_denied_module(node.module, DENIED_IMPORTS):
+                return None, _blocked_import_message(node.module)
+
+    return parsed, None
+
 
 def execute_generated_code(code: str) -> Tuple[str, str]:
     """Execute generated Python code in a constrained subprocess.
@@ -22,45 +80,10 @@ def execute_generated_code(code: str) -> Tuple[str, str]:
         with open(code_path, "w", encoding="utf-8") as handle:
             handle.write(code)
 
-        try:
-            parsed = ast.parse(code, filename="generated.py")
-        except SyntaxError as exc:
-            stderr_text = (
-                f"SyntaxError: {exc.msg} (line {exc.lineno}, column {exc.offset})"
-            )
+        _, parse_error = _parse_and_reject_dangerous_imports(code)
+        if parse_error:
+            stderr_text = parse_error
             return ("", stderr_text.replace("\r\n", "\n").replace("\r", "\n"))
-
-        disallowed = {
-            "os",
-            "sys",
-            "subprocess",
-            "socket",
-            "pathlib",
-            "importlib",
-            "ctypes",
-            "resource",
-            "multiprocessing",
-            "signal",
-            "inspect",
-            "builtins",
-            "threading",
-            "asyncio",
-            "selectors",
-        }
-        for node in ast.walk(parsed):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    root_name = alias.name.split(".", 1)[0]
-                    if root_name in disallowed:
-                        stderr_text = f"Disallowed import detected: {root_name}"
-                        return ("", stderr_text.replace("\r\n", "\n").replace("\r", "\n"))
-            elif isinstance(node, ast.ImportFrom):
-                if node.module is None:
-                    continue
-                root_name = node.module.split(".", 1)[0]
-                if root_name in disallowed:
-                    stderr_text = f"Disallowed import detected: {root_name}"
-                    return ("", stderr_text.replace("\r\n", "\n").replace("\r", "\n"))
 
         def apply_limits() -> None:
             try:
