@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 from typing import Any, Callable
 
 
@@ -137,25 +138,123 @@ def run_generation(task: dict[str, object]) -> str:
     except Exception:
         return fallback_script
 
-    banned_modules = {
-        "ctypes",
-        "ftplib",
-        "http",
-        "importlib",
-        "io",
-        "openai",
+    stdlib_allowlist = getattr(sys, "stdlib_module_names", None)
+    if stdlib_allowlist is None:
+        stdlib_allowlist = {
+            "__future__",
+            "_ast",
+            "_thread",
+            "abc",
+            "argparse",
+            "array",
+            "ast",
+            "base64",
+            "binascii",
+            "bisect",
+            "builtins",
+            "calendar",
+            "collections",
+            "cmath",
+            "contextlib",
+            "copy",
+            "csv",
+            "dataclasses",
+            "datetime",
+            "decimal",
+            "difflib",
+            "dis",
+            "enum",
+            "errno",
+            "fnmatch",
+            "fractions",
+            "functools",
+            "gc",
+            "getopt",
+            "getpass",
+            "gettext",
+            "glob",
+            "hashlib",
+            "heapq",
+            "hmac",
+            "html",
+            "inspect",
+            "io",
+            "itertools",
+            "json",
+            "linecache",
+            "locale",
+            "logging",
+            "math",
+            "operator",
+            "os",
+            "pathlib",
+            "pickle",
+            "platform",
+            "pprint",
+            "random",
+            "re",
+            "reprlib",
+            "secrets",
+            "shlex",
+            "shutil",
+            "signal",
+            "statistics",
+            "string",
+            "struct",
+            "tempfile",
+            "subprocess",
+            "sys",
+            "textwrap",
+            "threading",
+            "time",
+            "traceback",
+            "types",
+            "typing",
+            "uuid",
+            "warnings",
+            "weakref",
+            "asyncio",
+            "ftplib",
+            "http",
+            "imaplib",
+            "poplib",
+            "selectors",
+            "smtplib",
+            "socket",
+            "ssl",
+            "telnetlib",
+            "urllib",
+        }
+
+    filesystem_modules = {
+        "glob",
         "os",
         "pathlib",
         "shutil",
+        "tempfile",
+    }
+    network_modules = {
+        "asyncio",
+        "ftplib",
+        "http",
+        "imaplib",
+        "poplib",
+        "requests",
+        "selectors",
         "smtplib",
         "socket",
         "ssl",
+        "telnetlib",
+        "urllib",
+    }
+    extra_denied_modules = {
+        "ctypes",
+        "importlib",
         "subprocess",
         "sys",
-        "tempfile",
-        "urllib",
         "xmlrpc",
     }
+    denied_modules = filesystem_modules | network_modules | extra_denied_modules
     banned_builtins = {"open", "eval", "exec", "compile", "__import__", "input"}
     banned_base_names = {"builtins", "__builtins__"}
     banned_dynamic_call_names = {"__import__", "import_module"}
@@ -167,7 +266,9 @@ def run_generation(task: dict[str, object]) -> str:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 base_name = alias.name.split(".")[0]
-                if base_name in banned_modules:
+                if base_name not in stdlib_allowlist:
+                    return fallback_script
+                if base_name in denied_modules:
                     return fallback_script
                 if alias.asname and base_name in banned_base_names:
                     banned_aliases.add(alias.asname)
@@ -175,7 +276,9 @@ def run_generation(task: dict[str, object]) -> str:
         if isinstance(node, ast.ImportFrom):
             module_name = node.module or ""
             module_base = module_name.split(".")[0]
-            if module_base in banned_modules:
+            if module_base not in stdlib_allowlist:
+                return fallback_script
+            if module_base in denied_modules:
                 return fallback_script
             for alias in node.names:
                 if alias.asname and module_base in banned_base_names:
@@ -187,7 +290,7 @@ def run_generation(task: dict[str, object]) -> str:
             return fallback_script
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name):
-                if node.value.id in banned_modules:
+                if node.value.id in denied_modules:
                     return fallback_script
                 if node.value.id in banned_base_names:
                     if node.attr in banned_builtins:

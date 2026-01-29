@@ -69,6 +69,9 @@ def test_run_generation_uses_internal_wrapper_resolver(monkeypatch, task):
         "import subprocess\nprint('hi')",
         "import importlib\nprint('hi')",
         "import ssl\nprint('hi')",
+        "import numpy\nprint('hi')",
+        "import tempfile\nprint('hi')",
+        "import ftplib\nprint('hi')",
     ],
 )
 def test_run_generation_rejects_unsafe_imports(monkeypatch, unsafe_code):
