@@ -293,7 +293,7 @@ def run_generation(task: dict[str, object]) -> str:
         "sys",
         "xmlrpc",
     }
-    denied_modules = filesystem_modules | network_modules | extra_denied_modules
+    denied_modules = filesystem_modules | network_modules | extra_denied_modules | {"builtins"}
     banned_builtins = {"open", "eval", "exec", "compile", "__import__", "input"}
     banned_base_names = {"builtins", "__builtins__"}
     banned_dynamic_call_names = {"__import__", "import_module"}
@@ -354,11 +354,8 @@ def run_generation(task: dict[str, object]) -> str:
                 if node.value.id in denied_modules:
                     return fallback_code
                 if node.value.id in banned_base_names:
-                    if node.attr in banned_builtins:
-                        return fallback_code
-                    if node.attr in banned_builtin_attrs:
-                        return fallback_code
-                if node.value.id in banned_aliases and node.attr in banned_builtin_attrs:
+                    return fallback_code
+                if node.value.id in banned_aliases:
                     return fallback_code
                 if node.value.id in banned_module_aliases:
                     return fallback_code
