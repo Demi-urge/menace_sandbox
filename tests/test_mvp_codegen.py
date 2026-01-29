@@ -38,6 +38,32 @@ def test_run_generation_fallback_on_wrapper_error(monkeypatch):
     assert FALLBACK_MESSAGE in result
 
 
+def test_run_generation_passes_timeout_to_wrapper():
+    received = {}
+
+    def wrapper(_prompt, timeout=None):
+        received["timeout"] = timeout
+        return "print('hi')"
+
+    task = {"objective": "do the thing", "timeout_s": 12, "model_wrapper": wrapper}
+
+    result = mvp_codegen.run_generation(task)
+
+    assert result.strip() == "print('hi')"
+    assert received["timeout"] == 12
+
+
+def test_run_generation_fallback_on_timeout_error():
+    def wrapper(_prompt, timeout=None):
+        raise TimeoutError("too slow")
+
+    task = {"objective": "do the thing", "timeout_s": 3, "model_wrapper": wrapper}
+
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
 @pytest.mark.parametrize(
     "task",
     [
