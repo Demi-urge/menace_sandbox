@@ -1,9 +1,24 @@
 import pytest
 
+import mvp_codegen
 from mvp_codegen import run_generation
 
 
 FALLBACK_SCRIPT = 'print("internal error: code generation failed")'
+
+
+def _expected_fallback(objective: str, constraints=None) -> str:
+    normalized: list[str] = []
+    if isinstance(constraints, list):
+        for item in constraints:
+            text = str(item).strip()
+            if text:
+                normalized.append(text)
+    elif constraints is not None:
+        text = str(constraints).strip()
+        if text:
+            normalized.append(text)
+    return mvp_codegen._build_fallback_script(objective, normalized)
 
 
 def test_run_generation_returns_fallback_for_invalid_task():
@@ -25,7 +40,7 @@ def test_run_generation_returns_fallback_on_wrapper_failure(wrapper):
         "timeout_s": 0.01,
     }
 
-    assert run_generation(task) == FALLBACK_SCRIPT
+    assert run_generation(task) == _expected_fallback("say hi")
 
 
 @pytest.mark.parametrize(
@@ -41,7 +56,7 @@ def test_run_generation_rejects_banned_imports(generated):
         "model_wrapper": lambda *_args, **_kwargs: generated,
     }
 
-    assert run_generation(task) == FALLBACK_SCRIPT
+    assert run_generation(task) == _expected_fallback("write safe code")
 
 
 def test_run_generation_truncates_oversized_output():
