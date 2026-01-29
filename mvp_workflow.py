@@ -166,7 +166,15 @@ def execute_task(task_dict: dict) -> dict:
 
     if spec is not None:
         try:
-            exec_struct = _execution_result_from_dict(execution_result)
+            if execution_error:
+                exec_struct = ExecutionResult(
+                    stdout="",
+                    stderr="",
+                    return_code=1,
+                    error=execution_error,
+                )
+            else:
+                exec_struct = _execution_result_from_dict(execution_result)
             evaluation_result = evaluate_result(spec, exec_struct)
             roi_score = float(evaluation_result.roi_score)
             if evaluation_result.evaluation_error:
@@ -753,8 +761,21 @@ def evaluate_result(task: TaskSpec, exec_result: ExecutionResult) -> EvaluationR
         return_code = exec_result.return_code
         exec_error = exec_result.error or ""
 
+        if return_code is None or exec_error:
+            rationale_parts: list[str] = []
+            if return_code is None:
+                rationale_parts.append("missing return code")
+            if exec_error:
+                rationale_parts.append("execution error present")
+            rationale_parts.append("execution failure")
+            return EvaluationResult(
+                roi_score=0.0,
+                evaluation_error="",
+                rationale=_build_rationale(rationale_parts),
+            )
+
         score = 0.0
-        rationale_parts: list[str] = []
+        rationale_parts = []
 
         if return_code == 0 and not exec_error:
             score += 0.60
