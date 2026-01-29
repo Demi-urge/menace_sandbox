@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import inspect
 import sys
 
 
@@ -69,27 +68,13 @@ def run_generation(task: dict[str, object]) -> str:
     )
 
     timeout_value = task.get("timeout_s") if isinstance(task, dict) else None
-    timeout_param: str | None = None
-    if timeout_value is not None:
-        try:
-            signature = inspect.signature(wrapper)
-        except (TypeError, ValueError):
-            signature = None
-        if signature is not None:
-            params = signature.parameters
-            if "timeout_s" in params:
-                timeout_param = "timeout_s"
-            elif "timeout" in params:
-                timeout_param = "timeout"
-            elif any(
-                param.kind == inspect.Parameter.VAR_KEYWORD
-                for param in params.values()
-            ):
-                timeout_param = "timeout_s"
 
     try:
-        if timeout_param is not None:
-            raw_output = wrapper(prompt_text, **{timeout_param: timeout_value})
+        if timeout_value is not None:
+            try:
+                raw_output = wrapper(prompt_text, timeout_s=timeout_value)
+            except TypeError:
+                raw_output = wrapper(prompt_text)
         else:
             raw_output = wrapper(prompt_text)
     except TimeoutError:
