@@ -121,9 +121,14 @@ def execute_task(task_dict: dict) -> dict:
     duration_ms = _elapsed_ms(start_time, end_time)
     sanitized_output = _sanitize_error_output(execution_output)
 
+    sanitized_objective = _sanitize_error_output(spec.objective) if spec else ""
+    sanitized_constraints = (
+        [_sanitize_error_output(constraint) for constraint in spec.constraints] if spec else []
+    )
+
     return {
-        "objective": spec.objective if spec else "",
-        "constraints": spec.constraints if spec else [],
+        "objective": sanitized_objective,
+        "constraints": sanitized_constraints,
         "generated_code": _sanitize_error_output(generated_code),
         "execution_output": sanitized_output,
         "execution_error": _sanitize_error_output(execution_error),
