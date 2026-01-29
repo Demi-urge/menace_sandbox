@@ -63,15 +63,6 @@ class TaskSpec:
 
 
 @dataclass(frozen=True)
-class GenerationResult:
-    """Structured output for code generation."""
-
-    code: str
-    error: str
-    warnings: list[str]
-
-
-@dataclass(frozen=True)
 class ExecutionResult:
     """Structured output for executing generated code."""
 
@@ -212,73 +203,6 @@ def execute_task(task_dict: dict) -> dict:
         "duration_ms": duration_ms,
         "success": success,
     }
-
-
-def generate_code(task: TaskSpec) -> GenerationResult:
-    """Generate deterministic Python code for the given task.
-
-    Deprecated: use mvp_codegen.run_generation instead.
-
-    Args:
-        task: Normalized TaskSpec input.
-
-    Returns:
-        Structured generation result (code, error, warnings) with no exceptions.
-    """
-    warnings: list[str] = []
-    error = ""
-
-    objective_text = task.objective.strip() if isinstance(task.objective, str) else ""
-    constraints_payload = (
-        [item for item in task.constraints if isinstance(item, str)]
-        if isinstance(task.constraints, list)
-        else []
-    )
-
-    if not objective_text:
-        return GenerationResult(
-            code="",
-            error=sanitize_error_output("objective must be a non-empty string"),
-            warnings=warnings,
-        )
-
-    code_lines = [
-        '"""Auto-generated script."""',
-        f"OBJECTIVE = {objective_text!r}",
-        f"CONSTRAINTS = {constraints_payload!r}",
-        "",
-        "def main() -> None:",
-        "    print('Objective:')",
-        "    print(OBJECTIVE)",
-        "    if CONSTRAINTS:",
-        "        print('Constraints:')",
-        "        for constraint in CONSTRAINTS:",
-        "            print(f'- {constraint}')",
-        "    else:",
-        "        print('Constraints: none')",
-        "",
-        "if __name__ == '__main__':",
-        "    main()",
-        "",
-    ]
-
-    sanitized_code, sanitization_warnings, sanitization_errors = _sanitize_generated_code("\n".join(code_lines))
-    warnings.extend(sanitize_error_output(warning) for warning in sanitization_warnings)
-    if sanitization_errors:
-        error = sanitize_error_output(sanitization_errors[0])
-    elif not sanitized_code.strip():
-        error = sanitize_error_output("generated code is empty after sanitization")
-    return GenerationResult(code=sanitized_code, error=error, warnings=warnings)
-
-
-def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
-    """Backward-compatible wrapper for code generation.
-
-    Deprecated: prefer mvp_codegen.run_generation instead.
-    """
-    result = generate_code(TaskSpec(objective=objective, constraints=constraints))
-    errors = [result.error] if result.error else []
-    return {"generated_code": result.code, "errors": errors, "warnings": result.warnings}
 
 
 def execute_generated_code(code: str) -> ExecutionResult:
