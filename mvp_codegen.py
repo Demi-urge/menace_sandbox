@@ -138,33 +138,75 @@ def run_generation(task: dict[str, object]) -> str:
         return fallback_script
 
     banned_modules = {
+        "ctypes",
+        "ftplib",
+        "http",
+        "importlib",
+        "io",
+        "openai",
         "os",
-        "sys",
-        "subprocess",
-        "socket",
         "pathlib",
         "shutil",
-        "requests",
-        "http",
+        "smtplib",
+        "socket",
+        "ssl",
+        "subprocess",
+        "sys",
+        "tempfile",
         "urllib",
-        "openai",
+        "xmlrpc",
     }
     banned_builtins = {"open", "eval", "exec", "compile", "__import__", "input"}
     banned_base_names = {"builtins", "__builtins__"}
+    banned_dynamic_call_names = {"__import__", "import_module"}
+    banned_module_attrs = {"import_module", "reload"}
+    banned_aliases: set[str] = set()
+    banned_module_aliases: set[str] = set()
 
     for node in ast.walk(parsed):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+        if isinstance(node, ast.Import):
             for alias in node.names:
                 base_name = alias.name.split(".")[0]
                 if base_name in banned_modules:
                     return fallback_script
+                if alias.asname and base_name in banned_base_names:
+                    banned_aliases.add(alias.asname)
+                    banned_module_aliases.add(alias.asname)
+        if isinstance(node, ast.ImportFrom):
+            module_name = node.module or ""
+            module_base = module_name.split(".")[0]
+            if module_base in banned_modules:
+                return fallback_script
+            for alias in node.names:
+                if alias.asname and module_base in banned_base_names:
+                    banned_aliases.add(alias.asname)
+                    banned_module_aliases.add(alias.asname)
         if isinstance(node, ast.Name) and node.id in banned_builtins:
+            return fallback_script
+        if isinstance(node, ast.Name) and node.id in banned_aliases:
             return fallback_script
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name):
                 if node.value.id in banned_modules:
                     return fallback_script
-                if node.value.id in banned_base_names and node.attr in banned_builtins:
+                if node.value.id in banned_base_names:
+                    if node.attr in banned_builtins:
+                        return fallback_script
+                if node.value.id in banned_module_aliases:
                     return fallback_script
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.value, ast.Name) and node.value.id in banned_base_names:
+                return fallback_script
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                if func.id in banned_dynamic_call_names:
+                    return fallback_script
+                if func.id in banned_aliases:
+                    return fallback_script
+            if isinstance(func, ast.Attribute):
+                if isinstance(func.value, ast.Name):
+                    if func.value.id in banned_module_aliases and func.attr in banned_module_attrs:
+                        return fallback_script
 
     return output_text
