@@ -422,7 +422,8 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
 def execute_untrusted(code: str) -> tuple[str, str]:
     """Execute untrusted Python code in a constrained subprocess.
 
-    Returns (stdout, stderr) as normalized strings with predictable error surfaces.
+    Enforces a ~256MB memory cap and a 5s timeout. Returns (stdout, stderr)
+    as normalized strings with predictable error surfaces.
     """
     if os.name not in {"posix", "nt"}:
         return "", "error: unsupported platform for sandboxed execution"

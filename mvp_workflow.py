@@ -42,12 +42,7 @@ from __future__ import annotations
 
 import ast
 import datetime
-import os
 import re
-import shutil
-import subprocess
-import sys
-import tempfile
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -95,7 +90,6 @@ class EvaluationResult:
     rationale: str
 
 
-_EXECUTION_TIMEOUT_S = 5.0
 ALLOWED_IMPORTS = frozenset(
     {
         "collections",
@@ -321,51 +315,19 @@ def execute_generated_code(code: str) -> ExecutionResult:
             error=policy_errors[0],
         )
 
-    if sys.version_info >= (3, 10):
-        interpreter = sys.executable
-    else:
-        interpreter = shutil.which("python3.10")
-        if interpreter is None:
-            return ExecutionResult(
-                stdout="",
-                stderr="",
-                return_code=None,
-                error=sanitize_error_output("python 3.10+ interpreter not available"),
-            )
-
-    temp_path: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as temp_file:
-            temp_file.write(code)
-            temp_path = temp_file.name
-
-        try:
-            result = subprocess.run(
-                [interpreter, temp_path],
-                capture_output=True,
-                text=True,
-                timeout=_EXECUTION_TIMEOUT_S,
-                check=False,
-                encoding="utf-8",
-                errors="replace",
-            )
-            stdout = _strip_ansi(result.stdout or "")
-            stderr = _strip_ansi(result.stderr or "")
-            return ExecutionResult(
-                stdout=stdout,
-                stderr=stderr,
-                return_code=result.returncode,
-                error="",
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = _strip_ansi((exc.stdout or "").strip())
-            stderr = _strip_ansi((exc.stderr or "").strip())
-            return ExecutionResult(
-                stdout=stdout,
-                stderr=stderr,
-                return_code=None,
-                error=sanitize_error_output("execution timed out"),
-            )
+        stdout, stderr = mvp_executor.execute_untrusted(code)
+        stdout = _strip_ansi(stdout)
+        stderr = _strip_ansi(stderr)
+        error = ""
+        if stderr.strip().startswith("error:"):
+            error = sanitize_error_output(stderr.strip())
+        return ExecutionResult(
+            stdout=stdout,
+            stderr=stderr,
+            return_code=None,
+            error=error,
+        )
     except Exception as exc:  # pragma: no cover - defensive
         return ExecutionResult(
             stdout="",
@@ -373,12 +335,6 @@ def execute_generated_code(code: str) -> ExecutionResult:
             return_code=None,
             error=sanitize_exception(exc),
         )
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
 
 
 def _sanitize_generated_code(code: str) -> tuple[str, list[str], list[str]]:
@@ -555,46 +511,6 @@ def _validate_code_policy(code: str) -> list[str]:
     return errors
 
 
-def _narrow_posix_path(path_value: str | None) -> str:
-    if not path_value:
-        return os.defpath
-    default_paths = {path for path in os.defpath.split(os.pathsep) if path}
-    if not default_paths:
-        return path_value
-    narrowed = [path for path in path_value.split(os.pathsep) if path in default_paths]
-    return os.pathsep.join(narrowed) or path_value
-
-
-def _build_restricted_env() -> dict[str, str]:
-    base_env = os.environ.copy()
-    allowed_keys = {
-        "HOME",
-        "LANG",
-        "LC_ALL",
-        "LC_CTYPE",
-        "LOGNAME",
-        "PATH",
-        "TEMP",
-        "TMP",
-        "TMPDIR",
-        "TZ",
-        "USER",
-        "USERNAME",
-    }
-    if os.name == "nt":
-        allowed_keys.update({"ComSpec", "PATHEXT", "SystemRoot", "WINDIR"})
-
-    env = {key: value for key in allowed_keys if (value := base_env.get(key))}
-    if os.name == "nt":
-        if "PATH" in base_env:
-            env["PATH"] = base_env["PATH"]
-    else:
-        env["PATH"] = _narrow_posix_path(base_env.get("PATH"))
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONUNBUFFERED"] = "1"
-    return env
-
-
 def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
     """Execute code in a temporary file and capture sanitized output.
 
@@ -602,7 +518,7 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
 
     Args:
         code: Python source code to execute.
-        timeout_s: Timeout in seconds.
+        timeout_s: Timeout in seconds (ignored; mvp_executor enforces its own limits).
 
     Returns:
         A dictionary with execution output and errors following the unified import policy.
@@ -612,6 +528,7 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
     stderr = ""
     exit_code: int | None = None
     timed_out = False
+    _ = timeout_s
 
     if not code.strip():
         errors.append("code is empty or whitespace-only")
@@ -651,35 +568,11 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
         }
 
     try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            script_path = os.path.join(tmp_dir, "generated_script.py")
-            with open(script_path, "w", encoding="utf-8") as script_file:
-                script_file.write(code)
-
-            restricted_env = _build_restricted_env()
-
-            try:
-                result = subprocess.run(
-                    [sys.executable, script_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_s,
-                    check=False,
-                    env=restricted_env,
-                    encoding="utf-8",
-                    errors="replace",
-                )
-                stdout = _strip_ansi(result.stdout or "")
-                stderr = _strip_ansi(result.stderr or "")
-                exit_code = result.returncode
-
-                if exit_code != 0:
-                    errors.append(sanitize_error_output(_sanitize_error(stderr) or "execution failed"))
-            except subprocess.TimeoutExpired as exc:
-                timed_out = True
-                stdout = _strip_ansi((exc.stdout or "").strip())
-                stderr = _strip_ansi((exc.stderr or "").strip())
-                errors.append(sanitize_error_output("execution timed out"))
+        stdout, stderr = mvp_executor.execute_untrusted(code)
+        stdout = _strip_ansi(stdout)
+        stderr = _strip_ansi(stderr)
+        if stderr.strip().startswith("error:"):
+            errors.append(sanitize_error_output(stderr.strip()))
     except Exception as exc:  # pragma: no cover - defensive
         errors.append(sanitize_exception(exc))
 
