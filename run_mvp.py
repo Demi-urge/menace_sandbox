@@ -14,7 +14,7 @@ def _write_error(message: str, details: str | None = None) -> None:
     payload: dict[str, str] = {"error": sanitized_message}
     if details:
         payload["details"] = mvp_workflow.sanitize_error_output(details)
-    sys.stderr.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def _read_task_file(path: str) -> tuple[dict | None, str | None]:
