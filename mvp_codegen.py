@@ -1,86 +1,108 @@
 """Single-pass code generation with safety constraints."""
 
-import ast
+from __future__ import annotations
+
+from typing import Any
 
 import local_model_wrapper
 
 
-def run_generation(task: dict) -> str:
-    """Generate Python code from a task payload using a single model call.
+def run_generation(task: dict[str, object]) -> str:
+    """Generate safe Python code from a task payload using a single model call.
 
-    The task dictionary may contain an ``objective`` string and optional
-    ``constraints`` list or string. Malformed or missing values are handled
-    defensively, and model errors or unsafe outputs fall back to a harmless
-    placeholder script. The returned value is always UTF-8 text representing
-    Python code.
+    The task must include an ``objective`` string and may include optional
+    ``constraints`` (string or list). The function is deterministic, defensive,
+    and side-effect-free: it validates inputs, builds a strict safety system
+    prompt, invokes the model wrapper exactly once, and sanitizes/truncates the
+    output to safe Python code. On any failure, it returns a minimal placeholder
+    script that prints an internal error message.
     """
     fallback_script = (
-        '"""Safe fallback script."""\n'
+        "\"\"\"Internal error: code generation failed.\"\"\"\n"
         "def main() -> None:\n"
-        "    print('No valid code was generated.')\n\n"
+        "    print('Internal error: code generation failed.')\n\n"
         "if __name__ == '__main__':\n"
         "    main()\n"
     )
+
     if not isinstance(task, dict):
-        task = {}
+        return fallback_script
 
     objective_value = task.get("objective")
-    if isinstance(objective_value, str):
-        objective = objective_value.strip()
-    else:
-        objective = ""
+    if not isinstance(objective_value, str):
+        return fallback_script
+    objective = objective_value.strip()
+    if not objective:
+        return fallback_script
 
     constraints_value = task.get("constraints")
     constraints_list: list[str] = []
     if isinstance(constraints_value, str):
         constraints_list = [line.strip() for line in constraints_value.splitlines() if line.strip()]
     elif isinstance(constraints_value, list):
-        constraints_list = [str(item).strip() for item in constraints_value if isinstance(item, str) and str(item).strip()]
+        constraints_list = [item.strip() for item in constraints_value if isinstance(item, str) and item.strip()]
     elif constraints_value is not None:
         constraints_list = [str(constraints_value).strip()] if str(constraints_value).strip() else []
 
-    safety_instructions = (
-        "You are generating Python code only. "
-        "Do NOT import or use dangerous modules or system interfaces, including "
-        "os, sys, subprocess, socket, pathlib, shlex, shutil, tempfile, or similar. "
-        "Do NOT access the filesystem, spawn processes, execute shell/system calls, "
-        "or make any network requests outside the provided wrapper. "
-        "Avoid eval/exec, dynamic imports, and any reflection that could escape the sandbox."
+    banned_imports = (
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "pathlib",
+        "shlex",
+        "shutil",
+        "tempfile",
+        "ctypes",
+        "importlib",
+        "inspect",
+        "signal",
+        "asyncio",
+        "multiprocessing",
+        "threading",
+        "resource",
+        "builtins",
+        "platform",
+        "selectors",
+        "ssl",
+        "http",
+        "urllib",
+        "requests",
     )
 
-    if objective:
-        objective_section = f"Objective:\n{objective}\n"
-    else:
-        objective_section = "Objective:\nProvide a minimal safe Python script.\n"
+    safety_prompt = (
+        "You must output only plain Python code. "
+        "Never import or use dangerous modules or system interfaces. "
+        "Forbidden imports include: "
+        + ", ".join(banned_imports)
+        + ". "
+        "Do not access the filesystem, environment variables, or network. "
+        "Do not spawn processes, execute shell/system calls, or use reflection. "
+        "Do not use eval/exec/compile, __import__, or dynamic imports. "
+        "Only use safe, deterministic in-memory logic." 
+    )
 
-    if constraints_list:
-        constraints_section = "Constraints:\n" + "\n".join(
-            f"- {item}" for item in constraints_list
-        )
-    else:
-        constraints_section = "Constraints:\n- None provided."
-
+    constraints_section = "\n".join(f"- {item}" for item in constraints_list) if constraints_list else "- None provided."
     prompt_text = (
-        f"{objective_section}\n"
-        f"{constraints_section}\n\n"
+        f"Objective:\n{objective}\n\n"
+        f"Constraints:\n{constraints_section}\n\n"
         "Respond with only valid Python code."
     )
 
-    max_chars = 4000
-    output_text = ""
+    model = task.get("model")
+    tokenizer = task.get("tokenizer")
+    if model is None or tokenizer is None:
+        return fallback_script
 
+    output_text = ""
     try:
-        model = task.get("model")
-        tokenizer = task.get("tokenizer")
-        if model is None or tokenizer is None:
-            return fallback_script
         wrapper = local_model_wrapper.LocalModelWrapper(model, tokenizer)
         prompt_obj = local_model_wrapper.Prompt(
             user=prompt_text,
-            system=safety_instructions,
+            system=safety_prompt,
             metadata={"origin": "mvp_codegen"},
         )
-        raw_output = wrapper.generate(
+        raw_output: Any = wrapper.generate(
             prompt_obj,
             context_builder=None,
             max_new_tokens=256,
@@ -93,39 +115,40 @@ def run_generation(task: dict) -> str:
     except Exception:
         return fallback_script
 
-    if not isinstance(output_text, str):
-        output_text = str(output_text)
+    output_text = str(output_text)
     output_text = output_text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
     output_text = output_text.replace("\r\n", "\n").replace("\r", "\n")
     output_text = "".join(char for char in output_text if char.isprintable() or char in {"\n", "\t"})
 
-    forbidden_modules = {
-        "os",
-        "sys",
-        "subprocess",
-        "socket",
-        "pathlib",
-        "shutil",
-        "ctypes",
-    }
-    forbidden_builtins = {
-        "open",
-        "exec",
-        "eval",
-        "compile",
-        "__import__",
-    }
+    forbidden_modules = set(banned_imports)
+    forbidden_builtins = {"open", "exec", "eval", "compile", "__import__"}
     risky_call_snippets = [
         "os.",
         "sys.",
         "subprocess.",
         "socket.",
         "pathlib.",
+        "shlex.",
         "shutil.",
+        "tempfile.",
         "ctypes.",
+        "importlib.",
+        "inspect.",
+        "signal.",
+        "asyncio.",
+        "multiprocessing.",
+        "threading.",
+        "resource.",
+        "platform.",
+        "selectors.",
+        "ssl.",
+        "http.",
+        "urllib.",
+        "requests.",
         "popen(",
         "system(",
         "shell=true",
+        "__import__(",
     ]
 
     cleaned_lines: list[str] = []
@@ -158,16 +181,14 @@ def run_generation(task: dict) -> str:
     if not cleaned or not any(char.isalnum() for char in cleaned):
         return fallback_script
 
+    max_chars = 4000
     if len(cleaned) > max_chars:
         cutoff = cleaned.rfind("\n", 0, max_chars)
-        if cutoff == -1:
-            cleaned = cleaned[:max_chars].rstrip()
-        else:
-            cleaned = cleaned[:cutoff].rstrip()
+        cleaned = cleaned[: cutoff if cutoff != -1 else max_chars].rstrip()
 
     try:
-        ast.parse(cleaned)
-    except SyntaxError:
+        compile(cleaned, "<generated>", "exec")
+    except Exception:
         return fallback_script
 
     return cleaned
