@@ -7,6 +7,24 @@ import sys
 from typing import Any, Callable
 
 
+def _extract_literal_string(node: ast.AST | None) -> str | None:
+    """Return a literal string value from an AST node if available."""
+    if node is None:
+        return None
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Str):
+        return node.s
+    if isinstance(node, ast.Index):
+        return _extract_literal_string(node.value)
+    return None
+
+
+def _subscript_key(node: ast.Subscript) -> str | None:
+    """Return literal string keys from subscript expressions."""
+    return _extract_literal_string(node.slice)
+
+
 def _get_model_wrapper() -> Callable[[str], Any] | None:
     """Return a callable model wrapper based on configured LLM backends."""
     try:
@@ -259,6 +277,7 @@ def run_generation(task: dict[str, object]) -> str:
     banned_base_names = {"builtins", "__builtins__"}
     banned_dynamic_call_names = {"__import__", "import_module"}
     banned_module_attrs = {"import_module", "reload"}
+    banned_reflection_calls = {"getattr", "setattr", "globals", "locals", "vars", "dir"}
     banned_aliases: set[str] = set()
     banned_module_aliases: set[str] = set()
 
@@ -298,8 +317,15 @@ def run_generation(task: dict[str, object]) -> str:
                 if node.value.id in banned_module_aliases:
                     return fallback_script
         if isinstance(node, ast.Subscript):
+            key = _subscript_key(node)
             if isinstance(node.value, ast.Name) and node.value.id in banned_base_names:
-                return fallback_script
+                if key in banned_builtins:
+                    return fallback_script
+            if isinstance(node.value, ast.Call):
+                call = node.value
+                if isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals", "vars"}:
+                    if key in banned_builtins or key in denied_modules:
+                        return fallback_script
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
@@ -307,6 +333,22 @@ def run_generation(task: dict[str, object]) -> str:
                     return fallback_script
                 if func.id in banned_aliases:
                     return fallback_script
+                if func.id in banned_reflection_calls:
+                    literal = None
+                    if func.id in {"getattr", "setattr"} and len(node.args) >= 2:
+                        literal = _extract_literal_string(node.args[1])
+                        target = node.args[0]
+                        if literal in banned_builtins and isinstance(target, ast.Name):
+                            if target.id in banned_base_names or target.id in banned_aliases:
+                                return fallback_script
+                        if literal in denied_modules and isinstance(target, ast.Name):
+                            if target.id in denied_modules or target.id in banned_module_aliases:
+                                return fallback_script
+                    if func.id == "dir" and node.args:
+                        target = node.args[0]
+                        if isinstance(target, ast.Name):
+                            if target.id in banned_base_names or target.id in denied_modules:
+                                return fallback_script
             if isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name):
                     if func.value.id in banned_module_aliases and func.attr in banned_module_attrs:

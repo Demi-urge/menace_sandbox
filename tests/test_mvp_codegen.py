@@ -93,6 +93,10 @@ def test_run_generation_rejects_unsafe_imports(monkeypatch, unsafe_code):
         "import builtins as b\nprint(b)",
         "from builtins import open as o\nprint(o('x'))",
         "__builtins__['open']('x')",
+        "__builtins__['__import__']('os')",
+        "getattr(__builtins__, 'open')('x', 'w')",
+        "setattr(__builtins__, 'open', None)",
+        "globals()['open']('x')",
         "import_module('os')",
     ],
 )
