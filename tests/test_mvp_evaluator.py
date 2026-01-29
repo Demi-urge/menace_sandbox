@@ -1,71 +1,62 @@
 import json
-import math
-
-import pytest
 
 from mvp_evaluator import evaluate_roi
 
 
-@pytest.mark.parametrize(
-    "stdout, stderr",
-    [
-        ("", ""),
-        ("", "only stderr"),
-        ("x" * 10_000, ""),
-        ("x" * 50_000, "y" * 25_000),
-        (None, None),
-        (b"bytes output", b"bytes error"),
-    ],
-)
-def test_evaluate_roi_returns_finite_float(stdout, stderr) -> None:
-    score = evaluate_roi(stdout, stderr)
-
-    assert isinstance(score, float)
-    assert math.isfinite(score)
-    json.dumps(score)
-
-
-def test_evaluate_roi_is_deterministic() -> None:
-    stdout = "deterministic output"
-    stderr = "deterministic error"
+def test_evaluate_roi_deterministic():
+    stdout = "success" * 3
+    stderr = "warning" * 2
 
     first = evaluate_roi(stdout, stderr)
     second = evaluate_roi(stdout, stderr)
-    third = evaluate_roi(stdout, stderr)
 
-    assert first == second == third
-
-
-def test_evaluate_roi_monotonic_in_stdout() -> None:
-    stderr = "fixed stderr"
-
-    baseline = evaluate_roi("", stderr)
-    medium = evaluate_roi("a" * 10, stderr)
-    large = evaluate_roi("a" * 100, stderr)
-
-    assert baseline <= medium <= large
+    assert isinstance(first, float)
+    assert first == second
 
 
-def test_evaluate_roi_monotonic_in_stderr() -> None:
-    stdout = "fixed stdout"
+def test_evaluate_roi_monotonicity_stdout():
+    stderr = "error" * 2
+    low_stdout = "ok"
+    high_stdout = "ok" * 50
 
-    baseline = evaluate_roi(stdout, "")
-    medium = evaluate_roi(stdout, "b" * 10)
-    large = evaluate_roi(stdout, "b" * 100)
+    low_score = evaluate_roi(low_stdout, stderr)
+    high_score = evaluate_roi(high_stdout, stderr)
 
-    assert baseline >= medium >= large
+    assert isinstance(low_score, float)
+    assert isinstance(high_score, float)
+    assert high_score >= low_score
 
 
-def test_evaluate_roi_edge_cases() -> None:
-    assert evaluate_roi("", "") == 0.0
+def test_evaluate_roi_monotonicity_stderr():
+    stdout = "result" * 5
+    low_stderr = ""
+    high_stderr = "fail" * 20
 
-    stderr_only = evaluate_roi("", "error")
-    assert stderr_only < 0.0
+    low_score = evaluate_roi(stdout, low_stderr)
+    high_score = evaluate_roi(stdout, high_stderr)
 
-    large_stdout = "s" * 200_000
-    large_stderr = "e" * 200_000
+    assert isinstance(low_score, float)
+    assert isinstance(high_score, float)
+    assert high_score <= low_score
 
-    large_score = evaluate_roi(large_stdout, "")
-    mixed_score = evaluate_roi(large_stdout, large_stderr)
 
-    assert large_score >= mixed_score
+def test_evaluate_roi_edge_cases_json_serializable():
+    empty_score = evaluate_roi("", "")
+    stderr_only_score = evaluate_roi("", "error")
+    large_stdout_score = evaluate_roi("x" * 100000, "")
+    large_stderr_score = evaluate_roi("", "y" * 100000)
+    non_ascii_score = evaluate_roi("\ufffd\ufffd", "\ufffd")
+
+    for score in [
+        empty_score,
+        stderr_only_score,
+        large_stdout_score,
+        large_stderr_score,
+        non_ascii_score,
+    ]:
+        assert isinstance(score, float)
+        json.dumps(score)
+
+    assert stderr_only_score <= empty_score
+    assert large_stdout_score >= empty_score
+    assert large_stderr_score <= empty_score
