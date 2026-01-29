@@ -26,6 +26,18 @@ def _build_fallback_script(objective: str, constraints: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _coerce_text(value: object) -> str:
+    """Coerce a value into a safe, stripped string."""
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return ""
+    try:
+        return str(value).strip()
+    except Exception:
+        return ""
+
+
 def run_generation(task: dict[str, object]) -> str:
     """Generate a safe Python script from a task payload with strict safeguards.
 
@@ -35,15 +47,12 @@ def run_generation(task: dict[str, object]) -> str:
     import ast
     import sys
 
-    fallback_script = 'print("internal error: code generation failed")'
+    fallback_script = _build_fallback_script("unspecified objective", [])
 
     if not isinstance(task, dict):
         return fallback_script
 
-    objective_value = task.get("objective")
-    if not isinstance(objective_value, str):
-        return fallback_script
-    objective = objective_value.strip()
+    objective = _coerce_text(task.get("objective"))
     if not objective:
         return fallback_script
 
@@ -51,20 +60,11 @@ def run_generation(task: dict[str, object]) -> str:
     constraints: list[str] = []
     if isinstance(constraints_value, list):
         for item in constraints_value:
-            if isinstance(item, str):
-                text = item.strip()
-            else:
-                try:
-                    text = str(item).strip()
-                except Exception:
-                    continue
+            text = _coerce_text(item)
             if text:
                 constraints.append(text)
     elif constraints_value is not None:
-        try:
-            text = str(constraints_value).strip()
-        except Exception:
-            text = ""
+        text = _coerce_text(constraints_value)
         if text:
             constraints.append(text)
 
