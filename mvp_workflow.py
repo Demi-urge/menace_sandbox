@@ -541,11 +541,6 @@ def contains_exec_or_eval(code: str) -> set[str]:
     return unsafe_calls
 
 
-def _set_if_present(env: dict[str, str], key: str, value: str) -> None:
-    if key in env and env[key]:
-        env[key] = value
-
-
 def _find_utf8_locale(env: dict[str, str]) -> str | None:
     for key in ("LANG", "LC_ALL", "LC_CTYPE"):
         value = env.get(key)
@@ -559,28 +554,12 @@ def _find_utf8_locale(env: dict[str, str]) -> str | None:
 
 def _build_restricted_env() -> dict[str, str]:
     env = os.environ.copy()
-
-    if os.name == "nt":
-        _set_if_present(env, "PYTHONIOENCODING", "utf-8")
-        _set_if_present(env, "PYTHONUNBUFFERED", "1")
-        return env
-
-    path_value = env.get("PATH", "")
-    path_parts = path_value.split(os.pathsep) if path_value else []
-    prepend_parts: list[str] = []
-    for default_path in ("/usr/bin", "/bin"):
-        if default_path not in path_parts and os.path.isdir(default_path):
-            prepend_parts.append(default_path)
-    if prepend_parts:
-        env["PATH"] = os.pathsep.join(prepend_parts + path_parts)
-    elif not path_value:
-        env["PATH"] = os.pathsep.join(["/usr/bin", "/bin"])
-
-    utf8_locale = _find_utf8_locale(env)
-    if utf8_locale:
-        env["LANG"] = utf8_locale
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+    if os.name != "nt":
+        utf8_locale = _find_utf8_locale(env)
+        if utf8_locale:
+            env["LANG"] = utf8_locale
     return env
 
 
