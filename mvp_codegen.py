@@ -253,15 +253,6 @@ def run_generation(task: dict[str, object]) -> str:
     io_file_calls = {"open", "open_code", "FileIO", "BufferedWriter", "BufferedReader", "BufferedRandom", "TextIOWrapper"}
     banned_builtin_attrs = {"__dict__", "__getattribute__"}
 
-    def extract_slice_key(slice_node: ast.AST | None) -> str | None:
-        if isinstance(slice_node, ast.Index):
-            slice_node = slice_node.value
-        if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
-            return slice_node.value
-        if isinstance(slice_node, ast.Str):
-            return slice_node.s
-        return None
-
     for node in ast.walk(parsed):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -310,7 +301,14 @@ def run_generation(task: dict[str, object]) -> str:
                 if node.value.id in banned_module_aliases:
                     return fallback_script
         if isinstance(node, ast.Subscript):
-            key = extract_slice_key(node.slice)
+            key = None
+            slice_node = node.slice
+            if isinstance(slice_node, ast.Index):
+                slice_node = slice_node.value
+            if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
+                key = slice_node.value
+            elif isinstance(slice_node, ast.Str):
+                key = slice_node.s
             if isinstance(node.value, ast.Name) and node.value.id in banned_base_names:
                 if key in banned_builtins:
                     return fallback_script
@@ -322,7 +320,14 @@ def run_generation(task: dict[str, object]) -> str:
                             return fallback_script
             if isinstance(node.value, ast.Subscript):
                 parent = node.value
-                parent_key = extract_slice_key(parent.slice)
+                parent_key = None
+                parent_slice_node = parent.slice
+                if isinstance(parent_slice_node, ast.Index):
+                    parent_slice_node = parent_slice_node.value
+                if isinstance(parent_slice_node, ast.Constant) and isinstance(parent_slice_node.value, str):
+                    parent_key = parent_slice_node.value
+                elif isinstance(parent_slice_node, ast.Str):
+                    parent_key = parent_slice_node.s
                 if parent_key == "__builtins__":
                     if isinstance(parent.value, ast.Call):
                         call = parent.value
