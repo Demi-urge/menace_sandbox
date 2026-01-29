@@ -6,6 +6,7 @@ import ast
 import datetime
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,19 @@ class GenerationResult:
     code: str
     error: str
     warnings: list[str]
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    """Structured output for executing generated code."""
+
+    stdout: str
+    stderr: str
+    return_code: int | None
+    error: str
+
+
+_EXECUTION_TIMEOUT_S = 5.0
 
 
 def execute_task(task_dict: dict) -> dict:
@@ -180,6 +194,110 @@ def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
     result = generate_code(TaskSpec(objective=objective, constraints=constraints))
     errors = [result.error] if result.error else []
     return {"generated_code": result.code, "errors": errors, "warnings": result.warnings}
+
+
+def execute_generated_code(code: str) -> ExecutionResult:
+    """Execute generated code in a temporary file with safety checks."""
+    if not isinstance(code, str) or not code.strip():
+        return ExecutionResult(stdout="", stderr="", return_code=None, error="code is empty or whitespace-only")
+
+    try:
+        parsed = ast.parse(code)
+    except SyntaxError as exc:
+        location = f"line {exc.lineno}, column {exc.offset}" if exc.lineno and exc.offset else "unknown location"
+        message = exc.msg or "invalid syntax"
+        return ExecutionResult(
+            stdout="",
+            stderr="",
+            return_code=None,
+            error=f"syntax error at {location}: {message}",
+        )
+
+    forbidden_imports = {
+        "builtins",
+        "ctypes",
+        "importlib",
+        "inspect",
+        "os",
+        "subprocess",
+        "sys",
+    }
+    forbidden_found = _find_forbidden_imports(parsed, forbidden_imports)
+    if forbidden_found:
+        forbidden_list = ", ".join(sorted(forbidden_found))
+        return ExecutionResult(
+            stdout="",
+            stderr="",
+            return_code=None,
+            error=f"forbidden imports detected: {forbidden_list}",
+        )
+
+    if _find_dynamic_imports(parsed):
+        return ExecutionResult(
+            stdout="",
+            stderr="",
+            return_code=None,
+            error="dynamic import patterns detected",
+        )
+
+    if sys.version_info >= (3, 10):
+        interpreter = sys.executable
+    else:
+        interpreter = shutil.which("python3.10")
+        if interpreter is None:
+            return ExecutionResult(
+                stdout="",
+                stderr="",
+                return_code=None,
+                error="python 3.10+ interpreter not available",
+            )
+
+    temp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as temp_file:
+            temp_file.write(code)
+            temp_path = temp_file.name
+
+        try:
+            result = subprocess.run(
+                [interpreter, temp_path],
+                capture_output=True,
+                text=True,
+                timeout=_EXECUTION_TIMEOUT_S,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+            )
+            stdout = _strip_ansi(result.stdout or "")
+            stderr = _strip_ansi(result.stderr or "")
+            return ExecutionResult(
+                stdout=stdout,
+                stderr=stderr,
+                return_code=result.returncode,
+                error="",
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = _strip_ansi((exc.stdout or "").strip())
+            stderr = _strip_ansi((exc.stderr or "").strip())
+            return ExecutionResult(
+                stdout=stdout,
+                stderr=stderr,
+                return_code=None,
+                error="execution timed out",
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        return ExecutionResult(
+            stdout="",
+            stderr="",
+            return_code=None,
+            error=f"execution error: {exc}",
+        )
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 def _sanitize_generated_code(code: str) -> tuple[str, list[str], list[str]]:
