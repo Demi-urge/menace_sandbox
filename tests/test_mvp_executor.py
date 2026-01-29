@@ -61,7 +61,21 @@ def test_path_traversal_open_is_blocked():
     stdout, stderr = execute_untrusted("open('../somefile')")
 
     assert stdout == ""
-    assert stderr == "error: call to 'open' is not allowed; use of 'open' is not allowed"
+    assert stderr == (
+        "error: call to 'open' is not allowed; file access not allowed; use of 'open' is not allowed"
+    )
+
+
+def test_module_open_access_is_blocked():
+    stdout, stderr = execute_untrusted("import io\nio.open('x')")
+
+    assert stdout == ""
+    assert "file access not allowed" in stderr
+
+    stdout, stderr = execute_untrusted("import codecs\ncodecs.open('x')")
+
+    assert stdout == ""
+    assert "file access not allowed" in stderr
 
 
 def test_import_multiprocessing_is_blocked():
