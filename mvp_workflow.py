@@ -543,19 +543,18 @@ def contains_exec_or_eval(code: str) -> set[str]:
     return unsafe_calls
 
 
-def _find_utf8_locale(env: dict[str, str]) -> str | None:
-    for key in ("LANG", "LC_ALL", "LC_CTYPE"):
-        value = env.get(key)
-        if not value:
-            continue
-        normalized = value.upper()
-        if "UTF-8" in normalized or "UTF8" in normalized:
-            return value
-    return None
+def _narrow_posix_path(path_value: str | None) -> str:
+    if not path_value:
+        return os.defpath
+    default_paths = {path for path in os.defpath.split(os.pathsep) if path}
+    if not default_paths:
+        return path_value
+    narrowed = [path for path in path_value.split(os.pathsep) if path in default_paths]
+    return os.pathsep.join(narrowed) or path_value
 
 
 def _build_restricted_env() -> dict[str, str]:
-    base_env = os.environ
+    base_env = os.environ.copy()
     allowed_keys = {
         "HOME",
         "LANG",
@@ -574,13 +573,13 @@ def _build_restricted_env() -> dict[str, str]:
         allowed_keys.update({"ComSpec", "PATHEXT", "SystemRoot", "WINDIR"})
 
     env = {key: value for key in allowed_keys if (value := base_env.get(key))}
-    env["PATH"] = base_env.get("PATH", env.get("PATH", ""))
+    if os.name == "nt":
+        if "PATH" in base_env:
+            env["PATH"] = base_env["PATH"]
+    else:
+        env["PATH"] = _narrow_posix_path(base_env.get("PATH"))
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
-    if os.name != "nt":
-        utf8_locale = _find_utf8_locale(base_env)
-        if utf8_locale:
-            env["LANG"] = utf8_locale
     return env
 
 
