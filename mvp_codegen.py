@@ -9,10 +9,17 @@ import sys
 
 
 def run_generation(task: dict[str, object]) -> str:
-    """Generate a safe Python script from a task payload with strict safeguards."""
+    """Generate a safe Python script from a task payload with strict safeguards.
+
+    The model wrapper is an injected dependency provided via task["model_wrapper"].
+    """
     fallback_script = 'print("internal error: code generation failed")'
 
     if not isinstance(task, dict):
+        return fallback_script
+
+    wrapper = task.get("model_wrapper")
+    if not callable(wrapper):
         return fallback_script
 
     objective_value = task.get("objective")
@@ -60,10 +67,6 @@ def run_generation(task: dict[str, object]) -> str:
         f"Objective:\n{objective}\n\n"
         f"Constraints:\n{constraints_section}\n"
     )
-
-    wrapper = task.get("model_wrapper")
-    if not callable(wrapper):
-        return fallback_script
 
     timeout_value = task.get("timeout_s") if isinstance(task, dict) else None
     timeout_param: str | None = None
