@@ -3,7 +3,33 @@
 from __future__ import annotations
 
 import ast
-from typing import Any
+from typing import Any, Callable
+
+
+def _get_model_wrapper() -> Callable[[str], Any] | None:
+    """Return a callable model wrapper based on configured LLM backends."""
+    try:
+        from llm_registry import create_backend, register_backend_from_path
+        from prompt_types import Prompt
+        from sandbox_settings import SandboxSettings
+    except Exception:
+        return None
+
+    try:
+        settings = SandboxSettings()
+        for name, path in settings.available_backends.items():
+            register_backend_from_path(name, path)
+        backend_name = (settings.preferred_llm_backend or settings.llm_backend).lower()
+        client = create_backend(backend_name)
+    except Exception:
+        return None
+
+    def _wrapper(prompt_text: str) -> Any:
+        prompt = Prompt(user=prompt_text)
+        result = client._generate(prompt, context_builder=object())
+        return getattr(result, "text", result)
+
+    return _wrapper
 
 
 def run_generation(task: dict[str, object]) -> str:
@@ -60,6 +86,8 @@ def run_generation(task: dict[str, object]) -> str:
     )
 
     wrapper = task.get("model_wrapper")
+    if not callable(wrapper):
+        wrapper = _get_model_wrapper()
     if wrapper is None:
         return fallback_script
 
