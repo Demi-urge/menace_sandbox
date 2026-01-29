@@ -153,7 +153,11 @@ def execute_task(task_dict: dict) -> dict:
 
     if spec is not None:
         try:
-            generated_code = mvp_codegen.run_generation(task_dict)
+            generation_task = {
+                "objective": spec.objective,
+                "constraints": spec.constraints,
+            }
+            generated_code = mvp_codegen.run_generation(generation_task)
             if not isinstance(generated_code, str):
                 generated_code = str(generated_code)
             if not generated_code.strip():
