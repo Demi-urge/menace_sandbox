@@ -10,6 +10,41 @@ from typing import Callable, Optional
 
 _MEMORY_LIMIT_MB = 256
 _TIMEOUT_SECONDS = 5
+BANNED_MODULES = {
+    "http",
+    "importlib",
+    "os",
+    "pathlib",
+    "requests",
+    "shutil",
+    "socket",
+    "subprocess",
+    "sys",
+    "urllib",
+}
+BANNED_BUILTINS = {"__import__", "compile", "eval", "exec", "input", "open"}
+
+
+def _check_static_policy(tree: ast.AST) -> list[str]:
+    violations: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name.split(".", 1)[0]
+                if module_name in BANNED_MODULES:
+                    violations.add(f"import of '{module_name}' is not allowed")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                module_name = node.module.split(".", 1)[0]
+                if module_name in BANNED_MODULES:
+                    violations.add(f"import of '{module_name}' is not allowed")
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in BANNED_BUILTINS:
+                violations.add(f"call to '{node.func.id}' is not allowed")
+        elif isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load) and node.id in BANNED_BUILTINS:
+                violations.add(f"use of '{node.id}' is not allowed")
+    return sorted(violations)
 
 
 def execute_untrusted(code: str) -> tuple[str, str]:
@@ -63,12 +98,16 @@ def execute_untrusted(code: str) -> tuple[str, str]:
         return error_message("empty code")
 
     try:
-        ast.parse(code)
+        tree = ast.parse(code)
     except SyntaxError as exc:
         detail = exc.msg or "invalid syntax"
         line = exc.lineno or 0
         col = exc.offset or 0
         return error_message(f"syntax error: {detail} (line {line}, column {col})")
+
+    violations = _check_static_policy(tree)
+    if violations:
+        return "", "error: " + "; ".join(violations)
 
     temp_dir: Optional[tempfile.TemporaryDirectory[str]] = None
     try:
