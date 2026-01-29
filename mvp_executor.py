@@ -1,100 +1,32 @@
 from __future__ import annotations
 
 import ast
-import math
 import os
+import signal
 import subprocess
 import sys
 import tempfile
 from typing import Callable, Optional
 
+_MEMORY_LIMIT_MB = 256
+_TIMEOUT_SECONDS = 5
 
-def run_untrusted_code(
-    code: str,
-    timeout_s: float = 5.0,
-    memory_limit_mb: int = 256,
-) -> tuple[str, str]:
+
+def execute_untrusted(code: str) -> tuple[str, str]:
     """Execute untrusted Python code in a constrained subprocess.
 
-    Returns a tuple of (stdout, stderr) with normalized line endings.
+    Returns (stdout, stderr) as normalized strings with predictable error surfaces.
     """
 
-    def normalize_output(text: str) -> str:
+    def normalize_output(data: bytes) -> str:
+        text = data.decode("utf-8", errors="replace")
+        text = text.replace("\x00", "")
         return text.replace("\r\n", "\n").replace("\r", "\n")
 
-    def to_text(value: object) -> str:
-        if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace")
-        if isinstance(value, str):
-            return value
-        return str(value)
+    def error_message(message: str) -> tuple[str, str]:
+        return "", f"error: {message}"
 
-    def format_syntax_error(error: SyntaxError) -> str:
-        message = error.msg or "invalid syntax"
-        line = error.lineno
-        column = error.offset
-        if line is not None and column is not None:
-            return f"SyntaxError: {message} (line {line}, column {column})"
-        if line is not None:
-            return f"SyntaxError: {message} (line {line})"
-        return f"SyntaxError: {message}"
-
-    def find_forbidden_construct(tree: ast.AST) -> Optional[str]:
-        forbidden_modules = {
-            "os",
-            "sys",
-            "subprocess",
-            "socket",
-            "pathlib",
-            "ctypes",
-            "importlib",
-            "multiprocessing",
-            "threading",
-            "signal",
-            "resource",
-        }
-        forbidden_calls = {"exec", "eval", "compile", "__import__", "open"}
-
-        def is_forbidden_module(module: Optional[str]) -> Optional[str]:
-            if not module:
-                return None
-            root = module.split(".")[0]
-            if root in forbidden_modules:
-                return root
-            return None
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    root = is_forbidden_module(alias.name)
-                    if root:
-                        return f"ImportError: import of '{root}' is blocked"
-            elif isinstance(node, ast.ImportFrom):
-                root = is_forbidden_module(node.module)
-                if root:
-                    return f"ImportError: import of '{root}' is blocked"
-            elif isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Name) and func.id in forbidden_calls:
-                    return f"ImportError: call to '{func.id}' is blocked"
-                if isinstance(func, ast.Attribute) and func.attr in forbidden_calls:
-                    if isinstance(func.value, ast.Name) and func.value.id == "builtins":
-                        return f"ImportError: call to '{func.attr}' is blocked"
-        return None
-
-    if not code.strip():
-        return "", ""
-
-    try:
-        parsed = ast.parse(code)
-    except SyntaxError as exc:
-        return "", format_syntax_error(exc)
-
-    validation_error = find_forbidden_construct(parsed)
-    if validation_error:
-        return "", validation_error
-
-    def build_preexec_fn() -> Optional[Callable[[], None]]:
+    def preexec_limits() -> Optional[Callable[[], None]]:
         if os.name != "posix":
             return None
 
@@ -104,70 +36,92 @@ def run_untrusted_code(
             except Exception:
                 return
 
-            limit_bytes = max(1, int(memory_limit_mb)) * 1024 * 1024
+            memory_bytes = _MEMORY_LIMIT_MB * 1024 * 1024
             for limit in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
                 try:
-                    resource.setrlimit(limit, (limit_bytes, limit_bytes))
-                    break
+                    resource.setrlimit(limit, (memory_bytes, memory_bytes))
                 except (ValueError, OSError):
                     continue
 
-            cpu_limit = max(1, int(math.ceil(timeout_s)))
             try:
-                resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
+                resource.setrlimit(resource.RLIMIT_CPU, (_TIMEOUT_SECONDS, _TIMEOUT_SECONDS))
             except (ValueError, OSError):
                 pass
 
-            for limit_value in (0, 1):
-                try:
-                    resource.setrlimit(resource.RLIMIT_NPROC, (limit_value, limit_value))
-                    break
-                except (ValueError, OSError):
-                    continue
-
             try:
-                resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
+                resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
             except (ValueError, OSError):
                 pass
 
         return apply_limits
 
-    stdout_text = ""
-    stderr_text = ""
+    if not isinstance(code, str):
+        return error_message("code must be a string")
+
+    normalized_code = code.strip()
+    if not normalized_code:
+        return error_message("empty code")
 
     try:
-        with tempfile.TemporaryDirectory(prefix="mvp_executor_") as temp_dir:
-            code_path = os.path.join(temp_dir, "untrusted.py")
-            with open(code_path, "w", encoding="utf-8") as handle:
-                handle.write(code)
+        ast.parse(code)
+    except SyntaxError as exc:
+        detail = exc.msg or "invalid syntax"
+        line = exc.lineno or 0
+        col = exc.offset or 0
+        return error_message(f"syntax error: {detail} (line {line}, column {col})")
 
-            try:
-                result = subprocess.run(
-                    [sys.executable, "-I", "-S", "-u", code_path],
-                    cwd=temp_dir,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    close_fds=True,
-                    timeout=timeout_s,
-                    text=True,
-                    errors="replace",
-                    preexec_fn=build_preexec_fn(),
-                )
-                stdout_text = result.stdout
-                stderr_text = result.stderr
-            except subprocess.TimeoutExpired as exc:
-                stdout_text = to_text(exc.stdout or "")
-                stderr_text = to_text(exc.stderr or "")
-                timeout_message = f"Execution timed out after {timeout_s}s"
-                if stderr_text:
-                    stderr_text = f"{stderr_text}\n{timeout_message}"
-                else:
-                    stderr_text = timeout_message
-            except Exception as exc:
-                stderr_text = f"Execution failed: {exc}"
+    temp_dir: Optional[tempfile.TemporaryDirectory[str]] = None
+    try:
+        temp_dir = tempfile.TemporaryDirectory(prefix="mvp_executor_")
+        temp_path = temp_dir.name
+        code_path = os.path.join(temp_path, "untrusted.py")
+        with open(code_path, "w", encoding="utf-8") as handle:
+            handle.write(code)
+
+        env = {
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONPATH": "",
+        }
+
+        try:
+            result = subprocess.run(
+                [sys.executable, code_path],
+                shell=False,
+                timeout=_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=False,
+                cwd=temp_path,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                preexec_fn=preexec_limits(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = normalize_output(exc.stdout or b"")
+            stderr = normalize_output(exc.stderr or b"")
+            timeout_msg = "error: execution timed out"
+            stderr = f"{stderr}\n{timeout_msg}".strip() if stderr else timeout_msg
+            return stdout, stderr
+        except Exception as exc:
+            return error_message(f"execution failed: {exc}")
+
+        stdout_text = normalize_output(result.stdout or b"")
+        stderr_text = normalize_output(result.stderr or b"")
+
+        if result.returncode != 0:
+            if result.returncode < 0:
+                signum = -result.returncode
+                try:
+                    signal_name = signal.Signals(signum).name
+                except Exception:
+                    signal_name = f"signal {signum}"
+                crash_msg = f"error: terminated by {signal_name}"
+            else:
+                crash_msg = f"error: exited with status {result.returncode}"
+            stderr_text = f"{stderr_text}\n{crash_msg}".strip() if stderr_text else crash_msg
+
+        return stdout_text, stderr_text
     finally:
-        stdout_text = normalize_output(stdout_text)
-        stderr_text = normalize_output(stderr_text)
-
-    return stdout_text, stderr_text
+        if temp_dir is not None:
+            temp_dir.cleanup()
