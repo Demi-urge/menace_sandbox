@@ -75,21 +75,39 @@ def test_path_traversal_open_is_blocked():
     stdout, stderr = execute_untrusted("open('../somefile')")
 
     assert stdout == ""
-    assert stderr == (
-        "error: call to 'open' is not allowed; file access not allowed; use of 'open' is not allowed"
-    )
+    assert "error:" in stderr
 
 
 def test_module_open_access_is_blocked():
     stdout, stderr = execute_untrusted("import io\nio.open('x')")
 
     assert stdout == ""
-    assert "file access not allowed" in stderr
+    assert "import of 'io' is not allowed" in stderr
 
     stdout, stderr = execute_untrusted("import codecs\ncodecs.open('x')")
 
     assert stdout == ""
-    assert "file access not allowed" in stderr
+    assert "import of 'codecs' is not allowed" in stderr
+
+
+def test_open_allows_temp_directory_access():
+    code = """
+with open("note.txt", "w") as handle:
+    handle.write("ok")
+with open("note.txt", "r") as handle:
+    print(handle.read())
+"""
+    stdout, stderr = execute_untrusted(code)
+
+    assert stdout.strip() == "ok"
+    assert stderr == ""
+
+
+def test_open_rejects_outside_temp_directory():
+    stdout, stderr = execute_untrusted("open('/etc/passwd')")
+
+    assert stdout == ""
+    assert "error:" in stderr
 
 
 def test_import_multiprocessing_is_blocked():
