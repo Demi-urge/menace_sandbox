@@ -1,20 +1,21 @@
 """Deterministic MVP ROI evaluator based on output stream sizes.
 
-This module implements a minimal, fully deterministic, and monotonic scoring
-function. More stdout length increases the score, while more stderr length
-decreases it. The formula relies only on stable transforms of simple sizes,
-has no thresholds tied to specific messages, uses no learning or external
-state, and remains JSON-serializable by bounding the result.
+This module provides a fully deterministic, monotonic scoring function that
+uses no stochasticity, no external state, and no ML. The score depends only on
+generic lengths of stdout and stderr: more stdout length increases the score,
+and more stderr length decreases it. The normalization is stable and bounded,
+so the return value stays JSON-serializable without branching on specific
+messages or tuned thresholds.
 """
 
 from __future__ import annotations
 
 import math
 
-__all__ = ["evaluate_mvp_roi"]
+__all__ = ["evaluate_roi"]
 
 
-def evaluate_mvp_roi(stdout: str, stderr: str) -> float:
+def evaluate_roi(stdout: str, stderr: str) -> float:
     """Return a deterministic ROI score based on stdout and stderr volume.
 
     The score is monotonic with respect to basic success signals: increasing
@@ -36,11 +37,8 @@ def evaluate_mvp_roi(stdout: str, stderr: str) -> float:
         safe_stdout = _coerce(stdout)
         safe_stderr = _coerce(stderr)
 
-        stdout_len = len(safe_stdout)
-        stderr_len = len(safe_stderr)
-
-        stdout_signal = (1.0 if safe_stdout else 0.0) + math.log1p(stdout_len)
-        stderr_signal = math.log1p(stderr_len)
+        stdout_signal = math.log1p(len(safe_stdout))
+        stderr_signal = math.log1p(len(safe_stderr))
         raw_score = stdout_signal - stderr_signal
         score = math.tanh(raw_score)
 
