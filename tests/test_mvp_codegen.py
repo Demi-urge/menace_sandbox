@@ -10,17 +10,31 @@ FALLBACK_SCRIPT = f'print("{FALLBACK_MESSAGE}")'
 @pytest.mark.parametrize(
     "task",
     [
+        None,
+        "not a dict",
+        123,
+        [],
+    ],
+)
+def test_run_generation_fallback_on_non_dict_task(task):
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        {"model_wrapper": lambda _prompt: "print('hi')"},
         {"objective": "", "model_wrapper": lambda _prompt: "print('hi')"},
         {"objective": "   ", "model_wrapper": lambda _prompt: "print('hi')"},
         {"objective": 123, "model_wrapper": lambda _prompt: "print('hi')"},
-        {"objective": "do the thing", "model_wrapper": lambda _prompt: "print('hi')"},
     ],
 )
-def test_run_generation_always_returns_string(task):
+def test_run_generation_fallback_on_empty_or_invalid_objective(task):
     result = mvp_codegen.run_generation(task)
 
-    assert isinstance(result, str)
-    assert "print(" in result
+    assert result == FALLBACK_SCRIPT
 
 
 def test_run_generation_fallback_on_wrapper_error():
@@ -87,9 +101,24 @@ def test_run_generation_uses_model_wrapper(task):
 @pytest.mark.parametrize(
     "task",
     [
+        {"objective": "do the thing"},
+        {"objective": "do the thing", "constraints": ["fast", "safe"]},
+        {"objective": "do the thing", "constraints": "just a string"},
+    ],
+)
+def test_run_generation_falls_back_without_wrapper(task):
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
         {"objective": "do the thing", "model_wrapper": None},
         {"objective": "do the thing", "constraints": ["fast", "safe"], "model_wrapper": None},
         {"objective": "do the thing", "constraints": "just a string", "model_wrapper": None},
+        {"objective": "do the thing", "model_wrapper": "not callable"},
     ],
 )
 def test_run_generation_falls_back_with_non_callable_wrapper(task):
