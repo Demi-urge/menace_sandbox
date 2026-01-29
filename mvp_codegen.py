@@ -56,7 +56,8 @@ def run_generation(task: dict[str, object]) -> str:
         "- Single-pass, non-recursive output only.\n"
         "- Do not use or suggest dangerous imports (os, sys, subprocess, socket, pathlib, shutil, "
         "requests, http, urllib, openai, etc.).\n"
-        "- No system calls, subprocess usage, filesystem access, network access, or shell commands.\n"
+        "- No system calls, subprocess usage, filesystem access (including io/open), network access, "
+        "or shell commands.\n"
         "- Do not use open, eval, exec, compile, __import__, or input.\n"
         "Return only runnable Python code.\n"
     )
@@ -213,6 +214,7 @@ def run_generation(task: dict[str, object]) -> str:
 
     filesystem_modules = {
         "glob",
+        "io",
         "os",
         "pathlib",
         "shutil",
@@ -248,6 +250,8 @@ def run_generation(task: dict[str, object]) -> str:
     banned_reflection_calls = {"getattr", "setattr", "globals", "locals", "vars", "dir"}
     banned_aliases: set[str] = set()
     banned_module_aliases: set[str] = set()
+    io_aliases: set[str] = {"io"}
+    io_file_calls = {"open", "open_code", "FileIO", "BufferedWriter", "BufferedReader", "BufferedRandom", "TextIOWrapper"}
 
     for node in ast.walk(parsed):
         if isinstance(node, ast.Import):
@@ -257,6 +261,8 @@ def run_generation(task: dict[str, object]) -> str:
                     return fallback_script
                 if base_name in denied_modules:
                     return fallback_script
+                if base_name == "io" and alias.asname:
+                    io_aliases.add(alias.asname)
                 if alias.asname and base_name in banned_base_names:
                     banned_aliases.add(alias.asname)
                     banned_module_aliases.add(alias.asname)
@@ -340,6 +346,8 @@ def run_generation(task: dict[str, object]) -> str:
                                 return fallback_script
             if isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name):
+                    if func.value.id in io_aliases and func.attr in io_file_calls:
+                        return fallback_script
                     if func.value.id in banned_module_aliases and func.attr in banned_module_attrs:
                         return fallback_script
 
