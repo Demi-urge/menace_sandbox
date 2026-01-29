@@ -6,7 +6,9 @@ import signal
 import subprocess
 import sys
 import tempfile
-from typing import Callable, Optional
+from typing import Callable, Optional, TypeAlias
+
+AliasSet: TypeAlias = set[str]
 
 _MEMORY_LIMIT_MB = 256
 _TIMEOUT_SECONDS = 5
@@ -102,9 +104,9 @@ def execute_untrusted(code: str) -> tuple[str, str]:
     def check_static_policy(tree: ast.AST) -> list[str]:
         violations: set[str] = set()
         banned_lookup_names = BANNED_BUILTINS | BANNED_MODULES | {"__builtins__", "builtins"}
-        builtins_aliases: set[str] = set()
-        importlib_aliases: set[str] = set()
-        import_aliases: set[str] = set()
+        builtins_aliases: AliasSet = set()
+        importlib_aliases: AliasSet = set()
+        import_aliases: AliasSet = set()
 
         def is_builtins_target(node: ast.AST) -> bool:
             if isinstance(node, ast.Name):
@@ -119,7 +121,7 @@ def execute_untrusted(code: str) -> tuple[str, str]:
                 return is_builtins_target(node.value)
             return False
 
-        def is_module_reference(node: ast.AST, names: set[str]) -> bool:
+        def is_module_reference(node: ast.AST, names: AliasSet) -> bool:
             if isinstance(node, ast.Name):
                 return node.id in names
             if isinstance(node, ast.Attribute):
