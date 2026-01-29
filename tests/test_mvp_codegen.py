@@ -48,6 +48,21 @@ def test_run_generation_fallback_on_wrapper_error():
     assert FALLBACK_MESSAGE in result
 
 
+def test_run_generation_fallback_on_str_failure():
+    class BadString:
+        def __str__(self):
+            raise ValueError("nope")
+
+    def wrapper(_prompt):
+        return BadString()
+
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
+
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
 def test_run_generation_passes_timeout_to_wrapper():
     received = {}
 

@@ -82,10 +82,13 @@ def run_generation(task: dict[str, object]) -> str:
     if isinstance(raw_output, bytes):
         try:
             output_text = raw_output.decode("utf-8")
-        except UnicodeDecodeError:
+        except Exception:
             return fallback_script
     else:
-        output_text = str(raw_output)
+        try:
+            output_text = str(raw_output)
+        except Exception:
+            return fallback_script
 
     output_text = output_text.replace("\x00", "")
     output_text = output_text.replace("\r\n", "\n").replace("\r", "\n").strip()
