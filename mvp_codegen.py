@@ -1,17 +1,13 @@
 """Single-pass code generation with strict safety constraints."""
 
-from __future__ import annotations
-
-import ast
-import sys
-
-
-
 def run_generation(task: dict[str, object]) -> str:
     """Generate a safe Python script from a task payload with strict safeguards.
 
     The model wrapper is an injected dependency provided via task["model_wrapper"].
     """
+    import ast
+    import sys
+
     fallback_script = 'print("internal error: code generation failed")'
 
     if not isinstance(task, dict):
