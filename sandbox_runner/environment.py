@@ -5917,6 +5917,15 @@ def register_signal_handlers() -> None:
             logger.exception("signal handler setup failed")
 
 
+def _ensure_utf8(text: str, *, context: str) -> None:
+    """Validate that ``text`` can be encoded as UTF-8."""
+
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:  # pragma: no cover - defensive
+        raise ValueError(f"{context} must be UTF-8 encodable") from exc
+
+
 # ----------------------------------------------------------------------
 async def _execute_in_container(
     code_str: str,
@@ -5930,6 +5939,12 @@ async def _execute_in_container(
 
     If Docker is unavailable or repeatedly fails, the snippet is executed
     locally with the same environment variables and resource limits.
+
+    Platform notes:
+        Resource limits via ``resource``/cgroups and ``preexec_fn`` only apply
+        on POSIX platforms. When running on Windows, these constraints are
+        skipped and the subprocess runs without pre-exec hooks. Container
+        filesystem paths remain POSIX-style because they target Linux images.
     """
 
     snippet_path = Path(
@@ -5942,6 +5957,7 @@ async def _execute_in_container(
         """Fallback local execution with basic metrics."""
         with tempfile.TemporaryDirectory(prefix="sim_local_") as td:
             path = Path(td) / snippet_name
+            _ensure_utf8(code_str, context="sandbox snippet")
             path.write_text(code_str, encoding="utf-8")
             stdout_path = Path(td) / "stdout.log"
             stderr_path = Path(td) / "stderr.log"
@@ -5995,13 +6011,17 @@ async def _execute_in_container(
             net_start = psutil.net_io_counters() if psutil else None
             try:
                 proc = subprocess.Popen(
-                    ["python", str(path)],
+                    [sys.executable, str(path)],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     env=env_vars,
                     cwd=workdir or td,
-                    preexec_fn=_limits if (rlimit_ok or use_cgroup) else None,
+                    preexec_fn=(
+                        _limits
+                        if (rlimit_ok or use_cgroup) and os.name != "nt"
+                        else None
+                    ),
                 )
                 p = psutil.Process(proc.pid) if psutil else None
                 if p and not rlimit_ok:
@@ -6009,11 +6029,15 @@ async def _execute_in_container(
                         p, env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT")
                     )
                 out, err = proc.communicate(timeout=int(env.get("TIMEOUT", "30")))
+                _ensure_utf8(out, context="sandbox stdout")
+                _ensure_utf8(err, context="sandbox stderr")
                 stdout_path.write_text(out, encoding="utf-8")
                 stderr_path.write_text(err, encoding="utf-8")
                 exit_code = proc.returncode
             except subprocess.TimeoutExpired:
                 proc.kill()
+                _ensure_utf8("", context="sandbox stdout")
+                _ensure_utf8("timeout", context="sandbox stderr")
                 stdout_path.write_text("", encoding="utf-8")
                 stderr_path.write_text("timeout", encoding="utf-8")
                 exit_code = -1
@@ -6111,6 +6135,7 @@ async def _execute_in_container(
             try:
                 with tempfile.TemporaryDirectory(prefix="sim_cont_") as td:
                     path = Path(td) / snippet_name
+                    _ensure_utf8(code_str, context="container snippet")
                     path.write_text(code_str, encoding="utf-8")
 
                     image = env.get("CONTAINER_IMAGE")
@@ -6297,6 +6322,7 @@ async def _execute_in_container(
 
             async with pooled_container(image) as (container, td):
                 path = Path(td) / snippet_name
+                _ensure_utf8(code_str, context="container snippet")
                 path.write_text(code_str, encoding="utf-8")
 
                 timeout = int(env.get("TIMEOUT", 300))
@@ -7089,7 +7115,7 @@ async def _section_worker(
                     logger.warning("failed to set memory limit: %s", exc)
 
             def _run_psutil() -> Dict[str, Any]:
-                args = ["python", str(path)]
+                args = [sys.executable, str(path)]
                 if _use_netem and NSPopen is not None and _ns_name is not None:
                     proc = NSPopen(
                         _ns_name,
@@ -7201,12 +7227,12 @@ async def _section_worker(
             try:
                 if rlimit_ok:
                     proc = subprocess.run(
-                        ["python", str(path)],
+                        [sys.executable, str(path)],
                         capture_output=True,
                         text=True,
                         env=env,
                         timeout=int(env_input.get("TIMEOUT", "30")),
-                        preexec_fn=_limits,
+                        preexec_fn=_limits if os.name != "nt" else None,
                     )
                     return {
                         "stdout": proc.stdout,
@@ -9542,7 +9568,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
             diagnostics.setdefault("local_execution", "vm")
             env["SANDBOX_DATA_DIR"] = str(data_dir)
             subprocess.run(
-                ["python", str(runner_path)],
+                [sys.executable, str(runner_path)],
                 cwd=repo_path,
                 env=env,
                 check=False,

@@ -59,6 +59,7 @@ from dataclasses import dataclass, field
 from time import perf_counter, process_time
 from typing import Any, Callable, Iterable, Mapping
 from unittest import mock
+from pathlib import PurePosixPath
 
 from dynamic_path_router import resolve_path, path_for_prompt
 
@@ -95,6 +96,15 @@ except Exception:  # pragma: no cover - ROI tracker unavailable
     ROITracker = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_utf8(text: str, *, context: str) -> None:
+    """Validate that ``text`` can be encoded as UTF-8."""
+
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:  # pragma: no cover - defensive
+        raise ValueError(f"{context} must be UTF-8 encodable") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +276,12 @@ class WorkflowSandboxRunner:
         merged into ``test_data`` before execution.  Each profile maps file
         paths or URLs to payloads.  User-provided ``test_data`` values override
         those from the profiles.
+
+        Platform notes:
+            Container execution requires a Docker-compatible runtime and mounts
+            a temporary directory into the container at a POSIX-style path.
+            The container path remains POSIX even on non-POSIX hosts because it
+            targets the container filesystem.
         """
 
         test_data = dict(test_data or {})
@@ -329,38 +345,39 @@ class WorkflowSandboxRunner:
             if container_image and container_runtime:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tmp_path = pathlib.Path(tmpdir)
+                    container_mount = PurePosixPath("/sandbox")
                     payload = tmp_path / "payload.pkl"
                     result = tmp_path / "result.pkl"
                     script = pathlib.Path(
                         tmp_path, f"worker_{uuid.uuid4().hex}.py"
                     )  # path-ignore
                     payload.write_bytes(pickle.dumps((funcs, params)))
-                    script.write_text(
-                        textwrap.dedent(
-                            """
-                            import pathlib, pickle, sys
-                            from sandbox_runner.workflow_sandbox_runner import _subprocess_worker
+                    script_body = textwrap.dedent(
+                        """
+                        import pathlib, pickle, sys
+                        from sandbox_runner.workflow_sandbox_runner import _subprocess_worker
 
-                            class _FileConn:
-                                def __init__(self, path):
-                                    self.path = pathlib.Path(path)
+                        class _FileConn:
+                            def __init__(self, path):
+                                self.path = pathlib.Path(path)
 
-                                def send(self, obj):
-                                    with open(self.path, 'wb') as fh:
-                                        pickle.dump(obj, fh)
+                            def send(self, obj):
+                                with open(self.path, 'wb') as fh:
+                                    pickle.dump(obj, fh)
 
-                                def close(self):
-                                    pass
+                            def close(self):
+                                pass
 
-                            payload = pathlib.Path(sys.argv[1])
-                            output = pathlib.Path(sys.argv[2])
-                            with open(payload, 'rb') as fh:
-                                workflow, params = pickle.load(fh)
-                            conn = _FileConn(output)
-                            _subprocess_worker(conn, workflow, params)
-                            """
-                        )
+                        payload = pathlib.Path(sys.argv[1])
+                        output = pathlib.Path(sys.argv[2])
+                        with open(payload, 'rb') as fh:
+                            workflow, params = pickle.load(fh)
+                        conn = _FileConn(output)
+                        _subprocess_worker(conn, workflow, params)
+                        """
                     )
+                    _ensure_utf8(script_body, context="container worker script")
+                    script.write_text(script_body, encoding="utf-8")
                     env_file = tmp_path / "env.list"
                     env_map = dict(os.environ)
                     cov_file: pathlib.Path | None = None
@@ -369,20 +386,25 @@ class WorkflowSandboxRunner:
                         env_map["SANDBOX_COVERAGE_FILE"] = str(cov_file)
                     with env_file.open("w", encoding="utf-8") as fh:
                         for k, v in env_map.items():
-                            fh.write(f"{k}={v}\n")
+                            line = f"{k}={v}\n"
+                            _ensure_utf8(line, context="container env list")
+                            fh.write(line)
+                    container_payload = container_mount / payload.name
+                    container_result = container_mount / result.name
+                    container_script = container_mount / script.name
                     cmd = [
                         container_runtime,
                         "run",
                         "--rm",
-                        "-v",
-                        f"{tmp_path}:{tmp_path}",
+                        "--mount",
+                        f"type=bind,source={tmp_path},target={container_mount}",
                         "--env-file",
                         str(env_file),
                         container_image,
                         "python",
-                        str(script),
-                        str(payload),
-                        str(result),
+                        container_script.as_posix(),
+                        container_payload.as_posix(),
+                        container_result.as_posix(),
                     ]
                     proc = subprocess.run(cmd, capture_output=True, text=True)
                     stdout, stderr = proc.stdout, proc.stderr
