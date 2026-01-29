@@ -5,17 +5,15 @@ from __future__ import annotations
 import ast
 from typing import Any
 
-import local_model_wrapper
 
-
-def run_generation(task: dict) -> str:
-    """Generate safe Python code from a task payload using one model call."""
-    fallback_script = 'print("internal error")'
+def run_generation(task: dict[str, object]) -> str:
+    """Generate a safe Python script from a task payload with strict safeguards."""
+    fallback_script = 'print("internal error: code generation failed")'
 
     if not isinstance(task, dict):
         return fallback_script
 
-    objective_value = task.get("objective") if task is not None else None
+    objective_value = task.get("objective")
     if not isinstance(objective_value, str):
         return fallback_script
     objective = objective_value.strip()
@@ -23,84 +21,87 @@ def run_generation(task: dict) -> str:
         return fallback_script
 
     constraints_value = task.get("constraints")
-    if isinstance(constraints_value, str):
-        constraints = [line.strip() for line in constraints_value.splitlines() if line.strip()]
-    elif isinstance(constraints_value, list):
-        constraints = [item.strip() for item in constraints_value if isinstance(item, str) and item.strip()]
-    else:
-        constraints = []
+    constraints: list[str] = []
+    if isinstance(constraints_value, list):
+        for item in constraints_value:
+            if isinstance(item, str):
+                text = item.strip()
+            else:
+                try:
+                    text = str(item).strip()
+                except Exception:
+                    continue
+            if text:
+                constraints.append(text)
+    elif constraints_value is not None:
+        try:
+            text = str(constraints_value).strip()
+        except Exception:
+            text = ""
+        if text:
+            constraints.append(text)
 
     constraints_section = "\n".join(f"- {item}" for item in constraints) if constraints else "- none"
-    prompt_text = f"Objective:\n{objective}\n\nConstraints:\n{constraints_section}\n"
 
     safety_prompt = (
-        "Output only Python code. "
-        "Never import or use: os, sys, subprocess, socket, pathlib, shutil. "
-        "Never use open, eval, exec, __import__. "
-        "No filesystem, environment, or network access."
+        "System safety rules (mandatory):\n"
+        "- Single-pass, non-recursive output only.\n"
+        "- Do not use or suggest dangerous imports (os, sys, subprocess, socket, pathlib, shutil, "
+        "requests, http, urllib, openai, etc.).\n"
+        "- No system calls, subprocess usage, filesystem access, network access, or shell commands.\n"
+        "- Do not use open, eval, exec, compile, __import__, or input.\n"
+        "Return only runnable Python code.\n"
     )
 
-    output_text = ""
+    prompt_text = (
+        f"{safety_prompt}\n"
+        f"Objective:\n{objective}\n\n"
+        f"Constraints:\n{constraints_section}\n"
+    )
+
+    wrapper = task.get("model_wrapper")
+    if wrapper is None:
+        return fallback_script
+
     try:
-        model = task.get("model")
-        tokenizer = task.get("tokenizer")
-        if model is None or tokenizer is None:
-            return fallback_script
-        wrapper = local_model_wrapper.LocalModelWrapper(model, tokenizer)
-        prompt_obj = local_model_wrapper.Prompt(
-            user=prompt_text,
-            system=safety_prompt,
-            metadata={"origin": "mvp_codegen"},
-        )
-        raw_output: Any = wrapper.generate(
-            prompt_obj,
-            context_builder=None,
-            max_new_tokens=256,
-            do_sample=False,
-        )
-        if isinstance(raw_output, list):
-            output_text = str(raw_output[0]) if raw_output else ""
-        else:
-            output_text = str(raw_output)
+        raw_output: Any = wrapper(prompt_text)
     except Exception:
         return fallback_script
 
-    output_text = str(output_text)
-    output_text = output_text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    if isinstance(raw_output, bytes):
+        try:
+            output_text = raw_output.decode("utf-8")
+        except UnicodeDecodeError:
+            return fallback_script
+    else:
+        output_text = str(raw_output)
+
+    output_text = output_text.replace("\x00", "")
     output_text = output_text.replace("\r\n", "\n").replace("\r", "\n").strip()
-    max_bytes = 4000
-    if len(output_text.encode("utf-8")) > max_bytes:
-        output_text = output_text.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore").strip()
+
+    if output_text.startswith("```"):
+        lines = output_text.split("\n")
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        output_text = "\n".join(lines).strip()
 
     if not output_text:
         return fallback_script
 
-    lowered = output_text.lower()
-    blacklist_terms = (
-        "import os",
-        "from os",
-        "os.",
-        "import sys",
-        "from sys",
-        "sys.",
-        "import subprocess",
-        "from subprocess",
-        "subprocess.",
-        "import socket",
-        "from socket",
-        "socket.",
-        "import pathlib",
-        "from pathlib",
-        "pathlib.",
-        "import shutil",
-        "from shutil",
-        "shutil.",
-        "open(",
-        "eval(",
-        "exec(",
-        "__import__(",
-    )
-    if any(term in lowered for term in blacklist_terms):
+    max_length = 4000
+    if len(output_text) > max_length:
+        cut = output_text.rfind("\n", 0, max_length + 1)
+        if cut == -1:
+            output_text = output_text[:max_length].rstrip()
+        else:
+            output_text = output_text[:cut].rstrip()
+
+    if not output_text:
+        return fallback_script
+
+    if len(output_text) > max_length:
         return fallback_script
 
     try:
@@ -108,19 +109,34 @@ def run_generation(task: dict) -> str:
     except Exception:
         return fallback_script
 
-    banned_names = {"open", "eval", "exec", "__import__"}
-    banned_modules = {"os", "sys", "subprocess", "socket", "pathlib", "shutil"}
+    banned_modules = {
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "pathlib",
+        "shutil",
+        "requests",
+        "http",
+        "urllib",
+        "openai",
+    }
+    banned_builtins = {"open", "eval", "exec", "compile", "__import__", "input"}
+    banned_base_names = {"builtins", "__builtins__"}
+
     for node in ast.walk(parsed):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
-                name = alias.name.split(".")[0]
-                if name in banned_modules:
+                base_name = alias.name.split(".")[0]
+                if base_name in banned_modules:
                     return fallback_script
-        if isinstance(node, ast.Name) and node.id in banned_names:
+        if isinstance(node, ast.Name) and node.id in banned_builtins:
             return fallback_script
         if isinstance(node, ast.Attribute):
-            base = node.value
-            if isinstance(base, ast.Name) and base.id in banned_modules:
-                return fallback_script
+            if isinstance(node.value, ast.Name):
+                if node.value.id in banned_modules:
+                    return fallback_script
+                if node.value.id in banned_base_names and node.attr in banned_builtins:
+                    return fallback_script
 
     return output_text
