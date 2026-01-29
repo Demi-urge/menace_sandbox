@@ -266,6 +266,11 @@ def run_generation(task: dict[str, object]) -> str:
         "pathlib",
         "shutil",
         "tempfile",
+        # These modules open or persist files on disk.
+        "dbm",
+        "logging",
+        "shelve",
+        "sqlite3",
     }
     network_modules = {
         "asyncio",
@@ -300,6 +305,15 @@ def run_generation(task: dict[str, object]) -> str:
     io_aliases: set[str] = {"io"}
     io_file_calls = {"open", "open_code", "FileIO", "BufferedWriter", "BufferedReader", "BufferedRandom", "TextIOWrapper"}
     banned_builtin_attrs = {"__dict__", "__getattribute__"}
+
+    banned_call_paths = {
+        "logging.FileHandler",
+        "logging.handlers.FileHandler",
+        "logging.handlers.RotatingFileHandler",
+        "logging.handlers.TimedRotatingFileHandler",
+        "logging.handlers.WatchedFileHandler",
+        "sqlite3.connect",
+    }
 
     for node in ast.walk(parsed):
         if isinstance(node, ast.Import):
@@ -420,6 +434,14 @@ def run_generation(task: dict[str, object]) -> str:
                                 return fallback_code
             if isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name):
+                    dotted_name = f"{func.value.id}.{func.attr}"
+                    if dotted_name in banned_call_paths:
+                        return fallback_code
+                    if (
+                        dotted_name.startswith("logging.handlers.")
+                        and dotted_name.endswith("FileHandler")
+                    ):
+                        return fallback_code
                     if func.value.id in io_aliases and func.attr in io_file_calls:
                         return fallback_code
                     if func.value.id in banned_module_aliases and func.attr in banned_module_attrs:
