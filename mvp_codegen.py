@@ -4,8 +4,10 @@
 def run_generation(task: dict[str, object]) -> str:
     """Generate a safe Python script from a task payload with strict safeguards.
 
-    The task payload may include only an objective (required) and constraints (optional).
-    If no callable model wrapper is provided, a deterministic fallback script is returned.
+    The task payload must include an objective and may include constraints and a
+    callable model wrapper. The function returns a deterministic fallback script
+    whenever the payload is invalid, the wrapper is missing, or validation fails.
+    The function is side-effect-free and always returns a Python code string.
 
     Args:
         task: Task payload containing the objective, optional constraints, and optional
@@ -18,85 +20,61 @@ def run_generation(task: dict[str, object]) -> str:
     import sys
 
     fallback_objective = "unspecified objective"
-    fallback_constraints: list[str] = []
-    fallback_objective_text = (
-        fallback_objective.strip() if isinstance(fallback_objective, str) else ""
-    )
-    fallback_constraint_texts = [
-        item.strip()
-        for item in fallback_constraints
-        if isinstance(item, str) and item.strip()
-    ]
-    fallback_constraints_line = (
-        ", ".join(fallback_constraint_texts) if fallback_constraint_texts else "none"
-    )
-    fallback_lines = [
-        '"""Deterministic placeholder script generated without a model wrapper."""',
-        "",
-        "def main() -> None:",
-        f"    objective = {fallback_objective_text!r}",
-        f"    constraints = {fallback_constraints_line!r}",
-        "    summary_lines = [",
-        '        "Placeholder execution: no model wrapper provided.",',
-        '        f"Objective: {objective}",',
-        '        f"Constraints: {constraints}",',
-        '        "Status: completed safe placeholder run.",',
-        "    ]",
-        "    print(\"\\n\".join(summary_lines))",
-        "",
-        "if __name__ == \"__main__\":",
-        "    main()",
-    ]
-    fallback_script = "\n".join(fallback_lines)
-
-    if not isinstance(task, dict):
-        return fallback_script
-
-    raw_objective = task.get("objective")
-    if not isinstance(raw_objective, str):
-        return fallback_script
-    objective = raw_objective.strip()
-    if not objective:
-        return fallback_script
-
-    constraints_value = task.get("constraints")
+    fallback_constraints_line = "none"
+    objective = fallback_objective
     constraints: list[str] = []
-    if isinstance(constraints_value, list):
-        for item in constraints_value:
-            if isinstance(item, str):
-                text = item.strip()
-            elif item is None:
-                text = ""
-            else:
-                try:
-                    text = str(item).strip()
-                except Exception:
-                    text = ""
-            if text:
-                constraints.append(text)
-    elif constraints_value is not None:
-        if isinstance(constraints_value, str):
-            text = constraints_value.strip()
-        else:
-            try:
-                text = str(constraints_value).strip()
-            except Exception:
-                text = ""
-        if text:
-            constraints.append(text)
+    constraints_section = "- none"
+    use_fallback = True
 
-    constraints_section = "\n".join(f"- {item}" for item in constraints) if constraints else "- none"
-    objective_text = objective.strip() if isinstance(objective, str) else ""
-    constraint_texts = [
-        item.strip() for item in constraints if isinstance(item, str) and item.strip()
-    ]
-    constraints_line = ", ".join(constraint_texts) if constraint_texts else "none"
+    if isinstance(task, dict):
+        raw_objective = task.get("objective")
+        if isinstance(raw_objective, str):
+            objective_candidate = raw_objective.strip()
+            if objective_candidate:
+                objective = objective_candidate
+                constraints_value = task.get("constraints")
+                if isinstance(constraints_value, list):
+                    for item in constraints_value:
+                        if isinstance(item, str):
+                            text = item.strip()
+                        elif item is None:
+                            text = ""
+                        else:
+                            try:
+                                text = str(item).strip()
+                            except Exception:
+                                text = ""
+                        if text:
+                            constraints.append(text)
+                elif constraints_value is not None:
+                    if isinstance(constraints_value, str):
+                        text = constraints_value.strip()
+                    else:
+                        try:
+                            text = str(constraints_value).strip()
+                        except Exception:
+                            text = ""
+                    if text:
+                        constraints.append(text)
+                constraint_texts = [
+                    item.strip()
+                    for item in constraints
+                    if isinstance(item, str) and item.strip()
+                ]
+                constraints_section = (
+                    "\n".join(f"- {item}" for item in constraints) if constraints else "- none"
+                )
+                fallback_constraints_line = (
+                    ", ".join(constraint_texts) if constraint_texts else "none"
+                )
+                use_fallback = False
+
     lines = [
         '"""Deterministic placeholder script generated without a model wrapper."""',
         "",
         "def main() -> None:",
-        f"    objective = {objective_text!r}",
-        f"    constraints = {constraints_line!r}",
+        f"    objective = {objective!r}",
+        f"    constraints = {fallback_constraints_line!r}",
         "    summary_lines = [",
         '        "Placeholder execution: no model wrapper provided.",',
         '        f"Objective: {objective}",',
@@ -110,7 +88,10 @@ def run_generation(task: dict[str, object]) -> str:
     ]
     fallback_code = "\n".join(lines)
 
-    wrapper = task.get("model_wrapper")
+    if use_fallback:
+        return fallback_code
+
+    wrapper = task.get("model_wrapper") if isinstance(task, dict) else None
     if wrapper is None or not callable(wrapper):
         return fallback_code
 
