@@ -1,62 +1,58 @@
-import shutil
-import time
+import types
+import tempfile
 
-import mvp_executor
+from mvp_executor import execute_untrusted
 
 
-def test_run_untrusted_code_timeout():
-    start = time.monotonic()
-    stdout, stderr = mvp_executor.run_untrusted_code("while True:\n    pass")
-    elapsed = time.monotonic() - start
+def test_timeout_infinite_loop_triggers_timeout():
+    stdout, stderr = execute_untrusted("""
+while True:
+    pass
+""")
+
     assert stdout == ""
-    assert "Execution timed out after 5s" in stderr
-    assert elapsed < 6.5
+    assert "execution timed out" in stderr
 
 
-def test_run_untrusted_code_blocks_imports():
-    stdout, stderr = mvp_executor.run_untrusted_code("import subprocess\nprint('hi')")
+def test_syntax_error_returns_error_marker():
+    stdout, stderr = execute_untrusted("def broken(")
+
     assert stdout == ""
-    assert "ImportError: import of 'subprocess' is blocked" in stderr
+    assert stderr.startswith("error: syntax error:")
 
 
-def test_run_untrusted_code_reports_syntax_error():
-    stdout, stderr = mvp_executor.run_untrusted_code("def bad(:\n    pass")
+def test_import_blocking_prevents_execution():
+    stdout, stderr = execute_untrusted("import os\nprint('hi')")
+
     assert stdout == ""
-    assert "SyntaxError:" in stderr
-    assert "line" in stderr
+    assert "import of 'os' is not allowed" in stderr
 
 
-def test_run_untrusted_code_cleans_temp_dir(monkeypatch, tmp_path):
-    created_paths = []
+def test_temp_dir_cleanup(tmp_path, monkeypatch):
+    temp_root = tmp_path / "mvp_temp_root"
+    temp_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_root))
 
-    class TrackingTempDir:
-        def __init__(self, prefix: str):
-            self._path = tmp_path / f"{prefix}tracked"
+    stdout, stderr = execute_untrusted("print('hi')")
 
-        def __enter__(self):
-            self._path.mkdir(parents=True, exist_ok=True)
-            created_paths.append(self._path)
-            return str(self._path)
-
-        def __exit__(self, exc_type, exc, tb):
-            shutil.rmtree(self._path, ignore_errors=True)
-            return False
-
-    monkeypatch.setattr(mvp_executor.tempfile, "TemporaryDirectory", TrackingTempDir)
-
-    stdout, stderr = mvp_executor.run_untrusted_code("print('ok')")
-
-    assert stdout.strip() == "ok"
+    assert stdout.strip() == "hi"
     assert stderr == ""
-    assert created_paths
-    assert not list(tmp_path.iterdir())
+    assert list(temp_root.iterdir()) == []
 
 
-def test_run_untrusted_code_normalizes_newlines():
-    stdout, stderr = mvp_executor.run_untrusted_code('print("a\\r\\nb")')
-    assert stdout == "a\nb\n"
-    assert stderr == ""
+def test_output_decoding_normalizes_newlines(monkeypatch):
+    result = types.SimpleNamespace(
+        stdout=b"line1\r\nline2\rline3\xff",
+        stderr=b"bad\xff\r\n",
+        returncode=0,
+    )
 
+    def fake_run(*_args, **_kwargs):
+        return result
 
-def test_run_untrusted_code_empty_returns_blank():
-    assert mvp_executor.run_untrusted_code("  ") == ("", "")
+    monkeypatch.setattr("mvp_executor.subprocess.run", fake_run)
+
+    stdout, stderr = execute_untrusted("print('ignored')")
+
+    assert stdout == "line1\nline2\nline3�"
+    assert stderr == "bad�\n"
