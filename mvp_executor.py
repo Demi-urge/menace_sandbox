@@ -33,15 +33,41 @@ BANNED_MODULES = {
     "urllib",
     "zipfile",
 }
-BANNED_BUILTINS = {"__import__", "compile", "eval", "exec", "input"}
+BANNED_BUILTINS = {"__import__", "compile", "eval", "exec", "input", "open"}
 BANNED_IMPORT_PATHS = {"asyncio.subprocess", "concurrent.futures"}
 BAN_END_IMPORTS = {"asyncio": {"subprocess"}}
 BANNED_CALL_PATHS = {
     "asyncio.create_subprocess_exec",
     "asyncio.create_subprocess_shell",
     "concurrent.futures.ProcessPoolExecutor",
+    "glob.glob",
+    "glob.iglob",
+    "importlib.import_module",
+    "importlib.invalidate_caches",
+    "importlib.reload",
     "multiprocessing.Pool",
     "multiprocessing.Process",
+    "os.listdir",
+    "os.makedirs",
+    "os.mkdir",
+    "os.open",
+    "os.remove",
+    "os.rename",
+    "os.replace",
+    "os.rmdir",
+    "os.scandir",
+    "os.unlink",
+    "os.walk",
+    "pathlib.Path",
+    "pathlib.Path.open",
+    "pathlib.Path.read_bytes",
+    "pathlib.Path.read_text",
+    "pathlib.Path.write_bytes",
+    "pathlib.Path.write_text",
+    "shutil.copy",
+    "shutil.copyfile",
+    "shutil.copytree",
+    "shutil.rmtree",
 }
 
 
@@ -468,134 +494,8 @@ def execute_untrusted(code: str) -> tuple[str, str]:
         temp_dir = tempfile.TemporaryDirectory(prefix="mvp_executor_")
         temp_path = temp_dir.name
         code_path = os.path.join(temp_path, "untrusted.py")
-        runner_path = os.path.join(temp_path, "runner.py")
         with open(code_path, "w", encoding="utf-8") as handle:
             handle.write(code)
-        with open(runner_path, "w", encoding="utf-8") as handle:
-            handle.write(
-                (
-                    "import builtins\n"
-                    "import runpy\n"
-                    "import sys\n"
-                    "\n"
-                    f"ALLOWED_ROOT = {temp_path!r}\n"
-                    f"BANNED_MODULES = {sorted(BANNED_MODULES)!r}\n"
-                    "PATH_SEP = '\\\\' if sys.platform.startswith('win') else '/'\n"
-                    "ALT_SEP = '/' if PATH_SEP == '\\\\' else None\n"
-                    "\n"
-                    "def _error(message):\n"
-                    "    sys.stderr.write(f\"error: {message}\\n\")\n"
-                    "    raise SystemExit(1)\n"
-                    "\n"
-                    "def _coerce_path(value):\n"
-                    "    if isinstance(value, str):\n"
-                    "        return value\n"
-                    "    if isinstance(value, bytes):\n"
-                    "        return value.decode(sys.getfilesystemencoding(), errors='surrogateescape')\n"
-                    "    fspath = getattr(value, '__fspath__', None)\n"
-                    "    if fspath is None:\n"
-                    "        return None\n"
-                    "    return _coerce_path(fspath())\n"
-                    "\n"
-                    "def _is_absolute(path):\n"
-                    "    if path.startswith(PATH_SEP):\n"
-                    "        return True\n"
-                    "    if len(path) > 2 and path[1] == ':':\n"
-                    "        return path[2] in (PATH_SEP, ALT_SEP or PATH_SEP)\n"
-                    "    return False\n"
-                    "\n"
-                    "def _normalize(path):\n"
-                    "    if ALT_SEP:\n"
-                    "        path = path.replace(ALT_SEP, PATH_SEP)\n"
-                    "    drive = ''\n"
-                    "    absolute = path.startswith(PATH_SEP)\n"
-                    "    if len(path) > 1 and path[1] == ':':\n"
-                    "        drive = path[:2]\n"
-                    "        path = path[2:]\n"
-                    "        absolute = path.startswith(PATH_SEP)\n"
-                    "        if drive and not absolute:\n"
-                    "            return None\n"
-                    "    parts = []\n"
-                    "    for part in path.split(PATH_SEP):\n"
-                    "        if part in ('', '.'): \n"
-                    "            continue\n"
-                    "        if part == '..':\n"
-                    "            if parts:\n"
-                    "                parts.pop()\n"
-                    "            else:\n"
-                    "                return None\n"
-                    "            continue\n"
-                    "        parts.append(part)\n"
-                    "    prefix = drive + (PATH_SEP if absolute else '')\n"
-                    "    if not parts:\n"
-                    "        if prefix:\n"
-                    "            return prefix.rstrip(PATH_SEP) if not absolute else prefix\n"
-                    "        return PATH_SEP if absolute else '.'\n"
-                    "    return prefix + PATH_SEP.join(parts)\n"
-                    "\n"
-                    "def _resolve(path):\n"
-                    "    if path is None:\n"
-                    "        return None\n"
-                    "    if _is_absolute(path):\n"
-                    "        return _normalize(path)\n"
-                    "    base = _normalize(ALLOWED_ROOT)\n"
-                    "    if base is None:\n"
-                    "        return None\n"
-                    "    combined = base.rstrip(PATH_SEP) + PATH_SEP + path.lstrip(PATH_SEP)\n"
-                    "    return _normalize(combined)\n"
-                    "\n"
-                    "def is_allowed(path):\n"
-                    "    resolved = _resolve(path)\n"
-                    "    if resolved is None:\n"
-                    "        return False\n"
-                    "    allowed_root = _normalize(ALLOWED_ROOT)\n"
-                    "    if allowed_root is None:\n"
-                    "        return False\n"
-                    "    if resolved == allowed_root:\n"
-                    "        return True\n"
-                    "    return resolved.startswith(allowed_root.rstrip(PATH_SEP) + PATH_SEP)\n"
-                    "\n"
-                    "class ImportGate:\n"
-                    "    def find_spec(self, fullname, path=None, target=None):\n"
-                    "        root = fullname.split('.', 1)[0]\n"
-                    "        if root in BANNED_MODULES or fullname in BANNED_MODULES:\n"
-                    "            raise ImportError(f\"import of '{fullname}' is not allowed\")\n"
-                    "        return None\n"
-                    "\n"
-                    "def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
-                    "    if level:\n"
-                    "        raise ImportError(\"relative imports are not allowed\")\n"
-                    "    root = name.split('.', 1)[0]\n"
-                    "    if root in BANNED_MODULES or name in BANNED_MODULES:\n"
-                    "        raise ImportError(f\"import of '{name}' is not allowed\")\n"
-                    "    return _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)\n"
-                    "\n"
-                    "def _guarded_open(file, *args, **kwargs):\n"
-                    "    target = _coerce_path(file)\n"
-                    "    if target is not None and not is_allowed(target):\n"
-                    "        raise PermissionError(f\"Access to '{target}' is not allowed\")\n"
-                    "    return _ORIGINAL_OPEN(file, *args, **kwargs)\n"
-                    "\n"
-                    "_ORIGINAL_OPEN = builtins.open\n"
-                    "_ORIGINAL_IMPORT = builtins.__import__\n"
-                    "builtins.open = _guarded_open\n"
-                    "sys.meta_path.insert(0, ImportGate())\n"
-                    "builtins.__import__ = _guarded_import\n"
-                    "\n"
-                    "if len(sys.argv) < 2:\n"
-                    "    _error('Missing untrusted script path')\n"
-                    "untrusted_path = sys.argv[1]\n"
-                    "sys.argv = sys.argv[1:]\n"
-                    "try:\n"
-                    "    runpy.run_path(untrusted_path, run_name='__main__')\n"
-                    "except (ImportError, PermissionError) as exc:\n"
-                    "    _error(str(exc))\n"
-                    "except SystemExit as exc:\n"
-                    "    raise\n"
-                    "except Exception as exc:\n"
-                    "    _error(str(exc))\n"
-                )
-            )
 
         env = {
             "LANG": "C",
@@ -607,14 +507,14 @@ def execute_untrusted(code: str) -> tuple[str, str]:
         try:
             if os.name == "nt":
                 result = run_windows_subprocess(
-                    [sys.executable, runner_path, code_path],
+                    [sys.executable, "-I", "-S", code_path],
                     cwd=temp_path,
                     env=env,
                     timeout=_TIMEOUT_SECONDS,
                 )
             else:
                 result = subprocess.run(
-                    [sys.executable, runner_path, code_path],
+                    [sys.executable, "-I", "-S", code_path],
                     shell=False,
                     timeout=_TIMEOUT_SECONDS,
                     capture_output=True,
