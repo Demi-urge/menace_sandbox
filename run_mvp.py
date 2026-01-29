@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -45,6 +46,18 @@ def _emit_json(payload: dict) -> None:
 
 def _error_payload(message: str) -> dict:
     return {"error": message, "success": False}
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_ESCAPE.sub("", text)
+
+
+def _sanitize_exception_message(message: str) -> str:
+    cleaned = _strip_ansi(message)
+    return cleaned.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
 
 
 def _read_task_file(path: str) -> tuple[dict | None, str | None]:
@@ -91,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run(argv)
     except Exception as exc:
-        message = str(exc) or "unexpected error"
+        raw_message = str(exc) or "unexpected error"
+        message = _sanitize_exception_message(raw_message) or "unexpected error"
         _emit_json(_error_payload(message))
         return 1
 
