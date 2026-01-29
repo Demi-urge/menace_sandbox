@@ -1,4 +1,3 @@
-import os
 import shutil
 import time
 
@@ -15,10 +14,9 @@ def test_run_untrusted_code_timeout():
 
 
 def test_run_untrusted_code_blocks_imports():
-    stdout, stderr = mvp_executor.run_untrusted_code("import os\nprint('hi')")
+    stdout, stderr = mvp_executor.run_untrusted_code("import subprocess\nprint('hi')")
     assert stdout == ""
-    assert "Blocked import: os" in stderr
-    assert "Execution was not attempted" in stderr
+    assert "ImportError: import of 'subprocess' is blocked" in stderr
 
 
 def test_run_untrusted_code_reports_syntax_error():
@@ -51,7 +49,13 @@ def test_run_untrusted_code_cleans_temp_dir(monkeypatch, tmp_path):
     assert stdout.strip() == "ok"
     assert stderr == ""
     assert created_paths
-    assert not os.path.exists(created_paths[0])
+    assert not list(tmp_path.iterdir())
+
+
+def test_run_untrusted_code_normalizes_newlines():
+    stdout, stderr = mvp_executor.run_untrusted_code('print("a\\r\\nb")')
+    assert stdout == "a\nb\n"
+    assert stderr == ""
 
 
 def test_run_untrusted_code_empty_returns_blank():
