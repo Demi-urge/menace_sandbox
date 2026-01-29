@@ -1,4 +1,42 @@
-"""Minimal MVP workflow execution helpers."""
+"""Minimal MVP workflow execution helpers.
+
+This module implements an end-to-end pipeline for MVP tasks:
+generation (build deterministic Python code) → execution (run the code in a
+controlled subprocess) → evaluation (score execution output for ROI).
+
+Constraints:
+    - Standard-library-only implementation.
+    - No recursion.
+    - No concurrency.
+    - No networking.
+    - No dynamic imports.
+
+Input/Output Schema:
+    execute_task expects a dictionary with the following structure:
+        {
+            "objective": str,               # required, non-empty
+            "constraints": list[str] | None # optional
+        }
+    It returns a JSON-serializable dictionary:
+        {
+            "objective": str,
+            "constraints": list[str],
+            "generated_code": str,
+            "execution_output": str,
+            "execution_error": str,
+            "evaluation_error": str,
+            "roi_score": float,
+            "started_at": str,
+            "finished_at": str,
+            "duration_ms": int,
+            "success": bool
+        }
+
+Error Handling:
+    The workflow is defensive. It validates inputs, captures exceptions,
+    sanitizes error output, and reports errors through execution_error and
+    evaluation_error fields rather than raising.
+"""
 
 from __future__ import annotations
 
