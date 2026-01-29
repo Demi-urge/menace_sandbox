@@ -33,6 +33,15 @@ BANNED_MODULES = {
     "zipfile",
 }
 BANNED_BUILTINS = {"__import__", "compile", "eval", "exec", "input"}
+BANNED_IMPORT_PATHS = {"asyncio.subprocess", "concurrent.futures"}
+BAN_END_IMPORTS = {"asyncio": {"subprocess"}}
+BANNED_CALL_PATHS = {
+    "asyncio.create_subprocess_exec",
+    "asyncio.create_subprocess_shell",
+    "concurrent.futures.ProcessPoolExecutor",
+    "multiprocessing.Pool",
+    "multiprocessing.Process",
+}
 ALLOWED_IMPORTS = {
     "dataclasses",
     "functools",
@@ -86,20 +95,42 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
         literal = string_literal(node)
         return literal in banned_lookup_names if literal is not None else False
 
+    def dotted_name(node: ast.AST) -> Optional[str]:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted_name(node.value)
+            if prefix:
+                return f"{prefix}.{node.attr}"
+        return None
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 module_name = alias.name.split(".", 1)[0]
+                if alias.name in BANNED_IMPORT_PATHS:
+                    violations.add(f"import of '{alias.name}' is not allowed")
+                    continue
                 if module_name in BANNED_MODULES:
                     violations.add(f"import of '{module_name}' is not allowed")
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 module_name = node.module.split(".", 1)[0]
+                if node.module in BANNED_IMPORT_PATHS:
+                    violations.add(f"import of '{node.module}' is not allowed")
+                for alias in node.names:
+                    banned_names = BAN_END_IMPORTS.get(node.module)
+                    if banned_names and alias.name in banned_names:
+                        violations.add(f"import of '{node.module}.{alias.name}' is not allowed")
                 if module_name in BANNED_MODULES:
                     violations.add(f"import of '{module_name}' is not allowed")
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in BANNED_BUILTINS:
                 violations.add(f"call to '{node.func.id}' is not allowed")
+            if isinstance(node.func, ast.Attribute):
+                func_name = dotted_name(node.func)
+                if func_name in BANNED_CALL_PATHS:
+                    violations.add(f"call to '{func_name}' is not allowed")
             if isinstance(node.func, ast.Name) and node.func.id == "getattr":
                 if len(node.args) >= 2 and is_builtins_target(node.args[0]) and is_banned_lookup(node.args[1]):
                     violations.add("call to 'getattr' with builtins is not allowed")

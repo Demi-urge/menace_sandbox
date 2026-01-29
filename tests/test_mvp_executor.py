@@ -124,6 +124,55 @@ def test_import_concurrent_futures_is_blocked():
     assert "not allowed" in stderr
 
 
+def test_import_asyncio_subprocess_is_blocked():
+    stdout, stderr = execute_untrusted("import asyncio.subprocess")
+
+    assert stdout == ""
+    assert "import of 'asyncio.subprocess' is not allowed" in stderr
+
+
+def test_from_asyncio_subprocess_is_blocked():
+    stdout, stderr = execute_untrusted("from asyncio import subprocess")
+
+    assert stdout == ""
+    assert "import of 'asyncio.subprocess' is not allowed" in stderr
+
+
+def test_multiprocessing_process_call_is_blocked():
+    stdout, stderr = execute_untrusted("multiprocessing.Process(target=lambda: None)")
+
+    assert stdout == ""
+    assert "call to 'multiprocessing.Process' is not allowed" in stderr
+
+
+def test_multiprocessing_pool_call_is_blocked():
+    stdout, stderr = execute_untrusted("multiprocessing.Pool()")
+
+    assert stdout == ""
+    assert "call to 'multiprocessing.Pool' is not allowed" in stderr
+
+
+def test_concurrent_futures_process_pool_executor_call_is_blocked():
+    stdout, stderr = execute_untrusted("concurrent.futures.ProcessPoolExecutor()")
+
+    assert stdout == ""
+    assert "call to 'concurrent.futures.ProcessPoolExecutor' is not allowed" in stderr
+
+
+def test_asyncio_create_subprocess_exec_call_is_blocked():
+    stdout, stderr = execute_untrusted("asyncio.create_subprocess_exec('ls')")
+
+    assert stdout == ""
+    assert "call to 'asyncio.create_subprocess_exec' is not allowed" in stderr
+
+
+def test_asyncio_create_subprocess_shell_call_is_blocked():
+    stdout, stderr = execute_untrusted("asyncio.create_subprocess_shell('ls')")
+
+    assert stdout == ""
+    assert "call to 'asyncio.create_subprocess_shell' is not allowed" in stderr
+
+
 def test_temp_dir_cleanup(tmp_path, monkeypatch):
     temp_root = tmp_path / "mvp_temp_root"
     temp_root.mkdir()
