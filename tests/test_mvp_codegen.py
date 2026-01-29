@@ -26,12 +26,11 @@ def test_run_generation_always_returns_string(task):
     assert "print(" in result
 
 
-def test_run_generation_fallback_on_wrapper_error(monkeypatch):
+def test_run_generation_fallback_on_wrapper_error():
     def wrapper(_prompt):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
-    task = {"objective": "do the thing"}
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
 
     result = mvp_codegen.run_generation(task)
 
@@ -72,14 +71,14 @@ def test_run_generation_fallback_on_timeout_error():
         {"objective": "do the thing", "constraints": "just a string"},
     ],
 )
-def test_run_generation_uses_internal_wrapper_resolver(monkeypatch, task):
+def test_run_generation_uses_internal_wrapper_resolver(task):
     calls = []
 
     def wrapper(prompt):
         calls.append(prompt)
         return "print('hi')"
 
-    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
+    task = {**task, "model_wrapper": wrapper}
 
     result = mvp_codegen.run_generation(task)
 
@@ -100,12 +99,11 @@ def test_run_generation_uses_internal_wrapper_resolver(monkeypatch, task):
         "import ftplib\nprint('hi')",
     ],
 )
-def test_run_generation_rejects_unsafe_imports(monkeypatch, unsafe_code):
+def test_run_generation_rejects_unsafe_imports(unsafe_code):
     def wrapper(_prompt):
         return unsafe_code
 
-    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
-    task = {"objective": "do the thing"}
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
 
     result = mvp_codegen.run_generation(task)
 
@@ -126,36 +124,33 @@ def test_run_generation_rejects_unsafe_imports(monkeypatch, unsafe_code):
         "import_module('os')",
     ],
 )
-def test_run_generation_rejects_builtins_alias_bypasses(monkeypatch, unsafe_code):
+def test_run_generation_rejects_builtins_alias_bypasses(unsafe_code):
     def wrapper(_prompt):
         return unsafe_code
 
-    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
-    task = {"objective": "do the thing"}
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
 
     result = mvp_codegen.run_generation(task)
 
     assert result == FALLBACK_SCRIPT
 
 
-def test_run_generation_rejects_importlib_dynamic_import(monkeypatch):
+def test_run_generation_rejects_importlib_dynamic_import():
     def wrapper(_prompt):
         return "import importlib\nprint(importlib.import_module('os'))"
 
-    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
-    task = {"objective": "do the thing"}
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
 
     result = mvp_codegen.run_generation(task)
 
     assert result == FALLBACK_SCRIPT
 
 
-def test_run_generation_sanitizes_code_fences(monkeypatch):
+def test_run_generation_sanitizes_code_fences():
     def wrapper(_prompt):
         return "```python\nprint('hi')\n```"
 
-    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
-    task = {"objective": "do the thing"}
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
 
     result = mvp_codegen.run_generation(task)
 
@@ -163,12 +158,11 @@ def test_run_generation_sanitizes_code_fences(monkeypatch):
     assert result.strip() == "print('hi')"
 
 
-def test_run_generation_truncates_or_falls_back_on_oversized_output(monkeypatch):
+def test_run_generation_truncates_or_falls_back_on_oversized_output():
     def wrapper(_prompt):
         return ("print('a')\n" * 500).rstrip()
 
-    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
-    task = {"objective": "do the thing"}
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
 
     result = mvp_codegen.run_generation(task)
 

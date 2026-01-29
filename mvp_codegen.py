@@ -5,51 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 import sys
-from typing import Any, Callable
 
-
-def _extract_literal_string(node: ast.AST | None) -> str | None:
-    """Return a literal string value from an AST node if available."""
-    if node is None:
-        return None
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.Str):
-        return node.s
-    if isinstance(node, ast.Index):
-        return _extract_literal_string(node.value)
-    return None
-
-
-def _subscript_key(node: ast.Subscript) -> str | None:
-    """Return literal string keys from subscript expressions."""
-    return _extract_literal_string(node.slice)
-
-
-def _get_model_wrapper() -> Callable[[str], Any] | None:
-    """Return a callable model wrapper based on configured LLM backends."""
-    try:
-        from llm_registry import create_backend, register_backend_from_path
-        from prompt_types import Prompt
-        from sandbox_settings import SandboxSettings
-    except Exception:
-        return None
-
-    try:
-        settings = SandboxSettings()
-        for name, path in settings.available_backends.items():
-            register_backend_from_path(name, path)
-        backend_name = (settings.preferred_llm_backend or settings.llm_backend).lower()
-        client = create_backend(backend_name)
-    except Exception:
-        return None
-
-    def _wrapper(prompt_text: str) -> Any:
-        prompt = Prompt(user=prompt_text)
-        result = client._generate(prompt, context_builder=object())
-        return getattr(result, "text", result)
-
-    return _wrapper
 
 
 def run_generation(task: dict[str, object]) -> str:
@@ -107,8 +63,6 @@ def run_generation(task: dict[str, object]) -> str:
 
     wrapper = task.get("model_wrapper")
     if not callable(wrapper):
-        wrapper = _get_model_wrapper()
-    if wrapper is None:
         return fallback_script
 
     timeout_value = task.get("timeout_s") if isinstance(task, dict) else None
@@ -342,7 +296,14 @@ def run_generation(task: dict[str, object]) -> str:
                 if node.value.id in banned_module_aliases:
                     return fallback_script
         if isinstance(node, ast.Subscript):
-            key = _subscript_key(node)
+            key_node = node.slice
+            if isinstance(key_node, ast.Index):
+                key_node = key_node.value
+            key = None
+            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                key = key_node.value
+            elif isinstance(key_node, ast.Str):
+                key = key_node.s
             if isinstance(node.value, ast.Name) and node.value.id in banned_base_names:
                 if key in banned_builtins:
                     return fallback_script
@@ -361,7 +322,15 @@ def run_generation(task: dict[str, object]) -> str:
                 if func.id in banned_reflection_calls:
                     literal = None
                     if func.id in {"getattr", "setattr"} and len(node.args) >= 2:
-                        literal = _extract_literal_string(node.args[1])
+                        literal_node = node.args[1]
+                        if isinstance(literal_node, ast.Index):
+                            literal_node = literal_node.value
+                        if isinstance(literal_node, ast.Constant) and isinstance(
+                            literal_node.value, str
+                        ):
+                            literal = literal_node.value
+                        elif isinstance(literal_node, ast.Str):
+                            literal = literal_node.s
                         target = node.args[0]
                         if literal in banned_builtins and isinstance(target, ast.Name):
                             if target.id in banned_base_names or target.id in banned_aliases:
