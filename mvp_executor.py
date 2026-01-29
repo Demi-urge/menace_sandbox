@@ -50,6 +50,7 @@ ALLOWED_IMPORTS = {
 def _check_static_policy(tree: ast.AST) -> list[str]:
     violations: set[str] = set()
     banned_lookup_names = BANNED_BUILTINS | BANNED_MODULES | {"__builtins__", "builtins"}
+    file_access_message = "file access not allowed"
 
     def is_builtins_target(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
@@ -64,6 +65,17 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
             return is_builtins_target(node.value)
         return False
 
+    def is_module_reference(node: ast.AST, names: set[str]) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in names
+        if isinstance(node, ast.Attribute):
+            return node.attr in names or is_module_reference(node.value, names)
+        if isinstance(node, ast.Subscript):
+            return is_module_reference(node.value, names) or is_module_reference(node.slice, names)
+        if isinstance(node, ast.Index):  # pragma: no cover - py<3.9 compatibility
+            return is_module_reference(node.value, names)
+        return False
+
     def string_literal(node: ast.AST) -> Optional[str]:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return node.value
@@ -74,6 +86,10 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
     def is_banned_lookup(node: ast.AST) -> bool:
         literal = string_literal(node)
         return literal in banned_lookup_names if literal is not None else False
+
+    def is_open_lookup(node: ast.AST) -> bool:
+        literal = string_literal(node)
+        return literal == "open" if literal is not None else False
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -89,9 +105,21 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in BANNED_BUILTINS:
                 violations.add(f"call to '{node.func.id}' is not allowed")
+                if node.func.id == "open":
+                    violations.add(file_access_message)
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "open":
+                if is_module_reference(node.func.value, {"io", "codecs"}) or is_builtins_target(
+                    node.func.value
+                ):
+                    violations.add(file_access_message)
+            if isinstance(node.func, ast.Subscript):
+                if is_builtins_target(node.func.value) and is_open_lookup(node.func.slice):
+                    violations.add(file_access_message)
             if isinstance(node.func, ast.Name) and node.func.id == "getattr":
                 if len(node.args) >= 2 and is_builtins_target(node.args[0]) and is_banned_lookup(node.args[1]):
                     violations.add("call to 'getattr' with builtins is not allowed")
+                if len(node.args) >= 2 and is_builtins_target(node.args[0]) and is_open_lookup(node.args[1]):
+                    violations.add(file_access_message)
             if isinstance(node.func, ast.Name) and node.func.id == "vars":
                 if node.args and is_builtins_target(node.args[0]):
                     violations.add("call to 'vars' with builtins is not allowed")
@@ -119,6 +147,8 @@ def execute_untrusted(code: str) -> tuple[str, str]:
     """Execute untrusted Python code in a constrained subprocess.
 
     Returns (stdout, stderr) as normalized strings with predictable error surfaces.
+    File I/O is disallowed to preserve isolation because path-based confinement is not feasible
+    without OS sandboxing.
     """
 
     def normalize_output(data: bytes) -> str:
