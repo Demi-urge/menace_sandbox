@@ -52,6 +52,10 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import mvp_codegen
+import mvp_evaluator
+import mvp_executor
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
@@ -140,7 +144,8 @@ def execute_task(task_dict: dict) -> dict:
     roi_score = 0.0
     success = False
     spec: TaskSpec | None = None
-    execution_result: dict[str, object] = {}
+    exec_stdout = ""
+    exec_stderr = ""
 
     try:
         if not isinstance(task_dict, dict):
@@ -163,41 +168,33 @@ def execute_task(task_dict: dict) -> dict:
 
     if spec is not None:
         try:
-            generation_result = generate_code(spec)
-            generated_code = generation_result.code
-            if generation_result.error:
-                execution_error = generation_result.error
+            generated_code = mvp_codegen.run_generation(task_dict)
+            if not isinstance(generated_code, str):
+                generated_code = str(generated_code)
+            if not generated_code.strip():
+                execution_error = "code generation failed"
         except Exception as exc:  # pragma: no cover - defensive
             execution_error = sanitize_exception(exc)
 
     if spec is not None and generated_code and not execution_error:
         try:
-            execution_result = _execute_code(generated_code, timeout_s=5.0)
-            execution_output = str(execution_result.get("execution_output", ""))
-            execution_errors = _coerce_error_list(execution_result.get("errors"))
-            if execution_errors:
-                execution_error = execution_errors[0]
+            exec_stdout, exec_stderr = mvp_executor.execute_untrusted(generated_code)
+            execution_output = f"STDOUT:\n{exec_stdout}\n\nSTDERR:\n{exec_stderr}"
+            if isinstance(exec_stderr, str) and exec_stderr.strip().startswith("error:"):
+                execution_error = exec_stderr.strip()
         except Exception as exc:  # pragma: no cover - defensive
             execution_error = sanitize_exception(exc)
-            execution_result = {"execution_output": "", "errors": [execution_error]}
+            execution_output = ""
     elif spec is not None and not generated_code and not execution_error:
         execution_error = "execution skipped: no generated code"
 
     if spec is not None:
         try:
-            if execution_error:
-                exec_struct = ExecutionResult(
-                    stdout="",
-                    stderr="",
-                    return_code=1,
-                    error=execution_error,
-                )
-            else:
-                exec_struct = _execution_result_from_dict(execution_result)
-            evaluation_result = evaluate_result(spec, exec_struct)
-            roi_score = float(evaluation_result.roi_score)
-            if evaluation_result.evaluation_error:
-                evaluation_error = evaluation_result.evaluation_error
+            if execution_error and not exec_stderr:
+                exec_stderr = execution_error
+            roi_score = float(mvp_evaluator.evaluate_roi(exec_stdout, exec_stderr))
+            if roi_score == -1.0:
+                evaluation_error = "evaluation failed"
         except Exception as exc:  # pragma: no cover - defensive
             evaluation_error = sanitize_exception(exc)
             roi_score = 0.0
@@ -225,6 +222,8 @@ def execute_task(task_dict: dict) -> dict:
 
 def generate_code(task: TaskSpec) -> GenerationResult:
     """Generate deterministic Python code for the given task.
+
+    Deprecated: use mvp_codegen.run_generation instead.
 
     Args:
         task: Normalized TaskSpec input.
@@ -279,14 +278,20 @@ def generate_code(task: TaskSpec) -> GenerationResult:
 
 
 def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
-    """Backward-compatible wrapper for code generation."""
+    """Backward-compatible wrapper for code generation.
+
+    Deprecated: prefer mvp_codegen.run_generation instead.
+    """
     result = generate_code(TaskSpec(objective=objective, constraints=constraints))
     errors = [result.error] if result.error else []
     return {"generated_code": result.code, "errors": errors, "warnings": result.warnings}
 
 
 def execute_generated_code(code: str) -> ExecutionResult:
-    """Execute generated code with allowlisted imports, no dynamic imports, and no exec/eval."""
+    """Execute generated code with allowlisted imports, no dynamic imports, and no exec/eval.
+
+    Deprecated: prefer mvp_executor.execute_untrusted instead.
+    """
     if not isinstance(code, str) or not code.strip():
         return ExecutionResult(
             stdout="",
@@ -593,6 +598,8 @@ def _build_restricted_env() -> dict[str, str]:
 def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
     """Execute code in a temporary file and capture sanitized output.
 
+    Deprecated: prefer mvp_executor.execute_untrusted instead.
+
     Args:
         code: Python source code to execute.
         timeout_s: Timeout in seconds.
@@ -692,6 +699,8 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
 
 def evaluate_result(task: TaskSpec, exec_result: ExecutionResult) -> EvaluationResult:
     """Evaluate execution results and provide a deterministic ROI score.
+
+    Deprecated: prefer mvp_evaluator.evaluate_roi instead.
 
     Heuristics (bounded to 0.0–1.0):
     - +0.60 when return_code is zero and no execution error is reported.
@@ -806,6 +815,8 @@ def _build_rationale(parts: list[str]) -> str:
 
 def _evaluate_result(code: str, exec_result: dict[str, object]) -> dict[str, object]:
     """Evaluate execution results and provide an ROI score.
+
+    Deprecated: prefer mvp_evaluator.evaluate_roi instead.
 
     Args:
         code: Generated code string.
