@@ -6,12 +6,27 @@ def run_generation(task: dict[str, object]) -> str:
 
     The task payload may include only an objective (required) and constraints (optional).
     If no callable model wrapper is provided, a deterministic fallback script is returned.
+
+    Args:
+        task: Task payload containing the objective, optional constraints, and optional
+            model wrapper.
+
+    Returns:
+        A safe Python script derived from the task payload or a deterministic fallback.
     """
     import ast
     import sys
 
     def _build_fallback_script(objective: str, constraints: list[str]) -> str:
-        """Build a deterministic, safe fallback script when no model wrapper is supplied."""
+        """Build a deterministic, safe fallback script when no model wrapper is supplied.
+
+        Args:
+            objective: Objective text to include in the fallback output.
+            constraints: Constraint strings to include in the fallback output.
+
+        Returns:
+            A deterministic Python script as a string.
+        """
         objective_text = objective.strip() if isinstance(objective, str) else ""
         constraint_texts = [item.strip() for item in constraints if isinstance(item, str) and item.strip()]
         constraints_line = ", ".join(constraint_texts) if constraint_texts else "none"
@@ -36,7 +51,14 @@ def run_generation(task: dict[str, object]) -> str:
         return "\n".join(lines)
 
     def _coerce_text(value: object) -> str:
-        """Coerce a value into a safe, stripped string."""
+        """Coerce a value into a safe, stripped string.
+
+        Args:
+            value: Value to coerce into text.
+
+        Returns:
+            A stripped string representation of the value.
+        """
         if isinstance(value, str):
             return value.strip()
         if value is None:
