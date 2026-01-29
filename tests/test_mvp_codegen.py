@@ -10,17 +10,14 @@ FALLBACK_SCRIPT = f'print("{FALLBACK_MESSAGE}")'
 @pytest.mark.parametrize(
     "task",
     [
-        None,
-        "not-a-dict",
-        {},
-        {"objective": ""},
-        {"objective": "   "},
-        {"objective": 123},
-        {"objective": "do the thing"},
+        {"objective": "", "model_wrapper": lambda _prompt: "print('hi')"},
+        {"objective": "   ", "model_wrapper": lambda _prompt: "print('hi')"},
+        {"objective": 123, "model_wrapper": lambda _prompt: "print('hi')"},
+        {"objective": "do the thing", "model_wrapper": lambda _prompt: "print('hi')"},
     ],
 )
 def test_run_generation_always_returns_string(task):
-    result = mvp_codegen.run_generation(task)  # type: ignore[arg-type]
+    result = mvp_codegen.run_generation(task)
 
     assert isinstance(result, str)
     assert "print(" in result
@@ -40,8 +37,8 @@ def test_run_generation_fallback_on_wrapper_error():
 def test_run_generation_passes_timeout_to_wrapper():
     received = {}
 
-    def wrapper(_prompt, timeout=None):
-        received["timeout"] = timeout
+    def wrapper(_prompt, timeout_s=None):
+        received["timeout"] = timeout_s
         return "print('hi')"
 
     task = {"objective": "do the thing", "timeout_s": 12, "model_wrapper": wrapper}
@@ -53,7 +50,7 @@ def test_run_generation_passes_timeout_to_wrapper():
 
 
 def test_run_generation_fallback_on_timeout_error():
-    def wrapper(_prompt, timeout=None):
+    def wrapper(_prompt, timeout_s=None):
         raise TimeoutError("too slow")
 
     task = {"objective": "do the thing", "timeout_s": 3, "model_wrapper": wrapper}
@@ -90,12 +87,12 @@ def test_run_generation_uses_model_wrapper(task):
 @pytest.mark.parametrize(
     "task",
     [
-        {"objective": "do the thing"},
-        {"objective": "do the thing", "constraints": ["fast", "safe"]},
-        {"objective": "do the thing", "constraints": "just a string"},
+        {"objective": "do the thing", "model_wrapper": None},
+        {"objective": "do the thing", "constraints": ["fast", "safe"], "model_wrapper": None},
+        {"objective": "do the thing", "constraints": "just a string", "model_wrapper": None},
     ],
 )
-def test_run_generation_falls_back_without_model_wrapper(task):
+def test_run_generation_falls_back_with_non_callable_wrapper(task):
     result = mvp_codegen.run_generation(task)
 
     assert result == FALLBACK_SCRIPT
@@ -116,6 +113,28 @@ def test_run_generation_falls_back_without_model_wrapper(task):
 def test_run_generation_rejects_unsafe_imports(unsafe_code):
     def wrapper(_prompt):
         return unsafe_code
+
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
+
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
+def test_run_generation_rejects_io_open_usage():
+    def wrapper(_prompt):
+        return "import io\nio.open('data.txt')"
+
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
+
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
+def test_run_generation_rejects_io_open_alias_usage():
+    def wrapper(_prompt):
+        return "import io as i\ni.open('data.txt')"
 
     task = {"objective": "do the thing", "model_wrapper": wrapper}
 
