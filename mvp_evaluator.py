@@ -1,20 +1,20 @@
-"""Deterministic ROI evaluator for MVP outputs.
+"""Deterministic MVP ROI evaluator based on output streams.
 
-The scoring is strictly deterministic and monotonic: more stdout increases the ROI
-signal, and more stderr decreases it. It uses stable, bounded transforms of basic
-counts (string length and line count) so behavior remains consistent even for
-huge outputs. There are no tunable thresholds, no dynamic weights, no ML, and no
-stateful or I/O-driven behavior.
+This module implements a minimal, fully deterministic, and monotonic scoring
+function. More stdout increases the score, while more stderr decreases it. The
+formula relies only on stable transforms of simple counts (length and line
+count), has no thresholds tied to specific messages, uses no learning or
+external state, and remains JSON-serializable by bounding the result.
 """
 
 from __future__ import annotations
 
 import math
 
-__all__ = ["evaluate_roi"]
+__all__ = ["evaluate_mvp_roi"]
 
 
-def evaluate_roi(stdout: str, stderr: str) -> float:
+def evaluate_mvp_roi(stdout: str, stderr: str) -> float:
     """Return a deterministic ROI score based on stdout and stderr volume.
 
     The score is monotonic with respect to basic success signals: increasing
@@ -26,15 +26,26 @@ def evaluate_roi(stdout: str, stderr: str) -> float:
     JSON-serializable finite float.
     """
     try:
-        safe_stdout = stdout if isinstance(stdout, str) else str(stdout)
-        safe_stderr = stderr if isinstance(stderr, str) else str(stderr)
+        def _coerce(value: object) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bytes):
+                return value.decode(errors="replace")
+            return str(value)
+
+        safe_stdout = _coerce(stdout)
+        safe_stderr = _coerce(stderr)
 
         stdout_len = len(safe_stdout)
         stderr_len = len(safe_stderr)
         stdout_lines = safe_stdout.count("\n") + (1 if safe_stdout else 0)
         stderr_lines = safe_stderr.count("\n") + (1 if safe_stderr else 0)
 
-        stdout_signal = math.log1p(stdout_len) + math.log1p(stdout_lines)
+        stdout_signal = (
+            (1.0 if safe_stdout else 0.0)
+            + math.log1p(stdout_len)
+            + math.log1p(stdout_lines)
+        )
         stderr_signal = math.log1p(stderr_len) + math.log1p(stderr_lines)
 
         raw_score = stdout_signal - stderr_signal
