@@ -10,28 +10,39 @@ from pathlib import Path
 import mvp_workflow
 
 
-def _emit_json(payload: dict, *, stream: object) -> None:
+class _ArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.error_message: str | None = None
+
+    def error(self, message: str) -> int:
+        self.error_message = f"error: {message}"
+        sys.stdout.write(self.error_message + "\n")
+        return 2
+
+
+def _emit_json(payload: dict) -> None:
     message = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    stream.write(message + "\n")
+    sys.stdout.write(message + "\n")
 
 
 def _error_payload(message: str) -> dict:
-    return {"success": False, "error": mvp_workflow.sanitize_error_output(message)}
+    return {"error": message, "success": False}
 
 
 def _read_task_file(path: str) -> tuple[dict | None, str | None]:
     try:
         content = Path(path).read_text(encoding="utf-8")
     except OSError:
-        return None, "task file not found"
+        return None, "task file not found or unreadable"
 
     if not content or not content.strip():
         return None, "task file is empty"
 
     try:
         payload = json.loads(content)
-    except json.JSONDecodeError as exc:
-        return None, mvp_workflow.sanitize_error_output(str(exc))
+    except json.JSONDecodeError:
+        return None, "task file contains invalid JSON"
 
     if not isinstance(payload, dict):
         return None, "task payload must be a JSON object"
@@ -39,43 +50,32 @@ def _read_task_file(path: str) -> tuple[dict | None, str | None]:
     return payload, None
 
 
-def _validate_task_fields(payload: dict) -> str | None:
-    objective = payload.get("objective")
-    if not isinstance(objective, str) or not objective.strip():
-        return "task payload missing non-empty 'objective'"
-    return None
-
-
-def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8")
-
-    parser = argparse.ArgumentParser(description=__doc__)
+def _run(argv: list[str] | None) -> int:
+    parser = _ArgumentParser(description=__doc__)
     parser.add_argument("--task", required=True, help="Path to JSON task payload")
     args = parser.parse_args(argv)
 
+    if parser.error_message is not None:
+        return 2
+
     payload, error = _read_task_file(args.task)
     if error:
-        _emit_json(_error_payload(error), stream=sys.stdout)
+        _emit_json(_error_payload(error))
         return 1
 
-    field_error = _validate_task_fields(payload)
-    if field_error:
-        _emit_json(_error_payload(field_error), stream=sys.stdout)
-        return 1
-
-    try:
-        result = mvp_workflow.execute_task(payload)
-    except Exception as exc:  # pragma: no cover - defensive
-        message = mvp_workflow.sanitize_error_output(str(exc))
-        _emit_json(_error_payload(message), stream=sys.stdout)
-        return 1
-
-    _emit_json(result, stream=sys.stdout)
+    result = mvp_workflow.execute_task(payload)
+    _emit_json(result)
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI entry
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _run(argv)
+    except Exception as exc:
+        message = str(exc) or "unexpected error"
+        _emit_json(_error_payload(message))
+        return 1
+
+
+if __name__ == "__main__":
     raise SystemExit(main())
