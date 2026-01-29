@@ -555,11 +555,30 @@ def _find_utf8_locale(env: dict[str, str]) -> str | None:
 
 
 def _build_restricted_env() -> dict[str, str]:
-    env = os.environ.copy()
+    base_env = os.environ
+    allowed_keys = {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LOGNAME",
+        "PATH",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "TZ",
+        "USER",
+        "USERNAME",
+    }
+    if os.name == "nt":
+        allowed_keys.update({"ComSpec", "PATHEXT", "SystemRoot", "WINDIR"})
+
+    env = {key: value for key in allowed_keys if (value := base_env.get(key))}
+    env["PATH"] = base_env.get("PATH", env.get("PATH", ""))
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     if os.name != "nt":
-        utf8_locale = _find_utf8_locale(env)
+        utf8_locale = _find_utf8_locale(base_env)
         if utf8_locale:
             env["LANG"] = utf8_locale
     return env
