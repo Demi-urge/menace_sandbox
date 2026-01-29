@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import datetime
 import json
 import os
@@ -155,45 +156,126 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
     Returns:
         A dictionary with execution output and errors.
     """
-    if not code.strip():
-        return {"execution_output": "", "errors": ["code is empty"]}
-
     errors: list[str] = []
-    output = ""
-    tmp_path: str | None = None
+    stdout = ""
+    stderr = ""
+    exit_code: int | None = None
+    timed_out = False
+
+    if not code.strip():
+        errors.append("code is empty or whitespace-only")
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "execution_output": "",
+            "errors": errors,
+        }
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".py", mode="w", encoding="utf-8") as tmp_file:
-            tmp_file.write(code)
-            tmp_path = tmp_file.name
+        parsed = ast.parse(code)
+    except SyntaxError as exc:
+        location = f"line {exc.lineno}, column {exc.offset}" if exc.lineno and exc.offset else "unknown location"
+        message = exc.msg or "invalid syntax"
+        errors.append(f"syntax error at {location}: {message}")
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "execution_output": "",
+            "errors": errors,
+        }
 
-        result = subprocess.run(
-            [sys.executable, tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-        )
-        stdout = _strip_ansi(result.stdout or "")
-        stderr = _strip_ansi(result.stderr or "")
-        output = stdout
+    allowed_imports = {
+        "collections",
+        "datetime",
+        "functools",
+        "itertools",
+        "json",
+        "math",
+        "operator",
+        "random",
+        "re",
+        "statistics",
+        "string",
+        "time",
+        "typing",
+    }
+    forbidden_imports: set[str] = set()
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root_name = alias.name.split(".")[0]
+                if root_name not in allowed_imports:
+                    forbidden_imports.add(root_name)
+        elif isinstance(node, ast.ImportFrom):
+            module_name = node.module.split(".")[0] if node.module else ""
+            if module_name not in allowed_imports:
+                forbidden_imports.add(module_name or "<relative>")
+    if forbidden_imports:
+        forbidden_list = ", ".join(sorted(forbidden_imports))
+        errors.append(f"forbidden imports detected: {forbidden_list}")
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "execution_output": "",
+            "errors": errors,
+        }
 
-        if result.returncode != 0:
-            errors.append(_sanitize_error(stderr) or "execution failed")
-    except subprocess.TimeoutExpired:
-        errors.append("timeout")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            script_path = os.path.join(tmp_dir, "generated_script.py")
+            with open(script_path, "w", encoding="utf-8") as script_file:
+                script_file.write(code)
+
+            restricted_env = {
+                "PATH": "/usr/bin:/bin",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUNBUFFERED": "1",
+                "LANG": "C.UTF-8",
+            }
+
+            try:
+                result = subprocess.run(
+                    [sys.executable, script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_s,
+                    check=False,
+                    env=restricted_env,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                stdout = _strip_ansi(result.stdout or "")
+                stderr = _strip_ansi(result.stderr or "")
+                exit_code = result.returncode
+
+                if exit_code != 0:
+                    errors.append(_sanitize_error(stderr) or "execution failed")
+            except subprocess.TimeoutExpired as exc:
+                timed_out = True
+                stdout = _strip_ansi((exc.stdout or "").strip())
+                stderr = _strip_ansi((exc.stderr or "").strip())
+                errors.append("execution timed out")
     except Exception as exc:  # pragma: no cover - defensive
         errors.append(f"execution error: {exc}")
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
 
-    return {"execution_output": output, "errors": errors}
+    stdout = _strip_ansi(stdout)
+    stderr = _strip_ansi(stderr)
+    execution_output = f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"
+
+    return {
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "execution_output": execution_output,
+        "errors": errors,
+    }
 
 
 def _evaluate_result(code: str, exec_result: dict[str, object]) -> dict[str, object]:
