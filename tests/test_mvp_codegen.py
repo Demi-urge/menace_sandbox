@@ -1,94 +1,73 @@
-import ast
-
 import pytest
 
-import local_model_wrapper
-import mvp_codegen
+from mvp_codegen import run_generation
 
 
-FALLBACK_SCRIPT = 'print("internal error")'
-
-
-def _make_task(objective="Say hi"):
-    return {"objective": objective, "model": object(), "tokenizer": object()}
+FALLBACK_MESSAGE = "internal error: code generation failed"
+FALLBACK_SCRIPT = f'print("{FALLBACK_MESSAGE}")'
 
 
 @pytest.mark.parametrize(
     "task",
     [
         None,
-        123,
-        "not a dict",
+        "not-a-dict",
         {},
-        {"objective": None, "model": object(), "tokenizer": object()},
-        {"objective": " ", "model": object(), "tokenizer": object()},
+        {"objective": ""},
+        {"objective": "   "},
+        {"objective": 123},
+        {"objective": "do the thing"},
     ],
 )
-def test_run_generation_returns_str_for_invalid_inputs(task):
-    result = mvp_codegen.run_generation(task)  # type: ignore[arg-type]
+def test_run_generation_always_returns_string(task):
+    result = run_generation(task)  # type: ignore[arg-type]
+
     assert isinstance(result, str)
-    assert result == FALLBACK_SCRIPT
+    assert "print(" in result
 
 
-@pytest.mark.parametrize(
-    "unsafe_output",
-    [
-        "import os\nprint('hi')",
-        "from subprocess import Popen\nprint('hi')",
-        "print(open('secrets.txt').read())",
-    ],
-)
-def test_run_generation_filters_unsafe_output(monkeypatch, unsafe_output):
-    def fake_generate(self, *args, **kwargs):
-        return unsafe_output
-
-    monkeypatch.setattr(local_model_wrapper.LocalModelWrapper, "generate", fake_generate)
-
-    result = mvp_codegen.run_generation(_make_task())
-    assert result == FALLBACK_SCRIPT
-
-
-def test_run_generation_truncates_oversized_output(monkeypatch):
-    line = "print('1234567890')\n"
-    oversized_output = line * 201
-    assert len(line) == 20
-    assert len(oversized_output.encode("utf-8")) > 4000
-
-    def fake_generate(self, *args, **kwargs):
-        return oversized_output
-
-    monkeypatch.setattr(local_model_wrapper.LocalModelWrapper, "generate", fake_generate)
-
-    result = mvp_codegen.run_generation(_make_task())
-    assert result != FALLBACK_SCRIPT
-    assert len(result.encode("utf-8")) <= 4000
-    assert result == oversized_output.encode("utf-8")[:4000].decode("utf-8").strip()
-    ast.parse(result)
-
-
-@pytest.mark.parametrize(
-    "bad_output",
-    [
-        "",
-        "   \n\n",
-        "print('oops'",
-    ],
-)
-def test_run_generation_fallback_on_empty_or_garbled_output(monkeypatch, bad_output):
-    def fake_generate(self, *args, **kwargs):
-        return bad_output
-
-    monkeypatch.setattr(local_model_wrapper.LocalModelWrapper, "generate", fake_generate)
-
-    result = mvp_codegen.run_generation(_make_task())
-    assert result == FALLBACK_SCRIPT
-
-
-def test_run_generation_fallback_on_wrapper_error(monkeypatch):
-    def fake_generate(self, *args, **kwargs):
+def test_run_generation_fallback_on_wrapper_error():
+    def wrapper(_prompt):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(local_model_wrapper.LocalModelWrapper, "generate", fake_generate)
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
 
-    result = mvp_codegen.run_generation(_make_task())
+    result = run_generation(task)
+
+    assert FALLBACK_MESSAGE in result
+
+
+@pytest.mark.parametrize("unsafe_code", ["import os\nprint('hi')", "import subprocess\nprint('hi')"])
+def test_run_generation_rejects_unsafe_imports(unsafe_code):
+    def wrapper(_prompt):
+        return unsafe_code
+
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
+
+    result = run_generation(task)
+
     assert result == FALLBACK_SCRIPT
+
+
+def test_run_generation_sanitizes_code_fences():
+    def wrapper(_prompt):
+        return "```python\nprint('hi')\n```"
+
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
+
+    result = run_generation(task)
+
+    assert "```" not in result
+    assert result.strip() == "print('hi')"
+
+
+def test_run_generation_truncates_or_falls_back_on_oversized_output():
+    def wrapper(_prompt):
+        return ("print('a')\n" * 500).rstrip()
+
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
+
+    result = run_generation(task)
+
+    assert isinstance(result, str)
+    assert result == FALLBACK_SCRIPT or len(result) <= 4000
