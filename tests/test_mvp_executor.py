@@ -40,7 +40,21 @@ def test_builtins_open_access_is_blocked():
     stdout, stderr = execute_untrusted("__builtins__['open']('/etc/passwd')")
 
     assert stdout == ""
-    assert stderr == "error: access to builtins is not allowed; use of '__builtins__' is not allowed"
+    assert "not allowed" in stderr
+
+
+def test_getattr_builtins_open_access_is_blocked():
+    stdout, stderr = execute_untrusted('getattr(__builtins__, "open")("/etc/passwd")')
+
+    assert stdout == ""
+    assert "not allowed" in stderr
+
+
+def test_import_builtins_open_access_is_blocked():
+    stdout, stderr = execute_untrusted("import builtins\nbuiltins.open('x')")
+
+    assert stdout == ""
+    assert "not allowed" in stderr
 
 
 def test_path_traversal_open_is_blocked():
@@ -48,6 +62,20 @@ def test_path_traversal_open_is_blocked():
 
     assert stdout == ""
     assert stderr == "error: call to 'open' is not allowed; use of 'open' is not allowed"
+
+
+def test_import_multiprocessing_is_blocked():
+    stdout, stderr = execute_untrusted("import multiprocessing")
+
+    assert stdout == ""
+    assert "not allowed" in stderr
+
+
+def test_import_concurrent_futures_is_blocked():
+    stdout, stderr = execute_untrusted("from concurrent.futures import ProcessPoolExecutor")
+
+    assert stdout == ""
+    assert "not allowed" in stderr
 
 
 def test_temp_dir_cleanup(tmp_path, monkeypatch):

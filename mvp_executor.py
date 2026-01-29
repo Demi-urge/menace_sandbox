@@ -12,8 +12,14 @@ _MEMORY_LIMIT_MB = 256
 _TIMEOUT_SECONDS = 5
 BANNED_MODULES = {
     "builtins",
+    "codecs",
+    "concurrent",
+    "fnmatch",
+    "glob",
     "http",
     "importlib",
+    "io",
+    "multiprocessing",
     "os",
     "pathlib",
     "requests",
@@ -21,7 +27,10 @@ BANNED_MODULES = {
     "socket",
     "subprocess",
     "sys",
+    "tarfile",
+    "tempfile",
     "urllib",
+    "zipfile",
 }
 BANNED_BUILTINS = {"__import__", "compile", "eval", "exec", "input", "open"}
 ALLOWED_IMPORTS = {
@@ -40,6 +49,7 @@ ALLOWED_IMPORTS = {
 
 def _check_static_policy(tree: ast.AST) -> list[str]:
     violations: set[str] = set()
+    banned_lookup_names = BANNED_BUILTINS | BANNED_MODULES | {"__builtins__", "builtins"}
 
     def is_builtins_target(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
@@ -53,6 +63,17 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
         if isinstance(node, ast.Index):  # pragma: no cover - py<3.9 compatibility
             return is_builtins_target(node.value)
         return False
+
+    def string_literal(node: ast.AST) -> Optional[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Index):  # pragma: no cover - py<3.9 compatibility
+            return string_literal(node.value)
+        return None
+
+    def is_banned_lookup(node: ast.AST) -> bool:
+        literal = string_literal(node)
+        return literal in banned_lookup_names if literal is not None else False
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -68,15 +89,15 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in BANNED_BUILTINS:
                 violations.add(f"call to '{node.func.id}' is not allowed")
-            if isinstance(node.func, ast.Name) and node.func.id in {"getattr", "vars"}:
+            if isinstance(node.func, ast.Name) and node.func.id == "getattr":
+                if len(node.args) >= 2 and is_builtins_target(node.args[0]) and is_banned_lookup(node.args[1]):
+                    violations.add("call to 'getattr' with builtins is not allowed")
+            if isinstance(node.func, ast.Name) and node.func.id == "vars":
                 if node.args and is_builtins_target(node.args[0]):
-                    violations.add(f"call to '{node.func.id}' with builtins is not allowed")
-                if len(node.args) > 1 and is_builtins_target(node.args[1]):
-                    violations.add(f"call to '{node.func.id}' with builtins is not allowed")
+                    violations.add("call to 'vars' with builtins is not allowed")
             if isinstance(node.func, ast.Name) and node.func.id in {"globals", "locals"}:
-                for arg in node.args:
-                    if is_builtins_target(arg):
-                        violations.add(f"call to '{node.func.id}' with builtins is not allowed")
+                if node.args and any(is_builtins_target(arg) for arg in node.args):
+                    violations.add(f"call to '{node.func.id}' with builtins is not allowed")
         elif isinstance(node, ast.Name):
             if isinstance(node.ctx, ast.Load) and node.id in BANNED_BUILTINS:
                 violations.add(f"use of '{node.id}' is not allowed")
@@ -89,7 +110,7 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
             if is_builtins_target(node):
                 violations.add("access to builtins is not allowed")
             if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-                if node.value.func.id in {"globals", "locals"} and is_builtins_target(node.slice):
+                if node.value.func.id in {"globals", "locals", "vars"} and is_banned_lookup(node.slice):
                     violations.add(f"call to '{node.value.func.id}' with builtins is not allowed")
     return sorted(violations)
 
@@ -179,11 +200,18 @@ def execute_untrusted(code: str) -> tuple[str, str]:
                     "    'ctypes',\n"
                     "    'importlib',\n"
                     "    'io',\n"
+                    "    'codecs',\n"
+                    "    'concurrent',\n"
+                    "    'fnmatch',\n"
+                    "    'glob',\n"
                     "    'multiprocessing',\n"
                     "    'os',\n"
                     "    'pathlib',\n"
                     "    'socket',\n"
                     "    'subprocess',\n"
+                    "    'tarfile',\n"
+                    "    'tempfile',\n"
+                    "    'zipfile',\n"
                     ")\n"
                     "\n"
                     "def _is_allowed(module_name: str) -> bool:\n"
