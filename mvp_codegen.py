@@ -21,14 +21,6 @@ def run_generation(task: dict) -> str:
         "if __name__ == '__main__':\n"
         "    main()\n"
     )
-    error_script = (
-        '"""Generation error script."""\n'
-        "def main() -> None:\n"
-        "    print('Internal error during generation.')\n\n"
-        "if __name__ == '__main__':\n"
-        "    main()\n"
-    )
-
     if not isinstance(task, dict):
         task = {}
 
@@ -81,7 +73,7 @@ def run_generation(task: dict) -> str:
         model = task.get("model")
         tokenizer = task.get("tokenizer")
         if model is None or tokenizer is None:
-            raise ValueError("model and tokenizer are required for generation")
+            return fallback_script
         wrapper = local_model_wrapper.LocalModelWrapper(model, tokenizer)
         prompt_obj = local_model_wrapper.Prompt(
             user=prompt_text,
@@ -99,7 +91,7 @@ def run_generation(task: dict) -> str:
         else:
             output_text = str(raw_output)
     except Exception:
-        return error_script
+        return fallback_script
 
     if not isinstance(output_text, str):
         output_text = str(output_text)
