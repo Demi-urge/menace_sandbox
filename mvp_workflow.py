@@ -32,6 +32,7 @@ def execute_task(task_dict: dict[str, object]) -> dict[str, object]:
     execution_output = ""
     roi_score = 0.0
     success = False
+    evaluation_details: dict[str, object] = {}
 
     if not isinstance(task_dict, dict):
         errors.append("task_dict must be a dict")
@@ -94,13 +95,19 @@ def execute_task(task_dict: dict[str, object]) -> dict[str, object]:
         evaluation_result = _evaluate_result(generated_code, execution_result)
         roi_score = float(evaluation_result.get("roi_score", 0.0))
         errors.extend(_coerce_error_list(evaluation_result.get("errors")))
+        if isinstance(evaluation_result, dict):
+            evaluation_details = {
+                key: value
+                for key, value in evaluation_result.items()
+                if key not in {"roi_score", "errors"}
+            }
     except Exception as exc:  # pragma: no cover - defensive
         errors.append(f"evaluation error: {exc}")
         roi_score = 0.0
 
     success = not errors and bool(generated_code)
     finished_at = datetime.datetime.now(datetime.timezone.utc)
-    return _build_response(
+    response = _build_response(
         generated_code,
         execution_output,
         errors,
@@ -109,6 +116,8 @@ def execute_task(task_dict: dict[str, object]) -> dict[str, object]:
         finished_at,
         success,
     )
+    response.update(evaluation_details)
+    return response
 
 
 def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
@@ -289,17 +298,66 @@ def _evaluate_result(code: str, exec_result: dict[str, object]) -> dict[str, obj
         A dictionary with ROI score and errors.
     """
     errors: list[str] = []
-    execution_errors = _coerce_error_list(exec_result.get("errors"))
-    execution_output = str(exec_result.get("execution_output", ""))
+    notes: list[str] = []
 
-    if not code.strip():
-        errors.append("no code generated")
+    try:
+        if not isinstance(exec_result, dict):
+            raise TypeError("exec_result must be a dict")
 
-    base_score = 1.0 if not execution_errors and code.strip() else 0.0
-    output_bonus = min(len(execution_output) / 200.0, 1.0) * 0.2
-    roi_score = max(0.0, min(1.0, base_score + output_bonus))
+        code_text = code if isinstance(code, str) else ""
+        if not code_text.strip():
+            errors.append("no code generated")
 
-    return {"roi_score": float(roi_score), "errors": errors}
+        stdout = str(exec_result.get("stdout", "") or "")
+        stderr = str(exec_result.get("stderr", "") or "")
+        exit_code_raw = exec_result.get("exit_code", 1)
+        timed_out = bool(exec_result.get("timed_out", False))
+        execution_errors = _coerce_error_list(exec_result.get("errors"))
+
+        exit_code = int(exit_code_raw) if isinstance(exit_code_raw, (int, float)) else 1
+        succeeded = exit_code == 0 and not execution_errors and not timed_out
+
+        base_score = 1.0 if succeeded else 0.0
+        if succeeded:
+            notes.append("execution succeeded")
+        else:
+            notes.append("execution did not succeed")
+
+        stdout_len = len(stdout)
+        stderr_len = len(stderr)
+        output_len = stdout_len + stderr_len
+
+        stdout_penalty = min(stdout_len / 800.0, 1.0) * 0.2
+        stderr_penalty = min(stderr_len / 400.0, 1.0) * 0.3
+        long_output_penalty = min(output_len / 1200.0, 1.0) * 0.2
+        timeout_penalty = 0.4 if timed_out else 0.0
+        empty_output_penalty = 0.2 if output_len == 0 else 0.0
+
+        if timed_out:
+            notes.append("timeout penalty applied")
+        if output_len == 0:
+            notes.append("empty output penalty applied")
+        if stderr_len:
+            notes.append("stderr penalty applied")
+        if output_len > 0:
+            notes.append("output length penalty applied")
+
+        roi_score = base_score
+        roi_score -= stdout_penalty + stderr_penalty + long_output_penalty
+        roi_score -= timeout_penalty + empty_output_penalty
+        roi_score = max(0.0, min(1.0, roi_score))
+
+        return {
+            "roi_score": float(roi_score),
+            "errors": errors,
+            "evaluation_notes": notes,
+        }
+    except Exception as exc:  # pragma: no cover - defensive
+        return {
+            "roi_score": 0.0,
+            "errors": [f"evaluation error: {exc}"],
+            "evaluation_notes": [],
+        }
 
 
 def _normalize_constraints(constraints: object, errors: list[str]) -> list[str]:
