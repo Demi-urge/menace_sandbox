@@ -11,113 +11,110 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
-from typing import Any
+from dataclasses import dataclass
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def execute_task(task_dict: dict[str, object]) -> dict[str, object]:
+@dataclass(frozen=True)
+class TaskSpec:
+    """Normalized task specification for execution."""
+
+    objective: str
+    constraints: list[str]
+
+
+def execute_task(task_dict: dict) -> dict:
     """Execute a task workflow end-to-end and return a JSON-serializable payload.
 
     Args:
         task_dict: Input task payload that must contain an objective and optional constraints.
 
     Returns:
-        A JSON-serializable dictionary with generated code, execution output, errors,
-        ROI score, timestamps, and success flag.
+        A JSON-serializable dictionary with objective, constraints, generated code,
+        execution output, error details, ROI score, timestamps, duration, and success flag.
     """
     started_at = datetime.datetime.now(datetime.timezone.utc)
-    errors: list[str] = []
+    started_at_iso = started_at.isoformat()
     generated_code = ""
     execution_output = ""
+    execution_error = ""
+    evaluation_error = ""
     roi_score = 0.0
     success = False
-    evaluation_details: dict[str, object] = {}
-
-    if not isinstance(task_dict, dict):
-        errors.append("task_dict must be a dict")
-        finished_at = datetime.datetime.now(datetime.timezone.utc)
-        return _build_response(
-            generated_code,
-            execution_output,
-            errors,
-            roi_score,
-            started_at,
-            finished_at,
-            success,
-        )
-
-    objective_value = task_dict.get("objective")
-    if not isinstance(objective_value, str) or not objective_value.strip():
-        errors.append("objective must be a non-empty string")
-        finished_at = datetime.datetime.now(datetime.timezone.utc)
-        return _build_response(
-            generated_code,
-            execution_output,
-            errors,
-            roi_score,
-            started_at,
-            finished_at,
-            success,
-        )
-
-    objective = objective_value.strip()
-    constraints_raw = task_dict.get("constraints")
-    constraints = _normalize_constraints(constraints_raw, errors)
-    if errors:
-        finished_at = datetime.datetime.now(datetime.timezone.utc)
-        return _build_response(
-            generated_code,
-            execution_output,
-            errors,
-            roi_score,
-            started_at,
-            finished_at,
-            success,
-        )
+    spec: TaskSpec | None = None
+    execution_result: dict[str, object] = {}
 
     try:
-        generation_result = _generate_code(objective, constraints)
-        generated_code = str(generation_result.get("generated_code", ""))
-        errors.extend(_coerce_error_list(generation_result.get("errors")))
+        if not isinstance(task_dict, dict):
+            execution_error = "task_dict must be a dict"
+        else:
+            objective_value = task_dict.get("objective")
+            if not isinstance(objective_value, str) or not objective_value.strip():
+                execution_error = "objective must be a non-empty string"
+            else:
+                objective = objective_value.strip()
+                constraints_raw = task_dict.get("constraints")
+                constraints_errors: list[str] = []
+                constraints = _normalize_constraints(constraints_raw, constraints_errors)
+                if constraints_errors:
+                    execution_error = constraints_errors[0]
+                else:
+                    spec = TaskSpec(objective=objective, constraints=constraints)
     except Exception as exc:  # pragma: no cover - defensive
-        errors.append(f"generation error: {exc}")
+        execution_error = _sanitize_exception_message(exc)
 
-    try:
-        execution_result = _execute_code(generated_code, timeout_s=5.0)
-        execution_output = str(execution_result.get("execution_output", ""))
-        errors.extend(_coerce_error_list(execution_result.get("errors")))
-    except Exception as exc:  # pragma: no cover - defensive
-        errors.append(f"execution error: {exc}")
-        execution_result = {"execution_output": "", "errors": [f"execution error: {exc}"]}
+    if spec is not None:
+        try:
+            generation_result = _generate_code(spec.objective, spec.constraints)
+            generated_code = str(generation_result.get("generated_code", ""))
+            generation_errors = _coerce_error_list(generation_result.get("errors"))
+            if generation_errors:
+                execution_error = generation_errors[0]
+        except Exception as exc:  # pragma: no cover - defensive
+            execution_error = _sanitize_exception_message(exc)
 
-    try:
-        evaluation_result = _evaluate_result(generated_code, execution_result)
-        roi_score = float(evaluation_result.get("roi_score", 0.0))
-        errors.extend(_coerce_error_list(evaluation_result.get("errors")))
-        if isinstance(evaluation_result, dict):
-            evaluation_details = {
-                key: value
-                for key, value in evaluation_result.items()
-                if key not in {"roi_score", "errors"}
-            }
-    except Exception as exc:  # pragma: no cover - defensive
-        errors.append(f"evaluation error: {exc}")
-        roi_score = 0.0
+    if spec is not None and generated_code:
+        try:
+            execution_result = _execute_code(generated_code, timeout_s=5.0)
+            execution_output = str(execution_result.get("execution_output", ""))
+            execution_errors = _coerce_error_list(execution_result.get("errors"))
+            if execution_errors:
+                execution_error = execution_errors[0]
+        except Exception as exc:  # pragma: no cover - defensive
+            execution_error = _sanitize_exception_message(exc)
+            execution_result = {"execution_output": "", "errors": [execution_error]}
 
-    success = not errors and bool(generated_code)
+    if spec is not None:
+        try:
+            evaluation_result = _evaluate_result(generated_code, execution_result)
+            roi_score = float(evaluation_result.get("roi_score", 0.0))
+            evaluation_errors = _coerce_error_list(evaluation_result.get("errors"))
+            if evaluation_errors:
+                evaluation_error = evaluation_errors[0]
+        except Exception as exc:  # pragma: no cover - defensive
+            evaluation_error = _sanitize_exception_message(exc)
+            roi_score = 0.0
+
+    success = bool(spec and generated_code and not execution_error and not evaluation_error)
     finished_at = datetime.datetime.now(datetime.timezone.utc)
-    response = _build_response(
-        generated_code,
-        execution_output,
-        errors,
-        roi_score,
-        started_at,
-        finished_at,
-        success,
-    )
-    response.update(evaluation_details)
-    return response
+    finished_at_iso = finished_at.isoformat()
+    duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+    sanitized_output = _sanitize_output(execution_output)
+
+    return {
+        "objective": spec.objective if spec else "",
+        "constraints": spec.constraints if spec else [],
+        "generated_code": _sanitize_output(generated_code),
+        "execution_output": sanitized_output,
+        "execution_error": _sanitize_output(execution_error),
+        "evaluation_error": _sanitize_output(evaluation_error),
+        "roi_score": float(roi_score),
+        "started_at": started_at_iso,
+        "finished_at": finished_at_iso,
+        "duration_ms": duration_ms,
+        "success": success,
+    }
 
 
 def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
@@ -374,10 +371,13 @@ def _normalize_constraints(constraints: object, errors: list[str]) -> list[str]:
         return []
     if isinstance(constraints, dict):
         return [f"{key}: {value}" for key, value in constraints.items()]
+    if isinstance(constraints, str):
+        cleaned = constraints.strip()
+        return [cleaned] if cleaned else []
     if _is_sequence_of_strings(constraints):
         return [item.strip() for item in constraints if item.strip()]
 
-    errors.append("constraints must be a dict or sequence of strings when provided")
+    errors.append("constraints must be a dict, list of strings, or string when provided")
     return []
 
 
@@ -395,9 +395,44 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text)
 
 
+def _strip_tracebacks(text: str) -> str:
+    """Remove traceback-looking lines from output."""
+    cleaned_lines: list[str] = []
+    in_traceback = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Traceback (most recent call last):"):
+            in_traceback = True
+            continue
+        if in_traceback:
+            if not line.startswith(" ") and not line.startswith("\t"):
+                in_traceback = False
+            else:
+                continue
+        if stripped.startswith('File "'):
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
+
+def _sanitize_output(text: str) -> str:
+    """Ensure output contains UTF-8 text without ANSI or stack traces."""
+    if not isinstance(text, str):
+        text = str(text)
+    cleaned = _strip_ansi(text)
+    cleaned = _strip_tracebacks(cleaned)
+    return cleaned.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+
+
+def _sanitize_exception_message(exc: BaseException) -> str:
+    """Sanitize exception messages to avoid tracebacks and ANSI sequences."""
+    message = str(exc) if exc else "unexpected error"
+    return _sanitize_output(message) or "unexpected error"
+
+
 def _sanitize_error(stderr: str) -> str:
     """Reduce stderr output to a single sanitized line."""
-    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    lines = [line.strip() for line in _sanitize_output(stderr).splitlines() if line.strip()]
     if not lines:
         return "execution error"
     return lines[-1]
@@ -410,26 +445,3 @@ def _coerce_error_list(raw_errors: object) -> list[str]:
     if isinstance(raw_errors, str) and raw_errors:
         return [raw_errors]
     return []
-
-
-def _build_response(
-    generated_code: str,
-    execution_output: str,
-    errors: list[str],
-    roi_score: float,
-    started_at: datetime.datetime,
-    finished_at: datetime.datetime,
-    success: bool,
-) -> dict[str, object]:
-    """Build the JSON-serializable response payload."""
-    return {
-        "generated_code": generated_code,
-        "execution_output": execution_output,
-        "errors": errors,
-        "roi_score": float(roi_score),
-        "timestamps": {
-            "started_at": started_at.isoformat(),
-            "finished_at": finished_at.isoformat(),
-        },
-        "success": bool(success),
-    }
