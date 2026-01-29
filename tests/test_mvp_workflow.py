@@ -3,23 +3,25 @@ import tempfile
 
 import pytest
 
+import mvp_executor
 import mvp_workflow
+import mvp_workflow_legacy as legacy
 
 
 def test_evaluate_result_deterministic():
-    task = mvp_workflow.TaskSpec(
+    task = legacy.TaskSpec(
         objective="Validate deterministic ROI",
         constraints=["no network"],
     )
-    exec_result = mvp_workflow.ExecutionResult(
+    exec_result = legacy.ExecutionResult(
         stdout="ok\n",
         stderr="",
         return_code=0,
         error="",
     )
 
-    first = mvp_workflow.evaluate_result(task, exec_result)
-    second = mvp_workflow.evaluate_result(task, exec_result)
+    first = legacy.evaluate_result(task, exec_result)
+    second = legacy.evaluate_result(task, exec_result)
 
     assert first == second
     assert first.roi_score == second.roi_score
@@ -59,12 +61,13 @@ def test_execute_code_cleans_tempdir(monkeypatch: pytest.MonkeyPatch):
             self.cleaned = not os.path.exists(self.name)
             return result
 
-    monkeypatch.setattr(mvp_workflow.tempfile, "TemporaryDirectory", TrackingTempDir)
+    monkeypatch.setattr(mvp_executor.tempfile, "TemporaryDirectory", TrackingTempDir)
 
-    result = mvp_workflow._execute_code("print('ok')", timeout_s=1.0)
+    stdout, stderr = mvp_executor.execute_untrusted("print('ok')")
 
     assert created, "TemporaryDirectory was not invoked"
     tracked = created[0]
     assert tracked.cleaned
     assert not os.path.exists(tracked.name)
-    assert result["execution_output"]
+    assert "ok" in stdout
+    assert stderr == ""
