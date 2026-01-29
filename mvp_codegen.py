@@ -53,15 +53,9 @@ def run_generation(task: dict[str, object]) -> str:
         return fallback_script
 
     raw_objective = task.get("objective")
-    if isinstance(raw_objective, str):
-        objective = raw_objective.strip()
-    elif raw_objective is None:
-        objective = ""
-    else:
-        try:
-            objective = str(raw_objective).strip()
-        except Exception:
-            objective = ""
+    if not isinstance(raw_objective, str):
+        return fallback_script
+    objective = raw_objective.strip()
     if not objective:
         return fallback_script
 
