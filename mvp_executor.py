@@ -11,6 +11,7 @@ from typing import Callable, Optional
 _MEMORY_LIMIT_MB = 256
 _TIMEOUT_SECONDS = 5
 BANNED_MODULES = {
+    "builtins",
     "http",
     "importlib",
     "os",
@@ -23,10 +24,36 @@ BANNED_MODULES = {
     "urllib",
 }
 BANNED_BUILTINS = {"__import__", "compile", "eval", "exec", "input", "open"}
+ALLOWED_IMPORTS = {
+    "dataclasses",
+    "functools",
+    "json",
+    "math",
+    "random",
+    "re",
+    "statistics",
+    "string",
+    "time",
+    "typing",
+}
 
 
 def _check_static_policy(tree: ast.AST) -> list[str]:
     violations: set[str] = set()
+
+    def is_builtins_target(node: ast.AST) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in {"__builtins__", "builtins"}
+        if isinstance(node, ast.Attribute):
+            return node.attr in {"__builtins__", "builtins"} or is_builtins_target(node.value)
+        if isinstance(node, ast.Subscript):
+            return is_builtins_target(node.value) or is_builtins_target(node.slice)
+        if isinstance(node, ast.Constant):
+            return node.value in {"__builtins__", "builtins"}
+        if isinstance(node, ast.Index):  # pragma: no cover - py<3.9 compatibility
+            return is_builtins_target(node.value)
+        return False
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -41,9 +68,29 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in BANNED_BUILTINS:
                 violations.add(f"call to '{node.func.id}' is not allowed")
+            if isinstance(node.func, ast.Name) and node.func.id in {"getattr", "vars"}:
+                if node.args and is_builtins_target(node.args[0]):
+                    violations.add(f"call to '{node.func.id}' with builtins is not allowed")
+                if len(node.args) > 1 and is_builtins_target(node.args[1]):
+                    violations.add(f"call to '{node.func.id}' with builtins is not allowed")
+            if isinstance(node.func, ast.Name) and node.func.id in {"globals", "locals"}:
+                for arg in node.args:
+                    if is_builtins_target(arg):
+                        violations.add(f"call to '{node.func.id}' with builtins is not allowed")
         elif isinstance(node, ast.Name):
             if isinstance(node.ctx, ast.Load) and node.id in BANNED_BUILTINS:
                 violations.add(f"use of '{node.id}' is not allowed")
+            if isinstance(node.ctx, ast.Load) and node.id in {"__builtins__", "builtins"}:
+                violations.add(f"use of '{node.id}' is not allowed")
+        elif isinstance(node, ast.Attribute):
+            if is_builtins_target(node):
+                violations.add("access to builtins is not allowed")
+        elif isinstance(node, ast.Subscript):
+            if is_builtins_target(node):
+                violations.add("access to builtins is not allowed")
+            if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+                if node.value.func.id in {"globals", "locals"} and is_builtins_target(node.slice):
+                    violations.add(f"call to '{node.value.func.id}' with builtins is not allowed")
     return sorted(violations)
 
 
@@ -114,8 +161,63 @@ def execute_untrusted(code: str) -> tuple[str, str]:
         temp_dir = tempfile.TemporaryDirectory(prefix="mvp_executor_")
         temp_path = temp_dir.name
         code_path = os.path.join(temp_path, "untrusted.py")
+        bootstrap_path = os.path.join(temp_path, "bootstrap.py")
         with open(code_path, "w", encoding="utf-8") as handle:
             handle.write(code)
+        with open(bootstrap_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                (
+                    "import builtins\n"
+                    "import runpy\n"
+                    "import sys\n"
+                    "\n"
+                    "# Allowed imports must be explicitly listed for auditability.\n"
+                    f"ALLOWED_IMPORTS = {sorted(ALLOWED_IMPORTS)!r}\n"
+                    "# Banned prefixes are rejected even if they look allowed.\n"
+                    "BANNED_PREFIXES = (\n"
+                    "    'builtins',\n"
+                    "    'ctypes',\n"
+                    "    'importlib',\n"
+                    "    'io',\n"
+                    "    'multiprocessing',\n"
+                    "    'os',\n"
+                    "    'pathlib',\n"
+                    "    'socket',\n"
+                    "    'subprocess',\n"
+                    ")\n"
+                    "\n"
+                    "def _is_allowed(module_name: str) -> bool:\n"
+                    "    if not module_name:\n"
+                    "        return False\n"
+                    "    root = module_name.split('.', 1)[0]\n"
+                    "    for prefix in BANNED_PREFIXES:\n"
+                    "        if root == prefix or module_name.startswith(prefix + '.'):\n"
+                    "            return False\n"
+                    "    return root in ALLOWED_IMPORTS\n"
+                    "\n"
+                    "class ImportGate:\n"
+                    "    def find_spec(self, fullname, path=None, target=None):\n"
+                    "        if not _is_allowed(fullname):\n"
+                    "            raise ImportError(f\"import of '{fullname}' is not allowed\")\n"
+                    "        return None\n"
+                    "\n"
+                    "def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
+                    "    if level:\n"
+                    "        raise ImportError(\"relative imports are not allowed\")\n"
+                    "    if not _is_allowed(name):\n"
+                    "        raise ImportError(f\"import of '{name}' is not allowed\")\n"
+                    "    return _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)\n"
+                    "\n"
+                    "_ORIGINAL_IMPORT = builtins.__import__\n"
+                    "sys.meta_path.insert(0, ImportGate())\n"
+                    "builtins.__import__ = _guarded_import\n"
+                    "\n"
+                    "if len(sys.argv) < 2:\n"
+                    "    raise SystemExit('Missing untrusted script path')\n"
+                    "sys.argv = sys.argv[1:]\n"
+                    "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+                )
+            )
 
         env = {
             "LANG": "C",
@@ -126,7 +228,7 @@ def execute_untrusted(code: str) -> tuple[str, str]:
 
         try:
             result = subprocess.run(
-                [sys.executable, code_path],
+                [sys.executable, bootstrap_path, code_path],
                 shell=False,
                 timeout=_TIMEOUT_SECONDS,
                 capture_output=True,
