@@ -49,17 +49,16 @@ def execute_task(task_dict: dict) -> dict:
     """
     started_at = _now_iso8601()
     start_time = time.time()
+    generated_code = ""
+    execution_output = ""
+    execution_error = ""
+    evaluation_error = ""
+    roi_score = 0.0
+    success = False
+    spec: _TaskSpec | None = None
+    exec_stdout = ""
+    exec_stderr = ""
     try:
-        generated_code = ""
-        execution_output = ""
-        execution_error = ""
-        evaluation_error = ""
-        roi_score = 0.0
-        success = False
-        spec: _TaskSpec | None = None
-        exec_stdout = ""
-        exec_stderr = ""
-
         try:
             if not isinstance(task_dict, dict):
                 execution_error = "task_dict must be a dict"
@@ -143,12 +142,34 @@ def execute_task(task_dict: dict) -> dict:
     except Exception as exc:  # pragma: no cover - defensive
         finished_at = _now_iso8601()
         end_time = time.time()
+        sanitized_objective = ""
+        sanitized_constraints: list[str] = []
+        try:
+            if isinstance(task_dict, dict):
+                raw_objective = task_dict.get("objective", "")
+                if isinstance(raw_objective, str):
+                    sanitized_objective = _sanitize_error_output(raw_objective)
+                constraints_raw = task_dict.get("constraints")
+                normalized_constraints = _normalize_constraints(constraints_raw, [])
+                sanitized_constraints = [
+                    _sanitize_error_output(constraint) for constraint in normalized_constraints
+                ]
+        except Exception:  # pragma: no cover - defensive
+            sanitized_objective = ""
+            sanitized_constraints = []
+
         return {
-            "success": False,
-            "error": _sanitize_exception(exc),
+            "objective": sanitized_objective,
+            "constraints": sanitized_constraints,
+            "generated_code": _sanitize_error_output(generated_code),
+            "execution_output": _sanitize_error_output(execution_output),
+            "execution_error": _sanitize_exception(exc),
+            "evaluation_error": _sanitize_error_output(evaluation_error),
+            "roi_score": float(roi_score),
             "started_at": started_at,
             "finished_at": finished_at,
             "duration_ms": _elapsed_ms(start_time, end_time),
+            "success": False,
         }
 
 
