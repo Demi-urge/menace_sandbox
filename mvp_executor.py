@@ -150,6 +150,8 @@ def execute_untrusted(code: str) -> tuple[str, str]:
     File I/O is disallowed to preserve isolation because path-based confinement is not feasible
     without OS sandboxing.
     """
+    if os.name != "posix":
+        return "", "error: unsupported platform for sandboxed execution"
 
     def normalize_output(data: bytes) -> str:
         text = data.decode("utf-8", errors="replace")
