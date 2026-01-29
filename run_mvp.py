@@ -11,7 +11,10 @@ import mvp_workflow
 
 
 class _CliArgumentError(Exception):
-    pass
+    def __init__(self, message: str, status: int = 2, emitted: bool = False) -> None:
+        super().__init__(message)
+        self.status = status
+        self.emitted = emitted
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -19,15 +22,20 @@ class _ArgumentParser(argparse.ArgumentParser):
         cleaned = " ".join(str(message).split())
         return f"error: {cleaned}" if cleaned else "error: invalid arguments"
 
+    def _emit_error(self, message: str, status: int) -> None:
+        sanitized = self._sanitize_message(message)
+        _emit_json(_error_payload(sanitized))
+        raise _CliArgumentError(sanitized, status=status, emitted=True)
+
     def error(self, message: str) -> None:
-        raise _CliArgumentError(self._sanitize_message(message))
+        self._emit_error(message, status=2)
 
     def exit(self, status: int = 0, message: str | None = None) -> None:
         if status == 0:
             if message:
                 sys.stdout.write(message)
             return
-        raise _CliArgumentError(self._sanitize_message(message or "invalid arguments"))
+        self._emit_error(message or "invalid arguments", status=status)
 
 
 def _emit_json(payload: dict) -> None:
@@ -65,8 +73,9 @@ def _run(argv: list[str] | None) -> int:
     try:
         args = parser.parse_args(argv)
     except _CliArgumentError as exc:
-        _emit_json(_error_payload(str(exc)))
-        return 2
+        if not exc.emitted:
+            _emit_json(_error_payload(str(exc)))
+        return exc.status
 
     payload, error = _read_task_file(args.task)
     if error:

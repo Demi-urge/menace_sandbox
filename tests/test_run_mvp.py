@@ -88,3 +88,10 @@ def test_run_mvp_missing_task_file(capsys: pytest.CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
 
     _assert_error_result(exit_code, captured.out, captured.err)
+
+
+def test_run_mvp_missing_required_task_arg(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = run_mvp.main([])
+    captured = capsys.readouterr()
+
+    _assert_error_result(exit_code, captured.out, captured.err)
