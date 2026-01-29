@@ -71,7 +71,7 @@ def test_run_generation_fallback_on_timeout_error():
         {"objective": "do the thing", "constraints": "just a string"},
     ],
 )
-def test_run_generation_uses_internal_wrapper_resolver(task):
+def test_run_generation_uses_model_wrapper(task):
     calls = []
 
     def wrapper(prompt):
@@ -85,6 +85,20 @@ def test_run_generation_uses_internal_wrapper_resolver(task):
     assert isinstance(result, str)
     assert result.strip() == "print('hi')"
     assert calls
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        {"objective": "do the thing"},
+        {"objective": "do the thing", "constraints": ["fast", "safe"]},
+        {"objective": "do the thing", "constraints": "just a string"},
+    ],
+)
+def test_run_generation_falls_back_without_model_wrapper(task):
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
 
 
 @pytest.mark.parametrize(
