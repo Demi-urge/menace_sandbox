@@ -114,7 +114,7 @@ def execute_task(task_dict: dict) -> dict:
                     evaluation_error = "evaluation failed"
             except Exception as exc:  # pragma: no cover - defensive
                 evaluation_error = _sanitize_exception(exc)
-                roi_score = 0.0
+                roi_score = -1.0
 
         success = bool(spec and generated_code and not execution_error and not evaluation_error)
         finished_at = _now_iso8601()
