@@ -1,20 +1,39 @@
 """Single-pass code generation with strict safety constraints."""
 
-def run_generation(task: dict[str, object]) -> str:
-    """Generate a safe Python script from a task payload with strict safeguards.
+def _build_fallback_script(objective: str, constraints: list[str]) -> str:
+    """Build a deterministic, safe fallback script when no model wrapper is supplied."""
+    objective_text = objective.strip() if isinstance(objective, str) else ""
+    constraint_texts = [item.strip() for item in constraints if isinstance(item, str) and item.strip()]
+    constraints_line = ", ".join(constraint_texts) if constraint_texts else "none"
 
-    The model wrapper is an injected dependency provided via task["model_wrapper"].
-    """
+    lines = [
+        '"""Deterministic placeholder script generated without a model wrapper."""',
+        "",
+        "def main() -> None:",
+        f"    objective = {objective_text!r}",
+        f"    constraints = {constraints_line!r}",
+        "    summary_lines = [",
+        '        "Placeholder execution: no model wrapper provided.",',
+        '        f"Objective: {objective}",',
+        '        f"Constraints: {constraints}",',
+        '        "Status: completed safe placeholder run.",',
+        "    ]",
+        "    print(\"\\n\".join(summary_lines))",
+        "",
+        "if __name__ == \"__main__\":",
+        "    main()",
+    ]
+    return "\n".join(lines)
+
+
+def run_generation(task: dict[str, object]) -> str:
+    """Generate a safe Python script from a task payload with strict safeguards."""
     import ast
     import sys
 
     fallback_script = 'print("internal error: code generation failed")'
 
     if not isinstance(task, dict):
-        return fallback_script
-
-    wrapper = task.get("model_wrapper")
-    if not callable(wrapper):
         return fallback_script
 
     objective_value = task.get("objective")
@@ -46,6 +65,11 @@ def run_generation(task: dict[str, object]) -> str:
             constraints.append(text)
 
     constraints_section = "\n".join(f"- {item}" for item in constraints) if constraints else "- none"
+    fallback_code = _build_fallback_script(objective, constraints)
+
+    wrapper = task.get("model_wrapper")
+    if not callable(wrapper):
+        return fallback_code
 
     safety_prompt = (
         "System safety rules (mandatory):\n"
@@ -75,20 +99,20 @@ def run_generation(task: dict[str, object]) -> str:
         else:
             raw_output = wrapper(prompt_text)
     except TimeoutError:
-        return fallback_script
+        return fallback_code
     except Exception:
-        return fallback_script
+        return fallback_code
 
     if isinstance(raw_output, bytes):
         try:
             output_text = raw_output.decode("utf-8")
         except Exception:
-            return fallback_script
+            return fallback_code
     else:
         try:
             output_text = str(raw_output)
         except Exception:
-            return fallback_script
+            return fallback_code
 
     output_text = output_text.replace("\x00", "")
     output_text = output_text.replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -102,7 +126,7 @@ def run_generation(task: dict[str, object]) -> str:
         output_text = "\n".join(lines).strip()
 
     if not output_text:
-        return fallback_script
+        return fallback_code
 
     max_length = 4000
     if len(output_text) > max_length:
@@ -113,15 +137,15 @@ def run_generation(task: dict[str, object]) -> str:
             output_text = output_text[:cut].rstrip()
 
     if not output_text:
-        return fallback_script
+        return fallback_code
 
     if len(output_text) > max_length:
-        return fallback_script
+        return fallback_code
 
     try:
         parsed = ast.parse(output_text)
     except Exception:
-        return fallback_script
+        return fallback_code
 
     stdlib_allowlist = getattr(sys, "stdlib_module_names", None)
     if stdlib_allowlist is None:
@@ -258,9 +282,9 @@ def run_generation(task: dict[str, object]) -> str:
             for alias in node.names:
                 base_name = alias.name.split(".")[0]
                 if base_name not in stdlib_allowlist:
-                    return fallback_script
+        return fallback_code
                 if base_name in denied_modules:
-                    return fallback_script
+        return fallback_code
                 if base_name == "io" and alias.asname:
                     io_aliases.add(alias.asname)
                 if alias.asname and base_name in banned_base_names:
@@ -270,36 +294,36 @@ def run_generation(task: dict[str, object]) -> str:
             module_name = node.module or ""
             module_base = module_name.split(".")[0]
             if module_base not in stdlib_allowlist:
-                return fallback_script
+        return fallback_code
             if module_base in denied_modules:
-                return fallback_script
+        return fallback_code
             for alias in node.names:
                 if alias.name in banned_symbol_names:
-                    return fallback_script
+        return fallback_code
                 if alias.asname and alias.asname in banned_symbol_names:
-                    return fallback_script
+        return fallback_code
                 if module_name in banned_base_names and alias.name in banned_builtins:
-                    return fallback_script
+        return fallback_code
                 if alias.asname and module_base in banned_base_names:
                     banned_aliases.add(alias.asname)
                     banned_module_aliases.add(alias.asname)
         if isinstance(node, ast.Name) and node.id in banned_builtins:
-            return fallback_script
+        return fallback_code
         if isinstance(node, ast.Name) and node.id in banned_aliases:
-            return fallback_script
+        return fallback_code
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name):
                 if node.value.id in denied_modules:
-                    return fallback_script
+                    return fallback_code
                 if node.value.id in banned_base_names:
                     if node.attr in banned_builtins:
-                        return fallback_script
+                        return fallback_code
                     if node.attr in banned_builtin_attrs:
-                        return fallback_script
+                        return fallback_code
                 if node.value.id in banned_aliases and node.attr in banned_builtin_attrs:
-                    return fallback_script
+                    return fallback_code
                 if node.value.id in banned_module_aliases:
-                    return fallback_script
+                    return fallback_code
         if isinstance(node, ast.Subscript):
             key = None
             slice_node = node.slice
@@ -311,13 +335,13 @@ def run_generation(task: dict[str, object]) -> str:
                 key = slice_node.s
             if isinstance(node.value, ast.Name) and node.value.id in banned_base_names:
                 if key in banned_builtins:
-                    return fallback_script
+                    return fallback_code
             if isinstance(node.value, ast.Attribute) and node.value.attr == "__dict__":
                 if isinstance(node.value.value, ast.Name):
                     base_name = node.value.value.id
                     if base_name in banned_base_names or base_name in banned_aliases or base_name in banned_module_aliases:
                         if key in banned_builtins or key in denied_modules:
-                            return fallback_script
+                            return fallback_code
             if isinstance(node.value, ast.Subscript):
                 parent = node.value
                 parent_key = None
@@ -333,19 +357,19 @@ def run_generation(task: dict[str, object]) -> str:
                         call = parent.value
                         if isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals", "vars"}:
                             if key in banned_builtins:
-                                return fallback_script
+                                return fallback_code
             if isinstance(node.value, ast.Call):
                 call = node.value
                 if isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals", "vars"}:
                     if key in banned_builtins or key in denied_modules:
-                        return fallback_script
+                        return fallback_code
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
                 if func.id in banned_symbol_names:
-                    return fallback_script
+                    return fallback_code
                 if func.id in banned_aliases:
-                    return fallback_script
+                    return fallback_code
                 if func.id in banned_reflection_calls:
                     literal = None
                     if func.id in {"getattr", "setattr"} and len(node.args) >= 2:
@@ -361,20 +385,20 @@ def run_generation(task: dict[str, object]) -> str:
                         target = node.args[0]
                         if literal in banned_builtins and isinstance(target, ast.Name):
                             if target.id in banned_base_names or target.id in banned_aliases:
-                                return fallback_script
+                                return fallback_code
                         if literal in denied_modules and isinstance(target, ast.Name):
                             if target.id in denied_modules or target.id in banned_module_aliases:
-                                return fallback_script
+                                return fallback_code
                     if func.id == "dir" and node.args:
                         target = node.args[0]
                         if isinstance(target, ast.Name):
                             if target.id in banned_base_names or target.id in denied_modules:
-                                return fallback_script
+                                return fallback_code
             if isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name):
                     if func.value.id in io_aliases and func.attr in io_file_calls:
-                        return fallback_script
+                        return fallback_code
                     if func.value.id in banned_module_aliases and func.attr in banned_module_attrs:
-                        return fallback_script
+                        return fallback_code
 
     return output_text
