@@ -15,16 +15,20 @@ BANNED_MODULES = {
     "codecs",
     "concurrent",
     "ctypes",
+    "dbm",  # dbm family writes files to disk.
     "fnmatch",
     "glob",
     "http",
     "importlib",
     "io",
+    "logging",  # logging handlers can open files for writes.
     "multiprocessing",
     "os",
     "pathlib",
     "requests",
+    "shelve",  # shelve persists data to files.
     "shutil",
+    "sqlite3",  # sqlite3 opens database files on disk.
     "socket",
     "subprocess",
     "sys",
@@ -68,6 +72,13 @@ BANNED_CALL_PATHS = {
     "shutil.copyfile",
     "shutil.copytree",
     "shutil.rmtree",
+    "sqlite3.connect",
+    # logging handlers that open file paths on disk.
+    "logging.FileHandler",
+    "logging.handlers.FileHandler",
+    "logging.handlers.RotatingFileHandler",
+    "logging.handlers.TimedRotatingFileHandler",
+    "logging.handlers.WatchedFileHandler",
 }
 
 
@@ -184,6 +195,8 @@ def execute_untrusted(code: str) -> tuple[str, str]:
             if isinstance(node.func, ast.Attribute):
                 func_name = dotted_name(node.func)
                 if func_name in BANNED_CALL_PATHS:
+                    violations.add(f"call to '{func_name}' is not allowed")
+                if func_name and func_name.startswith("logging.handlers.") and func_name.endswith("FileHandler"):
                     violations.add(f"call to '{func_name}' is not allowed")
                 if node.func.attr == "__import__" and (
                     is_builtins_target(node.func.value) or is_module_reference(node.func.value, importlib_aliases)
