@@ -14,6 +14,7 @@ BANNED_MODULES = {
     "builtins",
     "codecs",
     "concurrent",
+    "ctypes",
     "fnmatch",
     "glob",
     "http",
@@ -42,20 +43,6 @@ BANNED_CALL_PATHS = {
     "multiprocessing.Pool",
     "multiprocessing.Process",
 }
-ALLOWED_IMPORTS = {
-    "dataclasses",
-    "functools",
-    "json",
-    "math",
-    "random",
-    "re",
-    "statistics",
-    "string",
-    "time",
-    "typing",
-}
-
-
 def _apply_windows_job_object(process_handle: int) -> int:
     import ctypes
     from ctypes import wintypes
@@ -425,7 +412,6 @@ def execute_untrusted(code: str) -> tuple[str, str]:
         temp_path = temp_dir.name
         code_path = os.path.join(temp_path, "untrusted.py")
         runner_path = os.path.join(temp_path, "runner.py")
-        bootstrap_path = os.path.join(temp_path, "bootstrap.py")
         with open(code_path, "w", encoding="utf-8") as handle:
             handle.write(code)
         with open(runner_path, "w", encoding="utf-8") as handle:
@@ -434,10 +420,16 @@ def execute_untrusted(code: str) -> tuple[str, str]:
                     "import builtins\n"
                     "import io\n"
                     "import os\n"
+                    "import pathlib\n"
                     "import runpy\n"
                     "import sys\n"
                     "\n"
                     f"ALLOWED_ROOT = {temp_path!r}\n"
+                    f"BANNED_MODULES = {sorted(BANNED_MODULES | {'builtins', 'io', 'ctypes', 'importlib'})!r}\n"
+                    "\n"
+                    "def _error(message):\n"
+                    "    sys.stderr.write(f\"error: {message}\\n\")\n"
+                    "    raise SystemExit(1)\n"
                     "\n"
                     "def is_allowed(path):\n"
                     "    try:\n"
@@ -449,6 +441,21 @@ def execute_untrusted(code: str) -> tuple[str, str]:
                     "        return True\n"
                     "    return resolved.startswith(allowed_root + os.sep)\n"
                     "\n"
+                    "class ImportGate:\n"
+                    "    def find_spec(self, fullname, path=None, target=None):\n"
+                    "        root = fullname.split('.', 1)[0]\n"
+                    "        if root in BANNED_MODULES or fullname in BANNED_MODULES:\n"
+                    "            raise ImportError(f\"import of '{fullname}' is not allowed\")\n"
+                    "        return None\n"
+                    "\n"
+                    "def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
+                    "    if level:\n"
+                    "        raise ImportError(\"relative imports are not allowed\")\n"
+                    "    root = name.split('.', 1)[0]\n"
+                    "    if root in BANNED_MODULES or name in BANNED_MODULES:\n"
+                    "        raise ImportError(f\"import of '{name}' is not allowed\")\n"
+                    "    return _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)\n"
+                    "\n"
                     "def _guarded_open(file, *args, **kwargs):\n"
                     "    if isinstance(file, (str, bytes, os.PathLike)):\n"
                     "        target = os.fsdecode(os.fspath(file))\n"
@@ -456,76 +463,42 @@ def execute_untrusted(code: str) -> tuple[str, str]:
                     "            raise PermissionError(f\"Access to '{target}' is not allowed\")\n"
                     "    return _ORIGINAL_OPEN(file, *args, **kwargs)\n"
                     "\n"
+                    "def _guarded_os_open(path, *args, **kwargs):\n"
+                    "    if isinstance(path, (str, bytes, os.PathLike)):\n"
+                    "        target = os.fsdecode(os.fspath(path))\n"
+                    "        if not is_allowed(target):\n"
+                    "            raise PermissionError(f\"Access to '{target}' is not allowed\")\n"
+                    "    return _ORIGINAL_OS_OPEN(path, *args, **kwargs)\n"
+                    "\n"
+                    "def _guarded_path_open(self, *args, **kwargs):\n"
+                    "    target = os.fspath(self)\n"
+                    "    if not is_allowed(target):\n"
+                    "        raise PermissionError(f\"Access to '{target}' is not allowed\")\n"
+                    "    return _ORIGINAL_PATH_OPEN(self, *args, **kwargs)\n"
+                    "\n"
                     "_ORIGINAL_OPEN = builtins.open\n"
+                    "_ORIGINAL_OS_OPEN = os.open\n"
+                    "_ORIGINAL_PATH_OPEN = pathlib.Path.open\n"
+                    "_ORIGINAL_IMPORT = builtins.__import__\n"
                     "builtins.open = _guarded_open\n"
                     "io.open = _guarded_open\n"
-                    "\n"
-                    "if len(sys.argv) < 2:\n"
-                    "    raise SystemExit('Missing untrusted script path')\n"
-                    "untrusted_path = sys.argv[1]\n"
-                    "sys.argv = sys.argv[1:]\n"
-                    "runpy.run_path(untrusted_path, run_name='__main__')\n"
-                )
-            )
-        with open(bootstrap_path, "w", encoding="utf-8") as handle:
-            handle.write(
-                (
-                    "import builtins\n"
-                    "import runpy\n"
-                    "import sys\n"
-                    "\n"
-                    "# Allowed imports must be explicitly listed for auditability.\n"
-                    f"ALLOWED_IMPORTS = {sorted(ALLOWED_IMPORTS)!r}\n"
-                    "# Banned prefixes are rejected even if they look allowed.\n"
-                    "BANNED_PREFIXES = (\n"
-                    "    'builtins',\n"
-                    "    'ctypes',\n"
-                    "    'importlib',\n"
-                    "    'io',\n"
-                    "    'codecs',\n"
-                    "    'concurrent',\n"
-                    "    'fnmatch',\n"
-                    "    'glob',\n"
-                    "    'multiprocessing',\n"
-                    "    'os',\n"
-                    "    'pathlib',\n"
-                    "    'socket',\n"
-                    "    'subprocess',\n"
-                    "    'tarfile',\n"
-                    "    'tempfile',\n"
-                    "    'zipfile',\n"
-                    ")\n"
-                    "\n"
-                    "def _is_allowed(module_name: str) -> bool:\n"
-                    "    if not module_name:\n"
-                    "        return False\n"
-                    "    root = module_name.split('.', 1)[0]\n"
-                    "    for prefix in BANNED_PREFIXES:\n"
-                    "        if root == prefix or module_name.startswith(prefix + '.'):\n"
-                    "            return False\n"
-                    "    return root in ALLOWED_IMPORTS\n"
-                    "\n"
-                    "class ImportGate:\n"
-                    "    def find_spec(self, fullname, path=None, target=None):\n"
-                    "        if not _is_allowed(fullname):\n"
-                    "            raise ImportError(f\"import of '{fullname}' is not allowed\")\n"
-                    "        return None\n"
-                    "\n"
-                    "def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
-                    "    if level:\n"
-                    "        raise ImportError(\"relative imports are not allowed\")\n"
-                    "    if not _is_allowed(name):\n"
-                    "        raise ImportError(f\"import of '{name}' is not allowed\")\n"
-                    "    return _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)\n"
-                    "\n"
-                    "_ORIGINAL_IMPORT = builtins.__import__\n"
+                    "os.open = _guarded_os_open\n"
+                    "pathlib.Path.open = _guarded_path_open\n"
                     "sys.meta_path.insert(0, ImportGate())\n"
                     "builtins.__import__ = _guarded_import\n"
                     "\n"
                     "if len(sys.argv) < 2:\n"
-                    "    raise SystemExit('Missing untrusted script path')\n"
+                    "    _error('Missing untrusted script path')\n"
+                    "untrusted_path = sys.argv[1]\n"
                     "sys.argv = sys.argv[1:]\n"
-                    "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+                    "try:\n"
+                    "    runpy.run_path(untrusted_path, run_name='__main__')\n"
+                    "except (ImportError, PermissionError) as exc:\n"
+                    "    _error(str(exc))\n"
+                    "except SystemExit as exc:\n"
+                    "    raise\n"
+                    "except Exception as exc:\n"
+                    "    _error(str(exc))\n"
                 )
             )
 
@@ -539,14 +512,14 @@ def execute_untrusted(code: str) -> tuple[str, str]:
         try:
             if os.name == "nt":
                 result = _run_windows_subprocess(
-                    [sys.executable, bootstrap_path, runner_path, code_path],
+                    [sys.executable, runner_path, code_path],
                     cwd=temp_path,
                     env=env,
                     timeout=_TIMEOUT_SECONDS,
                 )
             else:
                 result = subprocess.run(
-                    [sys.executable, bootstrap_path, runner_path, code_path],
+                    [sys.executable, runner_path, code_path],
                     shell=False,
                     timeout=_TIMEOUT_SECONDS,
                     capture_output=True,
