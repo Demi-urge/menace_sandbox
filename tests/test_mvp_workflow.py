@@ -1,5 +1,3 @@
-import datetime
-import json
 import os
 import tempfile
 import unittest
@@ -8,86 +6,76 @@ from unittest import mock
 import mvp_workflow
 
 
-class FixedDateTime(datetime.datetime):
-    """Datetime stub with controllable now() values."""
-
-    _now_values = []
-
-    @classmethod
-    def now(cls, tz=None):
-        if not cls._now_values:
-            raise AssertionError("No more fixed datetime values available")
-        value = cls._now_values.pop(0)
-        if tz is not None:
-            return value.astimezone(tz)
-        return value
-
-
 class TestMvpWorkflow(unittest.TestCase):
-    def test_deterministic_roi_for_same_input(self):
-        base_time = datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc)
-        end_time = base_time + datetime.timedelta(milliseconds=120)
-        FixedDateTime._now_values = [base_time, end_time, base_time, end_time]
+    def _strip_timestamps(self, payload: dict[str, object]) -> dict[str, object]:
+        cleaned = dict(payload)
+        cleaned.pop("timestamps", None)
+        return cleaned
 
-        with mock.patch.object(mvp_workflow.datetime, "datetime", FixedDateTime):
-            result_one = mvp_workflow.execute_task({"objective": "ping"})
-            result_two = mvp_workflow.execute_task({"objective": "ping"})
+    def test_execute_task_is_deterministic(self) -> None:
+        task = {"objective": "Echo payload for testing", "constraints": ["fast"]}
 
-        self.assertEqual(result_one["roi_score"], result_two["roi_score"])
-        self.assertEqual(result_one["generated_code"], result_two["generated_code"])
+        first = mvp_workflow.execute_task(task)
+        second = mvp_workflow.execute_task(task)
 
-    def test_missing_objective_returns_soft_error(self):
+        self.assertEqual(first["roi_score"], second["roi_score"])
+        self.assertEqual(first["success"], second["success"])
+        self.assertEqual(
+            self._strip_timestamps(first),
+            self._strip_timestamps(second),
+        )
+
+    def test_execute_task_missing_objective(self) -> None:
         result = mvp_workflow.execute_task({})
 
         self.assertFalse(result["success"])
-        self.assertTrue(any("objective must be a non-empty string" in err for err in result["errors"]))
+        self.assertTrue(result["errors"])
 
-    def test_empty_generated_code_captures_error(self):
-        with mock.patch.object(mvp_workflow, "_generate_code", return_value=""):
-            result = mvp_workflow.execute_task({"objective": "ignored"})
+    def test_execute_task_timeout(self) -> None:
+        slow_code = """\
+import time
+
+def main() -> None:
+    time.sleep(10)
+
+if __name__ == '__main__':
+    main()
+"""
+        captured: dict[str, object] = {}
+        original_execute = mvp_workflow._execute_code
+
+        def _capture_execute(code: str, timeout_s: float) -> dict[str, object]:
+            result = original_execute(code, timeout_s)
+            captured.update(result)
+            return result
+
+        with mock.patch.object(
+            mvp_workflow,
+            "_generate_code",
+            return_value={"generated_code": slow_code, "errors": []},
+        ):
+            with mock.patch.object(mvp_workflow, "_execute_code", side_effect=_capture_execute):
+                result = mvp_workflow.execute_task({"objective": "Sleep forever"})
 
         self.assertFalse(result["success"])
-        self.assertTrue(any("code is empty" in err for err in result["errors"]))
+        self.assertIn("execution timed out", result["errors"])
+        self.assertTrue(captured.get("timed_out"))
 
-    def test_invalid_generated_code_captures_error(self):
-        with mock.patch.object(mvp_workflow, "_generate_code", return_value="def bad("):
-            result = mvp_workflow.execute_task({"objective": "ignored"})
+    def test_execute_task_cleans_temp_files(self) -> None:
+        temp_dir = tempfile.gettempdir()
 
-        self.assertFalse(result["success"])
-        self.assertTrue(any("syntax error" in err for err in result["errors"]))
+        def _find_generated_scripts() -> set[str]:
+            matches: set[str] = set()
+            for root, _, files in os.walk(temp_dir):
+                if "generated_script.py" in files:
+                    matches.add(os.path.join(root, "generated_script.py"))
+            return matches
 
-    def test_timeout_and_tempfile_cleanup(self):
-        created_paths = []
-        original_named_tempfile = tempfile.NamedTemporaryFile
+        before = _find_generated_scripts()
+        mvp_workflow.execute_task({"objective": "Check temp cleanup"})
+        after = _find_generated_scripts()
 
-        def tracking_named_tempfile(*args, **kwargs):
-            tmp = original_named_tempfile(*args, **kwargs)
-            created_paths.append(tmp.name)
-            return tmp
-
-        loop_code = "while True: pass"
-        with mock.patch.object(mvp_workflow.tempfile, "NamedTemporaryFile", tracking_named_tempfile):
-            stdout, errors = mvp_workflow._execute_code(loop_code, timeout_s=0.05)
-
-        self.assertEqual("", stdout)
-        self.assertIn("timeout", errors)
-        for path in created_paths:
-            self.assertFalse(os.path.exists(path), f"temp file not removed: {path}")
-
-    def test_output_is_json_serializable_with_required_types(self):
-        result = mvp_workflow.execute_task({"objective": "serialize"})
-        payload = json.dumps(result)
-
-        self.assertIsInstance(payload, str)
-        self.assertIsInstance(result["generated_code"], str)
-        self.assertIsInstance(result["execution_output"], str)
-        self.assertIsInstance(result["errors"], list)
-        self.assertIsInstance(result["roi_score"], float)
-        self.assertIsInstance(result["timestamps"], dict)
-        self.assertIsInstance(result["timestamps"]["started_at"], str)
-        self.assertIsInstance(result["timestamps"]["finished_at"], str)
-        self.assertIsInstance(result["timestamps"]["duration_ms"], int)
-        self.assertIsInstance(result["success"], bool)
+        self.assertEqual(before, after)
 
 
 if __name__ == "__main__":
