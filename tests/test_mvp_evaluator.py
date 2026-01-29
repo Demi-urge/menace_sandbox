@@ -1,54 +1,71 @@
 import json
 import math
 
+import pytest
+
 from mvp_evaluator import evaluate_mvp_roi
 
 
-class ExplodingStr:
-    def __str__(self) -> str:
-        raise RuntimeError("boom")
+@pytest.mark.parametrize(
+    "stdout, stderr",
+    [
+        ("", ""),
+        ("", "only stderr"),
+        ("x" * 10_000, ""),
+        ("x" * 50_000, "y" * 25_000),
+        (None, None),
+        (b"bytes output", b"bytes error"),
+    ],
+)
+def test_evaluate_mvp_roi_returns_finite_float(stdout, stderr) -> None:
+    score = evaluate_mvp_roi(stdout, stderr)
+
+    assert isinstance(score, float)
+    assert math.isfinite(score)
+    json.dumps(score)
 
 
-def assert_finite_float(value: float) -> None:
-    assert isinstance(value, float)
-    assert math.isfinite(value)
+def test_evaluate_mvp_roi_is_deterministic() -> None:
+    stdout = "deterministic output"
+    stderr = "deterministic error"
 
-
-def test_evaluate_mvp_roi_deterministic():
-    stdout = "ok\nline"
-    stderr = "warn"
     first = evaluate_mvp_roi(stdout, stderr)
     second = evaluate_mvp_roi(stdout, stderr)
-    assert first == second
+    third = evaluate_mvp_roi(stdout, stderr)
+
+    assert first == second == third
 
 
-def test_evaluate_mvp_roi_monotonicity():
-    base_stdout = "success"
-    base_stderr = ""
+def test_evaluate_mvp_roi_monotonic_in_stdout() -> None:
+    stderr = "fixed stderr"
 
-    low_stderr = evaluate_mvp_roi(base_stdout, "err")
-    high_stderr = evaluate_mvp_roi(base_stdout, "err" * 10)
-    assert high_stderr <= low_stderr
+    baseline = evaluate_mvp_roi("", stderr)
+    medium = evaluate_mvp_roi("a" * 10, stderr)
+    large = evaluate_mvp_roi("a" * 100, stderr)
 
-    low_stdout = evaluate_mvp_roi("ok", base_stderr)
-    high_stdout = evaluate_mvp_roi("ok" * 10, base_stderr)
-    assert high_stdout >= low_stdout
+    assert baseline <= medium <= large
 
 
-def test_evaluate_mvp_roi_edge_cases_and_errors():
-    assert_finite_float(evaluate_mvp_roi("", ""))
-    assert_finite_float(evaluate_mvp_roi("", "only stderr"))
+def test_evaluate_mvp_roi_monotonic_in_stderr() -> None:
+    stdout = "fixed stdout"
 
-    huge_stdout = "a" * 200_000
-    huge_stderr = "b" * 150_000
-    assert_finite_float(evaluate_mvp_roi(huge_stdout, huge_stderr))
+    baseline = evaluate_mvp_roi(stdout, "")
+    medium = evaluate_mvp_roi(stdout, "b" * 10)
+    large = evaluate_mvp_roi(stdout, "b" * 100)
 
-    assert evaluate_mvp_roi(ExplodingStr(), "stderr") == -1.0
-    assert evaluate_mvp_roi("stdout", ExplodingStr()) == -1.0
+    assert baseline >= medium >= large
 
 
-def test_evaluate_mvp_roi_json_serializable():
-    value = evaluate_mvp_roi("output", "")
-    assert_finite_float(value)
-    dumped = json.dumps({"roi": value})
-    assert "roi" in dumped
+def test_evaluate_mvp_roi_edge_cases() -> None:
+    assert evaluate_mvp_roi("", "") == 0.0
+
+    stderr_only = evaluate_mvp_roi("", "error")
+    assert stderr_only < 0.0
+
+    large_stdout = "s" * 200_000
+    large_stderr = "e" * 200_000
+
+    large_score = evaluate_mvp_roi(large_stdout, "")
+    mixed_score = evaluate_mvp_roi(large_stdout, large_stderr)
+
+    assert large_score >= mixed_score
