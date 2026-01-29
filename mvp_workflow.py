@@ -6,10 +6,11 @@ import ast
 import datetime
 import os
 import re
+import json
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Optional
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -38,43 +39,43 @@ def execute_task(task_dict: dict) -> dict:
         errors.append(f"task normalization error: {exc}")
 
     try:
-        generation_result = _generate_code(normalized_task)
-        generated_code = generation_result.get("generated_code", "")
-        if generation_result.get("error"):
-            errors.append(str(generation_result["error"]))
+        generated_code = _generate_code(
+            normalized_task.get("objective", ""),
+            normalized_task.get("constraints"),
+        )
     except Exception as exc:  # pragma: no cover - defensive
         errors.append(f"generation error: {exc}")
 
-    validation_result: dict[str, Any] = {}
     try:
-        validation_result = _validate_code(generated_code)
-        if validation_result.get("error"):
-            errors.append(str(validation_result["error"]))
+        is_valid, validation_errors = _validate_code(generated_code)
+        if not is_valid:
+            errors.extend(validation_errors)
     except Exception as exc:  # pragma: no cover - defensive
         errors.append(f"validation error: {exc}")
 
     try:
-        code_to_execute = generated_code if not validation_result.get("error") else ""
-        execution_result = _execute_code(code_to_execute, timeout_s=5.0)
-        if execution_result.get("error"):
-            errors.append(str(execution_result["error"]))
-        execution_output = execution_result.get("stdout", "")
+        code_to_execute = generated_code if not errors else ""
+        execution_output, execution_errors = _execute_code(code_to_execute, timeout_s=5.0)
+        if execution_errors:
+            errors.extend(execution_errors)
     except Exception as exc:  # pragma: no cover - defensive
         errors.append(f"execution error: {exc}")
 
     try:
-        evaluation_result = _evaluate_result(normalized_task, generated_code, execution_output, errors)
-        roi_score = float(evaluation_result.get("roi_score", 0.0))
-        success = bool(evaluation_result.get("success", False))
-        if evaluation_result.get("error"):
-            errors.append(str(evaluation_result["error"]))
+        finished_at = datetime.datetime.now(datetime.timezone.utc)
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        roi_score = _evaluate_result(generated_code, execution_output, errors, duration_ms)
+        success = bool(roi_score > 0 and not errors)
     except Exception as exc:  # pragma: no cover - defensive
         errors.append(f"evaluation error: {exc}")
         success = False
         roi_score = 0.0
-
-    finished_at = datetime.datetime.now(datetime.timezone.utc)
-    duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        finished_at = datetime.datetime.now(datetime.timezone.utc)
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+    else:
+        if "finished_at" not in locals():
+            finished_at = datetime.datetime.now(datetime.timezone.utc)
+            duration_ms = int((finished_at - started_at).total_seconds() * 1000)
 
     return {
         "generated_code": generated_code,
@@ -126,71 +127,78 @@ def _normalize_task(task_dict: dict) -> tuple[dict[str, Any], list[str]]:
     return normalized, errors
 
 
-def _generate_code(task: dict[str, Any]) -> dict[str, Any]:
-    """Generate deterministic Python code for the given task.
+def _generate_code(objective: str, constraints: Optional[Any]) -> str:
+    """Generate deterministic Python code for the given task."""
+    objective_text = str(objective or "").strip()
+    if not objective_text:
+        return ""
 
-    Args:
-        task: Normalized task payload.
+    constraints_repr = "none"
+    if constraints is not None:
+        constraints_repr = repr(constraints)
 
-    Returns:
-        A dictionary containing generated code and an optional error.
-    """
-    try:
-        objective = str(task.get("objective", "")).strip()
-        constraints = task.get("constraints", {})
-        if not objective:
-            return {"generated_code": "", "error": "objective is empty"}
-        if constraints is None:
-            constraints = {}
-        if not isinstance(constraints, dict):
-            return {"generated_code": "", "error": "constraints must be a dict"}
-    except Exception as exc:  # pragma: no cover - defensive
-        return {"generated_code": "", "error": f"generation error: {exc}"}
+    payload = {
+        "objective": objective_text,
+        "constraints": constraints_repr,
+        "status": "generated",
+    }
+    payload_json = json.dumps(payload, sort_keys=True)
 
-    constraints_items = ", ".join(f"{key}={value}" for key, value in sorted(constraints.items()))
-    constraints_summary = constraints_items if constraints_items else "none"
-
-    code = (
-        "def main():\n"
-        f"    objective = {objective!r}\n"
-        f"    constraints = {constraints_summary!r}\n"
-        "    print(f\"Objective: {objective}\")\n"
-        "    print(f\"Constraints: {constraints}\")\n"
-        "\n"
-        "\n"
-        "if __name__ == '__main__':\n"
-        "    main()\n"
-    )
-    return {"generated_code": code, "error": None}
+    code_lines = [
+        '"""Auto-generated script.',
+        f"Objective: {objective_text}",
+        f"Constraints: {constraints_repr}",
+        '"""',
+        "import json",
+        "",
+        "def main() -> None:",
+        f"    payload = {payload_json!r}",
+        "    print(payload)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        "",
+    ]
+    return "\n".join(code_lines)
 
 
-def _validate_code(code: str) -> dict[str, Any]:
-    """Validate generated code for syntax and forbidden imports.
+def _validate_code(code: str) -> tuple[bool, list[str]]:
+    """Validate generated code for syntax, imports, and forbidden calls."""
+    errors: list[str] = []
+    if not code or not code.strip():
+        return False, ["code is empty"]
 
-    Args:
-        code: Generated Python code.
-
-    Returns:
-        A dictionary containing validation result and an optional error message.
-    """
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:
-        return {"error": f"syntax error: {exc.msg}"}
+        return False, [f"syntax error: {exc.msg}"]
     except Exception as exc:  # pragma: no cover - defensive
-        return {"error": f"validation error: {exc}"}
+        return False, [f"validation error: {exc}"]
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            modules = [alias.name.split(".")[0] for alias in node.names]
-            for module in modules:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module = alias.name.split(".")[0]
                 if not _is_stdlib_module(module):
-                    return {"error": f"forbidden import: {module}"}
+                    errors.append(f"forbidden import: {module}")
+        elif isinstance(node, ast.ImportFrom):
+            if not node.module:
+                errors.append("relative import not allowed")
+            else:
+                module = node.module.split(".")[0]
+                if not _is_stdlib_module(module):
+                    errors.append(f"forbidden import: {module}")
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in {"exec", "eval", "__import__"}:
+                errors.append(f"forbidden call: {node.func.id}")
+            if isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name) and node.func.value.id == "importlib":
+                    errors.append("dynamic import detected")
 
-    if _find_dynamic_import_calls(tree):
-        return {"error": "dynamic import detected"}
+    if not errors and _find_dynamic_import_calls(tree):
+        errors.append("dynamic import detected")
 
-    return {"error": None}
+    return not errors, errors
 
 
 def _is_stdlib_module(module_name: str) -> bool:
@@ -214,17 +222,15 @@ def _find_dynamic_import_calls(tree: ast.AST) -> bool:
     return False
 
 
-def _execute_code(code: str, timeout_s: float) -> dict[str, Any]:
-    """Execute code after static safety checks.
+def _execute_code(code: str, timeout_s: float = 2.0) -> tuple[str, list[str]]:
+    """Execute code in a temporary file and capture sanitized output."""
+    if not code or not code.strip():
+        return "", ["code is empty"]
 
-    Args:
-        code: Python source code to execute.
-        timeout_s: Timeout in seconds.
-
-    Returns:
-        A dictionary containing stdout, stderr, and an optional error message.
-    """
     tmp_path: str | None = None
+    errors: list[str] = []
+    stdout = ""
+
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".py", mode="w", encoding="utf-8") as tmp_file:
             tmp_file.write(code)
@@ -243,20 +249,19 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, Any]:
         stderr = _ANSI_ESCAPE_RE.sub("", result.stderr or "")
 
         if result.returncode != 0:
-            error_line = _redact_error(stderr) or "execution failed"
-            return {"stdout": stdout, "stderr": stderr, "error": error_line}
-
-        return {"stdout": stdout, "stderr": stderr, "error": None}
+            errors.append(_redact_error(stderr) or "execution failed")
     except subprocess.TimeoutExpired:
-        return {"stdout": "", "stderr": "", "error": "timeout"}
+        errors.append("timeout")
     except Exception as exc:  # pragma: no cover - defensive
-        return {"stdout": "", "stderr": "", "error": f"execution error: {exc}"}
+        errors.append(f"execution error: {exc}")
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except OSError:
                 pass
+
+    return stdout, errors
 
 
 def _redact_error(stderr: str) -> str:
@@ -267,33 +272,13 @@ def _redact_error(stderr: str) -> str:
     return lines[-1]
 
 
-def _evaluate_result(
-    task: dict[str, Any],
-    generated_code: str,
-    execution_output: str,
-    errors: list[str],
-) -> dict[str, Any]:
-    """Compute deterministic ROI score and success flag.
+def _evaluate_result(code: str, exec_output: str, errors: list[str], duration_ms: int) -> float:
+    """Compute a deterministic ROI score between 0 and 1."""
+    success_score = 0.5 if not errors else 0.0
+    output_score = min(len(exec_output) / 200.0, 1.0) * 0.3
+    error_penalty = min(len(errors) * 0.1, 0.4)
+    latency_penalty = min(duration_ms / 2000.0, 1.0) * 0.2
+    code_penalty = 0.1 if not code.strip() else 0.0
 
-    Args:
-        task: Normalized task payload.
-        generated_code: Generated Python code.
-        execution_output: Captured stdout from execution.
-        errors: Collected errors from previous steps.
-
-    Returns:
-        A dictionary containing roi_score, success, and optional error.
-    """
-    objective = str(task.get("objective", ""))
-    objective_len = max(len(objective), 1)
-    code_len = max(len(generated_code), 1)
-
-    success = not errors
-    output_bonus = 0.1 if execution_output else 0.0
-
-    base_score = min(1.0, (objective_len / (code_len + 1)) + output_bonus)
-    if not success:
-        base_score = max(0.0, base_score - 0.2)
-
-    roi_score = max(0.0, min(1.0, base_score))
-    return {"roi_score": roi_score, "success": success, "error": None}
+    score = success_score + output_score - error_penalty - latency_penalty - code_penalty
+    return max(0.0, min(1.0, score))
