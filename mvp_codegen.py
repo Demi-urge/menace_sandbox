@@ -1,5 +1,7 @@
 """Single-pass code generation with safety constraints."""
 
+import ast
+
 import local_model_wrapper
 
 
@@ -102,53 +104,78 @@ def run_generation(task: dict) -> str:
     if not isinstance(output_text, str):
         output_text = str(output_text)
     output_text = output_text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    output_text = output_text.replace("\r\n", "\n").replace("\r", "\n")
+    output_text = "".join(char for char in output_text if char.isprintable() or char in {"\n", "\t"})
 
-    cleaned_lines: list[str] = []
-    banned_snippets = [
-        "import os",
-        "import sys",
-        "import subprocess",
-        "import socket",
-        "import pathlib",
-        "import shlex",
-        "import shutil",
-        "import tempfile",
-        "from os",
-        "from sys",
-        "from subprocess",
-        "from socket",
-        "from pathlib",
-        "from shlex",
-        "from shutil",
-        "from tempfile",
-        "os.system",
-        "os.popen",
+    forbidden_modules = {
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "pathlib",
+        "shutil",
+        "ctypes",
+    }
+    forbidden_builtins = {
+        "open",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+    }
+    risky_call_snippets = [
+        "os.",
+        "sys.",
         "subprocess.",
-        "popen(",
-        "system(",
-        "shell=True",
         "socket.",
         "pathlib.",
-        "eval(",
-        "exec(",
-        "__import__(",
-        "open(",
+        "shutil.",
+        "ctypes.",
+        "popen(",
+        "system(",
+        "shell=true",
     ]
 
+    cleaned_lines: list[str] = []
     for line in output_text.splitlines():
         stripped = line.strip()
         if stripped.startswith("```"):
             continue
         lowered = stripped.lower()
-        if any(bad in lowered for bad in banned_snippets):
+        if stripped.startswith("import "):
+            imported = stripped[len("import ") :].split("#", 1)[0]
+            modules = [part.strip().split(" as ")[0] for part in imported.split(",")]
+            if any(module in forbidden_modules for module in modules):
+                cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
+                continue
+        if stripped.startswith("from "):
+            module_part = stripped[len("from ") :].split(" import ", 1)[0].strip()
+            root_module = module_part.split(".", 1)[0]
+            if root_module in forbidden_modules:
+                cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
+                continue
+        if any(bad in lowered for bad in risky_call_snippets):
+            cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
+            continue
+        if any(f"{builtin}(" in lowered for builtin in forbidden_builtins):
+            cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
             continue
         cleaned_lines.append(line)
 
     cleaned = "\n".join(cleaned_lines).strip()
-    if not cleaned or not any(char.isalnum() for char in cleaned) or len(cleaned) < 20:
+    if not cleaned or not any(char.isalnum() for char in cleaned):
         return fallback_script
 
     if len(cleaned) > max_chars:
-        cleaned = cleaned[:max_chars].rstrip()
+        cutoff = cleaned.rfind("\n", 0, max_chars)
+        if cutoff == -1:
+            cleaned = cleaned[:max_chars].rstrip()
+        else:
+            cleaned = cleaned[:cutoff].rstrip()
+
+    try:
+        ast.parse(cleaned)
+    except SyntaxError:
+        return fallback_script
 
     return cleaned
