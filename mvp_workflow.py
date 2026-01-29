@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import datetime
-import json
 import os
 import re
 import subprocess
@@ -22,6 +21,15 @@ class TaskSpec:
 
     objective: str
     constraints: list[str]
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    """Structured output for code generation."""
+
+    code: str
+    error: str
+    warnings: list[str]
 
 
 def execute_task(task_dict: dict) -> dict:
@@ -66,11 +74,10 @@ def execute_task(task_dict: dict) -> dict:
 
     if spec is not None:
         try:
-            generation_result = _generate_code(spec.objective, spec.constraints)
-            generated_code = str(generation_result.get("generated_code", ""))
-            generation_errors = _coerce_error_list(generation_result.get("errors"))
-            if generation_errors:
-                execution_error = generation_errors[0]
+            generation_result = generate_code(spec)
+            generated_code = generation_result.code
+            if generation_result.error:
+                execution_error = generation_result.error
         except Exception as exc:  # pragma: no cover - defensive
             execution_error = _sanitize_exception_message(exc)
 
@@ -117,39 +124,160 @@ def execute_task(task_dict: dict) -> dict:
     }
 
 
-def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
+def generate_code(task: TaskSpec) -> GenerationResult:
     """Generate deterministic Python code for the given task.
 
     Args:
-        objective: The task objective.
-        constraints: Normalized constraint strings.
+        task: Normalized TaskSpec input.
 
     Returns:
-        A dictionary containing generated code and error messages.
+        Structured generation result (code, error, warnings) with no exceptions.
     """
-    errors: list[str] = []
-    objective_text = objective.strip()
-    constraints_payload = constraints
+    warnings: list[str] = []
+    error = ""
 
-    payload = {
-        "objective": objective_text,
-        "constraints": constraints_payload,
-    }
-    payload_json = json.dumps(payload, sort_keys=True)
+    objective_text = task.objective.strip() if isinstance(task.objective, str) else ""
+    constraints_payload = (
+        [item for item in task.constraints if isinstance(item, str)]
+        if isinstance(task.constraints, list)
+        else []
+    )
+
+    if not objective_text:
+        return GenerationResult(code="", error="objective must be a non-empty string", warnings=warnings)
 
     code_lines = [
         '"""Auto-generated script."""',
-        "import json",
+        f"OBJECTIVE = {objective_text!r}",
+        f"CONSTRAINTS = {constraints_payload!r}",
         "",
         "def main() -> None:",
-        f"    payload = {payload_json!r}",
-        "    print(payload)",
+        "    print('Objective:')",
+        "    print(OBJECTIVE)",
+        "    if CONSTRAINTS:",
+        "        print('Constraints:')",
+        "        for constraint in CONSTRAINTS:",
+        "            print(f'- {constraint}')",
+        "    else:",
+        "        print('Constraints: none')",
         "",
         "if __name__ == '__main__':",
         "    main()",
         "",
     ]
-    return {"generated_code": "\n".join(code_lines), "errors": errors}
+
+    sanitized_code, sanitization_warnings, sanitization_errors = _sanitize_generated_code("\n".join(code_lines))
+    warnings.extend(sanitization_warnings)
+    if sanitization_errors:
+        error = sanitization_errors[0]
+    elif not sanitized_code.strip():
+        error = "generated code is empty after sanitization"
+    return GenerationResult(code=sanitized_code, error=error, warnings=warnings)
+
+
+def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
+    """Backward-compatible wrapper for code generation."""
+    result = generate_code(TaskSpec(objective=objective, constraints=constraints))
+    errors = [result.error] if result.error else []
+    return {"generated_code": result.code, "errors": errors, "warnings": result.warnings}
+
+
+def _sanitize_generated_code(code: str) -> tuple[str, list[str], list[str]]:
+    """Strip forbidden imports and dynamic import patterns from generated code."""
+    warnings: list[str] = []
+    errors: list[str] = []
+    if not isinstance(code, str) or not code.strip():
+        return "", warnings, ["generated code is empty"]
+
+    forbidden_imports = {
+        "builtins",
+        "ctypes",
+        "importlib",
+        "inspect",
+        "os",
+        "subprocess",
+        "sys",
+    }
+    dynamic_patterns = ("__import__", "importlib.import_module", "importlib.reload")
+
+    sanitized_lines: list[str] = []
+    for line in code.splitlines():
+        stripped = line.strip()
+        if any(pattern in stripped for pattern in dynamic_patterns):
+            warnings.append("dynamic import pattern removed from generated code")
+            continue
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            module_name = _extract_import_module(stripped)
+            if module_name in forbidden_imports:
+                warnings.append(f"forbidden import '{module_name}' removed from generated code")
+                continue
+        sanitized_lines.append(line)
+
+    sanitized_code = "\n".join(sanitized_lines).rstrip() + "\n"
+
+    try:
+        parsed = ast.parse(sanitized_code)
+    except SyntaxError as exc:
+        location = f"line {exc.lineno}, column {exc.offset}" if exc.lineno and exc.offset else "unknown location"
+        errors.append(f"generated code has syntax error at {location}: {exc.msg}")
+        return "", warnings, errors
+
+    forbidden_found = _find_forbidden_imports(parsed, forbidden_imports)
+    if forbidden_found:
+        forbidden_list = ", ".join(sorted(forbidden_found))
+        errors.append(f"forbidden imports detected after sanitization: {forbidden_list}")
+
+    dynamic_found = _find_dynamic_imports(parsed)
+    if dynamic_found:
+        errors.append("dynamic import patterns detected after sanitization")
+
+    if errors:
+        return "", warnings, errors
+    return sanitized_code, warnings, errors
+
+
+def _extract_import_module(line: str) -> str:
+    """Extract the root module name from an import line."""
+    if line.startswith("import "):
+        module_part = line.replace("import ", "", 1).strip()
+        return module_part.split(".")[0].split()[0]
+    if line.startswith("from "):
+        module_part = line.replace("from ", "", 1).strip()
+        return module_part.split(".")[0].split()[0]
+    return ""
+
+
+def _find_forbidden_imports(parsed: ast.AST, forbidden_imports: set[str]) -> set[str]:
+    """Return a set of forbidden imports discovered in AST."""
+    found: set[str] = set()
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root_name = alias.name.split(".")[0]
+                if root_name in forbidden_imports:
+                    found.add(root_name)
+        elif isinstance(node, ast.ImportFrom):
+            module_name = node.module.split(".")[0] if node.module else ""
+            if module_name in forbidden_imports:
+                found.add(module_name or "<relative>")
+    return found
+
+
+def _find_dynamic_imports(parsed: ast.AST) -> bool:
+    """Detect dynamic import patterns in AST."""
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "__import__":
+                return True
+            if isinstance(node.func, ast.Attribute):
+                attr = node.func
+                if (
+                    isinstance(attr.value, ast.Name)
+                    and attr.value.id == "importlib"
+                    and attr.attr in {"import_module", "reload"}
+                ):
+                    return True
+    return False
 
 
 def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
