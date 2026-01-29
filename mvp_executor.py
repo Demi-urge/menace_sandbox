@@ -56,6 +56,202 @@ ALLOWED_IMPORTS = {
 }
 
 
+def _apply_windows_job_object(process_handle: int) -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x100
+    JobObjectExtendedLimitInformation = 9
+
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        wintypes.INT,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    job_handle = kernel32.CreateJobObjectW(None, None)
+    if not job_handle:
+        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+
+    info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY
+    info.ProcessMemoryLimit = _MEMORY_LIMIT_MB * 1024 * 1024
+    if not kernel32.SetInformationJobObject(
+        job_handle,
+        JobObjectExtendedLimitInformation,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    ):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(job_handle)
+        raise OSError(error, "SetInformationJobObject failed")
+
+    if not kernel32.AssignProcessToJobObject(job_handle, wintypes.HANDLE(process_handle)):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(job_handle)
+        raise OSError(error, "AssignProcessToJobObject failed")
+
+    return job_handle
+
+
+def _close_windows_handle(handle: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+def _resume_windows_process(process_id: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    TH32CS_SNAPTHREAD = 0x00000004
+    THREAD_SUSPEND_RESUME = 0x0002
+    INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+    class THREADENTRY32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ThreadID", wintypes.DWORD),
+            ("th32OwnerProcessID", wintypes.DWORD),
+            ("tpBasePri", wintypes.LONG),
+            ("tpDeltaPri", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    kernel32.Thread32First.restype = wintypes.BOOL
+    kernel32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    kernel32.Thread32Next.restype = wintypes.BOOL
+    kernel32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenThread.restype = wintypes.HANDLE
+    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+    kernel32.ResumeThread.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+    if snapshot == INVALID_HANDLE_VALUE:
+        raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot failed")
+
+    entry = THREADENTRY32()
+    entry.dwSize = ctypes.sizeof(THREADENTRY32)
+    success = kernel32.Thread32First(snapshot, ctypes.byref(entry))
+    while success:
+        if entry.th32OwnerProcessID == process_id:
+            thread_handle = kernel32.OpenThread(
+                THREAD_SUSPEND_RESUME,
+                False,
+                entry.th32ThreadID,
+            )
+            if not thread_handle:
+                kernel32.CloseHandle(snapshot)
+                raise OSError(ctypes.get_last_error(), "OpenThread failed")
+            resume_result = kernel32.ResumeThread(thread_handle)
+            kernel32.CloseHandle(thread_handle)
+            kernel32.CloseHandle(snapshot)
+            if resume_result == 0xFFFFFFFF:
+                raise OSError(ctypes.get_last_error(), "ResumeThread failed")
+            return
+        success = kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+
+    kernel32.CloseHandle(snapshot)
+    raise OSError(ctypes.get_last_error(), "Unable to locate primary thread")
+
+
+def _run_windows_subprocess(
+    args: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess[bytes]:
+    creationflags = getattr(subprocess, "CREATE_SUSPENDED", 0x00000004)
+    proc = subprocess.Popen(
+        args,
+        shell=False,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=False,
+        creationflags=creationflags,
+    )
+    job_handle: Optional[int] = None
+    try:
+        job_handle = _apply_windows_job_object(proc._handle)
+        _resume_windows_process(proc.pid)
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(
+            exc.cmd,
+            exc.timeout,
+            stdout=stdout,
+            stderr=stderr,
+        ) from exc
+    except Exception:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        if job_handle is not None:
+            _close_windows_handle(job_handle)
+
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+
+
 def _check_static_policy(tree: ast.AST) -> list[str]:
     violations: set[str] = set()
     banned_lookup_names = BANNED_BUILTINS | BANNED_MODULES | {"__builtins__", "builtins"}
@@ -162,7 +358,7 @@ def execute_untrusted(code: str) -> tuple[str, str]:
 
     Returns (stdout, stderr) as normalized strings with predictable error surfaces.
     """
-    if os.name != "posix":
+    if os.name not in {"posix", "nt"}:
         return "", "error: unsupported platform for sandboxed execution"
 
     def normalize_output(data: bytes) -> str:
@@ -173,6 +369,8 @@ def execute_untrusted(code: str) -> tuple[str, str]:
     def error_message(message: str) -> tuple[str, str]:
         return "", f"error: {message}"
 
+    # POSIX uses resource-based rlimits in preexec_limits; Windows uses Job Objects
+    # configured in _apply_windows_job_object for the process memory cap.
     def preexec_limits() -> Optional[Callable[[], None]]:
         if os.name != "posix":
             return None
@@ -339,17 +537,25 @@ def execute_untrusted(code: str) -> tuple[str, str]:
         }
 
         try:
-            result = subprocess.run(
-                [sys.executable, bootstrap_path, runner_path, code_path],
-                shell=False,
-                timeout=_TIMEOUT_SECONDS,
-                capture_output=True,
-                text=False,
-                cwd=temp_path,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                preexec_fn=preexec_limits(),
-            )
+            if os.name == "nt":
+                result = _run_windows_subprocess(
+                    [sys.executable, bootstrap_path, runner_path, code_path],
+                    cwd=temp_path,
+                    env=env,
+                    timeout=_TIMEOUT_SECONDS,
+                )
+            else:
+                result = subprocess.run(
+                    [sys.executable, bootstrap_path, runner_path, code_path],
+                    shell=False,
+                    timeout=_TIMEOUT_SECONDS,
+                    capture_output=True,
+                    text=False,
+                    cwd=temp_path,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    preexec_fn=preexec_limits(),
+                )
         except subprocess.TimeoutExpired as exc:
             stdout = normalize_output(exc.stdout or b"")
             stderr = normalize_output(exc.stderr or b"")

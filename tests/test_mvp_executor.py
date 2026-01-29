@@ -15,17 +15,64 @@ while True:
     assert "execution timed out" in stderr
 
 
-def test_execute_untrusted_rejects_non_posix(monkeypatch):
+def test_execute_untrusted_rejects_unsupported_platform(monkeypatch):
     def fail_run(*_args, **_kwargs):
         raise AssertionError("subprocess.run should not be called")
 
-    monkeypatch.setattr(mvp_executor.os, "name", "nt", raising=False)
+    monkeypatch.setattr(mvp_executor.os, "name", "java", raising=False)
     monkeypatch.setattr("mvp_executor.subprocess.run", fail_run)
 
     stdout, stderr = execute_untrusted("print('hi')")
 
     assert stdout == ""
     assert stderr == "error: unsupported platform for sandboxed execution"
+
+
+def test_execute_untrusted_uses_job_object_on_windows(monkeypatch):
+    called = {"job": False, "resume": False, "close": False}
+
+    class DummyProc:
+        def __init__(self):
+            self._handle = 123
+            self.pid = 456
+            self.args = ["python", "runner.py"]
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            return (b"ok\n", b"")
+
+        def kill(self):
+            self.returncode = 1
+
+    def fake_popen(*_args, **_kwargs):
+        return DummyProc()
+
+    def fake_job_object(handle):
+        assert handle == 123
+        called["job"] = True
+        return 999
+
+    def fake_resume(pid):
+        assert pid == 456
+        called["resume"] = True
+
+    def fake_close(handle):
+        assert handle == 999
+        called["close"] = True
+
+    monkeypatch.setattr(mvp_executor.os, "name", "nt", raising=False)
+    monkeypatch.setattr(mvp_executor.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(mvp_executor, "_apply_windows_job_object", fake_job_object)
+    monkeypatch.setattr(mvp_executor, "_resume_windows_process", fake_resume)
+    monkeypatch.setattr(mvp_executor, "_close_windows_handle", fake_close)
+
+    stdout, stderr = execute_untrusted("print('hi')")
+
+    assert stdout.strip() == "ok"
+    assert stderr == ""
+    assert called["job"] is True
+    assert called["resume"] is True
+    assert called["close"] is True
 
 
 def test_syntax_error_returns_error_marker():
