@@ -1,6 +1,7 @@
 import types
 import tempfile
 
+import mvp_executor
 from mvp_executor import execute_untrusted
 
 
@@ -12,6 +13,19 @@ while True:
 
     assert stdout == ""
     assert "execution timed out" in stderr
+
+
+def test_execute_untrusted_rejects_non_posix(monkeypatch):
+    def fail_run(*_args, **_kwargs):
+        raise AssertionError("subprocess.run should not be called")
+
+    monkeypatch.setattr(mvp_executor.os, "name", "nt", raising=False)
+    monkeypatch.setattr("mvp_executor.subprocess.run", fail_run)
+
+    stdout, stderr = execute_untrusted("print('hi')")
+
+    assert stdout == ""
+    assert stderr == "error: unsupported platform for sandboxed execution"
 
 
 def test_syntax_error_returns_error_marker():
