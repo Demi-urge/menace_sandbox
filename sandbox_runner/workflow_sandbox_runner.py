@@ -51,6 +51,8 @@ import signal
 import threading
 import _thread
 import logging
+import io
+import sys
 # Spawn start method is required when HF tokenizers are in use; ensure entrypoint sets it.
 import multiprocessing
 import pickle
@@ -105,6 +107,52 @@ def _ensure_utf8(text: str, *, context: str) -> None:
         text.encode("utf-8")
     except UnicodeEncodeError as exc:  # pragma: no cover - defensive
         raise ValueError(f"{context} must be UTF-8 encodable") from exc
+
+
+def _path_is_relative_to(path: pathlib.Path, root: pathlib.Path) -> bool:
+    try:
+        return path.is_relative_to(root)
+    except AttributeError:  # pragma: no cover - py<3.9 compatibility
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            return False
+
+
+def _raise_forbidden_access(message: str) -> None:
+    msg = f"error: {message}"
+    print(msg, file=sys.stderr)
+    raise PermissionError(msg)
+
+
+@contextlib.contextmanager
+def _subprocess_open_guard(temp_root: pathlib.Path) -> Iterable[None]:
+    raw_open = builtins.open
+    temp_root = temp_root.resolve()
+
+    def guarded_open(file: object, mode: str = "r", *a: Any, **kw: Any):
+        if isinstance(file, int):
+            if file in {0, 1, 2}:
+                return raw_open(file, mode, *a, **kw)
+            _raise_forbidden_access("forbidden file descriptor")
+        try:
+            file_path = os.fspath(file)
+        except TypeError:
+            return raw_open(file, mode, *a, **kw)
+        try:
+            resolved = pathlib.Path(file_path).resolve()
+        except Exception:
+            _raise_forbidden_access("forbidden path access")
+        if not _path_is_relative_to(resolved, temp_root):
+            _raise_forbidden_access("forbidden path access")
+        return raw_open(file, mode, *a, **kw)
+
+    builtins.open = guarded_open
+    try:
+        yield
+    finally:
+        builtins.open = raw_open
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +258,7 @@ class WorkflowSandboxRunner:
         memory_limit: int | None = None,
         cpu_limit: int | None = None,
         use_subprocess: bool = True,
+        subprocess_guard: bool = False,
         container_image: str | None = None,
         container_runtime: str | None = None,
         audit_hook: Callable[[str, Mapping[str, Any]], None] | None = None,
@@ -261,6 +310,10 @@ class WorkflowSandboxRunner:
         provided, the workflow executes inside the chosen container instead of
         a plain subprocess.  Setting ``use_subprocess`` to ``False`` executes
         the workflow in the current process.
+
+        ``subprocess_guard`` enables a trusted runtime guard that confines
+        ``open`` access to the sandbox root.  This should only be enabled when
+        running inside the subprocess worker.
 
         ``audit_hook`` if provided is invoked for every file and network access
         attempt.  The first argument is a string describing the event and the
@@ -340,6 +393,7 @@ class WorkflowSandboxRunner:
                 "cpu_limit": cpu_limit,
                 "audit_hook": audit_hook,
                 "edge_case_profiles": edge_case_profiles,
+                "subprocess_guard": True,
                 "use_subprocess": False,
             }
             if container_image and container_runtime:
@@ -505,6 +559,10 @@ class WorkflowSandboxRunner:
 
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
             root = pathlib.Path(tmp).resolve()
+            guard_context = (
+                _subprocess_open_guard(root) if subprocess_guard else contextlib.nullcontext()
+            )
+            stack.enter_context(guard_context)
             stack.enter_context(_patched_imports())
 
             def _audit(event: str, **info: Any) -> None:
@@ -579,12 +637,24 @@ class WorkflowSandboxRunner:
             original_open = builtins.open
 
             def sandbox_open(file, mode="r", *a, **kw):
-                file_path = os.fspath(file)
+                if isinstance(file, int):
+                    return original_open(file, mode, *a, **kw)
+                try:
+                    file_path = os.fspath(file)
+                except TypeError:
+                    return original_open(file, mode, *a, **kw)
                 if file_path.startswith("/proc/"):
                     return original_open(file, mode, *a, **kw)
                 p = pathlib.Path(file_path)
-                path = self._resolve(root, file_path)
+                try:
+                    path = self._resolve(root, file_path)
+                except RuntimeError:
+                    if subprocess_guard:
+                        _raise_forbidden_access("forbidden path access")
+                    raise
                 if not path.is_relative_to(root):
+                    if subprocess_guard:
+                        _raise_forbidden_access("forbidden path access")
                     raise RuntimeError("path escapes sandbox")
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("open")
@@ -597,6 +667,8 @@ class WorkflowSandboxRunner:
                 return original_open(path, mode, *a, **kw)
 
             stack.enter_context(mock.patch("builtins.open", sandbox_open))
+            if subprocess_guard:
+                stack.enter_context(mock.patch.object(io, "open", sandbox_open))
 
             original_path_open = pathlib.Path.open
             original_write_text = pathlib.Path.write_text
