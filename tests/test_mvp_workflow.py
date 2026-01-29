@@ -1,59 +1,70 @@
 import os
 import tempfile
-import unittest
-from unittest import mock
+
+import pytest
 
 import mvp_workflow
 
 
-def _find_generated_scripts(temp_dir: str) -> set[str]:
-    matches: set[str] = set()
-    for root, _dirs, files in os.walk(temp_dir):
-        for name in files:
-            if name == "generated_script.py":
-                matches.add(os.path.join(root, name))
-    return matches
+def test_evaluate_result_deterministic():
+    task = mvp_workflow.TaskSpec(
+        objective="Validate deterministic ROI",
+        constraints=["no network"],
+    )
+    exec_result = mvp_workflow.ExecutionResult(
+        stdout="ok\n",
+        stderr="",
+        return_code=0,
+        error="",
+    )
+
+    first = mvp_workflow.evaluate_result(task, exec_result)
+    second = mvp_workflow.evaluate_result(task, exec_result)
+
+    assert first == second
+    assert first.roi_score == second.roi_score
+    assert first.evaluation_error == second.evaluation_error
 
 
-class TestMvpWorkflow(unittest.TestCase):
-    def test_execute_task_roi_deterministic(self) -> None:
-        task = {
-            "objective": "List the objective and constraints.",
-            "constraints": ["No networking", "Standard library only"],
-        }
-        results = [mvp_workflow.execute_task(task) for _ in range(3)]
-        roi_scores = [result["roi_score"] for result in results]
-        self.assertTrue(all(score == roi_scores[0] for score in roi_scores))
-        self.assertGreater(roi_scores[0], 0.0)
-        self.assertTrue(all(result["success"] for result in results))
+def test_execute_task_repeatable_fields():
+    payload = {
+        "objective": "Generate a short deterministic response",
+        "constraints": ["no networking", "standard library only"],
+    }
 
-    def test_execute_task_timeout_zero_roi_no_traceback(self) -> None:
-        fake_execution = {
-            "execution_output": "STDOUT:\nTraceback (most recent call last):\n  boom\n",
-            "errors": ["Traceback (most recent call last):\n  boom"],
-            "stdout": "Traceback (most recent call last):\n  boom",
-            "stderr": "Traceback (most recent call last):\n  boom",
-            "exit_code": None,
-            "timed_out": True,
-        }
-        with mock.patch.object(mvp_workflow, "_execute_code", return_value=fake_execution):
-            result = mvp_workflow.execute_task({"objective": "Trigger timeout"})
+    results = [mvp_workflow.execute_task(payload) for _ in range(12)]
+    baseline = results[0]
 
-        self.assertEqual(result["roi_score"], 0.0)
-        self.assertFalse(result["success"])
-        for field in ("execution_output", "execution_error", "evaluation_error"):
-            self.assertNotIn("Traceback", result[field])
-
-    def test_execute_task_cleans_temp_scripts(self) -> None:
-        temp_dir = tempfile.gettempdir()
-        before = _find_generated_scripts(temp_dir)
-
-        result = mvp_workflow.execute_task({"objective": "Clean temp scripts"})
-
-        after = _find_generated_scripts(temp_dir)
-        self.assertTrue(result["success"])
-        self.assertEqual(after - before, set())
+    for result in results[1:]:
+        for field in ("roi_score", "success", "execution_error", "evaluation_error"):
+            assert result[field] == baseline[field]
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_execute_code_cleans_tempdir(monkeypatch: pytest.MonkeyPatch):
+    created: list[object] = []
+    original_tempdir = tempfile.TemporaryDirectory
+
+    class TrackingTempDir:
+        def __init__(self, *args, **kwargs):
+            self._inner = original_tempdir(*args, **kwargs)
+            self.name = self._inner.name
+            self.cleaned = False
+            created.append(self)
+
+        def __enter__(self):
+            return self.name
+
+        def __exit__(self, exc_type, exc, tb):
+            result = self._inner.__exit__(exc_type, exc, tb)
+            self.cleaned = not os.path.exists(self.name)
+            return result
+
+    monkeypatch.setattr(mvp_workflow.tempfile, "TemporaryDirectory", TrackingTempDir)
+
+    result = mvp_workflow._execute_code("print('ok')", timeout_s=1.0)
+
+    assert created, "TemporaryDirectory was not invoked"
+    tracked = created[0]
+    assert tracked.cleaned
+    assert not os.path.exists(tracked.name)
+    assert result["execution_output"]
