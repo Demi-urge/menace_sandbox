@@ -28,6 +28,28 @@ def test_import_blocking_prevents_execution():
     assert "import of 'os' is not allowed" in stderr
 
 
+def test_runtime_import_blocking_for_io_module():
+    stdout, stderr = execute_untrusted("import io\nio.open('/etc/passwd')")
+
+    assert stdout == ""
+    assert "import of 'io' is not allowed" in stderr
+    assert "error:" in stderr
+
+
+def test_builtins_open_access_is_blocked():
+    stdout, stderr = execute_untrusted("__builtins__['open']('/etc/passwd')")
+
+    assert stdout == ""
+    assert stderr == "error: access to builtins is not allowed; use of '__builtins__' is not allowed"
+
+
+def test_path_traversal_open_is_blocked():
+    stdout, stderr = execute_untrusted("open('../somefile')")
+
+    assert stdout == ""
+    assert stderr == "error: call to 'open' is not allowed; use of 'open' is not allowed"
+
+
 def test_temp_dir_cleanup(tmp_path, monkeypatch):
     temp_root = tmp_path / "mvp_temp_root"
     temp_root.mkdir()
