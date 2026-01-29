@@ -1,5 +1,7 @@
-import types
+import os
+import shutil
 import tempfile
+import types
 
 import mvp_executor
 from mvp_executor import execute_untrusted
@@ -12,7 +14,7 @@ while True:
 """)
 
     assert stdout == ""
-    assert "execution timed out" in stderr
+    assert "error: execution timed out" in stderr
 
 
 def test_execute_untrusted_rejects_unsupported_platform(monkeypatch):
@@ -89,6 +91,13 @@ def test_import_blocking_prevents_execution():
     assert "import of 'os' is not allowed" in stderr
 
 
+def test_dynamic_import_attempt_is_blocked():
+    stdout, stderr = execute_untrusted("__import__('os')")
+
+    assert stdout == ""
+    assert "call to '__import__' is not allowed" in stderr
+
+
 def test_runtime_import_blocking_for_io_module():
     stdout, stderr = execute_untrusted("import io\nio.open('/etc/passwd')")
 
@@ -151,7 +160,7 @@ with open("note.txt", "r") as handle:
 
 
 def test_open_rejects_outside_temp_directory():
-    stdout, stderr = execute_untrusted("open('/etc/passwd')")
+    stdout, stderr = execute_untrusted("open('/etc/hosts')")
 
     assert stdout == ""
     assert "error:" in stderr
@@ -230,6 +239,34 @@ def test_temp_dir_cleanup(tmp_path, monkeypatch):
     assert stdout.strip() == "hi"
     assert stderr == ""
     assert list(temp_root.iterdir()) == []
+
+
+def test_empty_output_is_handled():
+    stdout, stderr = execute_untrusted("value = 4")
+
+    assert stdout == ""
+    assert stderr == ""
+
+
+def test_temp_dir_is_removed_after_execution(tmp_path, monkeypatch):
+    created = {}
+    original_mkdtemp = tempfile.mkdtemp
+
+    class TrackingTempDir:
+        def __init__(self, prefix="mvp_executor_"):
+            self.name = original_mkdtemp(prefix=prefix, dir=tmp_path)
+            created["path"] = self.name
+
+        def cleanup(self):
+            shutil.rmtree(self.name, ignore_errors=True)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", TrackingTempDir)
+
+    stdout, stderr = execute_untrusted("with open('marker.txt', 'w') as handle:\n    handle.write('ok')\n")
+
+    assert stdout == ""
+    assert stderr == ""
+    assert not os.path.exists(created["path"])
 
 
 def test_output_decoding_normalizes_newlines(monkeypatch):
