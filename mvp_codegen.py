@@ -286,9 +286,9 @@ def run_generation(task: dict[str, object]) -> str:
             for alias in node.names:
                 base_name = alias.name.split(".")[0]
                 if base_name not in stdlib_allowlist:
-        return fallback_code
+                    return fallback_code
                 if base_name in denied_modules:
-        return fallback_code
+                    return fallback_code
                 if base_name == "io" and alias.asname:
                     io_aliases.add(alias.asname)
                 if alias.asname and base_name in banned_base_names:
@@ -298,23 +298,23 @@ def run_generation(task: dict[str, object]) -> str:
             module_name = node.module or ""
             module_base = module_name.split(".")[0]
             if module_base not in stdlib_allowlist:
-        return fallback_code
+                return fallback_code
             if module_base in denied_modules:
-        return fallback_code
+                return fallback_code
             for alias in node.names:
                 if alias.name in banned_symbol_names:
-        return fallback_code
+                    return fallback_code
                 if alias.asname and alias.asname in banned_symbol_names:
-        return fallback_code
+                    return fallback_code
                 if module_name in banned_base_names and alias.name in banned_builtins:
-        return fallback_code
+                    return fallback_code
                 if alias.asname and module_base in banned_base_names:
                     banned_aliases.add(alias.asname)
                     banned_module_aliases.add(alias.asname)
         if isinstance(node, ast.Name) and node.id in banned_builtins:
-        return fallback_code
+            return fallback_code
         if isinstance(node, ast.Name) and node.id in banned_aliases:
-        return fallback_code
+            return fallback_code
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name):
                 if node.value.id in denied_modules:
