@@ -92,6 +92,23 @@ class EvaluationResult:
 
 
 _EXECUTION_TIMEOUT_S = 5.0
+ALLOWED_IMPORTS = frozenset(
+    {
+        "collections",
+        "datetime",
+        "functools",
+        "itertools",
+        "json",
+        "math",
+        "operator",
+        "random",
+        "re",
+        "statistics",
+        "string",
+        "time",
+        "typing",
+    }
+)
 
 
 def now_iso8601() -> str:
@@ -269,7 +286,7 @@ def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
 
 
 def execute_generated_code(code: str) -> ExecutionResult:
-    """Execute generated code in a temporary file with safety checks."""
+    """Execute generated code with allowlisted imports, no dynamic imports, and no exec/eval."""
     if not isinstance(code, str) or not code.strip():
         return ExecutionResult(
             stdout="",
@@ -290,41 +307,13 @@ def execute_generated_code(code: str) -> ExecutionResult:
             error=sanitize_error_output(f"syntax error at {location}: {message}"),
         )
 
-    forbidden_imports = {
-        "builtins",
-        "ctypes",
-        "importlib",
-        "inspect",
-        "os",
-        "subprocess",
-        "sys",
-    }
-    forbidden_found = contains_forbidden_imports(code, forbidden_imports=forbidden_imports)
-    if forbidden_found:
-        forbidden_list = ", ".join(sorted(forbidden_found))
+    policy_errors = _validate_code_policy(code)
+    if policy_errors:
         return ExecutionResult(
             stdout="",
             stderr="",
             return_code=None,
-            error=sanitize_error_output(f"forbidden imports detected: {forbidden_list}"),
-        )
-
-    if contains_dynamic_imports(code):
-        return ExecutionResult(
-            stdout="",
-            stderr="",
-            return_code=None,
-            error=sanitize_error_output("dynamic import patterns detected"),
-        )
-
-    unsafe_calls = contains_exec_or_eval(code)
-    if unsafe_calls:
-        unsafe_list = ", ".join(sorted(unsafe_calls))
-        return ExecutionResult(
-            stdout="",
-            stderr="",
-            return_code=None,
-            error=sanitize_error_output(f"unsafe call patterns detected: {unsafe_list}"),
+            error=policy_errors[0],
         )
 
     if sys.version_info >= (3, 10):
@@ -543,6 +532,24 @@ def contains_exec_or_eval(code: str) -> set[str]:
     return unsafe_calls
 
 
+def _validate_code_policy(code: str) -> list[str]:
+    """Validate code against the shared import and unsafe call policy."""
+    errors: list[str] = []
+    forbidden_imports = contains_forbidden_imports(code, allowed_imports=set(ALLOWED_IMPORTS))
+    if forbidden_imports:
+        forbidden_list = ", ".join(sorted(forbidden_imports))
+        errors.append(sanitize_error_output(f"forbidden imports detected: {forbidden_list}"))
+        return errors
+    if contains_dynamic_imports(code):
+        errors.append(sanitize_error_output("dynamic import patterns detected"))
+        return errors
+    unsafe_calls = contains_exec_or_eval(code)
+    if unsafe_calls:
+        unsafe_list = ", ".join(sorted(unsafe_calls))
+        errors.append(sanitize_error_output(f"unsafe call patterns detected: {unsafe_list}"))
+    return errors
+
+
 def _narrow_posix_path(path_value: str | None) -> str:
     if not path_value:
         return os.defpath
@@ -591,7 +598,7 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
         timeout_s: Timeout in seconds.
 
     Returns:
-        A dictionary with execution output and errors.
+        A dictionary with execution output and errors following the unified import policy.
     """
     errors: list[str] = []
     stdout = ""
@@ -625,49 +632,8 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
             "errors": errors,
         }
 
-    allowed_imports = {
-        "collections",
-        "datetime",
-        "functools",
-        "itertools",
-        "json",
-        "math",
-        "operator",
-        "random",
-        "re",
-        "statistics",
-        "string",
-        "time",
-        "typing",
-    }
-    forbidden_imports = contains_forbidden_imports(code, allowed_imports=allowed_imports)
-    if forbidden_imports:
-        forbidden_list = ", ".join(sorted(forbidden_imports))
-        errors.append(sanitize_error_output(f"forbidden imports detected: {forbidden_list}"))
-        return {
-            "stdout": "",
-            "stderr": "",
-            "exit_code": exit_code,
-            "timed_out": timed_out,
-            "execution_output": "",
-            "errors": errors,
-        }
-
-    if contains_dynamic_imports(code):
-        errors.append(sanitize_error_output("dynamic import patterns detected"))
-        return {
-            "stdout": "",
-            "stderr": "",
-            "exit_code": exit_code,
-            "timed_out": timed_out,
-            "execution_output": "",
-            "errors": errors,
-        }
-
-    unsafe_calls = contains_exec_or_eval(code)
-    if unsafe_calls:
-        unsafe_list = ", ".join(sorted(unsafe_calls))
-        errors.append(sanitize_error_output(f"unsafe call patterns detected: {unsafe_list}"))
+    errors.extend(_validate_code_policy(code))
+    if errors:
         return {
             "stdout": "",
             "stderr": "",
