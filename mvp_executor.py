@@ -72,6 +72,12 @@ def execute_generated_code(code: str) -> Tuple[str, str]:
 
     Returns a tuple of (stdout, stderr) with normalized line endings.
     """
+    def decode_stream(raw: bytes | bytearray | None) -> str:
+        if not raw:
+            return ""
+        text = raw.decode("utf-8", errors="replace")
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
     temp_dir = tempfile.mkdtemp(prefix="mvp_executor_")
     stdout_text = ""
     stderr_text = ""
@@ -82,8 +88,8 @@ def execute_generated_code(code: str) -> Tuple[str, str]:
 
         _, parse_error = _parse_and_reject_dangerous_imports(code)
         if parse_error:
-            stderr_text = parse_error
-            return ("", stderr_text.replace("\r\n", "\n").replace("\r", "\n"))
+            stderr_text = parse_error.replace("\r\n", "\n").replace("\r", "\n")
+            return ("", stderr_text)
 
         def apply_limits() -> None:
             try:
@@ -120,20 +126,16 @@ def execute_generated_code(code: str) -> Tuple[str, str]:
                 start_new_session=True,
                 shell=False,
             )
-            stdout_text = result.stdout.decode("utf-8", errors="replace")
-            stderr_text = result.stderr.decode("utf-8", errors="replace")
+            stdout_text = decode_stream(result.stdout)
+            stderr_text = decode_stream(result.stderr)
         except subprocess.TimeoutExpired as exc:
-            stdout_text = (
-                exc.stdout.decode("utf-8", errors="replace")
-                if isinstance(exc.stdout, (bytes, bytearray))
-                else ""
-            )
-            stderr_text = (
-                exc.stderr.decode("utf-8", errors="replace")
-                if isinstance(exc.stderr, (bytes, bytearray))
-                else ""
-            )
-            stderr_text = (stderr_text + "\nExecution timed out after 5 seconds.").strip()
+            stdout_text = decode_stream(exc.stdout)
+            stderr_text = decode_stream(exc.stderr)
+            timeout_message = "Execution timed out after 5 seconds."
+            if stderr_text:
+                stderr_text = f"{stderr_text}\n{timeout_message}"
+            else:
+                stderr_text = timeout_message
         except PermissionError as exc:
             stderr_text = f"PermissionError: {exc}"
         except OSError as exc:
