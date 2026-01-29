@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -55,6 +56,16 @@ class EvaluationResult:
 _EXECUTION_TIMEOUT_S = 5.0
 
 
+def now_iso8601() -> str:
+    """Return an ISO-8601 timestamp with timezone info when available."""
+    return datetime.datetime.now().astimezone().isoformat()
+
+
+def elapsed_ms(start: float, end: float) -> int:
+    """Return elapsed time in integer milliseconds."""
+    return int((end - start) * 1000)
+
+
 def execute_task(task_dict: dict) -> dict:
     """Execute a task workflow end-to-end and return a JSON-serializable payload.
 
@@ -65,8 +76,8 @@ def execute_task(task_dict: dict) -> dict:
         A JSON-serializable dictionary with objective, constraints, generated code,
         execution output, error details, ROI score, timestamps, duration, and success flag.
     """
-    started_at = datetime.datetime.now(datetime.timezone.utc)
-    started_at_iso = started_at.isoformat()
+    started_at = now_iso8601()
+    start_time = time.time()
     generated_code = ""
     execution_output = ""
     execution_error = ""
@@ -127,9 +138,9 @@ def execute_task(task_dict: dict) -> dict:
             roi_score = 0.0
 
     success = bool(spec and generated_code and not execution_error and not evaluation_error)
-    finished_at = datetime.datetime.now(datetime.timezone.utc)
-    finished_at_iso = finished_at.isoformat()
-    duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+    finished_at = now_iso8601()
+    end_time = time.time()
+    duration_ms = elapsed_ms(start_time, end_time)
     sanitized_output = sanitize_error_output(execution_output)
 
     return {
@@ -140,8 +151,8 @@ def execute_task(task_dict: dict) -> dict:
         "execution_error": sanitize_error_output(execution_error),
         "evaluation_error": sanitize_error_output(evaluation_error),
         "roi_score": float(roi_score),
-        "started_at": started_at_iso,
-        "finished_at": finished_at_iso,
+        "started_at": started_at,
+        "finished_at": finished_at,
         "duration_ms": duration_ms,
         "success": success,
     }
