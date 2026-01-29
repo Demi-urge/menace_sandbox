@@ -10,15 +10,24 @@ from pathlib import Path
 import mvp_workflow
 
 
-class _ArgumentParser(argparse.ArgumentParser):
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
-        self.error_message: str | None = None
+class _CliArgumentError(Exception):
+    pass
 
-    def error(self, message: str) -> int:
-        self.error_message = f"error: {message}"
-        sys.stdout.write(self.error_message + "\n")
-        return 2
+
+class _ArgumentParser(argparse.ArgumentParser):
+    def _sanitize_message(self, message: str) -> str:
+        cleaned = " ".join(str(message).split())
+        return f"error: {cleaned}" if cleaned else "error: invalid arguments"
+
+    def error(self, message: str) -> None:
+        raise _CliArgumentError(self._sanitize_message(message))
+
+    def exit(self, status: int = 0, message: str | None = None) -> None:
+        if status == 0:
+            if message:
+                sys.stdout.write(message)
+            return
+        raise _CliArgumentError(self._sanitize_message(message or "invalid arguments"))
 
 
 def _emit_json(payload: dict) -> None:
@@ -53,9 +62,10 @@ def _read_task_file(path: str) -> tuple[dict | None, str | None]:
 def _run(argv: list[str] | None) -> int:
     parser = _ArgumentParser(description=__doc__)
     parser.add_argument("--task", required=True, help="Path to JSON task payload")
-    args = parser.parse_args(argv)
-
-    if parser.error_message is not None:
+    try:
+        args = parser.parse_args(argv)
+    except _CliArgumentError as exc:
+        _emit_json(_error_payload(str(exc)))
         return 2
 
     payload, error = _read_task_file(args.task)
