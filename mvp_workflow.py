@@ -43,6 +43,15 @@ class ExecutionResult:
     error: str
 
 
+@dataclass(frozen=True)
+class EvaluationResult:
+    """Structured output for deterministic ROI evaluation."""
+
+    roi_score: float
+    evaluation_error: str
+    rationale: str
+
+
 _EXECUTION_TIMEOUT_S = 5.0
 
 
@@ -108,11 +117,11 @@ def execute_task(task_dict: dict) -> dict:
 
     if spec is not None:
         try:
-            evaluation_result = _evaluate_result(generated_code, execution_result)
-            roi_score = float(evaluation_result.get("roi_score", 0.0))
-            evaluation_errors = _coerce_error_list(evaluation_result.get("errors"))
-            if evaluation_errors:
-                evaluation_error = evaluation_errors[0]
+            exec_struct = _execution_result_from_dict(execution_result)
+            evaluation_result = evaluate_result(spec, exec_struct)
+            roi_score = float(evaluation_result.roi_score)
+            if evaluation_result.evaluation_error:
+                evaluation_error = evaluation_result.evaluation_error
         except Exception as exc:  # pragma: no cover - defensive
             evaluation_error = _sanitize_exception_message(exc)
             roi_score = 0.0
@@ -530,6 +539,107 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
     }
 
 
+def evaluate_result(task: TaskSpec, exec_result: ExecutionResult) -> EvaluationResult:
+    """Evaluate execution results and provide a deterministic ROI score.
+
+    Heuristics (bounded to 0.0–1.0):
+    - +0.60 when return_code is zero and no execution error is reported.
+    - +0.25 when stdout is non-empty after stripping.
+    - +0.15 when stderr is empty after stripping.
+
+    The score is deterministic and depends only on the inputs. Failures return
+    an ``evaluation_error`` string and a zero score without raising exceptions.
+    """
+    try:
+        if not isinstance(task, TaskSpec):
+            return EvaluationResult(
+                roi_score=0.0,
+                evaluation_error="task must be TaskSpec",
+                rationale="invalid task specification",
+            )
+        if not isinstance(task.objective, str) or not task.objective.strip():
+            return EvaluationResult(
+                roi_score=0.0,
+                evaluation_error="task objective must be a non-empty string",
+                rationale="invalid task objective",
+            )
+        if not isinstance(exec_result, ExecutionResult):
+            return EvaluationResult(
+                roi_score=0.0,
+                evaluation_error="exec_result must be ExecutionResult",
+                rationale="invalid execution result",
+            )
+
+        stdout = exec_result.stdout or ""
+        stderr = exec_result.stderr or ""
+        return_code = exec_result.return_code
+        exec_error = exec_result.error or ""
+
+        score = 0.0
+        rationale_parts: list[str] = []
+
+        if return_code == 0 and not exec_error:
+            score += 0.60
+            rationale_parts.append("zero return code")
+        else:
+            rationale_parts.append("non-zero return code")
+            if exec_error:
+                rationale_parts.append("execution error present")
+
+        if stdout.strip():
+            score += 0.25
+            rationale_parts.append("non-empty stdout")
+        else:
+            rationale_parts.append("empty stdout")
+
+        if not stderr.strip():
+            score += 0.15
+            rationale_parts.append("empty stderr")
+        else:
+            rationale_parts.append("stderr present")
+
+        score = max(0.0, min(1.0, score))
+        rationale = _build_rationale(rationale_parts)
+        return EvaluationResult(roi_score=score, evaluation_error="", rationale=rationale)
+    except Exception as exc:  # pragma: no cover - defensive
+        return EvaluationResult(
+            roi_score=0.0,
+            evaluation_error=_sanitize_exception_message(exc),
+            rationale="evaluation failure",
+        )
+
+
+def _execution_result_from_dict(exec_result: dict[str, object]) -> ExecutionResult:
+    """Coerce a dictionary into an ExecutionResult without raising exceptions."""
+    try:
+        stdout = str(exec_result.get("stdout", "") or "")
+        stderr = str(exec_result.get("stderr", "") or "")
+        exit_code_raw = exec_result.get("exit_code")
+        return_code: int | None
+        if isinstance(exit_code_raw, bool):
+            return_code = int(exit_code_raw)
+        elif isinstance(exit_code_raw, (int, float)):
+            return_code = int(exit_code_raw)
+        else:
+            return_code = None
+        errors = _coerce_error_list(exec_result.get("errors"))
+        error = _sanitize_output(errors[0]) if errors else ""
+        return ExecutionResult(stdout=stdout, stderr=stderr, return_code=return_code, error=error)
+    except Exception as exc:  # pragma: no cover - defensive
+        return ExecutionResult(stdout="", stderr="", return_code=None, error=_sanitize_exception_message(exc))
+
+
+def _build_rationale(parts: list[str]) -> str:
+    """Build a short, sanitized rationale string."""
+    if not parts:
+        return ""
+    rationale = _sanitize_output("; ".join(parts))
+    max_len = 160
+    if len(rationale) > max_len:
+        rationale = rationale[: max_len - 3].rstrip() + "..."
+    return rationale
+
+
 def _evaluate_result(code: str, exec_result: dict[str, object]) -> dict[str, object]:
     """Evaluate execution results and provide an ROI score.
 
@@ -551,54 +661,24 @@ def _evaluate_result(code: str, exec_result: dict[str, object]) -> dict[str, obj
         if not code_text.strip():
             errors.append("no code generated")
 
-        stdout = str(exec_result.get("stdout", "") or "")
-        stderr = str(exec_result.get("stderr", "") or "")
-        exit_code_raw = exec_result.get("exit_code", 1)
-        timed_out = bool(exec_result.get("timed_out", False))
-        execution_errors = _coerce_error_list(exec_result.get("errors"))
+        exec_struct = _execution_result_from_dict(exec_result)
+        task = TaskSpec(objective=code_text or "generated code", constraints=[])
+        evaluation = evaluate_result(task, exec_struct)
 
-        exit_code = int(exit_code_raw) if isinstance(exit_code_raw, (int, float)) else 1
-        succeeded = exit_code == 0 and not execution_errors and not timed_out
-
-        base_score = 1.0 if succeeded else 0.0
-        if succeeded:
-            notes.append("execution succeeded")
-        else:
-            notes.append("execution did not succeed")
-
-        stdout_len = len(stdout)
-        stderr_len = len(stderr)
-        output_len = stdout_len + stderr_len
-
-        stdout_penalty = min(stdout_len / 800.0, 1.0) * 0.2
-        stderr_penalty = min(stderr_len / 400.0, 1.0) * 0.3
-        long_output_penalty = min(output_len / 1200.0, 1.0) * 0.2
-        timeout_penalty = 0.4 if timed_out else 0.0
-        empty_output_penalty = 0.2 if output_len == 0 else 0.0
-
-        if timed_out:
-            notes.append("timeout penalty applied")
-        if output_len == 0:
-            notes.append("empty output penalty applied")
-        if stderr_len:
-            notes.append("stderr penalty applied")
-        if output_len > 0:
-            notes.append("output length penalty applied")
-
-        roi_score = base_score
-        roi_score -= stdout_penalty + stderr_penalty + long_output_penalty
-        roi_score -= timeout_penalty + empty_output_penalty
-        roi_score = max(0.0, min(1.0, roi_score))
+        if evaluation.evaluation_error:
+            errors.append(evaluation.evaluation_error)
+        if evaluation.rationale:
+            notes.append(evaluation.rationale)
 
         return {
-            "roi_score": float(roi_score),
+            "roi_score": float(evaluation.roi_score),
             "errors": errors,
             "evaluation_notes": notes,
         }
     except Exception as exc:  # pragma: no cover - defensive
         return {
             "roi_score": 0.0,
-            "errors": [f"evaluation error: {exc}"],
+            "errors": [_sanitize_exception_message(exc)],
             "evaluation_notes": [],
         }
 
