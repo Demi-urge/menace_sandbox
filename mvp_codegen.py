@@ -13,9 +13,11 @@ def run_generation(task: dict[str, object]) -> str:
     The task must include an ``objective`` string and may include optional
     ``constraints`` (string or list). The function is deterministic, defensive,
     and side-effect-free: it validates inputs, builds a strict safety system
-    prompt, invokes the model wrapper exactly once, and sanitizes/truncates the
-    output to safe Python code. On any failure, it returns a minimal placeholder
-    script that prints an internal error message.
+    prompt, invokes the model wrapper exactly once, and sanitizes the generated
+    text by replacing any lines that contain blacklisted modules/keywords,
+    truncating the output to a fixed size limit, and ensuring a non-empty return
+    value. On any failure, it returns a minimal placeholder script that prints
+    an internal error message.
     """
     fallback_script = (
         "\"\"\"Internal error: code generation failed.\"\"\"\n"
@@ -120,36 +122,34 @@ def run_generation(task: dict[str, object]) -> str:
     output_text = output_text.replace("\r\n", "\n").replace("\r", "\n")
     output_text = "".join(char for char in output_text if char.isprintable() or char in {"\n", "\t"})
 
-    forbidden_modules = set(banned_imports)
-    forbidden_builtins = {"open", "exec", "eval", "compile", "__import__"}
-    risky_call_snippets = [
+    blacklist_terms = (
+        "import os",
+        "from os",
         "os.",
-        "sys.",
+        "import subprocess",
+        "from subprocess",
         "subprocess.",
-        "socket.",
+        "import sys",
+        "from sys",
+        "sys.",
+        "import pathlib",
+        "from pathlib",
         "pathlib.",
-        "shlex.",
+        "import shutil",
+        "from shutil",
         "shutil.",
-        "tempfile.",
-        "ctypes.",
-        "importlib.",
-        "inspect.",
-        "signal.",
-        "asyncio.",
-        "multiprocessing.",
-        "threading.",
-        "resource.",
-        "platform.",
-        "selectors.",
-        "ssl.",
-        "http.",
-        "urllib.",
+        "import socket",
+        "from socket",
+        "socket.",
+        "import requests",
+        "from requests",
         "requests.",
-        "popen(",
-        "system(",
-        "shell=true",
+        "http",
+        "open(",
+        "eval(",
+        "exec(",
         "__import__(",
-    ]
+    )
 
     cleaned_lines: list[str] = []
     for line in output_text.splitlines():
@@ -157,34 +157,25 @@ def run_generation(task: dict[str, object]) -> str:
         if stripped.startswith("```"):
             continue
         lowered = stripped.lower()
-        if stripped.startswith("import "):
-            imported = stripped[len("import ") :].split("#", 1)[0]
-            modules = [part.strip().split(" as ")[0] for part in imported.split(",")]
-            if any(module in forbidden_modules for module in modules):
-                cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
-                continue
-        if stripped.startswith("from "):
-            module_part = stripped[len("from ") :].split(" import ", 1)[0].strip()
-            root_module = module_part.split(".", 1)[0]
-            if root_module in forbidden_modules:
-                cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
-                continue
-        if any(bad in lowered for bad in risky_call_snippets):
-            cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
-            continue
-        if any(f"{builtin}(" in lowered for builtin in forbidden_builtins):
+        if any(term in lowered for term in blacklist_terms):
             cleaned_lines.append(f"{line[: len(line) - len(line.lstrip())]}pass")
             continue
         cleaned_lines.append(line)
 
-    cleaned = "\n".join(cleaned_lines).strip()
+    max_lines = 200
+    trimmed_lines = cleaned_lines[:max_lines]
+    cleaned = "\n".join(trimmed_lines).strip()
     if not cleaned or not any(char.isalnum() for char in cleaned):
         return fallback_script
 
-    max_chars = 4000
-    if len(cleaned) > max_chars:
-        cutoff = cleaned.rfind("\n", 0, max_chars)
-        cleaned = cleaned[: cutoff if cutoff != -1 else max_chars].rstrip()
+    max_bytes = 4000
+    cleaned_bytes = cleaned.encode("utf-8")
+    if len(cleaned_bytes) > max_bytes:
+        truncated_text = cleaned_bytes[:max_bytes].decode("utf-8", errors="ignore")
+        cutoff = truncated_text.rfind("\n")
+        cleaned = truncated_text[: cutoff if cutoff != -1 else len(truncated_text)].rstrip()
+        if not cleaned:
+            return fallback_script
 
     try:
         compile(cleaned, "<generated>", "exec")
