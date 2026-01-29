@@ -17,63 +17,51 @@ def run_generation(task: dict[str, object]) -> str:
     import ast
     import sys
 
-    def _build_fallback_script(objective: str, constraints: list[str]) -> str:
-        """Build a deterministic, safe fallback script when no model wrapper is supplied.
-
-        Args:
-            objective: Objective text to include in the fallback output.
-            constraints: Constraint strings to include in the fallback output.
-
-        Returns:
-            A deterministic Python script as a string.
-        """
-        objective_text = objective.strip() if isinstance(objective, str) else ""
-        constraint_texts = [item.strip() for item in constraints if isinstance(item, str) and item.strip()]
-        constraints_line = ", ".join(constraint_texts) if constraint_texts else "none"
-
-        lines = [
-            '"""Deterministic placeholder script generated without a model wrapper."""',
-            "",
-            "def main() -> None:",
-            f"    objective = {objective_text!r}",
-            f"    constraints = {constraints_line!r}",
-            "    summary_lines = [",
-            '        "Placeholder execution: no model wrapper provided.",',
-            '        f"Objective: {objective}",',
-            '        f"Constraints: {constraints}",',
-            '        "Status: completed safe placeholder run.",',
-            "    ]",
-            "    print(\"\\n\".join(summary_lines))",
-            "",
-            "if __name__ == \"__main__\":",
-            "    main()",
-        ]
-        return "\n".join(lines)
-
-    def _coerce_text(value: object) -> str:
-        """Coerce a value into a safe, stripped string.
-
-        Args:
-            value: Value to coerce into text.
-
-        Returns:
-            A stripped string representation of the value.
-        """
-        if isinstance(value, str):
-            return value.strip()
-        if value is None:
-            return ""
-        try:
-            return str(value).strip()
-        except Exception:
-            return ""
-
-    fallback_script = _build_fallback_script("unspecified objective", [])
+    fallback_objective = "unspecified objective"
+    fallback_constraints: list[str] = []
+    fallback_objective_text = (
+        fallback_objective.strip() if isinstance(fallback_objective, str) else ""
+    )
+    fallback_constraint_texts = [
+        item.strip()
+        for item in fallback_constraints
+        if isinstance(item, str) and item.strip()
+    ]
+    fallback_constraints_line = (
+        ", ".join(fallback_constraint_texts) if fallback_constraint_texts else "none"
+    )
+    fallback_lines = [
+        '"""Deterministic placeholder script generated without a model wrapper."""',
+        "",
+        "def main() -> None:",
+        f"    objective = {fallback_objective_text!r}",
+        f"    constraints = {fallback_constraints_line!r}",
+        "    summary_lines = [",
+        '        "Placeholder execution: no model wrapper provided.",',
+        '        f"Objective: {objective}",',
+        '        f"Constraints: {constraints}",',
+        '        "Status: completed safe placeholder run.",',
+        "    ]",
+        "    print(\"\\n\".join(summary_lines))",
+        "",
+        "if __name__ == \"__main__\":",
+        "    main()",
+    ]
+    fallback_script = "\n".join(fallback_lines)
 
     if not isinstance(task, dict):
         return fallback_script
 
-    objective = _coerce_text(task.get("objective"))
+    raw_objective = task.get("objective")
+    if isinstance(raw_objective, str):
+        objective = raw_objective.strip()
+    elif raw_objective is None:
+        objective = ""
+    else:
+        try:
+            objective = str(raw_objective).strip()
+        except Exception:
+            objective = ""
     if not objective:
         return fallback_script
 
@@ -81,16 +69,52 @@ def run_generation(task: dict[str, object]) -> str:
     constraints: list[str] = []
     if isinstance(constraints_value, list):
         for item in constraints_value:
-            text = _coerce_text(item)
+            if isinstance(item, str):
+                text = item.strip()
+            elif item is None:
+                text = ""
+            else:
+                try:
+                    text = str(item).strip()
+                except Exception:
+                    text = ""
             if text:
                 constraints.append(text)
     elif constraints_value is not None:
-        text = _coerce_text(constraints_value)
+        if isinstance(constraints_value, str):
+            text = constraints_value.strip()
+        else:
+            try:
+                text = str(constraints_value).strip()
+            except Exception:
+                text = ""
         if text:
             constraints.append(text)
 
     constraints_section = "\n".join(f"- {item}" for item in constraints) if constraints else "- none"
-    fallback_code = _build_fallback_script(objective, constraints)
+    objective_text = objective.strip() if isinstance(objective, str) else ""
+    constraint_texts = [
+        item.strip() for item in constraints if isinstance(item, str) and item.strip()
+    ]
+    constraints_line = ", ".join(constraint_texts) if constraint_texts else "none"
+    lines = [
+        '"""Deterministic placeholder script generated without a model wrapper."""',
+        "",
+        "def main() -> None:",
+        f"    objective = {objective_text!r}",
+        f"    constraints = {constraints_line!r}",
+        "    summary_lines = [",
+        '        "Placeholder execution: no model wrapper provided.",',
+        '        f"Objective: {objective}",',
+        '        f"Constraints: {constraints}",',
+        '        "Status: completed safe placeholder run.",',
+        "    ]",
+        "    print(\"\\n\".join(summary_lines))",
+        "",
+        "if __name__ == \"__main__\":",
+        "    main()",
+    ]
+    fallback_code = "\n".join(lines)
 
     wrapper = task.get("model_wrapper")
     if wrapper is None or not callable(wrapper):
