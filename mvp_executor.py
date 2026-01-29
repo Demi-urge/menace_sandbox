@@ -242,10 +242,13 @@ def _run_windows_subprocess(
 def _check_static_policy(tree: ast.AST) -> list[str]:
     violations: set[str] = set()
     banned_lookup_names = BANNED_BUILTINS | BANNED_MODULES | {"__builtins__", "builtins"}
+    builtins_aliases: set[str] = set()
+    importlib_aliases: set[str] = set()
+    import_aliases: set[str] = set()
 
     def is_builtins_target(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
-            return node.id in {"__builtins__", "builtins"}
+            return node.id in {"__builtins__", "builtins"} or node.id in builtins_aliases
         if isinstance(node, ast.Attribute):
             return node.attr in {"__builtins__", "builtins"} or is_builtins_target(node.value)
         if isinstance(node, ast.Subscript):
@@ -287,56 +290,132 @@ def _check_static_policy(tree: ast.AST) -> list[str]:
                 return f"{prefix}.{node.attr}"
         return None
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
+    def register_alias(target: ast.AST, value: ast.AST) -> None:
+        if not isinstance(target, ast.Name):
+            return
+        if is_module_reference(value, {"builtins"} | builtins_aliases):
+            builtins_aliases.add(target.id)
+            return
+        if is_module_reference(value, {"importlib"} | importlib_aliases):
+            importlib_aliases.add(target.id)
+            return
+        if isinstance(value, ast.Name) and value.id in {"__import__"} | import_aliases:
+            import_aliases.add(target.id)
+            return
+        if isinstance(value, ast.Attribute) and value.attr == "__import__":
+            if is_builtins_target(value.value) or is_module_reference(value.value, importlib_aliases):
+                import_aliases.add(target.id)
+
+    def handle_import(node: ast.Import) -> None:
+        for alias in node.names:
+            module_name = alias.name.split(".", 1)[0]
+            if alias.name in BANNED_IMPORT_PATHS:
+                violations.add(f"import of '{alias.name}' is not allowed")
+                continue
+            if module_name in BANNED_MODULES:
+                violations.add(f"import of '{module_name}' is not allowed")
+
+    def handle_import_from(node: ast.ImportFrom) -> None:
+        if node.module:
+            module_name = node.module.split(".", 1)[0]
+            if node.module in BANNED_IMPORT_PATHS:
+                violations.add(f"import of '{node.module}' is not allowed")
             for alias in node.names:
-                module_name = alias.name.split(".", 1)[0]
-                if alias.name in BANNED_IMPORT_PATHS:
-                    violations.add(f"import of '{alias.name}' is not allowed")
-                    continue
-                if module_name in BANNED_MODULES:
-                    violations.add(f"import of '{module_name}' is not allowed")
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                module_name = node.module.split(".", 1)[0]
-                if node.module in BANNED_IMPORT_PATHS:
-                    violations.add(f"import of '{node.module}' is not allowed")
-                for alias in node.names:
-                    banned_names = BAN_END_IMPORTS.get(node.module)
-                    if banned_names and alias.name in banned_names:
-                        violations.add(f"import of '{node.module}.{alias.name}' is not allowed")
-                if module_name in BANNED_MODULES:
-                    violations.add(f"import of '{module_name}' is not allowed")
-        elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in BANNED_BUILTINS:
-                violations.add(f"call to '{node.func.id}' is not allowed")
-            if isinstance(node.func, ast.Attribute):
-                func_name = dotted_name(node.func)
-                if func_name in BANNED_CALL_PATHS:
-                    violations.add(f"call to '{func_name}' is not allowed")
-            if isinstance(node.func, ast.Name) and node.func.id == "getattr":
-                if len(node.args) >= 2 and is_builtins_target(node.args[0]) and is_banned_lookup(node.args[1]):
-                    violations.add("call to 'getattr' with builtins is not allowed")
-            if isinstance(node.func, ast.Name) and node.func.id == "vars":
-                if node.args and is_builtins_target(node.args[0]):
-                    violations.add("call to 'vars' with builtins is not allowed")
-            if isinstance(node.func, ast.Name) and node.func.id in {"globals", "locals"}:
-                if node.args and any(is_builtins_target(arg) for arg in node.args):
-                    violations.add(f"call to '{node.func.id}' with builtins is not allowed")
-        elif isinstance(node, ast.Name):
-            if isinstance(node.ctx, ast.Load) and node.id in BANNED_BUILTINS:
-                violations.add(f"use of '{node.id}' is not allowed")
-            if isinstance(node.ctx, ast.Load) and node.id in {"__builtins__", "builtins"}:
-                violations.add(f"use of '{node.id}' is not allowed")
-        elif isinstance(node, ast.Attribute):
-            if is_builtins_target(node):
-                violations.add("access to builtins is not allowed")
-        elif isinstance(node, ast.Subscript):
-            if is_builtins_target(node):
-                violations.add("access to builtins is not allowed")
-            if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-                if node.value.func.id in {"globals", "locals", "vars"} and is_banned_lookup(node.slice):
-                    violations.add(f"call to '{node.value.func.id}' with builtins is not allowed")
+                banned_names = BAN_END_IMPORTS.get(node.module)
+                if banned_names and alias.name in banned_names:
+                    violations.add(f"import of '{node.module}.{alias.name}' is not allowed")
+            if module_name in BANNED_MODULES:
+                violations.add(f"import of '{module_name}' is not allowed")
+
+    def handle_call(node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name) and node.func.id in BANNED_BUILTINS:
+            violations.add(f"call to '{node.func.id}' is not allowed")
+        if isinstance(node.func, ast.Name) and node.func.id in import_aliases:
+            violations.add("call to '__import__' is not allowed")
+        if isinstance(node.func, ast.Attribute):
+            func_name = dotted_name(node.func)
+            if func_name in BANNED_CALL_PATHS:
+                violations.add(f"call to '{func_name}' is not allowed")
+            if node.func.attr == "__import__" and (
+                is_builtins_target(node.func.value) or is_module_reference(node.func.value, importlib_aliases)
+            ):
+                violations.add("call to '__import__' is not allowed")
+        if isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            if len(node.args) >= 2 and is_builtins_target(node.args[0]) and is_banned_lookup(node.args[1]):
+                violations.add("call to 'getattr' with builtins is not allowed")
+            if len(node.args) >= 2 and string_literal(node.args[1]) in BANNED_BUILTINS:
+                violations.add("call to 'getattr' with banned builtin name is not allowed")
+        if isinstance(node.func, ast.Name) and node.func.id == "vars":
+            if node.args and is_builtins_target(node.args[0]):
+                violations.add("call to 'vars' with builtins is not allowed")
+        if isinstance(node.func, ast.Name) and node.func.id in {"globals", "locals"}:
+            if node.args and any(is_builtins_target(arg) for arg in node.args):
+                violations.add(f"call to '{node.func.id}' with builtins is not allowed")
+
+    def handle_name(node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load) and node.id in BANNED_BUILTINS:
+            violations.add(f"use of '{node.id}' is not allowed")
+        if isinstance(node.ctx, ast.Load) and node.id in {"__builtins__", "builtins"}:
+            violations.add(f"use of '{node.id}' is not allowed")
+        if isinstance(node.ctx, ast.Load) and node.id in builtins_aliases:
+            violations.add(f"use of builtins alias '{node.id}' is not allowed")
+
+    def handle_attribute(node: ast.Attribute) -> None:
+        if is_builtins_target(node):
+            violations.add("access to builtins is not allowed")
+
+    def handle_subscript(node: ast.Subscript) -> None:
+        if is_builtins_target(node):
+            violations.add("access to builtins is not allowed")
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+            if node.value.func.id in {"globals", "locals", "vars"} and is_banned_lookup(node.slice):
+                violations.add(f"call to '{node.value.func.id}' with builtins is not allowed")
+
+    class PolicyVisitor(ast.NodeVisitor):
+        def visit_Import(self, node: ast.Import) -> None:
+            handle_import(node)
+            self.generic_visit(node)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            handle_import_from(node)
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            handle_call(node)
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            handle_name(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            handle_attribute(node)
+            self.generic_visit(node)
+
+        def visit_Subscript(self, node: ast.Subscript) -> None:
+            handle_subscript(node)
+            self.generic_visit(node)
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            if node.value is not None:
+                self.visit(node.value)
+            for target in node.targets:
+                register_alias(target, node.value)
+                self.visit(target)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            if node.value is not None:
+                self.visit(node.value)
+            if node.annotation is not None:
+                self.visit(node.annotation)
+            if node.target is not None and node.value is not None:
+                register_alias(node.target, node.value)
+            if node.target is not None:
+                self.visit(node.target)
+
+        def visit(self, node: ast.AST) -> None:
+            super().visit(node)
+
+    PolicyVisitor().visit(tree)
     return sorted(violations)
 
 
