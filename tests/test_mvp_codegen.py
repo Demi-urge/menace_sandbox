@@ -39,6 +39,30 @@ def test_run_generation_fallback_on_wrapper_error(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "task",
+    [
+        {"objective": "do the thing"},
+        {"objective": "do the thing", "constraints": ["fast", "safe"]},
+        {"objective": "do the thing", "constraints": "just a string"},
+    ],
+)
+def test_run_generation_uses_internal_wrapper_resolver(monkeypatch, task):
+    calls = []
+
+    def wrapper(prompt):
+        calls.append(prompt)
+        return "print('hi')"
+
+    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
+
+    result = mvp_codegen.run_generation(task)
+
+    assert isinstance(result, str)
+    assert result.strip() == "print('hi')"
+    assert calls
+
+
+@pytest.mark.parametrize(
     "unsafe_code",
     [
         "import os\nprint('hi')",
@@ -72,6 +96,18 @@ def test_run_generation_rejects_unsafe_imports(monkeypatch, unsafe_code):
 def test_run_generation_rejects_builtins_alias_bypasses(monkeypatch, unsafe_code):
     def wrapper(_prompt):
         return unsafe_code
+
+    monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
+    task = {"objective": "do the thing"}
+
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
+def test_run_generation_rejects_importlib_dynamic_import(monkeypatch):
+    def wrapper(_prompt):
+        return "import importlib\nprint(importlib.import_module('os'))"
 
     monkeypatch.setattr(mvp_codegen, "_get_model_wrapper", lambda: wrapper)
     task = {"objective": "do the thing"}
