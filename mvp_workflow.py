@@ -153,7 +153,7 @@ def execute_task(task_dict: dict) -> dict:
         except Exception as exc:  # pragma: no cover - defensive
             execution_error = sanitize_exception(exc)
 
-    if spec is not None and generated_code:
+    if spec is not None and generated_code and not execution_error:
         try:
             execution_result = _execute_code(generated_code, timeout_s=5.0)
             execution_output = str(execution_result.get("execution_output", ""))
@@ -163,6 +163,8 @@ def execute_task(task_dict: dict) -> dict:
         except Exception as exc:  # pragma: no cover - defensive
             execution_error = sanitize_exception(exc)
             execution_result = {"execution_output": "", "errors": [execution_error]}
+    elif spec is not None and not generated_code and not execution_error:
+        execution_error = "execution skipped: no generated code"
 
     if spec is not None:
         try:
