@@ -197,6 +197,25 @@ def test_run_generation_rejects_builtins_alias_bypasses(unsafe_code):
     assert result == FALLBACK_SCRIPT
 
 
+@pytest.mark.parametrize(
+    "unsafe_code",
+    [
+        "import builtins\nbuiltins.__dict__['open']('x')",
+        "globals()['__builtins__']['open']('x')",
+        "import builtins\nvars(builtins)['open']('x')",
+    ],
+)
+def test_run_generation_rejects_builtins_dict_access(unsafe_code):
+    def wrapper(_prompt):
+        return unsafe_code
+
+    task = {"objective": "do the thing", "model_wrapper": wrapper}
+
+    result = mvp_codegen.run_generation(task)
+
+    assert result == FALLBACK_SCRIPT
+
+
 def test_run_generation_rejects_importlib_dynamic_import():
     def wrapper(_prompt):
         return "import importlib\nprint(importlib.import_module('os'))"

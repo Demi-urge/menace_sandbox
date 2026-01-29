@@ -248,6 +248,16 @@ def run_generation(task: dict[str, object]) -> str:
     banned_module_aliases: set[str] = set()
     io_aliases: set[str] = {"io"}
     io_file_calls = {"open", "open_code", "FileIO", "BufferedWriter", "BufferedReader", "BufferedRandom", "TextIOWrapper"}
+    banned_builtin_attrs = {"__dict__", "__getattribute__"}
+
+    def extract_slice_key(slice_node: ast.AST | None) -> str | None:
+        if isinstance(slice_node, ast.Index):
+            slice_node = slice_node.value
+        if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
+            return slice_node.value
+        if isinstance(slice_node, ast.Str):
+            return slice_node.s
+        return None
 
     for node in ast.walk(parsed):
         if isinstance(node, ast.Import):
@@ -290,20 +300,32 @@ def run_generation(task: dict[str, object]) -> str:
                 if node.value.id in banned_base_names:
                     if node.attr in banned_builtins:
                         return fallback_script
+                    if node.attr in banned_builtin_attrs:
+                        return fallback_script
+                if node.value.id in banned_aliases and node.attr in banned_builtin_attrs:
+                    return fallback_script
                 if node.value.id in banned_module_aliases:
                     return fallback_script
         if isinstance(node, ast.Subscript):
-            key_node = node.slice
-            if isinstance(key_node, ast.Index):
-                key_node = key_node.value
-            key = None
-            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
-                key = key_node.value
-            elif isinstance(key_node, ast.Str):
-                key = key_node.s
+            key = extract_slice_key(node.slice)
             if isinstance(node.value, ast.Name) and node.value.id in banned_base_names:
                 if key in banned_builtins:
                     return fallback_script
+            if isinstance(node.value, ast.Attribute) and node.value.attr == "__dict__":
+                if isinstance(node.value.value, ast.Name):
+                    base_name = node.value.value.id
+                    if base_name in banned_base_names or base_name in banned_aliases or base_name in banned_module_aliases:
+                        if key in banned_builtins or key in denied_modules:
+                            return fallback_script
+            if isinstance(node.value, ast.Subscript):
+                parent = node.value
+                parent_key = extract_slice_key(parent.slice)
+                if parent_key == "__builtins__":
+                    if isinstance(parent.value, ast.Call):
+                        call = parent.value
+                        if isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals", "vars"}:
+                            if key in banned_builtins:
+                                return fallback_script
             if isinstance(node.value, ast.Call):
                 call = node.value
                 if isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals", "vars"}:
