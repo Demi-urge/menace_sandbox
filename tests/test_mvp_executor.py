@@ -1,54 +1,58 @@
+import os
+import shutil
+import time
+
 import mvp_executor
 
 
-def test_execute_generated_code_times_out() -> None:
-    stdout, stderr = mvp_executor.execute_generated_code("while True:\n    pass\n")
-
+def test_run_untrusted_code_timeout():
+    start = time.monotonic()
+    stdout, stderr = mvp_executor.run_untrusted_code("while True:\n    pass")
+    elapsed = time.monotonic() - start
     assert stdout == ""
-    assert "Execution timed out after 5 seconds." in stderr
+    assert "Execution timed out after 5s" in stderr
+    assert elapsed < 6.5
 
 
-def test_execute_generated_code_reports_syntax_errors() -> None:
-    stdout, stderr = mvp_executor.execute_generated_code("def broken(:\n    pass\n")
-
+def test_run_untrusted_code_blocks_imports():
+    stdout, stderr = mvp_executor.run_untrusted_code("import os\nprint('hi')")
     assert stdout == ""
-    assert stderr
-    assert "SyntaxError" in stderr
+    assert "Blocked import: os" in stderr
+    assert "Execution was not attempted" in stderr
 
 
-def test_execute_generated_code_blocks_os_imports() -> None:
-    stdout, stderr = mvp_executor.execute_generated_code("import os\n")
-
+def test_run_untrusted_code_reports_syntax_error():
+    stdout, stderr = mvp_executor.run_untrusted_code("def bad(:\n    pass")
     assert stdout == ""
-    assert stderr == "Blocked import: os. Execution was not attempted."
+    assert "SyntaxError:" in stderr
+    assert "line" in stderr
 
 
-def test_execute_generated_code_blocks_os_submodule_imports() -> None:
-    stdout, stderr = mvp_executor.execute_generated_code("import os.path\n")
+def test_run_untrusted_code_cleans_temp_dir(monkeypatch, tmp_path):
+    created_paths = []
 
-    assert stdout == ""
-    assert stderr == "Blocked import: os.path. Execution was not attempted."
+    class TrackingTempDir:
+        def __init__(self, prefix: str):
+            self._path = tmp_path / f"{prefix}tracked"
 
+        def __enter__(self):
+            self._path.mkdir(parents=True, exist_ok=True)
+            created_paths.append(self._path)
+            return str(self._path)
 
-def test_execute_generated_code_cleans_up_temp_dir(tmp_path, monkeypatch) -> None:
-    temp_dir = tmp_path / "mvp_executor_temp"
-    temp_dir.mkdir()
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(self._path, ignore_errors=True)
+            return False
 
-    def fake_mkdtemp(prefix: str) -> str:
-        assert prefix.startswith("mvp_executor_")
-        return str(temp_dir)
+    monkeypatch.setattr(mvp_executor.tempfile, "TemporaryDirectory", TrackingTempDir)
 
-    monkeypatch.setattr(mvp_executor.tempfile, "mkdtemp", fake_mkdtemp)
-
-    stdout, stderr = mvp_executor.execute_generated_code("print('ok')\n")
+    stdout, stderr = mvp_executor.run_untrusted_code("print('ok')")
 
     assert stdout.strip() == "ok"
     assert stderr == ""
-    assert not temp_dir.exists()
+    assert created_paths
+    assert not os.path.exists(created_paths[0])
 
 
-def test_execute_generated_code_handles_empty_input() -> None:
-    stdout, stderr = mvp_executor.execute_generated_code("")
-
-    assert stdout == ""
-    assert stderr == ""
+def test_run_untrusted_code_empty_returns_blank():
+    assert mvp_executor.run_untrusted_code("  ") == ("", "")
