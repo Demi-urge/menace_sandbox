@@ -7,6 +7,20 @@ FALLBACK_MESSAGE = "internal error: code generation failed"
 FALLBACK_SCRIPT = f'print("{FALLBACK_MESSAGE}")'
 
 
+def _expected_fallback(objective: str, constraints=None) -> str:
+    normalized: list[str] = []
+    if isinstance(constraints, list):
+        for item in constraints:
+            text = str(item).strip()
+            if text:
+                normalized.append(text)
+    elif constraints is not None:
+        text = str(constraints).strip()
+        if text:
+            normalized.append(text)
+    return mvp_codegen._build_fallback_script(objective, normalized)
+
+
 @pytest.mark.parametrize(
     "task",
     [
@@ -45,7 +59,7 @@ def test_run_generation_fallback_on_wrapper_error():
 
     result = mvp_codegen.run_generation(task)
 
-    assert FALLBACK_MESSAGE in result
+    assert result == _expected_fallback("do the thing")
 
 
 def test_run_generation_fallback_on_str_failure():
@@ -60,7 +74,7 @@ def test_run_generation_fallback_on_str_failure():
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 def test_run_generation_passes_timeout_to_wrapper():
@@ -86,7 +100,7 @@ def test_run_generation_fallback_on_timeout_error():
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 @pytest.mark.parametrize(
@@ -124,7 +138,7 @@ def test_run_generation_uses_model_wrapper(task):
 def test_run_generation_falls_back_without_wrapper(task):
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback(task["objective"], task.get("constraints"))
 
 
 @pytest.mark.parametrize(
@@ -139,7 +153,7 @@ def test_run_generation_falls_back_without_wrapper(task):
 def test_run_generation_falls_back_with_non_callable_wrapper(task):
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback(task["objective"], task.get("constraints"))
 
 
 @pytest.mark.parametrize(
@@ -162,7 +176,7 @@ def test_run_generation_rejects_unsafe_imports(unsafe_code):
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 def test_run_generation_rejects_io_open_usage():
@@ -173,7 +187,7 @@ def test_run_generation_rejects_io_open_usage():
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 def test_run_generation_rejects_io_open_alias_usage():
@@ -184,7 +198,7 @@ def test_run_generation_rejects_io_open_alias_usage():
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 @pytest.mark.parametrize(
@@ -209,7 +223,7 @@ def test_run_generation_rejects_builtins_alias_bypasses(unsafe_code):
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 @pytest.mark.parametrize(
@@ -228,7 +242,7 @@ def test_run_generation_rejects_builtins_dict_access(unsafe_code):
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 def test_run_generation_rejects_importlib_dynamic_import():
@@ -239,7 +253,7 @@ def test_run_generation_rejects_importlib_dynamic_import():
 
     result = mvp_codegen.run_generation(task)
 
-    assert result == FALLBACK_SCRIPT
+    assert result == _expected_fallback("do the thing")
 
 
 def test_run_generation_sanitizes_code_fences():
@@ -263,4 +277,4 @@ def test_run_generation_truncates_or_falls_back_on_oversized_output():
     result = mvp_codegen.run_generation(task)
 
     assert isinstance(result, str)
-    assert result == FALLBACK_SCRIPT or len(result) <= 4000
+    assert result == _expected_fallback("do the thing") or len(result) <= 4000

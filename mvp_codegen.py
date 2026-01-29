@@ -27,7 +27,11 @@ def _build_fallback_script(objective: str, constraints: list[str]) -> str:
 
 
 def run_generation(task: dict[str, object]) -> str:
-    """Generate a safe Python script from a task payload with strict safeguards."""
+    """Generate a safe Python script from a task payload with strict safeguards.
+
+    The task payload may include only an objective (required) and constraints (optional).
+    If no callable model wrapper is provided, a deterministic fallback script is returned.
+    """
     import ast
     import sys
 
@@ -68,7 +72,7 @@ def run_generation(task: dict[str, object]) -> str:
     fallback_code = _build_fallback_script(objective, constraints)
 
     wrapper = task.get("model_wrapper")
-    if not callable(wrapper):
+    if wrapper is None or not callable(wrapper):
         return fallback_code
 
     safety_prompt = (
