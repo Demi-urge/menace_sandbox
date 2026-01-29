@@ -93,7 +93,7 @@ def execute_task(task_dict: dict) -> dict:
                 else:
                     spec = TaskSpec(objective=objective, constraints=constraints)
     except Exception as exc:  # pragma: no cover - defensive
-        execution_error = _sanitize_exception_message(exc)
+        execution_error = sanitize_exception(exc)
 
     if spec is not None:
         try:
@@ -102,7 +102,7 @@ def execute_task(task_dict: dict) -> dict:
             if generation_result.error:
                 execution_error = generation_result.error
         except Exception as exc:  # pragma: no cover - defensive
-            execution_error = _sanitize_exception_message(exc)
+            execution_error = sanitize_exception(exc)
 
     if spec is not None and generated_code:
         try:
@@ -112,7 +112,7 @@ def execute_task(task_dict: dict) -> dict:
             if execution_errors:
                 execution_error = execution_errors[0]
         except Exception as exc:  # pragma: no cover - defensive
-            execution_error = _sanitize_exception_message(exc)
+            execution_error = sanitize_exception(exc)
             execution_result = {"execution_output": "", "errors": [execution_error]}
 
     if spec is not None:
@@ -123,22 +123,22 @@ def execute_task(task_dict: dict) -> dict:
             if evaluation_result.evaluation_error:
                 evaluation_error = evaluation_result.evaluation_error
         except Exception as exc:  # pragma: no cover - defensive
-            evaluation_error = _sanitize_exception_message(exc)
+            evaluation_error = sanitize_exception(exc)
             roi_score = 0.0
 
     success = bool(spec and generated_code and not execution_error and not evaluation_error)
     finished_at = datetime.datetime.now(datetime.timezone.utc)
     finished_at_iso = finished_at.isoformat()
     duration_ms = int((finished_at - started_at).total_seconds() * 1000)
-    sanitized_output = _sanitize_output(execution_output)
+    sanitized_output = sanitize_error_output(execution_output)
 
     return {
         "objective": spec.objective if spec else "",
         "constraints": spec.constraints if spec else [],
-        "generated_code": _sanitize_output(generated_code),
+        "generated_code": sanitize_error_output(generated_code),
         "execution_output": sanitized_output,
-        "execution_error": _sanitize_output(execution_error),
-        "evaluation_error": _sanitize_output(evaluation_error),
+        "execution_error": sanitize_error_output(execution_error),
+        "evaluation_error": sanitize_error_output(evaluation_error),
         "roi_score": float(roi_score),
         "started_at": started_at_iso,
         "finished_at": finished_at_iso,
@@ -167,7 +167,11 @@ def generate_code(task: TaskSpec) -> GenerationResult:
     )
 
     if not objective_text:
-        return GenerationResult(code="", error="objective must be a non-empty string", warnings=warnings)
+        return GenerationResult(
+            code="",
+            error=sanitize_error_output("objective must be a non-empty string"),
+            warnings=warnings,
+        )
 
     code_lines = [
         '"""Auto-generated script."""',
@@ -190,11 +194,11 @@ def generate_code(task: TaskSpec) -> GenerationResult:
     ]
 
     sanitized_code, sanitization_warnings, sanitization_errors = _sanitize_generated_code("\n".join(code_lines))
-    warnings.extend(sanitization_warnings)
+    warnings.extend(sanitize_error_output(warning) for warning in sanitization_warnings)
     if sanitization_errors:
-        error = sanitization_errors[0]
+        error = sanitize_error_output(sanitization_errors[0])
     elif not sanitized_code.strip():
-        error = "generated code is empty after sanitization"
+        error = sanitize_error_output("generated code is empty after sanitization")
     return GenerationResult(code=sanitized_code, error=error, warnings=warnings)
 
 
@@ -208,10 +212,15 @@ def _generate_code(objective: str, constraints: list[str]) -> dict[str, object]:
 def execute_generated_code(code: str) -> ExecutionResult:
     """Execute generated code in a temporary file with safety checks."""
     if not isinstance(code, str) or not code.strip():
-        return ExecutionResult(stdout="", stderr="", return_code=None, error="code is empty or whitespace-only")
+        return ExecutionResult(
+            stdout="",
+            stderr="",
+            return_code=None,
+            error=sanitize_error_output("code is empty or whitespace-only"),
+        )
 
     try:
-        parsed = ast.parse(code)
+        ast.parse(code)
     except SyntaxError as exc:
         location = f"line {exc.lineno}, column {exc.offset}" if exc.lineno and exc.offset else "unknown location"
         message = exc.msg or "invalid syntax"
@@ -219,7 +228,7 @@ def execute_generated_code(code: str) -> ExecutionResult:
             stdout="",
             stderr="",
             return_code=None,
-            error=f"syntax error at {location}: {message}",
+            error=sanitize_error_output(f"syntax error at {location}: {message}"),
         )
 
     forbidden_imports = {
@@ -231,22 +240,32 @@ def execute_generated_code(code: str) -> ExecutionResult:
         "subprocess",
         "sys",
     }
-    forbidden_found = _find_forbidden_imports(parsed, forbidden_imports)
+    forbidden_found = contains_forbidden_imports(code, forbidden_imports=forbidden_imports)
     if forbidden_found:
         forbidden_list = ", ".join(sorted(forbidden_found))
         return ExecutionResult(
             stdout="",
             stderr="",
             return_code=None,
-            error=f"forbidden imports detected: {forbidden_list}",
+            error=sanitize_error_output(f"forbidden imports detected: {forbidden_list}"),
         )
 
-    if _find_dynamic_imports(parsed):
+    if contains_dynamic_imports(code):
         return ExecutionResult(
             stdout="",
             stderr="",
             return_code=None,
-            error="dynamic import patterns detected",
+            error=sanitize_error_output("dynamic import patterns detected"),
+        )
+
+    unsafe_calls = contains_exec_or_eval(code)
+    if unsafe_calls:
+        unsafe_list = ", ".join(sorted(unsafe_calls))
+        return ExecutionResult(
+            stdout="",
+            stderr="",
+            return_code=None,
+            error=sanitize_error_output(f"unsafe call patterns detected: {unsafe_list}"),
         )
 
     if sys.version_info >= (3, 10):
@@ -258,7 +277,7 @@ def execute_generated_code(code: str) -> ExecutionResult:
                 stdout="",
                 stderr="",
                 return_code=None,
-                error="python 3.10+ interpreter not available",
+                error=sanitize_error_output("python 3.10+ interpreter not available"),
             )
 
     temp_path: str | None = None
@@ -292,14 +311,14 @@ def execute_generated_code(code: str) -> ExecutionResult:
                 stdout=stdout,
                 stderr=stderr,
                 return_code=None,
-                error="execution timed out",
+                error=sanitize_error_output("execution timed out"),
             )
     except Exception as exc:  # pragma: no cover - defensive
         return ExecutionResult(
             stdout="",
             stderr="",
             return_code=None,
-            error=f"execution error: {exc}",
+            error=sanitize_exception(exc),
         )
     finally:
         if temp_path and os.path.exists(temp_path):
@@ -314,7 +333,7 @@ def _sanitize_generated_code(code: str) -> tuple[str, list[str], list[str]]:
     warnings: list[str] = []
     errors: list[str] = []
     if not isinstance(code, str) or not code.strip():
-        return "", warnings, ["generated code is empty"]
+        return "", warnings, [sanitize_error_output("generated code is empty")]
 
     forbidden_imports = {
         "builtins",
@@ -326,12 +345,16 @@ def _sanitize_generated_code(code: str) -> tuple[str, list[str], list[str]]:
         "sys",
     }
     dynamic_patterns = ("__import__", "importlib.import_module", "importlib.reload")
+    unsafe_call_patterns = ("exec(", "eval(")
 
     sanitized_lines: list[str] = []
     for line in code.splitlines():
         stripped = line.strip()
         if any(pattern in stripped for pattern in dynamic_patterns):
             warnings.append("dynamic import pattern removed from generated code")
+            continue
+        if any(pattern in stripped for pattern in unsafe_call_patterns):
+            warnings.append("unsafe exec/eval pattern removed from generated code")
             continue
         if stripped.startswith("import ") or stripped.startswith("from "):
             module_name = _extract_import_module(stripped)
@@ -346,17 +369,29 @@ def _sanitize_generated_code(code: str) -> tuple[str, list[str], list[str]]:
         parsed = ast.parse(sanitized_code)
     except SyntaxError as exc:
         location = f"line {exc.lineno}, column {exc.offset}" if exc.lineno and exc.offset else "unknown location"
-        errors.append(f"generated code has syntax error at {location}: {exc.msg}")
+        errors.append(
+            sanitize_error_output(f"generated code has syntax error at {location}: {exc.msg}")
+        )
         return "", warnings, errors
 
-    forbidden_found = _find_forbidden_imports(parsed, forbidden_imports)
+    forbidden_found = contains_forbidden_imports(sanitized_code, forbidden_imports=forbidden_imports)
     if forbidden_found:
         forbidden_list = ", ".join(sorted(forbidden_found))
-        errors.append(f"forbidden imports detected after sanitization: {forbidden_list}")
+        errors.append(
+            sanitize_error_output(
+                f"forbidden imports detected after sanitization: {forbidden_list}"
+            )
+        )
 
-    dynamic_found = _find_dynamic_imports(parsed)
-    if dynamic_found:
-        errors.append("dynamic import patterns detected after sanitization")
+    if contains_dynamic_imports(sanitized_code):
+        errors.append(sanitize_error_output("dynamic import patterns detected after sanitization"))
+
+    unsafe_calls = contains_exec_or_eval(sanitized_code)
+    if unsafe_calls:
+        unsafe_list = ", ".join(sorted(unsafe_calls))
+        errors.append(
+            sanitize_error_output(f"unsafe exec/eval patterns detected after sanitization: {unsafe_list}")
+        )
 
     if errors:
         return "", warnings, errors
@@ -374,24 +409,43 @@ def _extract_import_module(line: str) -> str:
     return ""
 
 
-def _find_forbidden_imports(parsed: ast.AST, forbidden_imports: set[str]) -> set[str]:
-    """Return a set of forbidden imports discovered in AST."""
-    found: set[str] = set()
-    for node in ast.walk(parsed):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root_name = alias.name.split(".")[0]
-                if root_name in forbidden_imports:
-                    found.add(root_name)
-        elif isinstance(node, ast.ImportFrom):
-            module_name = node.module.split(".")[0] if node.module else ""
-            if module_name in forbidden_imports:
-                found.add(module_name or "<relative>")
-    return found
+def contains_forbidden_imports(
+    code: str,
+    *,
+    forbidden_imports: set[str] | None = None,
+    allowed_imports: set[str] | None = None,
+) -> set[str]:
+    """Return a set of forbidden imports found in code.
+
+    Args:
+        code: Python source code to scan.
+        forbidden_imports: Explicitly forbidden root modules.
+        allowed_imports: If provided, any import not in this set is treated as forbidden.
+
+    Returns:
+        A set of forbidden root module names.
+    """
+    if not isinstance(code, str) or not code.strip():
+        return set()
+    parsed = _parse_code(code)
+    if parsed is None:
+        return set()
+    imports = _extract_imported_modules(parsed)
+    forbidden: set[str] = set()
+    if forbidden_imports:
+        forbidden.update({name for name in imports if name in forbidden_imports})
+    if allowed_imports is not None:
+        forbidden.update({name for name in imports if name not in allowed_imports})
+    return forbidden
 
 
-def _find_dynamic_imports(parsed: ast.AST) -> bool:
-    """Detect dynamic import patterns in AST."""
+def contains_dynamic_imports(code: str) -> bool:
+    """Return True if dynamic import patterns are detected."""
+    if not isinstance(code, str) or not code.strip():
+        return False
+    parsed = _parse_code(code)
+    if parsed is None:
+        return False
     for node in ast.walk(parsed):
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id == "__import__":
@@ -405,6 +459,29 @@ def _find_dynamic_imports(parsed: ast.AST) -> bool:
                 ):
                     return True
     return False
+
+
+def contains_exec_or_eval(code: str) -> set[str]:
+    """Return the set of unsafe builtins (exec/eval) found in code."""
+    if not isinstance(code, str) or not code.strip():
+        return set()
+    parsed = _parse_code(code)
+    if parsed is None:
+        return set()
+    unsafe_calls: set[str] = set()
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in {"exec", "eval"}:
+                unsafe_calls.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                if (
+                    isinstance(func.value, ast.Name)
+                    and func.value.id in {"builtins", "__builtins__"}
+                    and func.attr in {"exec", "eval"}
+                ):
+                    unsafe_calls.add(func.attr)
+    return unsafe_calls
 
 
 def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
@@ -435,11 +512,11 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
         }
 
     try:
-        parsed = ast.parse(code)
+        ast.parse(code)
     except SyntaxError as exc:
         location = f"line {exc.lineno}, column {exc.offset}" if exc.lineno and exc.offset else "unknown location"
         message = exc.msg or "invalid syntax"
-        errors.append(f"syntax error at {location}: {message}")
+        errors.append(sanitize_error_output(f"syntax error at {location}: {message}"))
         return {
             "stdout": "",
             "stderr": "",
@@ -464,20 +541,34 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
         "time",
         "typing",
     }
-    forbidden_imports: set[str] = set()
-    for node in ast.walk(parsed):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root_name = alias.name.split(".")[0]
-                if root_name not in allowed_imports:
-                    forbidden_imports.add(root_name)
-        elif isinstance(node, ast.ImportFrom):
-            module_name = node.module.split(".")[0] if node.module else ""
-            if module_name not in allowed_imports:
-                forbidden_imports.add(module_name or "<relative>")
+    forbidden_imports = contains_forbidden_imports(code, allowed_imports=allowed_imports)
     if forbidden_imports:
         forbidden_list = ", ".join(sorted(forbidden_imports))
-        errors.append(f"forbidden imports detected: {forbidden_list}")
+        errors.append(sanitize_error_output(f"forbidden imports detected: {forbidden_list}"))
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "execution_output": "",
+            "errors": errors,
+        }
+
+    if contains_dynamic_imports(code):
+        errors.append(sanitize_error_output("dynamic import patterns detected"))
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "execution_output": "",
+            "errors": errors,
+        }
+
+    unsafe_calls = contains_exec_or_eval(code)
+    if unsafe_calls:
+        unsafe_list = ", ".join(sorted(unsafe_calls))
+        errors.append(sanitize_error_output(f"unsafe call patterns detected: {unsafe_list}"))
         return {
             "stdout": "",
             "stderr": "",
@@ -516,14 +607,14 @@ def _execute_code(code: str, timeout_s: float) -> dict[str, object]:
                 exit_code = result.returncode
 
                 if exit_code != 0:
-                    errors.append(_sanitize_error(stderr) or "execution failed")
+                    errors.append(sanitize_error_output(_sanitize_error(stderr) or "execution failed"))
             except subprocess.TimeoutExpired as exc:
                 timed_out = True
                 stdout = _strip_ansi((exc.stdout or "").strip())
                 stderr = _strip_ansi((exc.stderr or "").strip())
-                errors.append("execution timed out")
+                errors.append(sanitize_error_output("execution timed out"))
     except Exception as exc:  # pragma: no cover - defensive
-        errors.append(f"execution error: {exc}")
+        errors.append(sanitize_exception(exc))
 
     stdout = _strip_ansi(stdout)
     stderr = _strip_ansi(stderr)
@@ -604,7 +695,7 @@ def evaluate_result(task: TaskSpec, exec_result: ExecutionResult) -> EvaluationR
     except Exception as exc:  # pragma: no cover - defensive
         return EvaluationResult(
             roi_score=0.0,
-            evaluation_error=_sanitize_exception_message(exc),
+            evaluation_error=sanitize_exception(exc),
             rationale="evaluation failure",
         )
 
@@ -623,17 +714,17 @@ def _execution_result_from_dict(exec_result: dict[str, object]) -> ExecutionResu
         else:
             return_code = None
         errors = _coerce_error_list(exec_result.get("errors"))
-        error = _sanitize_output(errors[0]) if errors else ""
+        error = sanitize_error_output(errors[0]) if errors else ""
         return ExecutionResult(stdout=stdout, stderr=stderr, return_code=return_code, error=error)
     except Exception as exc:  # pragma: no cover - defensive
-        return ExecutionResult(stdout="", stderr="", return_code=None, error=_sanitize_exception_message(exc))
+        return ExecutionResult(stdout="", stderr="", return_code=None, error=sanitize_exception(exc))
 
 
 def _build_rationale(parts: list[str]) -> str:
     """Build a short, sanitized rationale string."""
     if not parts:
         return ""
-    rationale = _sanitize_output("; ".join(parts))
+    rationale = sanitize_error_output("; ".join(parts))
     max_len = 160
     if len(rationale) > max_len:
         rationale = rationale[: max_len - 3].rstrip() + "..."
@@ -678,7 +769,7 @@ def _evaluate_result(code: str, exec_result: dict[str, object]) -> dict[str, obj
     except Exception as exc:  # pragma: no cover - defensive
         return {
             "roi_score": 0.0,
-            "errors": [_sanitize_exception_message(exc)],
+            "errors": [sanitize_exception(exc)],
             "evaluation_notes": [],
         }
 
@@ -741,8 +832,8 @@ def _strip_tracebacks(text: str) -> str:
     return "\n".join(cleaned_lines)
 
 
-def _sanitize_output(text: str) -> str:
-    """Ensure output contains UTF-8 text without ANSI or stack traces."""
+def sanitize_error_output(text: str) -> str:
+    """Remove ANSI codes and stack traces from error output."""
     if not isinstance(text, str):
         text = str(text)
     cleaned = _strip_ansi(text)
@@ -750,15 +841,15 @@ def _sanitize_output(text: str) -> str:
     return cleaned.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
 
 
-def _sanitize_exception_message(exc: BaseException) -> str:
-    """Sanitize exception messages to avoid tracebacks and ANSI sequences."""
+def sanitize_exception(exc: BaseException | str) -> str:
+    """Return a sanitized exception message without ANSI or tracebacks."""
     message = str(exc) if exc else "unexpected error"
-    return _sanitize_output(message) or "unexpected error"
+    return sanitize_error_output(message) or "unexpected error"
 
 
 def _sanitize_error(stderr: str) -> str:
     """Reduce stderr output to a single sanitized line."""
-    lines = [line.strip() for line in _sanitize_output(stderr).splitlines() if line.strip()]
+    lines = [line.strip() for line in sanitize_error_output(stderr).splitlines() if line.strip()]
     if not lines:
         return "execution error"
     return lines[-1]
@@ -771,3 +862,24 @@ def _coerce_error_list(raw_errors: object) -> list[str]:
     if isinstance(raw_errors, str) and raw_errors:
         return [raw_errors]
     return []
+
+
+def _parse_code(code: str) -> ast.AST | None:
+    """Parse code into an AST or return None on syntax errors."""
+    try:
+        return ast.parse(code)
+    except SyntaxError:
+        return None
+
+
+def _extract_imported_modules(parsed: ast.AST) -> set[str]:
+    """Extract root module names from import statements in the AST."""
+    found: set[str] = set()
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                found.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            module_name = node.module.split(".")[0] if node.module else ""
+            found.add(module_name or "<relative>")
+    return found
