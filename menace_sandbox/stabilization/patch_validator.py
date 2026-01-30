@@ -9,7 +9,7 @@ from .response_schemas import normalize_patch_validation
 
 _DIFF_HEADER = re.compile(r"^diff --git a/(?P<left>.+) b/(?P<right>.+)$")
 _FILE_OLD = re.compile(r"^--- (?P<path>.+)$")
-_FILE_NEW = re.compile(r"^\\+\\+\\+ (?P<path>.+)$")
+_FILE_NEW = re.compile(r"^\+\+\+ (?P<path>.+)$")
 
 _DISALLOWED_LITERALS = {
     "GIT binary patch": "binary_patch",
@@ -64,7 +64,10 @@ def validate_patch_text(
     *,
     limits: PatchValidationLimits | None = None,
 ) -> dict[str, object]:
-    """Validate structured patch rules and return a normalized payload."""
+    """Validate structured patch rules and return a normalized payload.
+
+    Applies size and content limits while rejecting disallowed operations.
+    """
 
     flags: list[str] = []
     context: dict[str, object] = {}
