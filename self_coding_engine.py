@@ -158,6 +158,8 @@ except Exception:  # pragma: no cover - degrade gracefully when unavailable
 _completion_validator = load_internal("completion_validator")
 ValidationResult = _completion_validator.ValidationResult
 validate_completion = _completion_validator.validate_completion
+_pipeline_wrapper = load_internal("stabilization.pipeline_wrapper")
+stabilize_completion = _pipeline_wrapper.stabilize_completion
 
 try:  # canonical tag constants shared across modules
     _log_tags = load_internal("log_tags")
@@ -2566,11 +2568,12 @@ class SelfCodingEngine:
         built-in fallback behaviour.
         """
 
-        validation: ValidationResult = validate_completion(result.text)
-        if validation.ok:
-            return result, validation.text
+        stabilized = stabilize_completion(result, source="self_coding_engine")
+        if stabilized["ok"]:
+            result.text = stabilized["text"]
+            return result, stabilized["text"]
 
-        reason = validation.reason or "unknown"
+        reason = stabilized.get("reason") or "unknown"
         self.logger.warning(
             "codex fallback",
             extra={"reason": reason, "description": description, "tags": ["degraded"]},
@@ -2596,17 +2599,18 @@ class SelfCodingEngine:
         if not getattr(alt, "text", "").strip():
             return result, None
 
-        alt_validation: ValidationResult = validate_completion(alt.text)
-        if alt_validation.ok:
+        alt_stabilized = stabilize_completion(alt, source="self_coding_engine.fallback")
+        if alt_stabilized["ok"]:
+            alt.text = alt_stabilized["text"]
             self.logger.info(
                 "codex fallback reroute succeeded", extra={"description": description}
             )
-            return alt, alt_validation.text
+            return alt, alt_stabilized["text"]
 
         self.logger.warning(
             "codex fallback invalid result",
             extra={
-                "reason": alt_validation.reason,
+                "reason": alt_stabilized.get("reason"),
                 "description": description,
                 "tags": ["degraded"],
             },

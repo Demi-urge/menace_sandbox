@@ -78,6 +78,9 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
+_pipeline_wrapper = load_internal("stabilization.pipeline_wrapper")
+stabilize_completion = _pipeline_wrapper.stabilize_completion
+
 
 _SNIPPET_COMPRESSOR: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 _CODEBASE_DIFF_MODULE: Any | None = None
@@ -1634,8 +1637,9 @@ def generate_patch(
                 bot_name = getattr(owner, "bot_name", "quick_fix_engine")
                 module_name = Path(context_meta.get("module", path.name)).name
                 for i in range(attempts):
+                    err: Exception | None = None
                     try:
-                        return helper(
+                        raw_output = helper(
                             manager,
                             desc,
                             context_builder=builder,
@@ -1645,17 +1649,39 @@ def generate_patch(
                         )
                     except TypeError:
                         try:
-                            return helper(
+                            raw_output = helper(
                                 manager,
                                 desc,
                                 context_builder=builder,
                             )
                         except Exception as exc2:  # fall through to logging
-                            err: Exception = exc2
+                            err = exc2
+                            raw_output = ""
                     except Exception as exc:
                         err = exc
-                    logger.exception("helper generation failed", exc_info=err)
-                    if event_bus:
+                        raw_output = ""
+                    if raw_output:
+                        stabilized = stabilize_completion(
+                            raw_output,
+                            source="quick_fix_engine.helper",
+                        )
+                        if stabilized["ok"]:
+                            return stabilized["text"]
+                        reason = stabilized.get("reason") or "invalid helper output"
+                        logger.warning(
+                            "helper output failed validation",
+                            extra={
+                                "module": module_name,
+                                "description": desc,
+                                "reason": reason,
+                                "diagnostics": stabilized.get("diagnostics"),
+                            },
+                        )
+                        err = RuntimeError(reason)
+                        raw_output = ""
+                    if err is not None:
+                        logger.exception("helper generation failed", exc_info=err)
+                    if event_bus and err is not None:
                         payload = {
                             "module": module_name,
                             "description": desc,
