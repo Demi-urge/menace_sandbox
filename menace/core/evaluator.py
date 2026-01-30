@@ -5,18 +5,21 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from menace.errors.exceptions import EvaluationError, MalformedInputError, MissingFieldError
+from menace.errors.exceptions import EvaluationError
 
 logger = logging.getLogger(__name__)
 
 
 def _require_numeric(data: Dict[str, Any], field_name: str) -> float:
     if field_name not in data or data[field_name] is None:
-        raise MissingFieldError(field_name)
+        raise EvaluationError(
+            f"Missing required field '{field_name}'",
+            details={"field": field_name},
+        )
 
     value = data[field_name]
-    if not isinstance(value, (int, float)):
-        raise MalformedInputError(
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise EvaluationError(
             f"Field '{field_name}' must be numeric",
             details={"field": field_name, "value_type": type(value).__name__},
         )
@@ -26,50 +29,67 @@ def _require_numeric(data: Dict[str, Any], field_name: str) -> float:
 def evaluate_roi(data: Dict[str, Any]) -> Dict[str, Any]:
     """Evaluate deterministic ROI from provided fields.
 
+    The ROI formula is deterministic and uses only the provided numeric inputs:
+
+    ``roi = ((benefit - cost) / cost) * risk_adjustment``
+
+    Invariants:
+    - ``data`` must be a mapping containing numeric ``cost``, ``benefit``,
+      and ``risk_adjustment`` values.
+    - ``cost`` must be non-zero to avoid division by zero.
+    - Missing, ``None``, or non-numeric values raise ``EvaluationError``.
+
     Args:
         data: Input payload containing required numeric fields:
-            - revenue: Total revenue for the workflow.
+            - benefit: Total benefit for the workflow.
             - cost: Total cost for the workflow.
+            - risk_adjustment: Multiplicative risk adjustment factor.
 
     Returns:
-        Dictionary with the exact schema: status, data, errors, meta.
+        Structured result containing the numeric ROI, a component breakdown,
+        and metadata describing the inputs used.
 
     Raises:
-        MissingFieldError: If required fields are missing or None.
-        MalformedInputError: If input payload is not a dict or fields are malformed.
-        EvaluationError: If ROI cannot be calculated deterministically.
+        EvaluationError: If input payload is invalid or ROI cannot be
+            calculated deterministically.
     """
     if not isinstance(data, dict):
-        raise MalformedInputError(
+        raise EvaluationError(
             "ROI evaluator expected a dict payload",
             details={"received_type": type(data).__name__},
         )
 
-    revenue = _require_numeric(data, "revenue")
+    benefit = _require_numeric(data, "benefit")
     cost = _require_numeric(data, "cost")
+    risk_adjustment = _require_numeric(data, "risk_adjustment")
 
     if cost == 0:
         raise EvaluationError("Cost must be non-zero to compute ROI", details={"cost": cost})
 
-    roi = (revenue - cost) / cost
+    net_benefit = benefit - cost
+    base_roi = net_benefit / cost
+    roi = base_roi * risk_adjustment
 
     logger.info(
         "Computed ROI",
-        extra={"roi": roi, "revenue": revenue, "cost": cost},
+        extra={
+            "roi": roi,
+            "benefit": benefit,
+            "cost": cost,
+            "risk_adjustment": risk_adjustment,
+        },
     )
 
     return {
-        "status": "ok",
-        "data": {
-            "roi": roi,
-            "revenue": revenue,
+        "roi": roi,
+        "components": {
+            "benefit": benefit,
             "cost": cost,
+            "risk_adjustment": risk_adjustment,
+            "net_benefit": net_benefit,
+            "base_roi": base_roi,
         },
-        "errors": [],
-        "meta": {
-            "inputs": {
-                "revenue": revenue,
-                "cost": cost,
-            }
+        "metadata": {
+            "inputs_used": ["benefit", "cost", "risk_adjustment"],
         },
     }
