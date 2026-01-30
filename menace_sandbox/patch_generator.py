@@ -442,6 +442,18 @@ def generate_patch(
     """
     start_time = time.monotonic()
     _validate_generate_patch_inputs(source, error_report, rules)
+    if not rules:
+        error = PatchRuleError("rules must not be empty", details={"field": "rules"})
+        return {
+            "status": "error",
+            "data": {},
+            "errors": [error.to_dict()],
+            "meta": _build_meta(
+                rule_summaries=[],
+                applied_count=0,
+                elapsed_ms=_elapsed_ms(start_time),
+            ),
+        }
     validate_rules(rules)
     rule_summaries = _summarize_rules(rules)
 
