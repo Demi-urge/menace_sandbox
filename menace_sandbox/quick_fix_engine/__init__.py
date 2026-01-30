@@ -31,7 +31,7 @@ import symtable
 import warnings
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable, TypeVar
+from typing import Tuple, Iterable, Dict, Any, List, Mapping, TYPE_CHECKING, Callable, TypeVar
 
 _FETCH_PATCH_DELEGATE = None
 _existing_qfe = sys.modules.get("quick_fix_engine")
@@ -100,6 +100,8 @@ _TARGET_REGION_EXTRACTOR_LOADED = False
 _TARGET_REGION_EXTRACTOR: Callable[..., Any] | None = None
 _PROMPT_STRATEGIES: tuple[type, Callable[..., Any]] | None = None
 _VECTOR_SERVICE_RESULTS: tuple[type, type] | None = None
+_PATCH_SAFETY_CLS: type | None = None
+_LICENSE_DENYLIST: dict[str, str] | None = None
 
 _T = TypeVar("_T")
 
@@ -193,6 +195,108 @@ def _log_validation_flags(
                 "flag": flag,
             },
         )
+
+
+def _get_patch_safety_cls() -> type:
+    global _PATCH_SAFETY_CLS
+    if _PATCH_SAFETY_CLS is None:
+        _PATCH_SAFETY_CLS = load_internal("patch_safety").PatchSafety
+    return _PATCH_SAFETY_CLS
+
+
+def _get_license_denylist() -> dict[str, str]:
+    global _LICENSE_DENYLIST
+    if _LICENSE_DENYLIST is None:
+        _LICENSE_DENYLIST = load_internal("compliance.license_fingerprint").DENYLIST
+    return _LICENSE_DENYLIST
+
+
+def _build_patch_safety(context_builder: Any | None) -> Any:
+    patch_safety = (
+        getattr(context_builder, "patch_safety", None) if context_builder else None
+    )
+    if patch_safety is None:
+        patch_safety = _get_patch_safety_cls()()
+    if context_builder is not None:
+        if getattr(context_builder, "max_alignment_severity", None) is not None:
+            patch_safety.max_alert_severity = float(
+                getattr(context_builder, "max_alignment_severity")
+            )
+        if getattr(context_builder, "max_alerts", None) is not None:
+            patch_safety.max_alerts = int(getattr(context_builder, "max_alerts"))
+        license_denylist = getattr(context_builder, "license_denylist", None)
+        if license_denylist is not None:
+            patch_safety.license_denylist = set(license_denylist)
+    return patch_safety
+
+
+def _evaluate_patch_safety(
+    patch_safety: Any,
+    meta: Mapping[str, Any],
+    *,
+    origin: str = "",
+) -> tuple[list[str], dict[str, Any]]:
+    flags: list[str] = []
+    context: dict[str, Any] = {}
+    try:
+        passed, score, risks = patch_safety.evaluate(meta, dict(meta), origin=origin)
+    except Exception as exc:  # pragma: no cover - defensive
+        return ["safety_violation"], {"patch_safety_error": str(exc)}
+    context.update(
+        {
+            "patch_safety_score": score,
+            "patch_safety_risks": risks,
+            "patch_safety_passed": passed,
+        }
+    )
+    if passed:
+        return flags, context
+
+    safety_violation = False
+    license_violation = False
+    similar_failure = False
+
+    sev = meta.get("alignment_severity")
+    if sev is not None:
+        try:
+            if float(sev) > float(getattr(patch_safety, "max_alert_severity", 1.0)):
+                safety_violation = True
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    alerts = meta.get("semantic_alerts")
+    if alerts is not None:
+        try:
+            count = len(alerts) if isinstance(alerts, (list, tuple, set)) else 1
+            if count > int(getattr(patch_safety, "max_alerts", 5)):
+                safety_violation = True
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    lic = meta.get("license")
+    fp = meta.get("license_fingerprint")
+    denylist = set(getattr(patch_safety, "license_denylist", []) or [])
+    if not denylist:
+        denylist = set(_get_license_denylist().values())
+    if lic in denylist or _get_license_denylist().get(fp) in denylist:
+        license_violation = True
+
+    threshold = getattr(patch_safety, "threshold", None)
+    if threshold is not None:
+        try:
+            similar_failure = float(score) >= float(threshold)
+        except Exception:  # pragma: no cover - defensive
+            similar_failure = False
+
+    if license_violation:
+        flags.append("license_violation")
+    if safety_violation:
+        flags.append("safety_violation")
+    if similar_failure:
+        flags.append("similar_failure")
+    if not flags:
+        flags.append("safety_violation")
+    return flags, context
 
 
 def _load_snippet_compressor() -> Callable[[dict[str, Any]], dict[str, Any]]:
@@ -2302,6 +2406,43 @@ def validate_patch(
             patch_logger=patch_logger,
             graph=graph,
         )
+        patch_safety = _build_patch_safety(context_builder)
+        safety_meta = {
+            "module": module_name,
+            "description": description,
+            "target_region": _format_target_region(target_region),
+        }
+        safety_flags, safety_context = _evaluate_patch_safety(
+            patch_safety,
+            safety_meta,
+            origin="quick_fix_engine",
+        )
+        if safety_context:
+            try:
+                logger.info(
+                    "patch safety evaluation completed for %s",
+                    module_name,
+                    extra={
+                        "module_path": module_name,
+                        "patch_safety_score": safety_context.get(
+                            "patch_safety_score"
+                        ),
+                        "patch_safety_passed": safety_context.get(
+                            "patch_safety_passed"
+                        ),
+                    },
+                )
+            except Exception:
+                logger.debug("failed to emit patch safety metadata", exc_info=True)
+        if safety_flags:
+            flags = list(flags) + safety_flags
+            _log_validation_flags(
+                logger,
+                module_name,
+                target_region,
+                "patch_safety",
+                safety_flags,
+            )
     except Exception:
         logger.exception("quick fix validation failed")
         flags = ["validation_error"]
@@ -3119,6 +3260,45 @@ class QuickFixEngine:
                 patch_logger=self.patch_logger,
                 graph=self.graph,
             )
+            patch_safety = _build_patch_safety(self.context_builder)
+            safety_meta = {
+                "module": module_name,
+                "description": description,
+                "target_region": _format_target_region(target_region),
+            }
+            safety_flags, safety_context = _evaluate_patch_safety(
+                patch_safety,
+                safety_meta,
+                origin="quick_fix_engine",
+            )
+            if safety_context:
+                try:
+                    self.logger.info(
+                        "patch safety evaluation completed for %s",
+                        module_name,
+                        extra={
+                            "module_path": module_name,
+                            "patch_safety_score": safety_context.get(
+                                "patch_safety_score"
+                            ),
+                            "patch_safety_passed": safety_context.get(
+                                "patch_safety_passed"
+                            ),
+                        },
+                    )
+                except Exception:
+                    self.logger.debug(
+                        "failed to emit patch safety metadata", exc_info=True
+                    )
+            if safety_flags:
+                flags = list(flags) + safety_flags
+                _log_validation_flags(
+                    self.logger,
+                    module_name,
+                    target_region,
+                    "patch_safety",
+                    safety_flags,
+                )
         except Exception:
             self.logger.exception("quick fix validation failed")
             flags = ["validation_error"]
