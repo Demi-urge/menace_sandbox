@@ -552,7 +552,6 @@ def _build_meta(
         "rule_summaries": list(rule_summaries),
         "rule_count": len(rule_summaries),
         "applied_count": applied_count,
-        "elapsed_ms": 0.0,
     }
 
 
