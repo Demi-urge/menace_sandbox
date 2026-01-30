@@ -67,6 +67,9 @@ def generate_patch(
     """Apply deterministic patch rules and return a structured result."""
     _validate_inputs(source, error_report, rules)
     parsed_rules = _parse_rules(rules)
+    if not parsed_rules:
+        error = ValidationError("No patch rules provided", details={"rule_count": 0})
+        return _failure_result([error.to_dict()], meta=_base_meta([], syntax_valid=None))
     line_index = _build_line_index(source)
 
     resolved_rules = [
