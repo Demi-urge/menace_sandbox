@@ -288,6 +288,18 @@ def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
     while still enforcing deterministic conflict checks. Anchors are resolved
     against the original source using literal matching unless a rule explicitly
     opts into regex anchors.
+
+    Args:
+        source: Original source content to update.
+        rules: Ordered rule objects to apply.
+
+    Returns:
+        A structured result containing the updated content and audit metadata.
+
+    Raises:
+        PatchRuleError: If the inputs or rule definitions are invalid.
+        PatchConflictError: If the resolved edits overlap or conflict.
+        PatchAnchorError: If a rule anchor fails to resolve.
     """
     if not isinstance(source, str):
         raise PatchRuleError(

@@ -1346,46 +1346,52 @@ def generate_patch(
     graph: KnowledgeGraph | None = None,
     test_command: List[str] | None = None,
 ) -> int | tuple[int | None, list[str]] | None:
-    """Attempt a quick patch for *module* and return the patch id.
+    """Attempt a quick patch for a module and return the patch identifier.
 
     A provided :class:`vector_service.ContextBuilder` is used to gather context
     for the patch.
 
-    Parameters
-    ----------
-    module:
-        Target module path or module name without ``.py``.
-    manager:
-        :class:`~self_coding_manager.SelfCodingManager` providing helper
-        generation context and telemetry hooks. A ``RuntimeError`` is raised if
-        no :class:`SelfCodingManager` is supplied.
-    engine:
-        :class:`~self_coding_engine.SelfCodingEngine` instance. If ``None``,
-        the value from ``manager.engine`` is used. A ``RuntimeError`` is raised
-        when no engine is available.
-    context_builder:
-        :class:`vector_service.ContextBuilder` instance used to retrieve
-        contextual information from local databases. The builder must be able
-        to query the databases associated with the current repository.
-    provenance_token:
-        Token from :class:`SelfCodingManager.validate_provenance` confirming the
-        call originates from the active ``EvolutionOrchestrator``.
-    description:
-        Optional patch description.  When omitted, a generic description is
-        used.
-    strategy:
-        Optional :class:`self_improvement.prompt_strategies.PromptStrategy` to
-        tailor the prompt. When provided the corresponding template is appended
-        to the description.
-    patch_logger:
-        Optional :class:`patch_provenance.PatchLogger` for recording vector
-        provenance.
-    context:
-        Optional dictionary merged into the patch's ``context_meta`` prior to
-        patch application.
-    target_region:
-        Optional region within the file to patch. When provided only this
-        slice is modified.
+    Args:
+        module: Target module path or module name without ``.py``.
+        manager: :class:`~self_coding_manager.SelfCodingManager` providing
+            helper generation context and telemetry hooks. A ``RuntimeError``
+            is raised if no :class:`SelfCodingManager` is supplied.
+        engine: :class:`~self_coding_engine.SelfCodingEngine` instance. If
+            ``None``, the value from ``manager.engine`` is used. A
+            ``RuntimeError`` is raised when no engine is available.
+        context_builder: :class:`vector_service.ContextBuilder` instance used to
+            retrieve contextual information from local databases. The builder
+            must be able to query the databases associated with the current
+            repository.
+        provenance_token: Token from
+            :meth:`SelfCodingManager.validate_provenance` confirming the call
+            originates from the active ``EvolutionOrchestrator``.
+        description: Optional patch description. When omitted, a generic
+            description is used.
+        strategy: Optional
+            :class:`self_improvement.prompt_strategies.PromptStrategy` to tailor
+            the prompt. When provided the corresponding template is appended to
+            the description.
+        patch_logger: Optional :class:`patch_provenance.PatchLogger` for
+            recording vector provenance.
+        context: Optional dictionary merged into the patch's ``context_meta``
+            prior to patch application.
+        effort_estimate: Optional floating-point estimate of effort for the
+            patch.
+        target_region: Optional region within the file to patch. When provided
+            only this slice is modified.
+        return_flags: When True, return a tuple containing the patch identifier
+            and any risk flags.
+        helper_fn: Optional helper function used to generate patch content.
+        graph: Optional :class:`KnowledgeGraph` instance used for context.
+        test_command: Optional test command to run after patch creation.
+
+    Returns:
+        The patch identifier, optionally with risk flags if requested, or
+        ``None`` when no patch is created.
+
+    Raises:
+        QuickFixEngineError: If required inputs are missing or invalid.
     """
 
     print(f"[QFE] generate_patch entered for module={module}", flush=True)
