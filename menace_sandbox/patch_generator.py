@@ -426,7 +426,7 @@ def generate_patch(
     error_report: dict[str, object],
     rules: list[Rule],
     *,
-    validate_syntax: bool = False,
+    validate_syntax: bool | None = None,
 ) -> dict[str, object]:
     """Generate a deterministic patch payload by applying explicit rules.
 
@@ -434,7 +434,8 @@ def generate_patch(
         source: The original source content to modify.
         error_report: Structured metadata about the error context.
         rules: Patch rules to apply.
-        validate_syntax: Whether to validate syntax for supported languages.
+        validate_syntax: Explicit override for syntax validation. When None, validation
+            runs automatically for supported languages (Python).
 
     Returns:
         A structured payload containing status, data, errors, and meta fields.
@@ -483,7 +484,7 @@ def generate_patch(
             ),
         }
 
-    if validate_syntax:
+    if validate_syntax is not False:
         syntax_error = _check_syntax(result.content, error_report, rules)
         if syntax_error:
             errors.append(syntax_error.to_dict())
