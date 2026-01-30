@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from menace.errors.exceptions import ConfigurationError
+
 
 @dataclass(frozen=True)
 class ConfigSchema:
@@ -25,16 +27,35 @@ class ConfigSchema:
     metadata: dict[str, str]
 
 
-class ConfigError(ValueError):
-    """Base class for configuration errors."""
+class ConfigError(ConfigurationError):
+    """Base class for configuration errors raised by the loader.
+
+    Context payload:
+        details: Includes config keys, invalid values, and schema hints.
+    """
 
 
 class MissingConfigKeyError(ConfigError):
-    """Raised when a required configuration key is missing."""
+    """Raised when a required configuration key is missing.
+
+    Context payload:
+        details: Includes "key" for the missing configuration key.
+    """
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"Missing required config key: {key}", details={"key": key})
 
 
 class InvalidConfigValueError(ConfigError):
-    """Raised when a configuration value is invalid."""
+    """Raised when a configuration value is invalid.
+
+    Context payload:
+        details: Includes "key" for the offending config entry when available.
+    """
+
+    def __init__(self, message: str, *, key: str | None = None) -> None:
+        details = {"key": key} if key is not None else None
+        super().__init__(message, details=details)
 
 
 _REQUIRED_KEYS: tuple[str, ...] = ("service_name", "environment", "log_level")
@@ -62,22 +83,23 @@ def load_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     if config is None:
-        raise InvalidConfigValueError("config cannot be None")
+        raise InvalidConfigValueError("config cannot be None", key="config")
 
     for key in _REQUIRED_KEYS:
         if key not in config:
-            raise MissingConfigKeyError(f"Missing required config key: {key}")
+            raise MissingConfigKeyError(key)
 
     for key, value in config.items():
         if value is None:
-            raise InvalidConfigValueError(f"Config value for '{key}' cannot be None")
+            raise InvalidConfigValueError(f"Config value for '{key}' cannot be None", key=key)
 
     service_name = _require_str(config, "service_name")
     environment = _require_str(config, "environment")
     log_level = _require_str(config, "log_level")
     if log_level not in _ALLOWED_LOG_LEVELS:
         raise InvalidConfigValueError(
-            f"Invalid log_level '{log_level}'. Allowed: {sorted(_ALLOWED_LOG_LEVELS)}"
+            f"Invalid log_level '{log_level}'. Allowed: {sorted(_ALLOWED_LOG_LEVELS)}",
+            key="log_level",
         )
 
     debug = _get_bool(config, "debug", default=False)
@@ -105,7 +127,8 @@ def _require_str(config: Mapping[str, Any], key: str) -> str:
     value = config.get(key)
     if not isinstance(value, str) or not value:
         raise InvalidConfigValueError(
-            f"Config value for '{key}' must be a non-empty string"
+            f"Config value for '{key}' must be a non-empty string",
+            key=key,
         )
     return value
 
@@ -117,7 +140,7 @@ def _get_bool(config: Mapping[str, Any], key: str, default: bool) -> bool:
         return default
     value = config.get(key)
     if not isinstance(value, bool):
-        raise InvalidConfigValueError(f"Config value for '{key}' must be a boolean")
+        raise InvalidConfigValueError(f"Config value for '{key}' must be a boolean", key=key)
     return value
 
 
@@ -126,17 +149,19 @@ def _get_metadata(config: Mapping[str, Any], key: str) -> dict[str, str]:
 
     value = config.get(key, {})
     if not isinstance(value, dict):
-        raise InvalidConfigValueError(f"Config value for '{key}' must be a dict")
+        raise InvalidConfigValueError(f"Config value for '{key}' must be a dict", key=key)
 
     normalized: dict[str, str] = {}
     for meta_key, meta_value in value.items():
         if not isinstance(meta_key, str) or not meta_key:
             raise InvalidConfigValueError(
-                f"Metadata key '{meta_key}' must be a non-empty string"
+                f"Metadata key '{meta_key}' must be a non-empty string",
+                key="metadata",
             )
         if not isinstance(meta_value, str):
             raise InvalidConfigValueError(
-                f"Metadata value for '{meta_key}' must be a string"
+                f"Metadata value for '{meta_key}' must be a string",
+                key="metadata",
             )
         normalized[meta_key] = meta_value
     return normalized
