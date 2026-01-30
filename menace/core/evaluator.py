@@ -3,93 +3,118 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, Iterable
 
-from menace.errors.exceptions import EvaluationError
+from menace.errors.exceptions import EvaluatorError
 
 logger = logging.getLogger(__name__)
 
 
-def _require_numeric(data: Dict[str, Any], field_name: str) -> float:
+def _require_decimal(data: Dict[str, Any], field_name: str) -> Decimal:
     if field_name not in data or data[field_name] is None:
-        raise EvaluationError(
+        raise EvaluatorError(
             f"Missing required field '{field_name}'",
             details={"field": field_name},
         )
 
     value = data[field_name]
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise EvaluationError(
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise EvaluatorError(
             f"Field '{field_name}' must be numeric",
             details={"field": field_name, "value_type": type(value).__name__},
         )
-    return float(value)
+
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise EvaluatorError(
+            f"Field '{field_name}' could not be parsed as a number",
+            details={"field": field_name, "value": value},
+        ) from exc
 
 
-def evaluate_roi(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluate deterministic ROI from provided fields.
+def _inputs_used(required_fields: Iterable[str]) -> Dict[str, Any]:
+    return {
+        "inputs_used": list(required_fields),
+    }
 
-    The ROI formula is deterministic and uses only the provided numeric inputs:
 
-    ``roi = ((benefit - cost) / cost) * risk_adjustment``
+def evaluate_roi(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Evaluate return on investment (ROI) using deterministic numeric logic.
 
-    Invariants:
-    - ``data`` must be a mapping containing numeric ``cost``, ``benefit``,
-      and ``risk_adjustment`` values.
-    - ``cost`` must be non-zero to avoid division by zero.
-    - Missing, ``None``, or non-numeric values raise ``EvaluationError``.
+    ROI is computed deterministically using the formula ``(revenue - cost) / cost``.
 
     Args:
-        data: Input payload containing required numeric fields:
-            - benefit: Total benefit for the workflow.
-            - cost: Total cost for the workflow.
-            - risk_adjustment: Multiplicative risk adjustment factor.
+        input_data: Mapping containing required numeric fields:
+            - cost: Total cost for the investment. Must be a positive number.
+            - revenue: Total revenue for the investment. Must be numeric.
 
     Returns:
-        Structured result containing the numeric ROI, a component breakdown,
-        and metadata describing the inputs used.
+        Structured evaluation result with the following shape:
+            {
+                "status": "ok",
+                "data": {
+                    "roi": Decimal,
+                    "components": {
+                        "revenue": Decimal,
+                        "cost": Decimal,
+                        "net_revenue": Decimal,
+                    },
+                },
+                "errors": [],
+                "meta": {
+                    "inputs_used": ["cost", "revenue"],
+                    "formula": "(revenue - cost) / cost",
+                },
+            }
 
     Raises:
-        EvaluationError: If input payload is invalid or ROI cannot be
-            calculated deterministically.
+        EvaluatorError: Raised when required inputs are missing, invalid, or
+            non-numeric, or when cost is zero/negative and ROI cannot be
+            computed deterministically.
     """
-    if not isinstance(data, dict):
-        raise EvaluationError(
+    if not isinstance(input_data, dict):
+        raise EvaluatorError(
             "ROI evaluator expected a dict payload",
-            details={"received_type": type(data).__name__},
+            details={"received_type": type(input_data).__name__},
         )
 
-    benefit = _require_numeric(data, "benefit")
-    cost = _require_numeric(data, "cost")
-    risk_adjustment = _require_numeric(data, "risk_adjustment")
+    required_fields = ("cost", "revenue")
+    cost = _require_decimal(input_data, "cost")
+    revenue = _require_decimal(input_data, "revenue")
 
-    if cost == 0:
-        raise EvaluationError("Cost must be non-zero to compute ROI", details={"cost": cost})
+    if cost <= 0:
+        raise EvaluatorError(
+            "Cost must be a positive number to compute ROI",
+            details={"cost": str(cost)},
+        )
 
-    net_benefit = benefit - cost
-    base_roi = net_benefit / cost
-    roi = base_roi * risk_adjustment
+    net_revenue = revenue - cost
+    roi = net_revenue / cost
 
     logger.info(
         "Computed ROI",
         extra={
-            "roi": roi,
-            "benefit": benefit,
-            "cost": cost,
-            "risk_adjustment": risk_adjustment,
+            "roi": str(roi),
+            "revenue": str(revenue),
+            "cost": str(cost),
         },
     )
 
     return {
-        "roi": roi,
-        "components": {
-            "benefit": benefit,
-            "cost": cost,
-            "risk_adjustment": risk_adjustment,
-            "net_benefit": net_benefit,
-            "base_roi": base_roi,
+        "status": "ok",
+        "data": {
+            "roi": roi,
+            "components": {
+                "revenue": revenue,
+                "cost": cost,
+                "net_revenue": net_revenue,
+            },
         },
-        "metadata": {
-            "inputs_used": ["benefit", "cost", "risk_adjustment"],
+        "errors": [],
+        "meta": {
+            **_inputs_used(required_fields),
+            "formula": "(revenue - cost) / cost",
         },
     }
