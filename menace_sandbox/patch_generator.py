@@ -82,12 +82,6 @@ class DeleteRegexRule:
 Rule = ReplaceRule | InsertAfterRule | DeleteRegexRule
 
 
-_RULE_TYPE_ORDER = {
-    "replace": 0,
-    "insert_after": 1,
-    "delete_regex": 2,
-}
-
 
 @dataclass(frozen=True)
 class PatchRuleInput:
@@ -253,10 +247,10 @@ def validate_rules(rules: list[Rule]) -> None:
 def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
     """Apply deterministic, ordered rules to a source string.
 
-    Rules are applied in a stable order keyed by ``rule_id`` and rule type to
-    guarantee deterministic outcomes regardless of input ordering. Anchors are
-    resolved against the original source using literal matching unless a rule
-    explicitly opts into regex anchors.
+    Rules are applied in the order they are provided to preserve caller intent
+    while still enforcing deterministic conflict checks. Anchors are resolved
+    against the original source using literal matching unless a rule explicitly
+    opts into regex anchors.
     """
     if not isinstance(source, str):
         raise PatchRuleError(
@@ -265,13 +259,7 @@ def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
         )
     validate_rules(rules)
 
-    ordered_rules = sorted(
-        rules,
-        key=lambda rule: (
-            rule.rule_id,
-            _RULE_TYPE_ORDER[_rule_kind(rule)],
-        ),
-    )
+    ordered_rules = list(rules)
     rule_lookup = {rule.rule_id: rule for rule in ordered_rules}
 
     line_index = _build_line_index(source)
