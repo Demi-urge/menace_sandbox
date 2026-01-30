@@ -124,7 +124,21 @@ class _StructuredFormatter(logging.Formatter):
 
 
 def _has_structured_handler(logger: logging.Logger) -> bool:
-    """Return True if the logger already has the structured handler."""
+    """Return True if the logger already has the structured handler.
+
+    Args:
+        logger (logging.Logger): Logger instance to inspect.
+
+    Returns:
+        bool: ``True`` when a ``_StructuredFormatter`` is attached.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - Inspection is deterministic for a given logger configuration.
+        - No mutation of the logger occurs.
+    """
 
     for handler in logger.handlers:
         formatter = handler.formatter
@@ -134,7 +148,22 @@ def _has_structured_handler(logger: logging.Logger) -> bool:
 
 
 def _normalize_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Normalize optional context mapping for structured log payloads."""
+    """Normalize optional context mapping for structured log payloads.
+
+    Args:
+        context (Mapping[str, Any] | None): Optional mapping of context values.
+
+    Returns:
+        dict[str, Any]: Normalized context dictionary (empty if ``None``).
+
+    Raises:
+        LoggingError: If ``context`` is not a mapping or contains invalid keys.
+
+    Invariants:
+        - Context keys must be non-empty strings.
+        - No mutation of the input mapping occurs.
+        - Deterministic for identical input mappings.
+    """
 
     if context is None:
         return {}
@@ -156,6 +185,20 @@ def _normalize_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _format_timestamp(created: float) -> str:
-    """Format epoch seconds into a deterministic ISO-8601 timestamp."""
+    """Format epoch seconds into a deterministic ISO-8601 timestamp.
+
+    Args:
+        created (float): Epoch seconds to format.
+
+    Returns:
+        str: ISO-8601 timestamp in UTC with timezone offset.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - Output is deterministic for the given ``created`` value.
+        - Timestamp is always expressed in UTC.
+    """
 
     return datetime.fromtimestamp(created, tz=timezone.utc).isoformat()

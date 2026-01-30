@@ -125,6 +125,26 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
 def _validate_workflow_definition(
     input_data: dict[str, Any],
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """Validate and normalize a workflow definition payload.
+
+    Args:
+        input_data (dict[str, Any]): Workflow definition mapping. Must be non-empty
+            and contain non-``None`` values for required keys.
+
+    Returns:
+        tuple[str, list[dict[str, Any]], dict[str, Any], dict[str, Any]]: Ordered
+        tuple of ``workflow_id``, validated ``steps``, ``payload``, and normalized
+        ``meta`` dictionary.
+
+    Raises:
+        ValidationError: If the workflow schema is invalid, required fields are
+            missing, values are ``None``, or field types are incorrect.
+
+    Invariants:
+        - Required keys are present and non-``None``.
+        - ``payload`` contains no ``None`` values.
+        - Validation is deterministic with respect to ``input_data``.
+    """
     if not isinstance(input_data, dict) or not input_data:
         raise ValidationError(
             "Workflow input must be a non-empty dictionary",
@@ -205,6 +225,22 @@ def _validate_workflow_definition(
 
 
 def _validate_payload_values(payload: dict[str, Any], workflow_id: str) -> None:
+    """Ensure payload values contain no ``None`` entries.
+
+    Args:
+        payload (dict[str, Any]): Workflow payload to inspect.
+        workflow_id (str): Identifier used for validation error context.
+
+    Returns:
+        None: The payload is validated in-place (no mutation occurs).
+
+    Raises:
+        ValidationError: If any payload value is ``None``.
+
+    Invariants:
+        - No ``None`` values are allowed in payloads.
+        - Validation is deterministic for a given payload.
+    """
     null_keys = [key for key, value in payload.items() if value is None]
     if null_keys:
         raise ValidationError(
@@ -214,6 +250,25 @@ def _validate_payload_values(payload: dict[str, Any], workflow_id: str) -> None:
 
 
 def _validate_step(step: Mapping[str, Any], workflow_id: str, index: int) -> None:
+    """Validate a single workflow step definition.
+
+    Args:
+        step (Mapping[str, Any]): Step configuration mapping.
+        workflow_id (str): Workflow identifier for error context.
+        index (int): Step index in the workflow sequence.
+
+    Returns:
+        None: The step is validated without mutation.
+
+    Raises:
+        ValidationError: If the step is not a mapping, contains unsupported
+            fields, has invalid types, or violates step-specific invariants.
+
+    Invariants:
+        - ``step`` must be a mapping with a supported ``type``.
+        - Required step keys are present and non-``None``.
+        - Validation is deterministic and order-independent for a given step.
+    """
     if not isinstance(step, Mapping):
         raise ValidationError(
             "step must be a mapping",
@@ -286,6 +341,24 @@ def _validate_step_keys(
     workflow_id: str,
     index: int,
 ) -> None:
+    """Verify that a step contains only allowed keys.
+
+    Args:
+        step (Mapping[str, Any]): Step payload to validate.
+        allowed_keys (set[str]): Allowed keys for the step.
+        workflow_id (str): Workflow identifier for error context.
+        index (int): Step index for error context.
+
+    Returns:
+        None: The step is validated without mutation.
+
+    Raises:
+        ValidationError: If unexpected keys are present in the step.
+
+    Invariants:
+        - No unexpected keys are permitted for a given step type.
+        - Validation is deterministic for identical inputs.
+    """
     unexpected = set(step.keys()) - allowed_keys
     if unexpected:
         raise ValidationError(
@@ -306,6 +379,27 @@ def _step_error(
     step_type: str,
     details: dict[str, Any],
 ) -> dict[str, Any]:
+    """Create a structured error payload for a workflow step.
+
+    Args:
+        code (str): Machine-readable error code.
+        message (str): Human-readable error message.
+        workflow_id (str): Workflow identifier.
+        step_index (int): Index of the step that failed.
+        step_type (str): Step type identifier.
+        details (dict[str, Any]): Structured error details; must not be ``None``.
+
+    Returns:
+        dict[str, Any]: Deterministic error payload with code, message, and
+        contextual metadata.
+
+    Raises:
+        None: This function does not raise.
+
+    Invariants:
+        - Returned payload has stable keys for a given input.
+        - No ``None`` values are injected by this helper.
+    """
     return {
         "code": code,
         "message": message,
@@ -322,6 +416,25 @@ def _step_result(
     status: str,
     error: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Build a deterministic step result payload.
+
+    Args:
+        index (int): Step index in the workflow.
+        step_type (str): Step type identifier.
+        status (str): Result status label (e.g., ``"ok"`` or ``"error"``).
+        error (dict[str, Any] | None): Optional error payload; when provided it
+            must be a mapping.
+
+    Returns:
+        dict[str, Any]: Step result payload with optional error details.
+
+    Raises:
+        None: This function does not raise.
+
+    Invariants:
+        - Output keys are stable for identical inputs.
+        - ``error`` is included only when provided.
+    """
     result = {"index": index, "type": step_type, "status": status}
     if error:
         result["error"] = error
