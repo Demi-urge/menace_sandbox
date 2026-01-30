@@ -157,13 +157,14 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
         - ``status``: ``ok`` | ``error``
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
-        - ``meta``: counts + status summary + config validation metadata
+        - ``metadata``: counts + status summary + config validation metadata
+        - ``meta``: deprecated alias for ``metadata`` (mirrors the payload)
 
         Each entry in ``data["results"]`` is a workflow result that includes a
-        top-level ``meta`` key (not ``metadata``). The workflow ``meta`` payload
-        includes ``workflow_id``, any input ``meta`` fields, and deterministic
-        failure indicators: ``partial_failure`` (bool), ``error_count`` (int),
-        and ``failed_steps`` (list[int]).
+        top-level ``metadata`` key. The workflow ``metadata`` payload includes
+        ``workflow_id``, any input ``meta`` fields, and deterministic failure
+        indicators: ``partial_failure`` (bool), ``error_count`` (int), and
+        ``failed_steps`` (list[int]).
     """
 
     results: list[dict[str, Any]] = []
@@ -251,7 +252,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results.append(result)
                 workflow_status = result.get("status")
                 workflow_errors = result.get("errors", [])
-                workflow_meta = result.get("meta", {})
+                workflow_metadata = result.get("metadata", result.get("meta", {}))
                 if workflow_status == "ok":
                     ok_count += 1
                 else:
@@ -263,7 +264,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                             "index": index,
                             "status": workflow_status,
                             "errors": workflow_errors,
-                            "meta": workflow_meta,
+                            "metadata": workflow_metadata,
                         },
                     )
                     errors.append(
@@ -366,7 +367,7 @@ def _final_response(
         normalized_config (dict[str, Any] | None): Optional normalized config data.
 
     Returns:
-        dict[str, Any]: Final response payload with data, errors, and meta.
+        dict[str, Any]: Final response payload with data, errors, and metadata.
 
     Raises:
         None: This helper does not raise.
@@ -375,6 +376,18 @@ def _final_response(
         - Output keys are stable for identical inputs.
         - ``partial_failure`` is true only when both ok and error counts exist.
     """
+    metadata = {
+        "workflow_count": workflows_count,
+        "result_count": len(results),
+        "ok_count": ok_count,
+        "error_count": error_count,
+        "partial_failure": bool(ok_count and error_count),
+        "status_summary": {
+            "ok": ok_count,
+            "error": error_count,
+        },
+        "config_metadata": config_meta,
+    }
     return {
         "status": status,
         "data": {
@@ -382,16 +395,6 @@ def _final_response(
             "config": normalized_config,
         },
         "errors": errors,
-        "meta": {
-            "workflow_count": workflows_count,
-            "result_count": len(results),
-            "ok_count": ok_count,
-            "error_count": error_count,
-            "partial_failure": bool(ok_count and error_count),
-            "status_summary": {
-                "ok": ok_count,
-                "error": error_count,
-            },
-            "config_metadata": config_meta,
-        },
+        "metadata": metadata,
+        "meta": metadata,
     }
