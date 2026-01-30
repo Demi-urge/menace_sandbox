@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from menace.core.workflow_runner import run_workflow
-from menace.errors.exceptions import MalformedInputError, MenaceError
+from menace.errors.exceptions import MenaceError, OrchestratorExecutionError, WorkflowDefinitionError
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def run_orchestrator(workflows: List[Dict[str, Any]]) -> Dict[str, Any]:
     logger.info("Starting orchestrator run", extra={"workflow_count": len(workflows) if isinstance(workflows, list) else 0})
 
     if not isinstance(workflows, list):
-        error = MalformedInputError(
+        error = OrchestratorExecutionError(
             "workflows must be a list of workflow payloads",
             details={"received_type": type(workflows).__name__},
         )
@@ -52,7 +52,7 @@ def run_orchestrator(workflows: List[Dict[str, Any]]) -> Dict[str, Any]:
             workflow_id: Optional[str] = None
             try:
                 if not isinstance(workflow, dict):
-                    raise MalformedInputError(
+                    raise WorkflowDefinitionError(
                         "Each workflow must be a dict",
                         details={
                             "index": index,

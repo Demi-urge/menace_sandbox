@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from menace.errors.exceptions import CalculationError, MalformedInputError, MissingFieldError
+from menace.errors.exceptions import EvaluationError, MalformedInputError, MissingFieldError
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def evaluate_roi(data: Dict[str, Any]) -> Dict[str, Any]:
     Raises:
         MissingFieldError: If required fields are missing or None.
         MalformedInputError: If input payload is not a dict or fields are malformed.
-        CalculationError: If ROI cannot be calculated deterministically.
+        EvaluationError: If ROI cannot be calculated deterministically.
     """
     if not isinstance(data, dict):
         raise MalformedInputError(
@@ -49,7 +49,7 @@ def evaluate_roi(data: Dict[str, Any]) -> Dict[str, Any]:
     cost = _require_numeric(data, "cost")
 
     if cost == 0:
-        raise CalculationError("Cost must be non-zero to compute ROI", details={"cost": cost})
+        raise EvaluationError("Cost must be non-zero to compute ROI", details={"cost": cost})
 
     roi = (revenue - cost) / cost
 
