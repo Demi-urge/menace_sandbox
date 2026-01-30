@@ -41,7 +41,7 @@ class ReplaceRule:
     anchor: str
     replacement: str
     anchor_kind: str
-    meta: Mapping[str, Any]
+    meta: Mapping[str, Any] | None
     count: int | None = None
     allow_zero_matches: bool = False
     count_specified: bool = False
@@ -65,7 +65,7 @@ class InsertAfterRule:
     anchor: str
     content: str
     anchor_kind: str
-    meta: Mapping[str, Any]
+    meta: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,7 @@ class DeleteRegexRule:
     description: str
     pattern: str
     flags: int
-    meta: Mapping[str, Any]
+    meta: Mapping[str, Any] | None
     allow_zero_matches: bool = False
 
 
@@ -242,9 +242,9 @@ def validate_rules(rules: list[Rule]) -> None:
                 "description is required",
                 details=_rule_details(index, rule, rule_id=rule_id, field="description"),
             )
-        if rule.meta is None or not isinstance(rule.meta, Mapping) or not rule.meta:
+        if rule.meta is not None and not isinstance(rule.meta, Mapping):
             raise PatchRuleError(
-                "meta is required",
+                "meta must be a mapping",
                 details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
             )
 
@@ -523,7 +523,7 @@ def generate_patch(
             - anchor/anchor_kind/content: Required for insert_after.
             - pattern/flags: Required for delete_regex (flags are strings such as
               "IGNORECASE", "MULTILINE", or "DOTALL").
-            - meta: Required mapping of rule metadata. Set meta["validate_syntax"]
+            - meta: Optional mapping of rule metadata. Set meta["validate_syntax"]
               to True to force syntax validation of the modified source.
         validate_syntax: Explicit override for syntax validation. When None, validation
             runs automatically for supported languages (Python).
@@ -1263,13 +1263,12 @@ def _reject_non_literal_transformations(rule: Rule, index: int) -> None:
 
 
 def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[str, Any]:
-    """Parse required meta data for a rule."""
+    """Parse optional meta data for a rule."""
     if "meta" not in rule:
-        raise PatchRuleError(
-            "meta is required",
-            details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
-        )
+        return {}
     meta = rule.get("meta")
+    if meta is None:
+        return {}
     if not isinstance(meta, Mapping):
         raise PatchRuleError(
             "meta must be a mapping",
