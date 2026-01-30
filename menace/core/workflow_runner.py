@@ -60,6 +60,7 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
                     error = _step_error(
                         code="missing_source_field",
                         message="copy_field source does not exist in payload",
+                        workflow_id=workflow_id,
                         step_index=index,
                         step_type=step_type,
                         details={"source": source, "target": step["target"]},
@@ -288,6 +289,7 @@ def _validate_step_keys(
 def _step_error(
     code: str,
     message: str,
+    workflow_id: str,
     step_index: int,
     step_type: str,
     details: dict[str, Any],
@@ -295,6 +297,7 @@ def _step_error(
     return {
         "code": code,
         "message": message,
+        "workflow_id": workflow_id,
         "step_index": step_index,
         "step_type": step_type,
         "details": details,
