@@ -429,8 +429,8 @@ def _build_patch_changes(
 
 def generate_patch(
     source: str,
-    error_report: dict[str, object],
-    rules: Sequence[Mapping[str, Any]] | Sequence[Rule],
+    error_report: Mapping[str, Any],
+    rules: Sequence[Mapping[str, Any]],
     *,
     validate_syntax: bool | None = None,
 ) -> dict[str, object]:
@@ -439,20 +439,38 @@ def generate_patch(
     Args:
         source: The original source content to modify.
         error_report: Structured metadata about the error context.
-        rules: Patch rules to apply.
+        rules: Patch rules to apply. Each rule is a mapping with:
+            - type: "replace", "insert_after", or "delete_regex".
+            - id: Unique rule identifier.
+            - description: Optional, non-empty string description.
+            - anchor/anchor_kind/replacement: Required for replace.
+            - anchor/anchor_kind/content: Required for insert_after.
+            - pattern/flags: Required for delete_regex (flags are strings such as
+              "IGNORECASE", "MULTILINE", or "DOTALL").
+            - meta: Optional mapping of rule metadata.
         validate_syntax: Explicit override for syntax validation. When None, validation
             runs automatically for supported languages (Python).
 
     Returns:
         A structured payload containing status, data, errors, and meta fields.
     """
-    parsed_rules: list[Rule]
-    if all(isinstance(rule, Mapping) for rule in rules):
+    parsed_rules: list[Rule] = []
+    rule_summaries: list[dict[str, Any]] = []
+    try:
         _validate_inputs(source, error_report, rules)
         parsed_rules = _parse_rules(rules)
-    else:
-        _validate_generate_patch_inputs(source, error_report, rules)
-        parsed_rules = list(rules)
+        validate_rules(parsed_rules)
+        rule_summaries = _summarize_rules(parsed_rules)
+    except MenaceError as exc:
+        return _failure_result(
+            [exc.to_dict()],
+            meta=_build_meta(
+                rule_summaries=[],
+                applied_count=0,
+                anchor_resolutions=[],
+                syntax_valid=None,
+            ),
+        )
 
     if not parsed_rules:
         error = PatchRuleError("rules must not be empty", details={"field": "rules"})
@@ -465,8 +483,6 @@ def generate_patch(
                 syntax_valid=None,
             ),
         )
-    validate_rules(parsed_rules)
-    rule_summaries = _summarize_rules(parsed_rules)
 
     errors: list[dict[str, Any]] = []
     try:
