@@ -61,69 +61,139 @@ def _extract_location(details: Mapping[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class ConfigError(MenaceError):
-    """Raised when configuration is missing, invalid, or inconsistent."""
+    """Raised when configuration is missing, invalid, or inconsistent.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class WorkflowError(MenaceError):
-    """Raised when a workflow cannot start or complete as expected."""
+    """Raised when a workflow cannot start or complete as expected.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class ValidationError(MenaceError):
-    """Raised when input, payload, or schema validation fails."""
+    """Raised when input, payload, or schema validation fails.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class PatchRuleError(ValidationError):
-    """Raised when a patch rule definition is malformed or unsupported."""
+    """Raised when a patch rule definition is malformed or unsupported.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class PatchAnchorError(ValidationError):
-    """Raised when a patch anchor is missing or resolves ambiguously."""
+    """Raised when a patch anchor is missing or resolves ambiguously.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class PatchConflictError(ValidationError):
-    """Raised when patch edits contradict or overlap each other."""
+    """Raised when patch edits contradict or overlap each other.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class EvaluationError(MenaceError):
-    """Raised when evaluation logic cannot compute a deterministic result."""
+    """Raised when evaluation logic cannot compute a deterministic result.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class PatchSyntaxError(ValidationError):
-    """Raised when a generated patch introduces syntax errors."""
+    """Raised when a generated patch introduces syntax errors.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class PatchParseError(EvaluationError):
-    """Raised when a generated patch cannot be parsed or validated."""
+    """Raised when a generated patch cannot be parsed or validated.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class OrchestratorError(MenaceError):
-    """Raised when orchestration fails due to scheduling or execution errors."""
+    """Raised when orchestration fails due to scheduling or execution errors.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class WorkflowValidationError(ValidationError):
-    """Raised when a workflow definition fails validation rules."""
+    """Raised when a workflow definition fails validation rules.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class WorkflowExecutionError(WorkflowError):
-    """Raised when a workflow cannot execute or terminates unexpectedly."""
+    """Raised when a workflow cannot execute or terminates unexpectedly.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class EvaluatorError(EvaluationError):
-    """Raised when evaluation logic cannot compute a deterministic result."""
+    """Raised when evaluation logic cannot compute a deterministic result.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
 
 
 @dataclass
 class LoggingError(MenaceError):
-    """Raised when logging or audit capture cannot be completed."""
+    """Raised when logging or audit capture cannot be completed.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
