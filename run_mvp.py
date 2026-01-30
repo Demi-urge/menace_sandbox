@@ -9,6 +9,11 @@ import sys
 from pathlib import Path
 
 import mvp_workflow
+from stabilization.response_schemas import (
+    ValidationError,
+    normalize_error_response,
+    normalize_mvp_response,
+)
 
 
 class _CliArgumentError(Exception):
@@ -45,7 +50,7 @@ def _emit_json(payload: dict) -> None:
 
 
 def _error_payload(message: str) -> dict:
-    return {"error": message, "success": False}
+    return normalize_error_response({"error": message, "success": False})
 
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -95,7 +100,11 @@ def _run(argv: list[str] | None) -> int:
         _emit_json(_error_payload(error))
         return 1
 
-    result = mvp_workflow.execute_task(payload)
+    try:
+        result = normalize_mvp_response(mvp_workflow.execute_task(payload))
+    except ValidationError:
+        _emit_json(_error_payload("response schema validation failed"))
+        return 1
     _emit_json(result)
     return 0
 
