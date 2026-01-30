@@ -14,12 +14,25 @@ from menace.errors import (
     PatchConflictError,
     PatchRuleError,
     PatchSyntaxError,
+    ValidationError,
 )
 
 
 @dataclass(frozen=True)
 class ReplaceRule:
+    """Rule for replacing an anchored target with new content.
+
+    Args:
+        rule_id: Unique identifier for the rule.
+        description: Human-readable summary of the rule intent.
+        anchor: Target text or regex pattern to locate.
+        replacement: Replacement content to apply.
+        anchor_kind: Whether the anchor is treated as literal or regex.
+        meta: Structured metadata associated with the rule.
+    """
+
     rule_id: str
+    description: str
     anchor: str
     replacement: str
     anchor_kind: str
@@ -28,7 +41,19 @@ class ReplaceRule:
 
 @dataclass(frozen=True)
 class InsertAfterRule:
+    """Rule for inserting content after a resolved anchor.
+
+    Args:
+        rule_id: Unique identifier for the rule.
+        description: Human-readable summary of the rule intent.
+        anchor: Target text or regex pattern to locate.
+        content: Content to insert after the anchor.
+        anchor_kind: Whether the anchor is treated as literal or regex.
+        meta: Structured metadata associated with the rule.
+    """
+
     rule_id: str
+    description: str
     anchor: str
     content: str
     anchor_kind: str
@@ -37,14 +62,60 @@ class InsertAfterRule:
 
 @dataclass(frozen=True)
 class DeleteRegexRule:
+    """Rule for deleting text matching a regex pattern.
+
+    Args:
+        rule_id: Unique identifier for the rule.
+        description: Human-readable summary of the rule intent.
+        pattern: Regex pattern to remove from the source.
+        flags: Compiled regex flags for the pattern.
+        meta: Structured metadata associated with the rule.
+    """
+
     rule_id: str
+    description: str
     pattern: str
     flags: int
     meta: Mapping[str, Any] | None
 
 
+Rule = ReplaceRule | InsertAfterRule | DeleteRegexRule
+
+
+@dataclass(frozen=True)
+class PatchRuleInput:
+    """Schema for patch generation inputs.
+
+    Args:
+        source: Original source content to update.
+        error_report: Structured metadata about the error context.
+        rules: Parsed rules to apply in order.
+    """
+
+    source: str
+    error_report: Mapping[str, Any]
+    rules: list[Rule]
+
+
 @dataclass(frozen=True)
 class ResolvedRule:
+    """Resolved edit with concrete spans in the source document.
+
+    Args:
+        rule_id: Identifier of the originating rule.
+        rule_type: Resolved rule type.
+        anchor: Anchor text or pattern.
+        anchor_kind: Whether the anchor was literal or regex.
+        start: Byte offset start position.
+        end: Byte offset end position.
+        replacement: Replacement text to apply.
+        index: Original rule index in the input list.
+        line_start: Starting line number.
+        line_end: Ending line number.
+        col_start: Starting column number.
+        col_end: Ending column number.
+    """
+
     rule_id: str
     rule_type: str
     anchor: str
@@ -57,6 +128,67 @@ class ResolvedRule:
     line_end: int
     col_start: int
     col_end: int
+
+
+def validate_rules(rules: list[Rule]) -> None:
+    """Validate patch rules for deterministic, schema-safe behavior.
+
+    Args:
+        rules: Rule objects to validate.
+
+    Raises:
+        ValidationError: If a rule violates deterministic constraints.
+    """
+    if not isinstance(rules, list):
+        raise ValidationError(
+            "rules must be provided as a list",
+            details={"field": "rules", "expected": "list", "actual_type": type(rules).__name__},
+        )
+
+    allowed_flag_mask = re.IGNORECASE | re.MULTILINE | re.DOTALL
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, (ReplaceRule, InsertAfterRule, DeleteRegexRule)):
+            raise ValidationError(
+                "rule must be a supported Rule type",
+                details=_rule_details(index, rule, expected="Rule"),
+            )
+
+        rule_id = rule.rule_id
+        if not isinstance(rule_id, str) or not rule_id.strip():
+            raise ValidationError(
+                "rule_id is required",
+                details=_rule_details(index, rule, field="rule_id"),
+            )
+        if not isinstance(rule.description, str) or not rule.description.strip():
+            raise ValidationError(
+                "description is required",
+                details=_rule_details(index, rule, rule_id=rule_id, field="description"),
+            )
+        if rule.meta is None or not isinstance(rule.meta, Mapping) or not rule.meta:
+            raise ValidationError(
+                "meta is required",
+                details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
+            )
+
+        if isinstance(rule, ReplaceRule):
+            _require_non_empty_target(rule.anchor, index, rule, rule_id, field="anchor")
+            _require_non_empty_target(
+                rule.replacement, index, rule, rule_id, field="replacement"
+            )
+            _validate_anchor(rule.anchor, rule.anchor_kind, index, rule, rule_id)
+        elif isinstance(rule, InsertAfterRule):
+            _require_non_empty_target(rule.anchor, index, rule, rule_id, field="anchor")
+            _require_non_empty_target(rule.content, index, rule, rule_id, field="content")
+            _validate_anchor(rule.anchor, rule.anchor_kind, index, rule, rule_id)
+        elif isinstance(rule, DeleteRegexRule):
+            _require_non_empty_target(rule.pattern, index, rule, rule_id, field="pattern")
+            if rule.flags & ~allowed_flag_mask:
+                raise ValidationError(
+                    "regex flags are not supported",
+                    details=_rule_details(
+                        index, rule, rule_id=rule_id, field="flags", flags=rule.flags
+                    ),
+                )
 
 
 def generate_patch(
@@ -258,27 +390,59 @@ def _parse_rules(
 
 def _parse_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> ReplaceRule:
     """Parse a replace rule definition."""
-    _ensure_only_keys(rule, {"type", "id", "anchor", "anchor_kind", "replacement", "meta"}, index, rule_id)
+    _ensure_only_keys(
+        rule,
+        {"type", "id", "description", "anchor", "anchor_kind", "replacement", "meta"},
+        index,
+        rule_id,
+    )
+    description = _parse_description(rule, index, rule_id)
     anchor = _require_non_empty_str(rule, "anchor", index)
     replacement = _require_non_empty_str(rule, "replacement", index)
     anchor_kind = _parse_anchor_kind(rule, index, rule_id)
     meta = _parse_meta(rule, index, rule_id)
-    return ReplaceRule(rule_id=rule_id, anchor=anchor, replacement=replacement, anchor_kind=anchor_kind, meta=meta)
+    return ReplaceRule(
+        rule_id=rule_id,
+        description=description,
+        anchor=anchor,
+        replacement=replacement,
+        anchor_kind=anchor_kind,
+        meta=meta,
+    )
 
 
 def _parse_insert_after(rule: Mapping[str, Any], index: int, rule_id: str) -> InsertAfterRule:
     """Parse an insert-after rule definition."""
-    _ensure_only_keys(rule, {"type", "id", "anchor", "anchor_kind", "content", "meta"}, index, rule_id)
+    _ensure_only_keys(
+        rule,
+        {"type", "id", "description", "anchor", "anchor_kind", "content", "meta"},
+        index,
+        rule_id,
+    )
+    description = _parse_description(rule, index, rule_id)
     anchor = _require_non_empty_str(rule, "anchor", index)
     content = _require_non_empty_str(rule, "content", index)
     anchor_kind = _parse_anchor_kind(rule, index, rule_id)
     meta = _parse_meta(rule, index, rule_id)
-    return InsertAfterRule(rule_id=rule_id, anchor=anchor, content=content, anchor_kind=anchor_kind, meta=meta)
+    return InsertAfterRule(
+        rule_id=rule_id,
+        description=description,
+        anchor=anchor,
+        content=content,
+        anchor_kind=anchor_kind,
+        meta=meta,
+    )
 
 
 def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> DeleteRegexRule:
     """Parse a delete-regex rule definition."""
-    _ensure_only_keys(rule, {"type", "id", "pattern", "flags", "meta"}, index, rule_id)
+    _ensure_only_keys(
+        rule,
+        {"type", "id", "description", "pattern", "flags", "meta"},
+        index,
+        rule_id,
+    )
+    description = _parse_description(rule, index, rule_id)
     pattern = _require_non_empty_str(rule, "pattern", index)
     flags = rule.get("flags", [])
     if not isinstance(flags, Sequence) or isinstance(flags, (str, bytes)):
@@ -307,7 +471,13 @@ def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> De
             details=_rule_details(index, rule, rule_id=rule_id, message=str(exc)),
         ) from exc
     meta = _parse_meta(rule, index, rule_id)
-    return DeleteRegexRule(rule_id=rule_id, pattern=pattern, flags=compiled_flags, meta=meta)
+    return DeleteRegexRule(
+        rule_id=rule_id,
+        description=description,
+        pattern=pattern,
+        flags=compiled_flags,
+        meta=meta,
+    )
 
 
 _FLAG_MAP = {
@@ -346,6 +516,55 @@ def _require_non_empty_str(rule: Mapping[str, Any], field: str, index: int) -> s
             details=_rule_details(index, rule, field=field),
         )
     return value
+
+
+def _parse_description(rule: Mapping[str, Any], index: int, rule_id: str) -> str:
+    """Parse an optional description field."""
+    if "description" not in rule:
+        return ""
+    description = rule.get("description")
+    if not isinstance(description, str):
+        raise PatchRuleError(
+            "description must be a string",
+            details=_rule_details(index, rule, rule_id=rule_id, field="description"),
+        )
+    if not description.strip():
+        raise PatchRuleError(
+            "description must be a non-empty string",
+            details=_rule_details(index, rule, rule_id=rule_id, field="description"),
+        )
+    return description
+
+
+def _require_non_empty_target(
+    target: str,
+    index: int,
+    rule: Rule,
+    rule_id: str,
+    *,
+    field: str,
+) -> None:
+    """Ensure a rule target string is non-empty."""
+    if not isinstance(target, str) or not target.strip():
+        raise ValidationError(
+            f"{field} must be a non-empty string",
+            details=_rule_details(index, rule, rule_id=rule_id, field=field),
+        )
+
+
+def _validate_anchor(
+    anchor: str,
+    anchor_kind: str,
+    index: int,
+    rule: Rule,
+    rule_id: str,
+) -> None:
+    """Ensure anchors are deterministic and unambiguous."""
+    if anchor_kind == "regex" and not (anchor.startswith("^") and anchor.endswith("$")):
+        raise ValidationError(
+            "regex anchors must be fully anchored with ^ and $",
+            details=_rule_details(index, rule, rule_id=rule_id, anchor=anchor),
+        )
 
 
 def _parse_anchor_kind(rule: Mapping[str, Any], index: int, rule_id: str) -> str:
