@@ -6,7 +6,13 @@ import logging
 from typing import Any
 
 from menace.core.workflow_runner import run_workflow
-from menace.errors.exceptions import ConfigError, MenaceError, OrchestratorError, WorkflowValidationError
+from menace.errors.exceptions import (
+    ConfigError,
+    MenaceError,
+    OrchestratorError,
+    WorkflowExecutionError,
+    WorkflowValidationError,
+)
 from menace.infra.config_loader import load_config as load_infra_config
 
 logger = logging.getLogger(__name__)
@@ -99,7 +105,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
 
     Returns:
         A dictionary with the schema:
-        - ``status``: ``ok`` | ``error``
+        - ``status``: ``ok`` | ``partial_failure`` | ``error``
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
         - ``meta``: counts + status summary + config validation metadata
@@ -191,25 +197,25 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 workflow_status = result.get("status")
                 workflow_errors = result.get("errors", [])
                 workflow_meta = result.get("meta", {})
-                partial_failure = bool(workflow_errors) or bool(workflow_meta.get("partial_failure"))
-                if workflow_status == "ok" and not partial_failure:
+                if workflow_status == "ok":
                     ok_count += 1
                 else:
                     error_count += 1
+                    error = WorkflowExecutionError(
+                        message="Workflow completed with errors.",
+                        details={
+                            "workflow_id": workflow_id,
+                            "index": index,
+                            "status": workflow_status,
+                            "errors": workflow_errors,
+                            "meta": workflow_meta,
+                        },
+                    )
                     errors.append(
                         {
                             "workflow_id": workflow_id,
                             "index": index,
-                            "error": {
-                                "error_type": "WorkflowError",
-                                "message": "Workflow completed with errors.",
-                                "details": {
-                                    "workflow_id": workflow_id,
-                                    "index": index,
-                                    "errors": workflow_errors,
-                                    "meta": workflow_meta,
-                                },
-                            },
+                            "error": _error_payload(error),
                         }
                     )
             except MenaceError as exc:
@@ -257,6 +263,9 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
 
 
 def _derive_status(ok_count: int, error_count: int) -> str:
+    """Return aggregate status based on success/failure counts."""
+    if ok_count and error_count:
+        return "partial_failure"
     if error_count:
         return "error"
     if ok_count:
