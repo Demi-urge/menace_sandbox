@@ -63,7 +63,10 @@ def log_event(
     Args:
         logger: Logger obtained from ``get_logger(...)[\"data\"][\"logger\"]``.
         event: Event identifier or message to emit.
-        context: Optional structured context for the log entry.
+        context: Optional structured context for the log entry. If ``context``
+            includes a ``timestamp`` key, it must be a valid ISO-8601 string
+            with timezone information and will be normalized to UTC for the
+            structured payload; otherwise no timestamp field is emitted.
 
     Returns:
         A dict with schema:
@@ -76,7 +79,8 @@ def log_event(
 
     Raises:
         LoggingError: If ``event`` is empty, ``logger`` is invalid, or
-            ``context`` is not a mapping with string keys.
+            ``context`` is not a mapping with string keys. Invalid timestamps
+            in ``context`` also raise ``LoggingError``.
     """
 
     if not isinstance(logger, logging.Logger):
@@ -107,12 +111,16 @@ class _StructuredFormatter(logging.Formatter):
     """Formatter that renders log records as deterministic JSON."""
 
     def format(self, record: logging.LogRecord) -> str:
+        raw_context = getattr(record, "context", {})
+        context = dict(raw_context) if isinstance(raw_context, Mapping) else {}
+        timestamp = context.pop("timestamp", None)
         payload: dict[str, Any] = {
-            "timestamp": _format_timestamp(record.created),
             "level": record.levelname.lower(),
             "event": getattr(record, "event", record.getMessage()),
-            "context": getattr(record, "context", {}),
+            "context": context,
         }
+        if timestamp is not None:
+            payload["timestamp"] = timestamp
 
         return json.dumps(
             payload,
@@ -158,9 +166,11 @@ def _normalize_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
 
     Raises:
         LoggingError: If ``context`` is not a mapping or contains invalid keys.
+            Invalid ``timestamp`` values also raise ``LoggingError``.
 
     Invariants:
         - Context keys must be non-empty strings.
+        - ``timestamp`` values are normalized to UTC ISO-8601 strings.
         - No mutation of the input mapping occurs.
         - Deterministic for identical input mappings.
     """
@@ -180,7 +190,10 @@ def _normalize_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
                 "Context keys must be non-empty strings.",
                 details={"context_key": key},
             )
-        normalized[key] = value
+        if key == "timestamp":
+            normalized[key] = _normalize_timestamp(value)
+        else:
+            normalized[key] = value
     return normalized
 
 
@@ -202,3 +215,37 @@ def _format_timestamp(created: float) -> str:
     """
 
     return datetime.fromtimestamp(created, tz=timezone.utc).isoformat()
+
+
+def _normalize_timestamp(value: Any) -> str:
+    """Normalize a caller-provided timestamp into UTC ISO-8601 format.
+
+    Args:
+        value (Any): Timestamp value expected to be an ISO-8601 string with tzinfo.
+
+    Returns:
+        str: Normalized ISO-8601 timestamp in UTC with timezone offset.
+
+    Raises:
+        LoggingError: If the timestamp is not a valid ISO-8601 string with tzinfo.
+    """
+
+    if not isinstance(value, str) or not value:
+        raise LoggingError(
+            "Timestamp must be a non-empty ISO-8601 string with timezone data.",
+            details={"timestamp_type": type(value).__name__},
+        )
+    candidate = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise LoggingError(
+            "Timestamp must be a valid ISO-8601 string with timezone data.",
+            details={"timestamp": value},
+        ) from exc
+    if parsed.tzinfo is None:
+        raise LoggingError(
+            "Timestamp must include timezone information.",
+            details={"timestamp": value},
+        )
+    return parsed.astimezone(timezone.utc).isoformat()
