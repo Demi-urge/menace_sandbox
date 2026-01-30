@@ -47,7 +47,10 @@ def load_config(config: dict[str, Any]) -> dict[str, Any]:
         - ``status`` (str): ``"ok"`` when validation succeeds.
         - ``data`` (dict): The validated configuration.
         - ``errors`` (list): Empty list for successful loads.
-        - ``meta`` (dict): Metadata about validation and schema expectations.
+        - ``metadata`` (dict): Metadata about validation and schema expectations.
+            - ``required_keys`` (list[str]): Required config keys.
+            - ``validated_keys`` (list[str]): Required keys validated in this payload.
+            - ``extra_keys`` (list[str]): Extra keys provided beyond the required schema.
 
     Raises:
         ConfigError: If the config mapping is missing, invalid, has ``None``
@@ -100,7 +103,7 @@ def load_config(config: dict[str, Any]) -> dict[str, Any]:
     extra_keys = sorted(key for key in config.keys() if key not in _REQUIRED_SCHEMA)
     normalized_data = {**required_data, **{key: config[key] for key in extra_keys}}
 
-    meta = {
+    metadata = {
         "required_keys": list(_REQUIRED_SCHEMA.keys()),
         "validated_keys": sorted(_REQUIRED_SCHEMA.keys()),
         "extra_keys": extra_keys,
@@ -110,5 +113,5 @@ def load_config(config: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "data": normalized_data,
         "errors": [],
-        "meta": meta,
+        "metadata": metadata,
     }
