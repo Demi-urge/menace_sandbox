@@ -199,6 +199,7 @@ def validate_rules(rules: list[Rule]) -> None:
         )
 
     allowed_flag_mask = re.IGNORECASE | re.MULTILINE | re.DOTALL
+    seen_rule_ids: dict[str, int] = {}
     for index, rule in enumerate(rules):
         if not isinstance(rule, (ReplaceRule, InsertAfterRule, DeleteRegexRule)):
             raise PatchRuleError(
@@ -212,6 +213,17 @@ def validate_rules(rules: list[Rule]) -> None:
                 "rule_id is required",
                 details=_rule_details(index, rule, field="rule_id"),
             )
+        prior_index = seen_rule_ids.get(rule_id)
+        if prior_index is not None:
+            raise PatchRuleError(
+                "duplicate rule_id detected",
+                details={
+                    "rule_id": rule_id,
+                    "rule_index": index,
+                    "prior_index": prior_index,
+                },
+            )
+        seen_rule_ids[rule_id] = index
         if not isinstance(rule.description, str) or not rule.description.strip():
             raise PatchRuleError(
                 "description is required",
