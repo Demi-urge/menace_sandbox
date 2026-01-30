@@ -6,15 +6,51 @@ import ast
 import difflib
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-from menace.errors.exceptions import MenaceError, ValidationError
+from menace.errors import MenaceError, ValidationError
 
 
-@dataclass
-class _Line:
-    text: str
-    modified_by: str | None = None
+@dataclass(frozen=True)
+class ReplaceRule:
+    rule_id: str
+    anchor: str
+    replacement: str
+    anchor_kind: str
+    meta: Mapping[str, Any] | None
+
+
+@dataclass(frozen=True)
+class InsertAfterRule:
+    rule_id: str
+    anchor: str
+    content: str
+    anchor_kind: str
+    meta: Mapping[str, Any] | None
+
+
+@dataclass(frozen=True)
+class DeleteRegexRule:
+    rule_id: str
+    pattern: str
+    flags: int
+    meta: Mapping[str, Any] | None
+
+
+@dataclass(frozen=True)
+class ResolvedRule:
+    rule_id: str
+    rule_type: str
+    anchor: str
+    anchor_kind: str
+    start: int
+    end: int
+    replacement: str
+    index: int
+    line_start: int
+    line_end: int
+    col_start: int
+    col_end: int
 
 
 def generate_patch(
@@ -22,56 +58,66 @@ def generate_patch(
     error_report: Mapping[str, Any],
     rules: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Apply deterministic, line-based patch rules and return a structured result."""
+    """Apply deterministic patch rules and return a structured result."""
+    _validate_inputs(source, error_report, rules)
+    parsed_rules = _parse_rules(rules)
+    line_index = _build_line_index(source)
 
-    try:
-        _validate_inputs(source, error_report, rules)
-        validated_rules = _validate_rules(rules)
-        original_lines = source.splitlines()
-        trailing_newline = source.endswith("\n")
-        line_state = [_Line(text=line) for line in original_lines]
+    resolved_rules = [
+        _resolve_rule(source, rule, index, line_index) for index, rule in enumerate(parsed_rules)
+    ]
 
-        applied_rule_ids: list[str] = []
-        change_summary = {"inserted": 0, "deleted": 0, "replaced": 0}
+    conflict_error = _detect_conflicts(resolved_rules)
+    if conflict_error:
+        return _failure_result([conflict_error], meta=_base_meta(resolved_rules, syntax_valid=None))
 
-        for rule in validated_rules:
-            _apply_rule(line_state, rule, change_summary)
-            applied_rule_ids.append(rule["id"])
+    updated_source = _apply_edits(source, resolved_rules)
+    patch_text = _build_diff(source, updated_source)
 
-        updated_source = _join_lines(line_state, trailing_newline)
-        diff_text = _build_diff(source, updated_source)
+    syntax_error = _check_syntax(updated_source, error_report, parsed_rules)
+    syntax_valid = syntax_error is None
+    errors: list[dict[str, Any]] = []
+    if syntax_error:
+        errors.append(syntax_error.to_dict())
 
-        syntax_error = _check_syntax(updated_source, error_report, validated_rules)
-
-        errors: list[dict[str, Any]] = []
-        status = "success"
-        if syntax_error:
-            errors.append(syntax_error.to_dict())
-            status = "failed"
-
-        return {
-            "status": status,
-            "data": {
-                "diff": diff_text,
-                "source": updated_source,
-            },
-            "errors": errors,
-            "meta": {
-                "applied_rules": list(applied_rule_ids),
-                "line_counts": {
-                    "before": len(original_lines),
-                    "after": len(line_state),
-                },
-                "change_summary": dict(change_summary),
-            },
+    data = {
+        "patch_text": patch_text,
+        "modified_source": updated_source,
+        "applied_rules": _serialize_rules(resolved_rules),
+    }
+    meta = _base_meta(resolved_rules, syntax_valid=syntax_valid)
+    meta.update(
+        {
+            "rule_count": len(parsed_rules),
+            "changed_line_count": _count_changed_lines(patch_text),
+            "anchor_resolutions": _serialize_anchor_resolutions(resolved_rules),
         }
-    except MenaceError as error:
-        return {
-            "status": "failed",
-            "data": {},
-            "errors": [error.to_dict()],
-            "meta": {},
-        }
+    )
+
+    status = "ok" if not errors else "error"
+    return {
+        "status": status,
+        "data": data,
+        "errors": errors,
+        "meta": meta,
+    }
+
+
+def _failure_result(
+    errors: Sequence[dict[str, Any]],
+    *,
+    meta: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "data": {
+            "patch_text": "",
+            "modified_source": "",
+            "applied_rules": [],
+        },
+        "errors": list(errors),
+        "meta": dict(meta),
+    }
 
 
 def _validate_inputs(
@@ -96,8 +142,8 @@ def _validate_inputs(
         )
 
 
-def _validate_rules(rules: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    validated: list[dict[str, Any]] = []
+def _parse_rules(rules: Sequence[Mapping[str, Any]]) -> list[ReplaceRule | InsertAfterRule | DeleteRegexRule]:
+    parsed: list[ReplaceRule | InsertAfterRule | DeleteRegexRule] = []
     seen_ids: set[str] = set()
     for index, rule in enumerate(rules):
         if not isinstance(rule, Mapping):
@@ -105,77 +151,53 @@ def _validate_rules(rules: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "rule must be a mapping",
                 details={"index": index, "expected": "mapping"},
             )
-        rule_type = rule.get("type")
-        if rule_type not in {"replace", "insert_after", "insert_before", "delete_regex"}:
-            raise ValidationError(
-                "Unknown rule type",
-                details={
-                    "index": index,
-                    "rule_type": rule_type,
-                    "supported_types": [
-                        "delete_regex",
-                        "insert_after",
-                        "insert_before",
-                        "replace",
-                    ],
-                },
-            )
-        rule_id = rule.get("id") or f"rule-{index + 1}"
-        if not isinstance(rule_id, str):
-            raise ValidationError(
-                "rule id must be a string",
-                details={"index": index, "field": "id"},
-            )
+        rule_type = _require_non_empty_str(rule, "type", index)
+        rule_id = _require_non_empty_str(rule, "id", index)
         if rule_id in seen_ids:
             raise ValidationError(
                 "rule id must be unique",
                 details={"index": index, "id": rule_id},
             )
         seen_ids.add(rule_id)
-        validator = _RULE_VALIDATORS[rule_type]
-        validated_rule = validator(rule, index, rule_id)
-        validated.append(validated_rule)
-    return validated
+        if rule_type == "replace":
+            parsed.append(_parse_replace(rule, index, rule_id))
+        elif rule_type == "insert_after":
+            parsed.append(_parse_insert_after(rule, index, rule_id))
+        elif rule_type == "delete_regex":
+            parsed.append(_parse_delete_regex(rule, index, rule_id))
+        else:
+            raise ValidationError(
+                "Unknown rule type",
+                details={
+                    "index": index,
+                    "rule_type": rule_type,
+                    "supported_types": ["delete_regex", "insert_after", "replace"],
+                },
+            )
+    return parsed
 
 
-def _validate_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> dict[str, Any]:
-    _ensure_only_keys(rule, {"type", "id", "line", "content", "meta"}, index, rule_id)
-    line = _require_line(rule, index, rule_id)
-    content = rule.get("content")
-    if not isinstance(content, str):
-        raise ValidationError(
-            "replace content must be a string",
-            details={"index": index, "id": rule_id, "field": "content"},
-        )
-    return {"type": "replace", "id": rule_id, "line": line, "content": content, "meta": rule.get("meta")}
+def _parse_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> ReplaceRule:
+    _ensure_only_keys(rule, {"type", "id", "anchor", "anchor_kind", "replacement", "meta"}, index, rule_id)
+    anchor = _require_non_empty_str(rule, "anchor", index)
+    replacement = _require_non_empty_str(rule, "replacement", index)
+    anchor_kind = _parse_anchor_kind(rule, index, rule_id)
+    meta = _parse_meta(rule, index, rule_id)
+    return ReplaceRule(rule_id=rule_id, anchor=anchor, replacement=replacement, anchor_kind=anchor_kind, meta=meta)
 
 
-def _validate_insert(rule: Mapping[str, Any], index: int, rule_id: str) -> dict[str, Any]:
-    _ensure_only_keys(rule, {"type", "id", "line", "content", "meta"}, index, rule_id)
-    line = _require_line(rule, index, rule_id)
-    content = rule.get("content")
-    if not isinstance(content, str):
-        raise ValidationError(
-            "insert content must be a string",
-            details={"index": index, "id": rule_id, "field": "content"},
-        )
-    return {
-        "type": rule["type"],
-        "id": rule_id,
-        "line": line,
-        "content": content,
-        "meta": rule.get("meta"),
-    }
+def _parse_insert_after(rule: Mapping[str, Any], index: int, rule_id: str) -> InsertAfterRule:
+    _ensure_only_keys(rule, {"type", "id", "anchor", "anchor_kind", "content", "meta"}, index, rule_id)
+    anchor = _require_non_empty_str(rule, "anchor", index)
+    content = _require_non_empty_str(rule, "content", index)
+    anchor_kind = _parse_anchor_kind(rule, index, rule_id)
+    meta = _parse_meta(rule, index, rule_id)
+    return InsertAfterRule(rule_id=rule_id, anchor=anchor, content=content, anchor_kind=anchor_kind, meta=meta)
 
 
-def _validate_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> dict[str, Any]:
+def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> DeleteRegexRule:
     _ensure_only_keys(rule, {"type", "id", "pattern", "flags", "meta"}, index, rule_id)
-    pattern = rule.get("pattern")
-    if not isinstance(pattern, str):
-        raise ValidationError(
-            "delete_regex pattern must be a string",
-            details={"index": index, "id": rule_id, "field": "pattern"},
-        )
+    pattern = _require_non_empty_str(rule, "pattern", index)
     flags = rule.get("flags", [])
     if not isinstance(flags, Sequence) or isinstance(flags, (str, bytes)):
         raise ValidationError(
@@ -184,6 +206,11 @@ def _validate_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) ->
         )
     compiled_flags = 0
     for flag in flags:
+        if not isinstance(flag, str) or not flag.strip():
+            raise ValidationError(
+                "delete_regex flag must be a non-empty string",
+                details={"index": index, "id": rule_id, "flag": flag},
+            )
         if flag not in {"IGNORECASE", "MULTILINE", "DOTALL"}:
             raise ValidationError(
                 "delete_regex flag is invalid",
@@ -197,21 +224,9 @@ def _validate_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) ->
             "delete_regex pattern is invalid",
             details={"index": index, "id": rule_id, "message": str(exc)},
         ) from exc
-    return {
-        "type": "delete_regex",
-        "id": rule_id,
-        "pattern": pattern,
-        "flags": compiled_flags,
-        "meta": rule.get("meta"),
-    }
+    meta = _parse_meta(rule, index, rule_id)
+    return DeleteRegexRule(rule_id=rule_id, pattern=pattern, flags=compiled_flags, meta=meta)
 
-
-_RULE_VALIDATORS = {
-    "replace": _validate_replace,
-    "insert_after": _validate_insert,
-    "insert_before": _validate_insert,
-    "delete_regex": _validate_delete_regex,
-}
 
 _FLAG_MAP = {
     "IGNORECASE": re.IGNORECASE,
@@ -234,128 +249,232 @@ def _ensure_only_keys(
         )
 
 
-def _require_line(rule: Mapping[str, Any], index: int, rule_id: str) -> int:
-    line = rule.get("line")
-    if not isinstance(line, int):
+def _require_non_empty_str(rule: Mapping[str, Any], field: str, index: int) -> str:
+    value = rule.get(field)
+    if not isinstance(value, str):
         raise ValidationError(
-            "rule line must be an integer",
-            details={"index": index, "id": rule_id, "field": "line"},
+            f"{field} must be a string",
+            details={"index": index, "field": field},
         )
-    if line < 1:
+    if not value.strip():
         raise ValidationError(
-            "rule line must be >= 1",
-            details={"index": index, "id": rule_id, "line": line},
+            f"{field} must be a non-empty string",
+            details={"index": index, "field": field},
         )
-    return line
+    return value
 
 
-def _apply_rule(
-    lines: list[_Line],
-    rule: Mapping[str, Any],
-    change_summary: dict[str, int],
-) -> None:
-    rule_type = rule["type"]
-    if rule_type == "replace":
-        _apply_replace(lines, rule, change_summary)
-    elif rule_type == "insert_after":
-        _apply_insert(lines, rule, change_summary, after=True)
-    elif rule_type == "insert_before":
-        _apply_insert(lines, rule, change_summary, after=False)
-    elif rule_type == "delete_regex":
-        _apply_delete_regex(lines, rule, change_summary)
+def _parse_anchor_kind(rule: Mapping[str, Any], index: int, rule_id: str) -> str:
+    anchor_kind = rule.get("anchor_kind", "literal")
+    if not isinstance(anchor_kind, str) or not anchor_kind.strip():
+        raise ValidationError(
+            "anchor_kind must be a non-empty string",
+            details={"index": index, "id": rule_id, "field": "anchor_kind"},
+        )
+    if anchor_kind not in {"literal", "regex"}:
+        raise ValidationError(
+            "anchor_kind must be literal or regex",
+            details={"index": index, "id": rule_id, "anchor_kind": anchor_kind},
+        )
+    return anchor_kind
+
+
+def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[str, Any] | None:
+    if "meta" not in rule:
+        return None
+    meta = rule.get("meta")
+    if not isinstance(meta, Mapping):
+        raise ValidationError(
+            "meta must be a mapping",
+            details={"index": index, "id": rule_id, "field": "meta"},
+        )
+    return meta
+
+
+def _resolve_rule(
+    source: str,
+    rule: ReplaceRule | InsertAfterRule | DeleteRegexRule,
+    index: int,
+    line_index: list[int],
+) -> ResolvedRule:
+    if isinstance(rule, ReplaceRule):
+        start, end = _resolve_anchor(source, rule.anchor, rule.anchor_kind, rule.rule_id)
+        return _build_resolved_rule(
+            rule.rule_id,
+            "replace",
+            rule.anchor,
+            rule.anchor_kind,
+            start,
+            end,
+            rule.replacement,
+            index,
+            line_index,
+        )
+    if isinstance(rule, InsertAfterRule):
+        start, end = _resolve_anchor(source, rule.anchor, rule.anchor_kind, rule.rule_id)
+        return _build_resolved_rule(
+            rule.rule_id,
+            "insert_after",
+            rule.anchor,
+            rule.anchor_kind,
+            end,
+            end,
+            rule.content,
+            index,
+            line_index,
+        )
+    if isinstance(rule, DeleteRegexRule):
+        start, end = _resolve_regex(source, rule.pattern, rule.flags, rule.rule_id)
+        return _build_resolved_rule(
+            rule.rule_id,
+            "delete_regex",
+            rule.pattern,
+            "regex",
+            start,
+            end,
+            "",
+            index,
+            line_index,
+        )
+    raise ValidationError(
+        "Unknown rule type",
+        details={"id": getattr(rule, "rule_id", None)},
+    )
+
+
+def _resolve_anchor(source: str, anchor: str, anchor_kind: str, rule_id: str) -> tuple[int, int]:
+    if anchor_kind == "literal":
+        matches = _find_literal_matches(source, anchor)
     else:
+        matches = _find_regex_matches(source, anchor, 0)
+    return _select_single_match(matches, rule_id, anchor)
+
+
+def _resolve_regex(source: str, pattern: str, flags: int, rule_id: str) -> tuple[int, int]:
+    matches = _find_regex_matches(source, pattern, flags)
+    return _select_single_match(matches, rule_id, pattern)
+
+
+def _find_literal_matches(text: str, anchor: str) -> list[tuple[int, int]]:
+    matches: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        idx = text.find(anchor, start)
+        if idx == -1:
+            break
+        matches.append((idx, idx + len(anchor)))
+        start = idx + 1
+    return matches
+
+
+def _find_regex_matches(text: str, pattern: str, flags: int) -> list[tuple[int, int]]:
+    compiled = re.compile(pattern, flags)
+    return [(match.start(), match.end()) for match in compiled.finditer(text)]
+
+
+def _select_single_match(
+    matches: Sequence[tuple[int, int]],
+    rule_id: str,
+    anchor: str,
+) -> tuple[int, int]:
+    if not matches:
         raise ValidationError(
-            "Unknown rule type",
-            details={"id": rule.get("id"), "rule_type": rule_type},
+            "anchor not found",
+            details={"id": rule_id, "anchor": anchor},
         )
-
-
-def _apply_replace(
-    lines: list[_Line],
-    rule: Mapping[str, Any],
-    change_summary: dict[str, int],
-) -> None:
-    line_number = rule["line"]
-    index = line_number - 1
-    if index < 0 or index >= len(lines):
+    if len(matches) > 1:
         raise ValidationError(
-            "replace line is out of range",
-            details={"id": rule["id"], "line": line_number, "line_count": len(lines)},
+            "anchor is ambiguous",
+            details={"id": rule_id, "anchor": anchor, "match_count": len(matches)},
         )
-    line = lines[index]
-    if line.modified_by and line.modified_by != rule["id"]:
-        raise ValidationError(
-            "replace conflicts with previous rule",
-            details={
-                "id": rule["id"],
-                "line": line_number,
-                "conflicting_rule_id": line.modified_by,
-            },
-        )
-    replacement_lines = [_Line(text=text, modified_by=rule["id"]) for text in _split_content(rule["content"]) or [""]]
-    lines[index : index + 1] = replacement_lines
-    change_summary["replaced"] += 1
-    if len(replacement_lines) > 1:
-        change_summary["inserted"] += len(replacement_lines) - 1
+    return matches[0]
 
 
-def _apply_insert(
-    lines: list[_Line],
-    rule: Mapping[str, Any],
-    change_summary: dict[str, int],
-    *,
-    after: bool,
-) -> None:
-    line_number = rule["line"]
-    index = line_number if after else line_number - 1
-    if line_number < 1 or line_number > len(lines):
-        raise ValidationError(
-            "insert anchor is out of range",
-            details={"id": rule["id"], "line": line_number, "line_count": len(lines)},
-        )
-    insertion = [_Line(text=text, modified_by=rule["id"]) for text in _split_content(rule["content"]) or [""]]
-    lines[index:index] = insertion
-    change_summary["inserted"] += len(insertion)
+def _build_resolved_rule(
+    rule_id: str,
+    rule_type: str,
+    anchor: str,
+    anchor_kind: str,
+    start: int,
+    end: int,
+    replacement: str,
+    index: int,
+    line_index: list[int],
+) -> ResolvedRule:
+    line_start, col_start = _line_and_column(line_index, start)
+    line_end, col_end = _line_and_column(line_index, end)
+    return ResolvedRule(
+        rule_id=rule_id,
+        rule_type=rule_type,
+        anchor=anchor,
+        anchor_kind=anchor_kind,
+        start=start,
+        end=end,
+        replacement=replacement,
+        index=index,
+        line_start=line_start,
+        line_end=line_end,
+        col_start=col_start,
+        col_end=col_end,
+    )
 
 
-def _apply_delete_regex(
-    lines: list[_Line],
-    rule: Mapping[str, Any],
-    change_summary: dict[str, int],
-) -> None:
-    pattern = re.compile(rule["pattern"], rule["flags"])
-    conflicts: list[dict[str, Any]] = []
-    indices_to_delete: list[int] = []
-    for idx, line in enumerate(lines):
-        if pattern.search(line.text):
-            if line.modified_by and line.modified_by != rule["id"]:
-                conflicts.append(
-                    {
-                        "line": idx + 1,
-                        "conflicting_rule_id": line.modified_by,
-                    }
+def _line_and_column(line_index: Sequence[int], offset: int) -> tuple[int, int]:
+    line_number = 1
+    for idx, line_start in enumerate(line_index):
+        if line_start > offset:
+            line_number = idx
+            break
+        line_number = idx + 1
+    line_start = line_index[line_number - 1] if line_number - 1 < len(line_index) else 0
+    return line_number, offset - line_start
+
+
+def _build_line_index(text: str) -> list[int]:
+    indices = [0]
+    for idx, char in enumerate(text):
+        if char == "\n":
+            indices.append(idx + 1)
+    return indices
+
+
+def _detect_conflicts(resolved_rules: Sequence[ResolvedRule]) -> dict[str, Any] | None:
+    for idx, rule in enumerate(resolved_rules):
+        for other in resolved_rules[idx + 1 :]:
+            if _rules_conflict(rule, other):
+                error = ValidationError(
+                    "conflicting edits detected",
+                    details={
+                        "rule_id": rule.rule_id,
+                        "conflicting_rule_id": other.rule_id,
+                        "span": [rule.start, rule.end],
+                        "conflicting_span": [other.start, other.end],
+                    },
                 )
-            else:
-                indices_to_delete.append(idx)
-    if conflicts:
-        raise ValidationError(
-            "delete_regex conflicts with previous rule",
-            details={"id": rule["id"], "conflicts": conflicts},
-        )
-    for idx in reversed(indices_to_delete):
-        del lines[idx]
-    change_summary["deleted"] += len(indices_to_delete)
+                return error.to_dict()
+    return None
 
 
-def _split_content(content: str) -> list[str]:
-    return content.splitlines()
+def _rules_conflict(first: ResolvedRule, second: ResolvedRule) -> bool:
+    if first.start == first.end and second.start == second.end:
+        return first.start == second.start
+    if first.start == first.end:
+        return second.start <= first.start <= second.end
+    if second.start == second.end:
+        return first.start <= second.start <= first.end
+    return not (first.end <= second.start or second.end <= first.start)
 
 
-def _join_lines(lines: Iterable[_Line], trailing_newline: bool) -> str:
-    text = "\n".join(line.text for line in lines)
-    if trailing_newline:
-        return text + "\n"
-    return text
+def _apply_edits(source: str, resolved_rules: Sequence[ResolvedRule]) -> str:
+    ordered = sorted(resolved_rules, key=lambda rule: (rule.start, rule.index))
+    offset = 0
+    updated = source
+    for rule in ordered:
+        start = rule.start + offset
+        end = rule.end + offset
+        updated = updated[:start] + rule.replacement + updated[end:]
+        offset += len(rule.replacement) - (rule.end - rule.start)
+    return updated
 
 
 def _build_diff(before: str, after: str) -> str:
@@ -378,11 +497,64 @@ def _lines_for_diff(text: str) -> list[str]:
     return [f"{line}\n" for line in lines]
 
 
+def _serialize_rules(resolved_rules: Sequence[ResolvedRule]) -> list[dict[str, Any]]:
+    ordered = sorted(resolved_rules, key=lambda rule: rule.index)
+    return [
+        {
+            "id": rule.rule_id,
+            "type": rule.rule_type,
+            "anchor": rule.anchor,
+            "anchor_kind": rule.anchor_kind,
+            "span": {"start": rule.start, "end": rule.end},
+            "line_offsets": {
+                "start_line": rule.line_start,
+                "start_col": rule.col_start,
+                "end_line": rule.line_end,
+                "end_col": rule.col_end,
+            },
+        }
+        for rule in ordered
+    ]
+
+
+def _serialize_anchor_resolutions(resolved_rules: Sequence[ResolvedRule]) -> list[dict[str, Any]]:
+    ordered = sorted(resolved_rules, key=lambda rule: rule.index)
+    return [
+        {
+            "id": rule.rule_id,
+            "start": rule.start,
+            "end": rule.end,
+            "start_line": rule.line_start,
+            "end_line": rule.line_end,
+        }
+        for rule in ordered
+    ]
+
+
+def _count_changed_lines(patch_text: str) -> int:
+    count = 0
+    for line in patch_text.splitlines():
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+            continue
+        if line.startswith("+") or line.startswith("-"):
+            count += 1
+    return count
+
+
+def _base_meta(resolved_rules: Sequence[ResolvedRule], *, syntax_valid: bool | None) -> dict[str, Any]:
+    return {
+        "rule_count": len(resolved_rules),
+        "changed_line_count": 0,
+        "anchor_resolutions": _serialize_anchor_resolutions(resolved_rules),
+        "syntax_valid": syntax_valid,
+    }
+
+
 def _check_syntax(
     source: str,
     error_report: Mapping[str, Any],
-    rules: Sequence[Mapping[str, Any]],
-) -> ValidationError | None:
+    rules: Sequence[ReplaceRule | InsertAfterRule | DeleteRegexRule],
+) -> MenaceError | None:
     language = _detect_language(error_report, rules)
     if language != "python":
         return None
@@ -403,27 +575,24 @@ def _check_syntax(
 
 def _detect_language(
     error_report: Mapping[str, Any],
-    rules: Sequence[Mapping[str, Any]],
+    rules: Sequence[ReplaceRule | InsertAfterRule | DeleteRegexRule],
 ) -> str | None:
     candidates: list[str] = []
     for key in ("language", "lang"):
         value = error_report.get(key)
-        if isinstance(value, str):
+        if isinstance(value, str) and value.strip():
             candidates.append(value)
     meta = error_report.get("meta")
     if isinstance(meta, Mapping):
         value = meta.get("language")
-        if isinstance(value, str):
+        if isinstance(value, str) and value.strip():
             candidates.append(value)
     file_path = error_report.get("file_path")
     if isinstance(file_path, str) and file_path.endswith(".py"):
         candidates.append("python")
     for rule in rules:
-        meta = rule.get("meta")
-        if isinstance(meta, Mapping):
-            value = meta.get("language")
-            if isinstance(value, str):
-                candidates.append(value)
+        if rule.meta and isinstance(rule.meta.get("language"), str):
+            candidates.append(rule.meta["language"])
     for candidate in candidates:
         normalized = candidate.strip().lower()
         if normalized in {"python", "py"}:
