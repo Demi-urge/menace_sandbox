@@ -46,21 +46,35 @@ class StabilizationLoggingWrapper:
         )
 
     def log_validation(
-        self, *, ok: bool, reason: str | None, diagnostics_count: int
+        self,
+        *,
+        ok: bool,
+        reason: str | None,
+        diagnostics_count: int,
+        error_category: str | None = None,
     ) -> None:
         self._log(
             "stabilization.validation",
             ok=ok,
             reason=reason,
             diagnostics_count=diagnostics_count,
+            error_category=error_category,
         )
 
-    def log_handoff(self, *, ok: bool, error: str | None, reason: str | None) -> None:
+    def log_handoff(
+        self,
+        *,
+        ok: bool,
+        error: str | None,
+        reason: str | None,
+        error_category: str | None = None,
+    ) -> None:
         self._log(
             "stabilization.handoff",
             ok=ok,
             error=error,
             reason=reason,
+            error_category=error_category,
         )
 
     def close(self) -> None:
