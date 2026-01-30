@@ -456,15 +456,15 @@ def generate_patch(
 
     if not parsed_rules:
         error = PatchRuleError("rules must not be empty", details={"field": "rules"})
-        return {
-            "status": "error",
-            "data": {},
-            "errors": [error.to_dict()],
-            "meta": _build_meta(
+        return _failure_result(
+            [error.to_dict()],
+            meta=_build_meta(
                 rule_summaries=[],
                 applied_count=0,
+                anchor_resolutions=[],
+                syntax_valid=None,
             ),
-        }
+        )
     validate_rules(parsed_rules)
     rule_summaries = _summarize_rules(parsed_rules)
 
@@ -473,61 +473,70 @@ def generate_patch(
         result = apply_rules(source, parsed_rules)
     except PatchConflictError as exc:
         errors.append(exc.to_dict())
-        return {
-            "status": "error",
-            "data": {},
-            "errors": errors,
-            "meta": _build_meta(
+        return _failure_result(
+            errors,
+            meta=_build_meta(
                 rule_summaries=rule_summaries,
                 applied_count=0,
+                anchor_resolutions=[],
+                syntax_valid=None,
             ),
-        }
+        )
 
     try:
         patch_text = render_patch(result)
     except MenaceError as exc:
         errors.append(exc.to_dict())
-        return {
-            "status": "error",
-            "data": {},
-            "errors": errors,
-            "meta": _build_meta(
+        return _failure_result(
+            errors,
+            meta=_build_meta(
                 rule_summaries=rule_summaries,
                 applied_count=0,
+                anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
+                syntax_valid=None,
             ),
-        }
+        )
 
+    syntax_valid: bool | None = None
     if validate_syntax is not False:
-        syntax_error = _check_syntax(result.content, error_report, parsed_rules)
-        if syntax_error:
-            errors.append(syntax_error.to_dict())
+        detected_language = _detect_language(error_report, parsed_rules)
+        if detected_language and detected_language.strip().lower() == "python":
+            syntax_error = _check_syntax(
+                result.content,
+                error_report,
+                parsed_rules,
+                language=detected_language,
+            )
+            if syntax_error:
+                errors.append(syntax_error.to_dict())
+                syntax_valid = False
+            else:
+                syntax_valid = True
 
     status = "ok" if not errors else "error"
-    data: dict[str, object] = {}
-    if status == "ok":
-        data = {
-            "patch_text": patch_text,
-            "updated_source": result.content,
-            "applied_rules": _serialize_rules(result.resolved_rules),
-            "changes": [
-                {
-                    "id": change.rule_id,
-                    "type": change.rule_type,
-                    "description": change.description,
-                    "span": {"start": change.start, "end": change.end},
-                    "line_offsets": {
-                        "start_line": change.line_start,
-                        "start_col": change.col_start,
-                        "end_line": change.line_end,
-                        "end_col": change.col_end,
-                    },
-                    "before": change.before,
-                    "after": change.after,
-                }
-                for change in result.changes
-            ],
-            "audit_trail": [asdict(entry) for entry in result.audit_trail],
-        }
+    data: dict[str, object] = {
+        "patch_text": patch_text,
+        "updated_source": result.content,
+        "applied_rules": _serialize_rules(result.resolved_rules),
+        "changes": [
+            {
+                "id": change.rule_id,
+                "type": change.rule_type,
+                "description": change.description,
+                "span": {"start": change.start, "end": change.end},
+                "line_offsets": {
+                    "start_line": change.line_start,
+                    "start_col": change.col_start,
+                    "end_line": change.line_end,
+                    "end_col": change.col_end,
+                },
+                "before": change.before,
+                "after": change.after,
+            }
+            for change in result.changes
+        ],
+        "audit_trail": [asdict(entry) for entry in result.audit_trail],
+    }
 
     return {
         "status": status,
@@ -538,6 +547,7 @@ def generate_patch(
             applied_count=len(result.changes),
             anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
             changed_line_count=_count_changed_lines(patch_text),
+            syntax_valid=syntax_valid,
         ),
     }
 
@@ -595,6 +605,7 @@ def _build_meta(
     applied_count: int,
     anchor_resolutions: Sequence[Mapping[str, Any]] | None = None,
     changed_line_count: int = 0,
+    syntax_valid: bool | None = None,
 ) -> dict[str, Any]:
     """Build deterministic metadata for generate_patch."""
     return {
@@ -603,6 +614,7 @@ def _build_meta(
         "applied_count": applied_count,
         "anchor_resolutions": list(anchor_resolutions or []),
         "changed_line_count": changed_line_count,
+        "syntax_valid": syntax_valid,
     }
 
 
