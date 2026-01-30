@@ -13,6 +13,7 @@ class MvpResponseSchema(SimpleSchema):
     execution_error = fields.Str()
     evaluation_error = fields.Str()
     roi_score = fields.Float()
+    roi_delta = fields.Float()
     started_at = fields.Str()
     finished_at = fields.Str()
     duration_ms = fields.Int()
@@ -79,6 +80,7 @@ def normalize_mvp_response(payload: Mapping[str, Any] | None) -> dict[str, Any]:
         "execution_error": "",
         "evaluation_error": "",
         "roi_score": 0.0,
+        "roi_delta": 0.0,
         "started_at": "",
         "finished_at": "",
         "duration_ms": 0,

@@ -54,6 +54,7 @@ def execute_task(task_dict: dict) -> dict:
     execution_error = ""
     evaluation_error = ""
     roi_score = 0.0
+    roi_delta = 0.0
     success = False
     spec: _TaskSpec | None = None
     exec_stdout = ""
@@ -114,6 +115,7 @@ def execute_task(task_dict: dict) -> dict:
             except Exception as exc:  # pragma: no cover - defensive
                 evaluation_error = _sanitize_exception(exc)
                 roi_score = -1.0
+            roi_delta = float(roi_score)
 
         success = bool(spec and generated_code and not execution_error and not evaluation_error)
         finished_at = _now_iso8601()
@@ -134,6 +136,7 @@ def execute_task(task_dict: dict) -> dict:
             "execution_error": _sanitize_error_output(execution_error),
             "evaluation_error": _sanitize_error_output(evaluation_error),
             "roi_score": float(roi_score),
+            "roi_delta": float(roi_delta),
             "started_at": started_at,
             "finished_at": finished_at,
             "duration_ms": duration_ms,
@@ -166,6 +169,7 @@ def execute_task(task_dict: dict) -> dict:
             "execution_error": _sanitize_exception(exc),
             "evaluation_error": _sanitize_error_output(evaluation_error),
             "roi_score": float(roi_score),
+            "roi_delta": float(roi_delta),
             "started_at": started_at,
             "finished_at": finished_at,
             "duration_ms": _elapsed_ms(start_time, end_time),
