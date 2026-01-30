@@ -13,8 +13,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import mvp_codegen
-import mvp_executor
 from llm_interface import LLMBackend, LLMClient, LLMResult
 from prompt_types import Prompt
 
@@ -28,8 +26,7 @@ class _HeuristicBackend(LLMBackend):
     def generate(self, prompt: Prompt, *, context_builder: object) -> LLMResult:  # type: ignore[override]
         _ = context_builder
         patch_text = _derive_patch(prompt.text)
-        python_program = _wrap_patch_program(patch_text)
-        return LLMResult(raw={"backend": "heuristic"}, text=python_program)
+        return LLMResult(raw={"backend": "heuristic"}, text=patch_text)
 
 
 def _derive_patch(prompt_text: str) -> str:
@@ -61,19 +58,6 @@ def _build_diff() -> str:
              print(add(2, 3))
         """
     ).rstrip() + "\n"
-
-
-def _wrap_patch_program(patch_text: str) -> str:
-    return textwrap.dedent(
-        f"""\
-        def main() -> None:
-            patch = {patch_text!r}
-            print(patch)
-
-        if __name__ == "__main__":
-            main()
-        """
-    )
 
 
 def _build_prompt(objective: str) -> Prompt:
@@ -137,22 +121,21 @@ AssertionError: expected 5, got -1
     backend = os.getenv("MVP_LLM_BACKEND", "heuristic").lower()
     model = os.getenv("MVP_LLM_MODEL", "heuristic")
     client = _build_client()
-    prompt = _build_prompt(objective)
+    constraint_block = "\n".join(f"- {item}" for item in constraints) if constraints else "- none"
+    prompt_text = f"{objective}\n\nConstraints:\n{constraint_block}\n"
+    prompt = _build_prompt(prompt_text)
     print(f"LLMClient.generate start backend={backend} model={model}")
     result = client.generate(prompt, context_builder=object())
     print(f"LLMClient.generate end backend={backend} model={model}")
-
-    def wrapper(_prompt: str, timeout_s: int | None = None) -> str:
-        _ = timeout_s
-        return result.text
-
-    code = mvp_codegen.run_generation(
-        {"objective": objective, "constraints": constraints, "model_wrapper": wrapper}
-    )
-    stdout, stderr = mvp_executor.execute_untrusted(code)
-    if stderr:
-        raise SystemExit(f"Unexpected stderr from executor: {stderr}")
-    output_path.write_text(stdout, encoding="utf-8")
+    patch_text = result.text.strip()
+    if patch_text.startswith("```"):
+        lines = patch_text.splitlines()
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        patch_text = "\n".join(lines).strip()
+    output_path.write_text(patch_text + "\n", encoding="utf-8")
 
 
 def main() -> None:
