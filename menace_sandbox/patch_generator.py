@@ -536,10 +536,10 @@ def generate_patch(
         "applied_rules": _serialize_rules(result.resolved_rules),
         "changes": [
             {
-                "id": change.rule_id,
-                "type": change.rule_type,
+                "rule_id": change.rule_id,
+                "rule_type": change.rule_type,
                 "description": change.description,
-                "span": {"start": change.start, "end": change.end},
+                "spans": {"start": change.start, "end": change.end},
                 "line_offsets": {
                     "start_line": change.line_start,
                     "start_col": change.col_start,
@@ -646,6 +646,8 @@ def _failure_result(
             "patch_text": "",
             "modified_source": "",
             "applied_rules": [],
+            "changes": [],
+            "audit_trail": [],
         },
         "errors": list(errors),
         "meta": dict(meta),
