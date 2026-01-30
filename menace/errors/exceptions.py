@@ -48,6 +48,21 @@ class ValidationError(MenaceError):
 
 
 @dataclass
+class PatchRuleError(ValidationError):
+    """Raised when a patch rule definition is malformed or unsupported."""
+
+
+@dataclass
+class PatchAnchorError(ValidationError):
+    """Raised when a patch anchor is missing or resolves ambiguously."""
+
+
+@dataclass
+class PatchConflictError(ValidationError):
+    """Raised when patch edits contradict or overlap each other."""
+
+
+@dataclass
 class EvaluationError(MenaceError):
     """Raised when evaluation logic cannot compute a deterministic result."""
 
