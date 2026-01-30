@@ -79,14 +79,16 @@ def generate_patch(
         _validate_inputs(source, error_report, rules)
         parsed_rules = _parse_rules(rules)
         if not parsed_rules:
-            error = PatchRuleError(
-                "No patch rules provided",
-                details={"rule_count": 0, "rules": []},
-            )
-            return _failure_result(
-                [error.to_dict()],
-                meta=_base_meta(safe_source, [], syntax_valid=None, rule_count=0),
-            )
+            return {
+                "status": "noop",
+                "data": {
+                    "patch_text": "",
+                    "modified_source": safe_source,
+                    "applied_rules": [],
+                },
+                "errors": [],
+                "meta": _base_meta(safe_source, [], syntax_valid=None, rule_count=0),
+            }
         line_index = _build_line_index(source)
 
         resolved_rules: list[ResolvedRule] = []
