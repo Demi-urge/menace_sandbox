@@ -10,6 +10,7 @@ from .response_schemas import (
     normalize_preset_batch,
 )
 from .roi import compute_roi_delta
+from .patch_validator import PatchValidationLimits, validate_patch_text
 
 __all__ = [
     "ValidationError",
@@ -20,4 +21,6 @@ __all__ = [
     "normalize_preset_batch",
     "stabilize_completion",
     "compute_roi_delta",
+    "PatchValidationLimits",
+    "validate_patch_text",
 ]
