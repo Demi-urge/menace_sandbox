@@ -105,17 +105,17 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
 
     Returns:
         A dictionary with the schema:
-        - ``status``: ``ok`` | ``partial_failure`` | ``error``
+        - ``status``: ``ok`` | ``error``
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
-        - ``meta``: counts + status summary + config validation metadata
+        - ``metadata``: counts + status summary + config validation metadata
     """
 
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     ok_count = 0
     error_count = 0
-    config_meta: dict[str, Any] | None = None
+    config_metadata: dict[str, Any] | None = None
     normalized_config: dict[str, Any] | None = None
 
     try:
@@ -154,7 +154,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
         try:
             config_response = load_infra_config(config)
             normalized_config = config_response["data"]
-            config_meta = config_response.get("meta")
+            config_metadata = config_response.get("metadata")
         except ConfigError as exc:
             errors.append({"workflow_id": None, "index": None, "error": _error_payload(exc)})
             return _final_response(
@@ -177,7 +177,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 errors=errors,
                 ok_count=0,
                 error_count=0,
-                config_meta=config_meta,
+                config_meta=config_metadata,
                 normalized_config=normalized_config,
             )
 
@@ -196,7 +196,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results.append(result)
                 workflow_status = result.get("status")
                 workflow_errors = result.get("errors", [])
-                workflow_meta = result.get("meta", {})
+                workflow_metadata = result.get("metadata", {})
                 if workflow_status == "ok":
                     ok_count += 1
                 else:
@@ -208,7 +208,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                             "index": index,
                             "status": workflow_status,
                             "errors": workflow_errors,
-                            "meta": workflow_meta,
+                            "metadata": workflow_metadata,
                         },
                     )
                     errors.append(
@@ -245,7 +245,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
             errors=errors,
             ok_count=ok_count,
             error_count=error_count,
-            config_meta=config_meta,
+            config_meta=config_metadata,
             normalized_config=normalized_config,
         )
     except Exception as exc:  # noqa: BLE001 - top-level safety net
@@ -264,8 +264,6 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
 
 def _derive_status(ok_count: int, error_count: int) -> str:
     """Return aggregate status based on success/failure counts."""
-    if ok_count and error_count:
-        return "partial_failure"
     if error_count:
         return "error"
     if ok_count:
@@ -291,15 +289,16 @@ def _final_response(
             "config": normalized_config,
         },
         "errors": errors,
-        "meta": {
+        "metadata": {
             "workflow_count": workflows_count,
             "result_count": len(results),
             "ok_count": ok_count,
             "error_count": error_count,
+            "partial_failure": bool(ok_count and error_count),
             "status_summary": {
                 "ok": ok_count,
                 "error": error_count,
             },
-            "config_meta": config_meta,
+            "config_metadata": config_meta,
         },
     }
