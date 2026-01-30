@@ -11,17 +11,23 @@ from typing import Any, Mapping
 from menace.errors.exceptions import LoggingError
 
 
-def get_logger(name: str) -> logging.Logger:
-    """Return a configured logger for deterministic structured output.
+def get_logger(name: str) -> dict[str, Any]:
+    """Return a configured logger wrapped in a structured response.
 
     Args:
         name: Logger name used by the standard library logging registry.
 
     Returns:
-        A configured :class:`logging.Logger` instance.
+        A dict with schema:
+            {
+                "status": "ok",
+                "data": {"logger": logging.Logger},
+                "errors": [],
+                "meta": {"name": str},
+            }
 
     Raises:
-        LoggingError: If ``name`` is empty.
+        LoggingError: If ``name`` is empty or invalid.
     """
 
     if not isinstance(name, str) or not name:
@@ -39,20 +45,34 @@ def get_logger(name: str) -> logging.Logger:
         handler.setFormatter(_StructuredFormatter())
         logger.addHandler(handler)
 
-    return logger
+    return {
+        "status": "ok",
+        "data": {"logger": logger},
+        "errors": [],
+        "meta": {"name": name},
+    }
 
 
 def log_event(
     logger: logging.Logger,
     event: str,
     context: Mapping[str, Any] | None = None,
-) -> None:
-    """Emit a structured log entry using the provided logger.
+) -> dict[str, Any]:
+    """Emit a structured log entry and return a structured response.
 
     Args:
-        logger: Logger obtained from :func:`get_logger`.
+        logger: Logger obtained from ``get_logger(...)[\"data\"][\"logger\"]``.
         event: Event identifier or message to emit.
         context: Optional structured context for the log entry.
+
+    Returns:
+        A dict with schema:
+            {
+                "status": "ok",
+                "data": {"event": str},
+                "errors": [],
+                "meta": {"context_keys": list[str]},
+            }
 
     Raises:
         LoggingError: If ``event`` is empty, ``logger`` is invalid, or
@@ -74,6 +94,13 @@ def log_event(
     extra: dict[str, Any] = {"event": event, "context": normalized_context}
 
     logger.info(event, extra=extra)
+
+    return {
+        "status": "ok",
+        "data": {"event": event},
+        "errors": [],
+        "meta": {"context_keys": list(normalized_context.keys())},
+    }
 
 
 class _StructuredFormatter(logging.Formatter):
