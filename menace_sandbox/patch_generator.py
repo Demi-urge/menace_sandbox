@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import difflib
 import re
-import time
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Mapping, Sequence
 
@@ -440,7 +439,6 @@ def generate_patch(
     Returns:
         A structured payload containing status, data, errors, and meta fields.
     """
-    start_time = time.monotonic()
     _validate_generate_patch_inputs(source, error_report, rules)
     if not rules:
         error = PatchRuleError("rules must not be empty", details={"field": "rules"})
@@ -451,7 +449,6 @@ def generate_patch(
             "meta": _build_meta(
                 rule_summaries=[],
                 applied_count=0,
-                elapsed_ms=_elapsed_ms(start_time),
             ),
         }
     validate_rules(rules)
@@ -469,7 +466,6 @@ def generate_patch(
             "meta": _build_meta(
                 rule_summaries=rule_summaries,
                 applied_count=0,
-                elapsed_ms=_elapsed_ms(start_time),
             ),
         }
 
@@ -484,7 +480,6 @@ def generate_patch(
             "meta": _build_meta(
                 rule_summaries=rule_summaries,
                 applied_count=0,
-                elapsed_ms=_elapsed_ms(start_time),
             ),
         }
 
@@ -508,7 +503,6 @@ def generate_patch(
         "meta": _build_meta(
             rule_summaries=rule_summaries,
             applied_count=len(result.changes),
-            elapsed_ms=_elapsed_ms(start_time),
         ),
     }
 
@@ -560,23 +554,16 @@ def _summarize_rules(rules: Sequence[Rule]) -> list[dict[str, Any]]:
     return summaries
 
 
-def _elapsed_ms(start_time: float) -> float:
-    """Compute deterministic elapsed milliseconds."""
-    return round((time.monotonic() - start_time) * 1000.0, 3)
-
-
 def _build_meta(
     *,
     rule_summaries: Sequence[Mapping[str, Any]],
     applied_count: int,
-    elapsed_ms: float,
 ) -> dict[str, Any]:
     """Build deterministic metadata for generate_patch."""
     return {
         "rule_summaries": list(rule_summaries),
         "rule_count": len(rule_summaries),
         "applied_count": applied_count,
-        "elapsed_ms": elapsed_ms,
     }
 
 
