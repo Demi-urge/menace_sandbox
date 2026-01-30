@@ -23,7 +23,7 @@ def get_logger(name: str) -> dict[str, Any]:
                 "status": "ok",
                 "data": {"logger": logging.Logger},
                 "errors": [],
-                "meta": {"name": str},
+                "metadata": {"name": str},
             }
 
     Raises:
@@ -49,7 +49,7 @@ def get_logger(name: str) -> dict[str, Any]:
         "status": "ok",
         "data": {"logger": logger},
         "errors": [],
-        "meta": {"name": name},
+        "metadata": {"name": name},
     }
 
 
@@ -69,9 +69,9 @@ def log_event(
         A dict with schema:
             {
                 "status": "ok",
-                "data": {"event": str},
+                "data": {"event": str, "context": dict[str, Any]},
                 "errors": [],
-                "meta": {"context_keys": list[str]},
+                "metadata": {"context_keys": list[str]},
             }
 
     Raises:
@@ -97,9 +97,9 @@ def log_event(
 
     return {
         "status": "ok",
-        "data": {"event": event},
+        "data": {"event": event, "context": dict(normalized_context)},
         "errors": [],
-        "meta": {"context_keys": list(normalized_context.keys())},
+        "metadata": {"context_keys": list(normalized_context.keys())},
     }
 
 
