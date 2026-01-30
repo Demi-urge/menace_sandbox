@@ -280,10 +280,11 @@ def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
     for index, rule in enumerate(ordered_rules):
         resolved_rules.extend(_resolve_rule(source, rule, index, line_index))
 
-    _raise_on_conflicts(resolved_rules, rule_lookup)
+    ordered_resolved = sorted(resolved_rules, key=_resolved_rule_order_key)
+    _raise_on_conflicts(ordered_resolved, rule_lookup)
 
-    updated_source = _apply_edits(source, resolved_rules)
-    changes = _build_patch_changes(source, resolved_rules)
+    updated_source = _apply_edits(source, ordered_resolved)
+    changes = _build_patch_changes(source, ordered_resolved)
     audit_trail = [
         PatchAuditEntry(
             order=idx + 1,
@@ -291,13 +292,13 @@ def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
             rule_type=rule.rule_type,
             anchor_kind=rule.anchor_kind,
         )
-        for idx, rule in enumerate(sorted(resolved_rules, key=lambda rule: rule.index))
+        for idx, rule in enumerate(ordered_resolved)
     ]
     return PatchResult(
         content=updated_source,
         changes=changes,
         audit_trail=audit_trail,
-        resolved_rules=list(resolved_rules),
+        resolved_rules=list(ordered_resolved),
     )
 
 
@@ -408,7 +409,7 @@ def _build_patch_changes(
     resolved_rules: Sequence[ResolvedRule],
 ) -> list[PatchChange]:
     """Build a deterministic list of applied patch changes."""
-    ordered = sorted(resolved_rules, key=lambda rule: rule.index)
+    ordered = sorted(resolved_rules, key=_resolved_rule_order_key)
     return [
         PatchChange(
             rule_id=rule.rule_id,
@@ -425,6 +426,16 @@ def _build_patch_changes(
         )
         for rule in ordered
     ]
+
+
+def _resolved_rule_order_key(rule: ResolvedRule) -> tuple[int, str, int, int]:
+    """Return deterministic ordering for applied rule metadata."""
+    return (rule.index, rule.rule_type, rule.start, rule.end)
+
+
+def _resolved_rule_apply_key(rule: ResolvedRule) -> tuple[int, int, int, str]:
+    """Return deterministic ordering for applying edits to the source."""
+    return (rule.start, rule.end, rule.index, rule.rule_type)
 
 
 def generate_patch(
@@ -475,6 +486,7 @@ def generate_patch(
                 meta=_build_meta(
                     rule_summaries=rule_summaries,
                     applied_count=0,
+                    applied_rules=[],
                     anchor_resolutions=[],
                     syntax_valid=None,
                 ),
@@ -491,6 +503,7 @@ def generate_patch(
                 meta=_build_meta(
                     rule_summaries=rule_summaries,
                     applied_count=0,
+                    applied_rules=[],
                     anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
                     syntax_valid=None,
                 ),
@@ -544,6 +557,7 @@ def generate_patch(
             "meta": _build_meta(
                 rule_summaries=rule_summaries,
                 applied_count=len(result.changes),
+                applied_rules=_serialize_applied_rules(result.resolved_rules),
                 anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
                 changed_line_count=_count_changed_lines(patch_text),
                 syntax_valid=syntax_valid,
@@ -556,7 +570,11 @@ def generate_patch(
             "unexpected error during patch generation",
             details={"error_type": type(exc).__name__, "message": str(exc)},
         )
-        return _deterministic_error_payload(error, rule_summaries=rule_summaries)
+        return _deterministic_error_payload(
+            error,
+            rule_summaries=rule_summaries,
+            applied_rules=[],
+        )
 
 
 def _validate_generate_patch_inputs(
@@ -610,15 +628,19 @@ def _build_meta(
     *,
     rule_summaries: Sequence[Mapping[str, Any]],
     applied_count: int,
+    applied_rules: Sequence[Mapping[str, Any]] | None = None,
     anchor_resolutions: Sequence[Mapping[str, Any]] | None = None,
     changed_line_count: int = 0,
     syntax_valid: bool | None = None,
 ) -> dict[str, Any]:
     """Build deterministic metadata for generate_patch."""
+    applied_rules_list = list(applied_rules or [])
     return {
         "rule_summaries": list(rule_summaries),
         "rule_count": len(rule_summaries),
         "applied_count": applied_count,
+        "applied_rule_ids": [rule["id"] for rule in applied_rules_list if "id" in rule],
+        "applied_rules": applied_rules_list,
         "anchor_resolutions": list(anchor_resolutions or []),
         "changed_line_count": changed_line_count,
         "syntax_valid": syntax_valid,
@@ -644,6 +666,7 @@ def _deterministic_error_payload(
     *,
     rule_summaries: Sequence[Mapping[str, Any]],
     applied_count: int = 0,
+    applied_rules: Sequence[Mapping[str, Any]] | None = None,
     anchor_resolutions: Sequence[Mapping[str, Any]] | None = None,
     syntax_valid: bool | None = None,
 ) -> dict[str, Any]:
@@ -655,6 +678,7 @@ def _deterministic_error_payload(
         "meta": _build_meta(
             rule_summaries=rule_summaries,
             applied_count=applied_count,
+            applied_rules=applied_rules,
             anchor_resolutions=anchor_resolutions or [],
             syntax_valid=syntax_valid,
         ),
@@ -1268,7 +1292,7 @@ def _rules_conflict(first: ResolvedRule, second: ResolvedRule) -> bool:
 
 def _apply_edits(source: str, resolved_rules: Sequence[ResolvedRule]) -> str:
     """Apply resolved edits to the source in deterministic order."""
-    ordered = sorted(resolved_rules, key=lambda rule: (rule.start, rule.index))
+    ordered = sorted(resolved_rules, key=_resolved_rule_apply_key)
     offset = 0
     updated = source
     for rule in ordered:
@@ -1507,7 +1531,7 @@ def _split_patch_lines(text: str) -> list[str]:
 
 def _serialize_rules(resolved_rules: Sequence[ResolvedRule]) -> list[dict[str, Any]]:
     """Serialize resolved rules into deterministic payloads."""
-    ordered = sorted(resolved_rules, key=lambda rule: rule.index)
+    ordered = sorted(resolved_rules, key=_resolved_rule_order_key)
     return [
         {
             "id": rule.rule_id,
@@ -1528,7 +1552,7 @@ def _serialize_rules(resolved_rules: Sequence[ResolvedRule]) -> list[dict[str, A
 
 def _serialize_anchor_resolutions(resolved_rules: Sequence[ResolvedRule]) -> list[dict[str, Any]]:
     """Serialize anchor resolution metadata for diagnostics."""
-    ordered = sorted(resolved_rules, key=lambda rule: rule.index)
+    ordered = sorted(resolved_rules, key=_resolved_rule_order_key)
     return [
         {
             "id": rule.rule_id,
@@ -1536,6 +1560,26 @@ def _serialize_anchor_resolutions(resolved_rules: Sequence[ResolvedRule]) -> lis
             "end": rule.end,
             "start_line": rule.line_start,
             "end_line": rule.line_end,
+        }
+        for rule in ordered
+    ]
+
+
+def _serialize_applied_rules(resolved_rules: Sequence[ResolvedRule]) -> list[dict[str, Any]]:
+    """Serialize applied rules for deterministic metadata output."""
+    ordered = sorted(resolved_rules, key=_resolved_rule_order_key)
+    return [
+        {
+            "id": rule.rule_id,
+            "type": rule.rule_type,
+            "rationale": rule.description,
+            "span": {"start": rule.start, "end": rule.end},
+            "line_offsets": {
+                "start_line": rule.line_start,
+                "start_col": rule.col_start,
+                "end_line": rule.line_end,
+                "end_col": rule.col_end,
+            },
         }
         for rule in ordered
     ]
