@@ -44,6 +44,7 @@ from dynamic_path_router import resolve_path
 from .retriever import Retriever, PatchRetriever
 from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
+from menace_sandbox.stabilization.roi import compute_roi_delta
 from vector_metrics_db import (
     VectorMetricsDB,
     get_bootstrap_vector_metrics_db,
@@ -850,6 +851,32 @@ class CognitionLayer:
                 logger.exception("Failed to load vectors for session %s", session_id)
         if not vectors:
             return
+        roi_after: float | None = None
+        retrieval_metrics: list[dict[str, Any]] | None = None
+        if self.vector_metrics is not None:
+            try:
+                cur = self.vector_metrics.conn.execute(
+                    """
+                    SELECT db, tokens, contribution, hit
+                      FROM vector_metrics
+                     WHERE session_id=? AND event_type='retrieval'
+                    """,
+                    (session_id,),
+                )
+                rows = cur.fetchall()
+                roi_after = sum(float(contrib or 0.0) for _db, _tok, contrib, _hit in rows)
+                retrieval_metrics = [
+                    {
+                        "origin_db": str(db),
+                        "tokens": float(contrib or 0.0),
+                        "hit": bool(hit),
+                    }
+                    for db, _tokens, contrib, hit in rows
+                ]
+            except Exception:
+                logger.exception("Failed to load retrieval metrics for session %s", session_id)
+                roi_after = None
+                retrieval_metrics = None
         # Extract any pre-computed risk scores from retrieval metadata so they
         # can influence ranking weights even if the patch logger cannot
         # reproduce them (for example when failure embeddings are unavailable).
@@ -895,6 +922,15 @@ class CognitionLayer:
             "end_time": timestamp,
             "effort_estimate": effort_estimate,
         }
+        prior_roi = None
+        if self.roi_tracker is not None:
+            try:
+                history = getattr(self.roi_tracker, "roi_history", None)
+                if history:
+                    prior_roi = history[-1]
+            except Exception:
+                prior_roi = None
+        kwargs["roi_delta"] = compute_roi_delta(prior_roi, roi_after)
         import inspect
 
         try:
@@ -965,41 +1001,24 @@ class CognitionLayer:
 
         if self.roi_tracker is not None:
             try:  # pragma: no cover - best effort
-                cur = self.vector_metrics.conn.execute(
-                    """
-                    SELECT db, tokens, contribution, hit
-                      FROM vector_metrics
-                     WHERE session_id=? AND event_type='retrieval'
-                    """,
-                    (session_id,),
-                )
-                rows = cur.fetchall()
-                roi_after = sum(float(contrib or 0.0) for _db, _tok, contrib, _hit in rows)
-                retrieval_metrics = [
-                    {
-                        "origin_db": str(db),
-                        "tokens": float(contrib or 0.0),
-                        "hit": bool(hit),
-                    }
-                    for db, _tokens, contrib, hit in rows
-                ]
-                self.roi_tracker.update(
-                    0.0,
-                    roi_after,
-                    retrieval_metrics=retrieval_metrics,
-                )
-                if not used_tracker_deltas:
-                    deltas = self.roi_tracker.origin_db_deltas()
-                    for origin, _vid, _score in vectors:
-                        key = origin or ""
-                        val = deltas.get(key)
-                        if val is not None:
-                            val = float(val)
-                            roi_actuals[key] = val
-                            roi_contribs[key] = abs(val)
-                            roi_drop = roi_drop or val < 0
-                    if roi_contribs:
-                        used_tracker_deltas = True
+                if roi_after is not None and retrieval_metrics is not None:
+                    self.roi_tracker.update(
+                        0.0,
+                        roi_after,
+                        retrieval_metrics=retrieval_metrics,
+                    )
+                    if not used_tracker_deltas:
+                        deltas = self.roi_tracker.origin_db_deltas()
+                        for origin, _vid, _score in vectors:
+                            key = origin or ""
+                            val = deltas.get(key)
+                            if val is not None:
+                                val = float(val)
+                                roi_actuals[key] = val
+                                roi_contribs[key] = abs(val)
+                                roi_drop = roi_drop or val < 0
+                        if roi_contribs:
+                            used_tracker_deltas = True
             except Exception:
                 logger.exception("Failed to update ROI tracker with retrieval metrics")
 
