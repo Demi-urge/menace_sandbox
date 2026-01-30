@@ -157,13 +157,14 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
         - ``status``: ``ok`` | ``error``
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
-        - ``metadata``: counts + status summary + config validation metadata
+        - ``meta``: counts + status summary + config validation metadata
+        - ``metadata``: same payload as ``meta`` for global metadata consumers
 
-        Each entry in ``data["results"]`` is a workflow result that includes a
-        top-level ``metadata`` key. The workflow ``metadata`` payload includes
-        ``workflow_id``, any input ``metadata`` fields, and deterministic failure
-        indicators: ``partial_failure`` (bool), ``error_count`` (int), and
-        ``failed_steps`` (list[int]).
+        Each entry in ``data["results"]`` is a workflow result that includes
+        top-level ``meta`` and ``metadata`` keys. The workflow metadata payload
+        includes ``workflow_id``, any input ``metadata`` fields, and deterministic
+        failure indicators: ``partial_failure`` (bool), ``error_count`` (int),
+        and ``failed_steps`` (list[int]).
     """
 
     results: list[dict[str, Any]] = []
@@ -366,7 +367,8 @@ def _final_response(
         normalized_config (dict[str, Any] | None): Optional normalized config data.
 
     Returns:
-        dict[str, Any]: Final response payload with data, errors, and metadata.
+        dict[str, Any]: Final response payload with data, errors, meta, and
+        metadata.
 
     Raises:
         None: This helper does not raise.
@@ -394,5 +396,6 @@ def _final_response(
             "config": normalized_config,
         },
         "errors": errors,
+        "meta": metadata,
         "metadata": metadata,
     }

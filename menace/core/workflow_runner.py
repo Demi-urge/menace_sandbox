@@ -28,11 +28,13 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
             status (str): "ok" when all steps succeed, "error" when any step fails
             data (dict): workflow_id, payload, steps
             errors (list[dict]): structured errors captured during step execution
-            metadata (dict): workflow_id plus any input metadata, along with
+            meta (dict): workflow_id plus any input metadata, along with
                 deterministic step-failure indicators:
                 - partial_failure (bool): True when any step error exists
                 - error_count (int): count of step-level errors
                 - failed_steps (list[int]): indices of steps that failed
+            metadata (dict): Same payload as ``meta`` for global metadata
+                requirements.
 
     Raises:
         ValidationError: If the input schema or step definitions are invalid.
@@ -119,6 +121,7 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
             "steps": step_results,
         },
         "errors": errors,
+        "meta": metadata,
         "metadata": metadata,
     }
 
