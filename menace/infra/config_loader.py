@@ -1,10 +1,10 @@
 """Configuration loading utilities for infrastructure components.
 
 Schema (required fields):
-    - service_name (str): Name of the service or component.
-    - environment (str): Deployment environment identifier (e.g., "dev").
-    - log_level (str): Logging verbosity label (e.g., "INFO").
-    - timeout_seconds (int): Timeout in seconds for infra operations.
+    - service_name (str): Name of the service or component; must be non-empty.
+    - environment (str): Deployment environment identifier (e.g., "dev"); must be non-empty.
+    - log_level (str): Logging verbosity label (e.g., "INFO"); must be non-empty.
+    - timeout_seconds (int): Timeout in seconds for infra operations; must be positive.
 """
 
 from __future__ import annotations
@@ -69,7 +69,9 @@ def load_config(config: dict[str, Any]) -> dict[str, Any]:
 
     Raises:
         ConfigError: If the config mapping is missing, invalid, has ``None``
-            values, or contains incorrect types for required fields.
+            values, contains incorrect types for required fields, contains
+            empty string values for required text fields, or non-positive values
+            for ``timeout_seconds``.
     """
 
     if config is None:
@@ -104,13 +106,30 @@ def load_config(config: dict[str, Any]) -> dict[str, Any]:
                 "actual": type(value).__name__,
             }
 
-    if missing_keys or none_keys or invalid_types:
+    empty_keys = [
+        key
+        for key in ("service_name", "environment", "log_level")
+        if key in config
+        and isinstance(config[key], str)
+        and not config[key].strip()
+    ]
+    non_positive_keys = [
+        "timeout_seconds"
+        for key in ("timeout_seconds",)
+        if key in config
+        and _is_valid_int(config[key])
+        and config[key] <= 0
+    ]
+
+    if missing_keys or none_keys or invalid_types or empty_keys or non_positive_keys:
         raise ConfigError(
             message="Invalid configuration payload.",
             details={
                 "missing_keys": missing_keys,
                 "none_keys": none_keys,
                 "invalid_types": dict(sorted(invalid_types.items())),
+                "empty_keys": empty_keys,
+                "non_positive_keys": non_positive_keys,
             },
         )
 
