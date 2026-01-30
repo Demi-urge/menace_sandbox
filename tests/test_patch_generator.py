@@ -272,6 +272,116 @@ def test_single_delete_regex_rule():
     )
 
 
+def test_replace_insert_delete_rules_apply_deterministically():
+    source = "alpha\nbravo\ncharlie\n"
+    rules = [
+        {
+            "type": "replace",
+            "id": "rule-replace",
+            "description": "replace bravo",
+            "anchor": "bravo\n",
+            "replacement": "bravo-1\n",
+            "meta": {"source": "test"},
+        },
+        {
+            "type": "insert_after",
+            "id": "rule-insert",
+            "description": "insert beta",
+            "anchor": "alpha\n",
+            "content": "beta\n",
+            "meta": {"source": "test"},
+        },
+        {
+            "type": "delete_regex",
+            "id": "rule-delete",
+            "description": "delete charlie",
+            "pattern": "charlie",
+            "meta": {"source": "test"},
+        },
+    ]
+
+    result = _assert_deterministic(source, {}, rules)
+
+    expected_source = "alpha\nbeta\nbravo-1\n"
+    assert result["status"] == "ok"
+    assert result["errors"] == []
+    assert result["data"]["modified_source"] == expected_source
+    assert result["data"]["patch_text"] == _build_expected_diff(source, expected_source)
+    assert [rule["id"] for rule in result["data"]["applied_rules"]] == [
+        "rule-insert",
+        "rule-replace",
+        "rule-delete",
+    ]
+
+
+def test_missing_anchor_fails_with_patch_anchor_error():
+    source = "alpha\nbravo\n"
+    rules = [
+        {
+            "type": "insert_after",
+            "id": "rule-missing",
+            "description": "missing anchor",
+            "anchor": "missing\n",
+            "content": "beta\n",
+            "meta": {"source": "test"},
+        }
+    ]
+
+    result = _assert_deterministic(source, {}, rules)
+
+    assert result["status"] == "error"
+    assert result["errors"][0]["type"] == "PatchAnchorError"
+    assert result["errors"][0]["details"]["anchor_search"]["match_count"] == 0
+    assert result["errors"][0]["details"]["anchor_search"]["anchor"] == "missing\n"
+
+
+def test_invalid_regex_pattern_fails_with_patch_rule_error():
+    source = "alpha\nbravo\n"
+    rules = [
+        {
+            "type": "delete_regex",
+            "id": "rule-invalid",
+            "description": "invalid regex",
+            "pattern": "(unclosed",
+            "meta": {"source": "test"},
+        }
+    ]
+
+    result = _assert_deterministic(source, {}, rules)
+
+    assert result["status"] == "error"
+    assert result["errors"][0]["type"] == "PatchRuleError"
+    assert result["errors"][0]["message"] == "delete_regex pattern is invalid"
+
+
+def test_multiple_inserts_same_anchor_fails_deterministically():
+    source = "alpha\n"
+    rules = [
+        {
+            "type": "insert_after",
+            "id": "rule-insert-a",
+            "description": "insert beta",
+            "anchor": "alpha\n",
+            "content": "beta\n",
+            "meta": {"source": "test"},
+        },
+        {
+            "type": "insert_after",
+            "id": "rule-insert-b",
+            "description": "insert gamma",
+            "anchor": "alpha\n",
+            "content": "gamma\n",
+            "meta": {"source": "test"},
+        },
+    ]
+
+    result = _assert_deterministic(source, {}, rules)
+
+    assert result["status"] == "error"
+    assert result["errors"][0]["type"] == "PatchConflictError"
+    assert result["errors"][0]["message"] == "multiple inserts at the same anchor are not allowed"
+
+
 def test_conflicting_edits_fail_deterministically():
     source = "alpha\nbravo\n"
     rules = [
@@ -562,3 +672,30 @@ def test_rule_meta_can_force_syntax_validation():
     assert details["line"] == 2
     assert details["column"] == 1
     assert details["message"] == "expected an indented block after function definition on line 1"
+
+
+def test_meta_is_stable_across_repeated_runs():
+    source = "alpha\nbravo\ncharlie\n"
+    rules = [
+        {
+            "type": "replace",
+            "id": "rule-replace",
+            "description": "replace bravo",
+            "anchor": "bravo\n",
+            "replacement": "bravo-1\n",
+            "meta": {"source": "test"},
+        },
+        {
+            "type": "insert_after",
+            "id": "rule-insert",
+            "description": "insert beta",
+            "anchor": "alpha\n",
+            "content": "beta\n",
+            "meta": {"source": "test"},
+        },
+    ]
+
+    first = patch_generator.generate_patch(source, {}, rules)
+    second = patch_generator.generate_patch(source, {}, rules)
+
+    assert first["meta"] == second["meta"]
