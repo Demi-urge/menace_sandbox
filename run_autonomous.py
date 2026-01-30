@@ -1368,6 +1368,10 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from stabilization.response_schemas import (
+    ValidationError as SimpleValidationError,
+    normalize_preset_batch,
+)
 
 # Default to test mode when using the bundled SQLite database.
 if settings.menace_mode.lower() == "production" and settings.database_url.startswith(
@@ -2220,6 +2224,20 @@ def prepare_presets(
                 last_actions=actions,
             ),
         )
+    try:
+        normalized = normalize_preset_batch(
+            {"presets": presets, "preset_source": preset_source, "actions": actions}
+        )
+    except SimpleValidationError as exc:
+        logger.error(
+            "preset batch schema validation failed: %s",
+            exc.messages,
+            **_log_extra(run=run_idx, preset_source=preset_source),
+        )
+        raise
+    presets = list(normalized["presets"])
+    preset_source = str(normalized["preset_source"])
+    actions = list(normalized["actions"])
     os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
     prepare_presets.last_source = preset_source  # type: ignore[attr-defined]
     if preset_log is not None:

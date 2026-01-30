@@ -21,6 +21,11 @@ import sys
 from types import SimpleNamespace
 from typing import Any, Iterable, Mapping
 
+from stabilization.response_schemas import (
+    ValidationError,
+    normalize_patch_apply,
+    normalize_patch_validation,
+)
 
 def _add_repo_to_syspath(repo_root: Path) -> None:
     """Ensure the repository parent is on ``sys.path`` for package imports."""
@@ -78,7 +83,19 @@ def _parse_validation_result(result: Any) -> tuple[bool, list[str], dict[str, An
     if not isinstance(context, Mapping):
         raise RuntimeError("Validation context must be mapping-like")
 
-    return bool(valid), list(flags or []), dict(context)
+    payload = {"valid": valid, "flags": list(flags or []), "context": dict(context)}
+    try:
+        normalized = normalize_patch_validation(payload)
+    except ValidationError as exc:
+        raise RuntimeError(
+            f"quick_fix.validate_patch schema validation failed: {exc.messages}"
+        ) from exc
+
+    return (
+        bool(normalized["valid"]),
+        list(normalized["flags"]),
+        dict(normalized["context"]),
+    )
 
 
 def _parse_apply_result(result: Any) -> tuple[bool, Any, list[str]]:
@@ -91,7 +108,19 @@ def _parse_apply_result(result: Any) -> tuple[bool, Any, list[str]]:
             "quick_fix.apply_validated_patch returned unexpected response format"
         ) from exc
 
-    return bool(passed), patch_id, list(flags or [])
+    payload = {"passed": passed, "patch_id": patch_id, "flags": list(flags or [])}
+    try:
+        normalized = normalize_patch_apply(payload)
+    except ValidationError as exc:
+        raise RuntimeError(
+            f"quick_fix.apply_validated_patch schema validation failed: {exc.messages}"
+        ) from exc
+
+    return (
+        bool(normalized["passed"]),
+        normalized["patch_id"],
+        list(normalized["flags"]),
+    )
 
 
 def _validate_and_apply(
