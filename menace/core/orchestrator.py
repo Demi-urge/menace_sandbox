@@ -3,245 +3,298 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from menace.core.evaluator import evaluate_roi
 from menace.core.workflow_runner import run_workflow
-from menace.errors.exceptions import ConfigError, EvaluatorError, MenaceError, OrchestratorError
+from menace.errors.exceptions import ConfigError, MenaceError, OrchestratorError, WorkflowValidationError
+from menace.infra.config_loader import load_config as load_infra_config
 
 logger = logging.getLogger(__name__)
 
 
-def _error_dict(error: MenaceError) -> Dict[str, Any]:
-    to_error_dict = getattr(error, "to_error_dict", None)
-    if callable(to_error_dict):
-        return to_error_dict()
-    return {"message": error.message, "details": error.details}
+def _error_payload(error: MenaceError) -> dict[str, Any]:
+    return error.to_dict()
 
 
-def _format_unexpected_error(exc: Exception) -> Dict[str, Any]:
-    return _error_dict(
-        OrchestratorError(
-            "Unexpected orchestrator exception",
-            details={"exception_type": type(exc).__name__, "message": str(exc)},
+def _unexpected_error_payload(exc: Exception) -> dict[str, Any]:
+    return OrchestratorError(
+        message="Unexpected orchestrator exception",
+        details={
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+        },
+    ).to_dict()
+
+
+def _validate_workflow_shape(workflow: Any, index: int) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if workflow is None:
+        error = WorkflowValidationError(
+            message="Workflow definition cannot be None.",
+            details={"index": index},
         )
-    )
+        return None, _error_payload(error)
 
-
-def _normalize_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    if config is None:
-        raise ConfigError("config cannot be None", details={"received": None})
-    if not isinstance(config, dict):
-        raise ConfigError(
-            "config must be a dict",
-            details={"received_type": type(config).__name__},
+    if not isinstance(workflow, dict):
+        error = WorkflowValidationError(
+            message="Workflow definition must be a dictionary.",
+            details={"index": index, "received_type": type(workflow).__name__},
         )
-    if "input_data" not in config:
-        raise ConfigError(
-            "config missing required key 'input_data'",
-            details={"required_keys": ["input_data"]},
+        return None, _error_payload(error)
+
+    missing_keys = [key for key in ("workflow_id", "steps", "payload") if key not in workflow]
+    if missing_keys:
+        error = WorkflowValidationError(
+            message="Workflow definition missing required keys.",
+            details={"index": index, "missing_keys": missing_keys},
         )
-    return config
+        return None, _error_payload(error)
 
-
-def _normalize_input_data(input_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    if input_data is None:
-        raise ConfigError(
-            "config['input_data'] cannot be None",
-            details={"received": None},
+    workflow_id = workflow.get("workflow_id")
+    if not isinstance(workflow_id, str) or not workflow_id.strip():
+        error = WorkflowValidationError(
+            message="workflow_id must be a non-empty string.",
+            details={"index": index, "workflow_id": workflow_id},
         )
-    if not isinstance(input_data, dict):
-        raise ConfigError(
-            "config['input_data'] must be a dict",
-            details={"received_type": type(input_data).__name__},
+        return None, _error_payload(error)
+
+    steps = workflow.get("steps")
+    if not isinstance(steps, list):
+        error = WorkflowValidationError(
+            message="steps must be a list of step definitions.",
+            details={"index": index, "workflow_id": workflow_id, "steps_type": type(steps).__name__},
         )
-    return input_data
+        return None, _error_payload(error)
+
+    payload = workflow.get("payload")
+    if not isinstance(payload, dict):
+        error = WorkflowValidationError(
+            message="payload must be a dictionary.",
+            details={"index": index, "workflow_id": workflow_id, "payload_type": type(payload).__name__},
+        )
+        return None, _error_payload(error)
+
+    meta = workflow.get("meta")
+    if meta is not None and not isinstance(meta, dict):
+        error = WorkflowValidationError(
+            message="meta must be a dictionary when provided.",
+            details={"index": index, "workflow_id": workflow_id, "meta_type": type(meta).__name__},
+        )
+        return None, _error_payload(error)
+
+    return workflow, None
 
 
-def _resolve_evaluator_input(config: Dict[str, Any], results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if "evaluator_input" in config:
-        evaluator_input = config.get("evaluator_input")
-        if evaluator_input is None:
-            raise ConfigError(
-                "config['evaluator_input'] cannot be None when provided",
-                details={"received": None},
-            )
-        if not isinstance(evaluator_input, dict):
-            raise ConfigError(
-                "config['evaluator_input'] must be a dict",
-                details={"received_type": type(evaluator_input).__name__},
-            )
-        return evaluator_input
+def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
+    """Run workflows synchronously and return deterministic aggregated results.
 
-    for result in results:
-        payload = (result.get("data") or {}).get("payload")
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("cost") is not None and payload.get("revenue") is not None:
-            return {"cost": payload.get("cost"), "revenue": payload.get("revenue")}
-
-    return None
-
-
-def run_orchestrator(workflows: List[Dict[str, Any]], config: Dict[str, Any]) -> Dict[str, Any]:
-    """Run workflows in a single-pass deterministic execution.
-
-    Args:
-        workflows: List of workflow payloads to execute. Each workflow is passed to
-            ``run_workflow`` exactly once in order.
-        config: Orchestrator configuration. Requires ``input_data`` for shared payload
-            values and optionally accepts ``evaluator_input`` for ROI evaluation.
+    Contract:
+        - ``workflows`` must be a list (empty list is allowed and returns zeroed
+          results).
+        - Each workflow must be a dictionary containing ``workflow_id`` (str),
+          ``steps`` (list), ``payload`` (dict), and optional ``meta`` (dict).
+        - ``config`` is validated through :func:`menace.infra.config_loader.load_config`.
+        - Workflows run in input order exactly once (no recursion, retries, or
+          reordering).
+        - This function never raises; all failures are returned in ``errors``.
 
     Returns:
-        Dictionary with the exact schema: status, data, errors, meta. Data contains
-        workflow results and optional ROI evaluation output.
-
-    Raises:
-        None. This function handles ConfigError, WorkflowValidationError,
-        WorkflowExecutionError, EvaluatorError, OrchestratorError, and unexpected
-        Exception instances, returning structured error output instead of raising.
+        A dictionary with the schema:
+        - ``status``: ``ok`` | ``partial_failure`` | ``error``
+        - ``data``: ``{"results": [...], "config": {...}}``
+        - ``errors``: list of deterministic error payloads
+        - ``meta``: counts + status summary + config validation metadata
     """
-    logger.info(
-        "Starting orchestrator run",
-        extra={"workflow_count": len(workflows) if isinstance(workflows, list) else 0},
-    )
 
-    results: List[Dict[str, Any]] = []
-    errors: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
     ok_count = 0
+    partial_count = 0
     error_count = 0
-    evaluation_result: Optional[Dict[str, Any]] = None
+    config_meta: dict[str, Any] | None = None
+    normalized_config: dict[str, Any] | None = None
 
     try:
-        normalized_config = _normalize_config(config)
-        normalized_input = _normalize_input_data(normalized_config.get("input_data"))
-
         if workflows is None:
-            raise OrchestratorError(
-                "workflows cannot be None",
+            error = WorkflowValidationError(
+                message="workflows cannot be None.",
                 details={"received": None},
+            )
+            return _final_response(
+                status="error",
+                workflows_count=0,
+                results=results,
+                errors=[{"workflow_id": None, "index": None, "error": _error_payload(error)}],
+                ok_count=0,
+                partial_count=0,
+                error_count=1,
+                config_meta=None,
+                normalized_config=None,
             )
 
         if not isinstance(workflows, list):
-            raise OrchestratorError(
-                "workflows must be a list of workflow payloads",
+            error = WorkflowValidationError(
+                message="workflows must be a list.",
                 details={"received_type": type(workflows).__name__},
+            )
+            return _final_response(
+                status="error",
+                workflows_count=0,
+                results=results,
+                errors=[{"workflow_id": None, "index": None, "error": _error_payload(error)}],
+                ok_count=0,
+                partial_count=0,
+                error_count=1,
+                config_meta=None,
+                normalized_config=None,
+            )
+
+        try:
+            config_response = load_infra_config(config)
+            normalized_config = config_response["data"]
+            config_meta = config_response.get("meta")
+        except ConfigError as exc:
+            errors.append({"workflow_id": None, "index": None, "error": _error_payload(exc)})
+            return _final_response(
+                status="error",
+                workflows_count=len(workflows),
+                results=results,
+                errors=errors,
+                ok_count=0,
+                partial_count=0,
+                error_count=1,
+                config_meta=None,
+                normalized_config=None,
             )
 
         if len(workflows) == 0:
-            logger.info("No workflows provided; returning empty result set")
-        else:
-            for index, workflow in enumerate(workflows):
-                workflow_id: Optional[str] = None
-                try:
-                    if workflow is None:
-                        raise OrchestratorError(
-                            "Workflow definition cannot be None",
-                            details={"index": index},
-                        )
-                    if not isinstance(workflow, dict):
-                        raise OrchestratorError(
-                            "Each workflow must be a dict",
-                            details={"index": index, "received_type": type(workflow).__name__},
-                        )
+            logger.info("No workflows provided; returning empty results")
+            return _final_response(
+                status="ok",
+                workflows_count=0,
+                results=results,
+                errors=errors,
+                ok_count=0,
+                partial_count=0,
+                error_count=0,
+                config_meta=config_meta,
+                normalized_config=normalized_config,
+            )
 
-                    workflow_id = workflow.get("workflow_id")
-                    payload = workflow.get("payload")
-                    if payload is None:
-                        payload = {}
-                    if not isinstance(payload, dict):
-                        raise OrchestratorError(
-                            "Workflow payload must be a dict",
-                            details={
-                                "index": index,
-                                "workflow_id": workflow_id,
-                                "payload_type": type(payload).__name__,
-                            },
-                        )
+        for index, workflow in enumerate(workflows):
+            workflow_id: str | None = None
+            validated_workflow, shape_error = _validate_workflow_shape(workflow, index)
+            if shape_error is not None:
+                error_count += 1
+                errors.append({"workflow_id": workflow_id, "index": index, "error": shape_error})
+                continue
 
-                    workflow_payload = {**workflow, "payload": {**normalized_input, **payload}}
-                    result = run_workflow(workflow_payload)
-                    results.append(result)
-                    if result.get("status") == "success":
-                        ok_count += 1
-                    else:
-                        error_count += 1
-                        error_payload = (result.get("errors") or [{}])[0]
-                        errors.append(
-                            {
-                                "workflow_id": workflow_id,
-                                "index": index,
-                                "error": error_payload,
-                            }
-                        )
-                except MenaceError as exc:
-                    error_count += 1
-                    errors.append(
-                        {
-                            "workflow_id": workflow_id,
-                            "index": index,
-                            "error": _error_dict(exc),
-                        }
-                    )
-                except Exception as exc:  # unexpected exceptions
-                    error_count += 1
-                    errors.append(
-                        {
-                            "workflow_id": workflow_id,
-                            "index": index,
-                            "error": _format_unexpected_error(exc),
-                        }
-                    )
-
-        evaluator_input = _resolve_evaluator_input(normalized_config, results)
-        if evaluator_input is not None:
+            assert validated_workflow is not None
+            workflow_id = validated_workflow.get("workflow_id")
             try:
-                evaluation_result = evaluate_roi(evaluator_input)
-            except EvaluatorError as exc:
+                result = run_workflow(validated_workflow)
+                results.append(result)
+                if result.get("status") == "success":
+                    ok_count += 1
+                else:
+                    partial_count += 1
+                    error_count += 1
+                    errors.append(
+                        {
+                            "workflow_id": workflow_id,
+                            "index": index,
+                            "error": {
+                                "error_type": "WorkflowPartialFailure",
+                                "message": "Workflow completed with errors.",
+                                "details": {"errors": result.get("errors", [])},
+                            },
+                        }
+                    )
+            except MenaceError as exc:
                 error_count += 1
                 errors.append(
                     {
-                        "workflow_id": None,
-                        "index": None,
-                        "error": _error_dict(exc),
+                        "workflow_id": workflow_id,
+                        "index": index,
+                        "error": _error_payload(exc),
                     }
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - unexpected workflow errors
                 error_count += 1
                 errors.append(
                     {
-                        "workflow_id": None,
-                        "index": None,
-                        "error": _format_unexpected_error(exc),
+                        "workflow_id": workflow_id,
+                        "index": index,
+                        "error": _unexpected_error_payload(exc),
                     }
                 )
-    except MenaceError as exc:
-        errors.append({"workflow_id": None, "index": None, "error": _error_dict(exc)})
-        error_count += 1
-    except Exception as exc:
+
+        status = _derive_status(ok_count, partial_count, error_count)
+        return _final_response(
+            status=status,
+            workflows_count=len(workflows),
+            results=results,
+            errors=errors,
+            ok_count=ok_count,
+            partial_count=partial_count,
+            error_count=error_count,
+            config_meta=config_meta,
+            normalized_config=normalized_config,
+        )
+    except Exception as exc:  # noqa: BLE001 - top-level safety net
         logger.exception("Unexpected orchestrator failure")
-        errors.append({"workflow_id": None, "index": None, "error": _format_unexpected_error(exc)})
-        error_count += 1
+        return _final_response(
+            status="error",
+            workflows_count=len(workflows) if isinstance(workflows, list) else 0,
+            results=results,
+            errors=[{"workflow_id": None, "index": None, "error": _unexpected_error_payload(exc)}],
+            ok_count=0,
+            partial_count=0,
+            error_count=1,
+            config_meta=None,
+            normalized_config=None,
+        )
 
-    status = "ok"
+
+def _derive_status(ok_count: int, partial_count: int, error_count: int) -> str:
     if error_count and ok_count:
-        status = "partial_failure"
-    elif error_count and not ok_count:
-        status = "error"
+        return "partial_failure"
+    if error_count and not ok_count and partial_count:
+        return "partial_failure"
+    if error_count:
+        return "error"
+    return "ok"
 
-    logger.info(
-        "Orchestrator completed",
-        extra={"status": status, "result_count": len(results), "error_count": error_count},
-    )
 
+def _final_response(
+    *,
+    status: str,
+    workflows_count: int,
+    results: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    ok_count: int,
+    partial_count: int,
+    error_count: int,
+    config_meta: dict[str, Any] | None,
+    normalized_config: dict[str, Any] | None,
+) -> dict[str, Any]:
     return {
         "status": status,
-        "data": {"results": results, "evaluation": evaluation_result},
+        "data": {
+            "results": results,
+            "config": normalized_config,
+        },
         "errors": errors,
         "meta": {
-            "workflow_count": len(workflows) if isinstance(workflows, list) else 0,
+            "workflow_count": workflows_count,
             "result_count": len(results),
             "ok_count": ok_count,
+            "partial_failure_count": partial_count,
             "error_count": error_count,
+            "status_summary": {
+                "success": ok_count,
+                "partial_failure": partial_count,
+                "error": error_count,
+            },
+            "config_meta": config_meta,
         },
     }
