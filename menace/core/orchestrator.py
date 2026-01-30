@@ -158,6 +158,12 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
         - ``meta``: counts + status summary + config validation metadata
+
+        Each entry in ``data["results"]`` is a workflow result that includes a
+        top-level ``meta`` key (not ``metadata``). The workflow ``meta`` payload
+        includes ``workflow_id``, any input ``meta`` fields, and deterministic
+        failure indicators: ``partial_failure`` (bool), ``error_count`` (int),
+        and ``failed_steps`` (list[int]).
     """
 
     results: list[dict[str, Any]] = []
