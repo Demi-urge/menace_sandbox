@@ -37,6 +37,8 @@ def test_empty_rules_noop_patch():
         "patch_text": "",
         "modified_source": source,
         "applied_rules": [],
+        "changes": [],
+        "audit_trail": [],
     }
     assert result["errors"] == []
     assert result["meta"] == {
@@ -193,7 +195,13 @@ def test_conflicting_edits_fail_deterministically():
     result = _assert_deterministic(source, {}, rules)
 
     assert result["status"] == "error"
-    assert result["data"] == {"patch_text": "", "modified_source": "", "applied_rules": []}
+    assert result["data"] == {
+        "patch_text": "",
+        "modified_source": "",
+        "applied_rules": [],
+        "changes": [],
+        "audit_trail": [],
+    }
     assert result["errors"] == [
         {
             "error_type": "PatchConflictError",
@@ -237,7 +245,13 @@ def test_overlapping_ranges_fail_deterministically():
     result = _assert_deterministic(source, {}, rules)
 
     assert result["status"] == "error"
-    assert result["data"] == {"patch_text": "", "modified_source": "", "applied_rules": []}
+    assert result["data"] == {
+        "patch_text": "",
+        "modified_source": "",
+        "applied_rules": [],
+        "changes": [],
+        "audit_trail": [],
+    }
     assert result["errors"] == [
         {
             "error_type": "PatchConflictError",
@@ -276,7 +290,13 @@ def test_ambiguous_anchor_fails_with_patch_anchor_error():
     result = _assert_deterministic(source, {}, rules)
 
     assert result["status"] == "error"
-    assert result["data"] == {"patch_text": "", "modified_source": "", "applied_rules": []}
+    assert result["data"] == {
+        "patch_text": "",
+        "modified_source": "",
+        "applied_rules": [],
+        "changes": [],
+        "audit_trail": [],
+    }
     assert result["errors"] == [
         {
             "error_type": "PatchAnchorError",

@@ -529,7 +529,7 @@ def generate_patch(
         status = "ok" if not errors else "error"
         data: dict[str, object] = {
             "patch_text": patch_text,
-            "updated_source": result.content,
+            "modified_source": result.content,
             "applied_rules": _serialize_rules(result.resolved_rules),
             "changes": [
                 {
@@ -645,13 +645,7 @@ def _failure_result(
     """Build a structured failure payload."""
     return {
         "status": "error",
-        "data": {
-            "patch_text": "",
-            "modified_source": "",
-            "applied_rules": [],
-            "changes": [],
-            "audit_trail": [],
-        },
+        "data": _empty_data_payload(),
         "errors": list(errors),
         "meta": dict(meta),
     }
@@ -668,7 +662,7 @@ def _deterministic_error_payload(
     """Return a deterministic error payload with empty data."""
     return {
         "status": "error",
-        "data": {},
+        "data": _empty_data_payload(),
         "errors": [error.to_dict()],
         "meta": _build_meta(
             rule_summaries=rule_summaries,
@@ -676,6 +670,17 @@ def _deterministic_error_payload(
             anchor_resolutions=anchor_resolutions or [],
             syntax_valid=syntax_valid,
         ),
+    }
+
+
+def _empty_data_payload() -> dict[str, Any]:
+    """Return a stable empty data payload for error responses."""
+    return {
+        "patch_text": "",
+        "modified_source": "",
+        "applied_rules": [],
+        "changes": [],
+        "audit_trail": [],
     }
 
 
