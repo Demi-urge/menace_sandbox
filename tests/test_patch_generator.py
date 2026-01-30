@@ -1,5 +1,9 @@
 import difflib
 
+import pytest
+
+from menace.errors import PatchAnchorError, PatchRuleError
+
 from menace_sandbox import patch_generator
 
 
@@ -27,27 +31,12 @@ def _assert_deterministic(source: str, error_report: dict, rules: list[dict]) ->
     return first
 
 
-def test_empty_rules_noop_patch():
+def test_empty_rules_raise_patch_rule_error():
     source = "alpha\nbravo\n"
 
-    result = _assert_deterministic(source, {}, [])
-
-    assert result["status"] == "noop"
-    assert result["data"] == {
-        "patch_text": "",
-        "modified_source": source,
-        "applied_rules": [],
-        "changes": [],
-        "audit_trail": [],
-    }
-    assert result["errors"] == []
-    assert result["meta"] == {
-        "rule_count": 0,
-        "changed_line_count": 0,
-        "anchor_resolutions": [],
-        "syntax_valid": None,
-        "original_source": source,
-    }
+    for _ in range(2):
+        with pytest.raises(PatchRuleError):
+            patch_generator.generate_patch(source, {}, [])
 
 
 def test_single_replace_rule():
@@ -56,8 +45,10 @@ def test_single_replace_rule():
         {
             "type": "replace",
             "id": "rule-replace",
+            "description": "replace alpha",
             "anchor": "alpha\n",
             "replacement": "alpha-1\n",
+            "meta": {"source": "test"},
         }
     ]
 
@@ -98,8 +89,10 @@ def test_single_insert_after_rule():
         {
             "type": "insert_after",
             "id": "rule-insert",
+            "description": "insert beta",
             "anchor": "alpha\n",
             "content": "beta\n",
+            "meta": {"source": "test"},
         }
     ]
 
@@ -140,7 +133,9 @@ def test_single_delete_regex_rule():
         {
             "type": "delete_regex",
             "id": "rule-delete",
+            "description": "delete bravo",
             "pattern": "bravo",
+            "meta": {"source": "test"},
         }
     ]
 
@@ -181,14 +176,18 @@ def test_conflicting_edits_fail_deterministically():
         {
             "type": "replace",
             "id": "rule-a",
+            "description": "replace alpha once",
             "anchor": "alpha",
             "replacement": "alpha-1",
+            "meta": {"source": "test"},
         },
         {
             "type": "replace",
             "id": "rule-b",
+            "description": "replace alpha twice",
             "anchor": "alpha",
             "replacement": "alpha-2",
+            "meta": {"source": "test"},
         },
     ]
 
@@ -232,13 +231,17 @@ def test_overlapping_ranges_fail_deterministically():
         {
             "type": "replace",
             "id": "rule-a",
+            "description": "replace alpha",
             "anchor": "alpha\n",
             "replacement": "alpha-1\n",
+            "meta": {"source": "test"},
         },
         {
             "type": "delete_regex",
             "id": "rule-b",
+            "description": "delete alpha",
             "pattern": "alpha",
+            "meta": {"source": "test"},
         },
     ]
 
@@ -282,51 +285,19 @@ def test_ambiguous_anchor_fails_with_patch_anchor_error():
         {
             "type": "replace",
             "id": "rule-1",
+            "description": "replace alpha",
             "anchor": "alpha",
             "replacement": "alpha-1",
+            "meta": {"source": "test"},
         }
     ]
 
-    result = _assert_deterministic(source, {}, rules)
+    with pytest.raises(PatchAnchorError) as exc_info:
+        patch_generator.generate_patch(source, {}, rules)
 
-    assert result["status"] == "error"
-    assert result["data"] == {
-        "patch_text": "",
-        "modified_source": "",
-        "applied_rules": [],
-        "changes": [],
-        "audit_trail": [],
-    }
-    assert result["errors"] == [
-        {
-            "error_type": "PatchAnchorError",
-            "message": "anchor is ambiguous",
-            "details": {
-                "rule_index": 0,
-                "rule": {
-                    "rule_id": "rule-1",
-                    "anchor": "alpha",
-                    "replacement": "alpha-1",
-                    "anchor_kind": "literal",
-                    "meta": None,
-                },
-                "rule_id": "rule-1",
-                "anchor_search": {
-                    "anchor": "alpha",
-                    "anchor_kind": "literal",
-                    "match_count": 2,
-                    "matches": [(0, 5), (6, 11)],
-                },
-            },
-        }
-    ]
-    assert result["meta"] == {
-        "rule_count": 1,
-        "changed_line_count": 0,
-        "anchor_resolutions": [],
-        "syntax_valid": None,
-        "original_source": source,
-    }
+    details = exc_info.value.details
+    assert details["rule_id"] == "rule-1"
+    assert details["anchor_search"]["match_count"] == 2
 
 
 def test_syntax_breaking_insert_fails_with_patch_syntax_error():
@@ -335,8 +306,10 @@ def test_syntax_breaking_insert_fails_with_patch_syntax_error():
         {
             "type": "insert_after",
             "id": "rule-1",
+            "description": "insert bad syntax",
             "anchor": "def ok():\n",
             "content": "def bad(\n",
+            "meta": {"language": "python"},
         }
     ]
 

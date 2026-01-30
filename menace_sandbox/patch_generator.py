@@ -457,33 +457,17 @@ def generate_patch(
     parsed_rules: list[Rule] = []
     rule_summaries: list[dict[str, Any]] = []
     try:
-        try:
-            _validate_inputs(source, error_report, rules)
-            parsed_rules = _parse_rules(rules)
-            validate_rules(parsed_rules)
-            rule_summaries = _summarize_rules(parsed_rules)
-        except (PatchRuleError, PatchAnchorError) as exc:
-            return _deterministic_error_payload(exc, rule_summaries=[])
-        except MenaceError as exc:
-            return _failure_result(
-                [exc.to_dict()],
-                meta=_build_meta(
-                    rule_summaries=[],
-                    applied_count=0,
-                    anchor_resolutions=[],
-                    syntax_valid=None,
-                ),
-            )
+        _validate_inputs(source, error_report, rules)
+        parsed_rules = _parse_rules(rules)
+        validate_rules(parsed_rules)
+        rule_summaries = _summarize_rules(parsed_rules)
 
         if not parsed_rules:
-            error = PatchRuleError("rules must not be empty", details={"field": "rules"})
-            return _deterministic_error_payload(error, rule_summaries=[])
+            raise PatchRuleError("rules must not be empty", details={"field": "rules"})
 
         errors: list[dict[str, Any]] = []
         try:
             result = apply_rules(source, parsed_rules)
-        except (PatchRuleError, PatchAnchorError) as exc:
-            return _deterministic_error_payload(exc, rule_summaries=rule_summaries)
         except PatchConflictError as exc:
             errors.append(exc.to_dict())
             return _failure_result(
@@ -499,6 +483,8 @@ def generate_patch(
         try:
             patch_text = render_patch(result)
         except MenaceError as exc:
+            if isinstance(exc, (PatchRuleError, PatchAnchorError)):
+                raise
             errors.append(exc.to_dict())
             return _failure_result(
                 errors,
@@ -563,6 +549,8 @@ def generate_patch(
                 syntax_valid=syntax_valid,
             ),
         }
+    except (PatchRuleError, PatchAnchorError):
+        raise
     except Exception as exc:
         error = exc if isinstance(exc, MenaceError) else MenaceError(
             "unexpected error during patch generation",
