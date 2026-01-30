@@ -30,9 +30,10 @@ class ReplaceRule:
         anchor: Target text or regex pattern to locate.
         replacement: Replacement content to apply.
         anchor_kind: Whether the anchor is treated as literal or regex.
+        meta: Structured metadata associated with the rule.
         count: Optional maximum number of replacements; None means all matches.
         allow_zero_matches: Whether zero matches are allowed without error.
-        meta: Structured metadata associated with the rule.
+        count_specified: Whether the count key was explicitly provided.
     """
 
     rule_id: str
@@ -40,9 +41,10 @@ class ReplaceRule:
     anchor: str
     replacement: str
     anchor_kind: str
+    meta: Mapping[str, Any]
     count: int | None = None
     allow_zero_matches: bool = False
-    meta: Mapping[str, Any]
+    count_specified: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,16 +77,16 @@ class DeleteRegexRule:
         description: Human-readable summary of the rule intent.
         pattern: Regex pattern to remove from the source.
         flags: Compiled regex flags for the pattern.
-        allow_zero_matches: Whether zero matches are allowed without error.
         meta: Structured metadata associated with the rule.
+        allow_zero_matches: Whether zero matches are allowed without error.
     """
 
     rule_id: str
     description: str
     pattern: str
     flags: int
-    allow_zero_matches: bool = False
     meta: Mapping[str, Any]
+    allow_zero_matches: bool = False
 
 
 Rule = ReplaceRule | InsertAfterRule | DeleteRegexRule
@@ -264,6 +266,11 @@ def validate_rules(rules: list[Rule]) -> None:
                     ),
                 )
             _validate_replace_count(rule.count, index, rule, rule_id)
+            if not isinstance(rule.count_specified, bool):
+                raise PatchRuleError(
+                    "count_specified must be a boolean",
+                    details=_rule_details(index, rule, rule_id=rule_id, field="count_specified"),
+                )
             _validate_allow_zero_matches(rule.allow_zero_matches, index, rule, rule_id)
         elif isinstance(rule, InsertAfterRule):
             _require_non_empty_target(rule.anchor, index, rule, rule_id, field="anchor")
@@ -305,6 +312,16 @@ def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
         raise PatchRuleError(
             "source must be a string",
             details={"field": "source", "expected": "str", "actual_type": type(source).__name__},
+        )
+    if not source:
+        raise PatchRuleError(
+            "source must not be empty",
+            details={"field": "source", "expected": "non-empty string"},
+        )
+    if not rules:
+        raise PatchRuleError(
+            "rules must not be empty",
+            details={"field": "rules"},
         )
     validate_rules(rules)
 
@@ -357,6 +374,13 @@ def _allows_multiple_inserts(rule: InsertAfterRule) -> bool:
     if not rule.meta:
         return False
     return bool(rule.meta.get("allow_multiple_inserts"))
+
+
+def _allows_multiple_matches(rule: ReplaceRule) -> bool:
+    """Check whether a replace rule explicitly allows multiple anchor matches."""
+    if not rule.meta:
+        return False
+    return bool(rule.meta.get("allow_multiple_matches"))
 
 
 def _raise_on_conflicts(
@@ -647,6 +671,11 @@ def _validate_generate_patch_inputs(
             "source must be a string",
             details={"field": "source", "expected": "str", "actual_type": type(source).__name__},
         )
+    if not source:
+        raise PatchRuleError(
+            "source must not be empty",
+            details={"field": "source", "expected": "non-empty string"},
+        )
     if not isinstance(error_report, Mapping):
         raise PatchRuleError(
             "error_report must be a mapping",
@@ -811,6 +840,11 @@ def _validate_inputs(
             "source must be a string",
             details={"field": "source", "expected": "str", "actual_type": type(source).__name__},
         )
+    if not source:
+        raise PatchRuleError(
+            "source must not be empty",
+            details={"field": "source", "expected": "non-empty string"},
+        )
     if not isinstance(error_report, Mapping):
         raise PatchRuleError(
             "error_report must be a mapping",
@@ -893,6 +927,7 @@ def _parse_rules(
 
 def _parse_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> ReplaceRule:
     """Parse a replace rule definition."""
+    count_specified = "count" in rule
     _ensure_only_keys(
         rule,
         {
@@ -924,6 +959,7 @@ def _parse_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> Replace
         anchor_kind=anchor_kind,
         count=count,
         allow_zero_matches=allow_zero_matches,
+        count_specified=count_specified,
         meta=meta,
     )
 
@@ -1398,6 +1434,29 @@ def _resolve_replace(
                     "match_count": 0,
                     "matches": [],
                     "allow_zero_matches": allow_zero_matches,
+                },
+            ),
+        )
+    if (
+        len(matches) > 1
+        and count is None
+        and not rule_payload.count_specified
+        and not _allows_multiple_matches(rule_payload)
+    ):
+        raise PatchAnchorError(
+            "anchor is ambiguous",
+            details=_rule_details(
+                rule_index,
+                rule_payload,
+                rule_id=rule_id,
+                anchor_search={
+                    "anchor": anchor,
+                    "anchor_kind": "literal",
+                    "match_count": len(matches),
+                    "matches": list(matches),
+                    "count": count,
+                    "count_specified": rule_payload.count_specified,
+                    "allow_multiple_matches": _allows_multiple_matches(rule_payload),
                 },
             ),
         )
