@@ -181,6 +181,7 @@ class PatchResult:
     content: str
     changes: list[PatchChange]
     audit_trail: list[PatchAuditEntry]
+    resolved_rules: list[ResolvedRule]
 
 
 def validate_rules(rules: list[Rule]) -> None:
@@ -292,7 +293,12 @@ def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
         )
         for idx, rule in enumerate(sorted(resolved_rules, key=lambda rule: rule.index))
     ]
-    return PatchResult(content=updated_source, changes=changes, audit_trail=audit_trail)
+    return PatchResult(
+        content=updated_source,
+        changes=changes,
+        audit_trail=audit_trail,
+        resolved_rules=list(resolved_rules),
+    )
 
 
 def _rule_kind(rule: Rule) -> str:
@@ -502,6 +508,25 @@ def generate_patch(
         data = {
             "patch_text": patch_text,
             "updated_source": result.content,
+            "applied_rules": _serialize_rules(result.resolved_rules),
+            "changes": [
+                {
+                    "id": change.rule_id,
+                    "type": change.rule_type,
+                    "description": change.description,
+                    "span": {"start": change.start, "end": change.end},
+                    "line_offsets": {
+                        "start_line": change.line_start,
+                        "start_col": change.col_start,
+                        "end_line": change.line_end,
+                        "end_col": change.col_end,
+                    },
+                    "before": change.before,
+                    "after": change.after,
+                }
+                for change in result.changes
+            ],
+            "audit_trail": [asdict(entry) for entry in result.audit_trail],
         }
 
     return {
@@ -511,6 +536,8 @@ def generate_patch(
         "meta": _build_meta(
             rule_summaries=rule_summaries,
             applied_count=len(result.changes),
+            anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
+            changed_line_count=_count_changed_lines(patch_text),
         ),
     }
 
@@ -566,12 +593,16 @@ def _build_meta(
     *,
     rule_summaries: Sequence[Mapping[str, Any]],
     applied_count: int,
+    anchor_resolutions: Sequence[Mapping[str, Any]] | None = None,
+    changed_line_count: int = 0,
 ) -> dict[str, Any]:
     """Build deterministic metadata for generate_patch."""
     return {
         "rule_summaries": list(rule_summaries),
         "rule_count": len(rule_summaries),
         "applied_count": applied_count,
+        "anchor_resolutions": list(anchor_resolutions or []),
+        "changed_line_count": changed_line_count,
     }
 
 
