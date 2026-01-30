@@ -102,6 +102,7 @@ _PROMPT_STRATEGIES: tuple[type, Callable[..., Any]] | None = None
 _VECTOR_SERVICE_RESULTS: tuple[type, type] | None = None
 _PATCH_SAFETY_CLS: type | None = None
 _LICENSE_DENYLIST: dict[str, str] | None = None
+_PATCH_VALIDATOR: Callable[[str], dict[str, object]] | None = None
 
 _T = TypeVar("_T")
 
@@ -202,6 +203,38 @@ def _get_patch_safety_cls() -> type:
     if _PATCH_SAFETY_CLS is None:
         _PATCH_SAFETY_CLS = load_internal("patch_safety").PatchSafety
     return _PATCH_SAFETY_CLS
+
+
+def _get_patch_validator() -> Callable[[str], dict[str, object]]:
+    """Return the patch validation helper from stabilization utilities."""
+
+    global _PATCH_VALIDATOR
+    if _PATCH_VALIDATOR is None:
+        _PATCH_VALIDATOR = load_internal(
+            "stabilization.patch_validator"
+        ).validate_patch_text
+    return _PATCH_VALIDATOR
+
+
+def _run_patch_validation(
+    patch_text: str,
+    module_path: str,
+    target_region: Any,
+    logger: logging.Logger,
+) -> tuple[list[str], dict[str, Any]]:
+    validator = _get_patch_validator()
+    result = validator(patch_text)
+    flags = list(result.get("flags", [])) if isinstance(result, Mapping) else []
+    context = result.get("context", {}) if isinstance(result, Mapping) else {}
+    if flags:
+        _log_validation_flags(
+            logger,
+            module_path,
+            target_region,
+            "patch_validator",
+            flags,
+        )
+    return flags, context
 
 
 def _get_license_denylist() -> dict[str, str]:
@@ -2247,6 +2280,20 @@ def apply_validated_patch(
         logger.exception("quick fix patch failed")
         return False, None, ["generation_error"]
     flags_list = list(flags)
+    if patch_id is not None and not flags_list:
+        try:
+            patch_text = fetch_patch(patch_id)
+        except Exception:
+            logger.exception("failed to fetch patch for validation")
+            flags_list.append("patch_fetch_error")
+        else:
+            patch_flags, _patch_context = _run_patch_validation(
+                patch_text,
+                str(module_path),
+                None,
+                logger,
+            )
+            flags_list.extend(patch_flags)
     if flags_list:
         try:
             if repo_root is not None:
@@ -2443,6 +2490,21 @@ def validate_patch(
                 "patch_safety",
                 safety_flags,
             )
+        if not flags and _pid is not None:
+            try:
+                patch_text = fetch_patch(_pid)
+            except Exception:
+                logger.exception("failed to fetch patch for validation")
+                flags = list(flags) + ["patch_fetch_error"]
+            else:
+                patch_flags, _patch_context = _run_patch_validation(
+                    patch_text,
+                    module_name,
+                    target_region,
+                    logger,
+                )
+                if patch_flags:
+                    flags = list(flags) + patch_flags
     except Exception:
         logger.exception("quick fix validation failed")
         flags = ["validation_error"]
@@ -3299,6 +3361,21 @@ class QuickFixEngine:
                     "patch_safety",
                     safety_flags,
                 )
+            if not flags and _pid is not None:
+                try:
+                    patch_text = fetch_patch(_pid)
+                except Exception:
+                    self.logger.exception("failed to fetch patch for validation")
+                    flags = list(flags) + ["patch_fetch_error"]
+                else:
+                    patch_flags, _patch_context = _run_patch_validation(
+                        patch_text,
+                        module_name,
+                        target_region,
+                        self.logger,
+                    )
+                    if patch_flags:
+                        flags = list(flags) + patch_flags
         except Exception:
             self.logger.exception("quick fix validation failed")
             flags = ["validation_error"]
