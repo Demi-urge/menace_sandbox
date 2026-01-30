@@ -342,6 +342,7 @@ def test_syntax_breaking_insert_fails_with_patch_syntax_error():
                 "error_type": "SyntaxError",
                 "message": "expected an indented block after function definition on line 1",
                 "line": 2,
+                "column": 1,
                 "offset": 1,
                 "rule_ids": ["rule-1"],
                 "rule_count": 1,
@@ -355,3 +356,26 @@ def test_syntax_breaking_insert_fails_with_patch_syntax_error():
         "syntax_valid": False,
         "original_source": source,
     }
+
+
+def test_rule_meta_can_force_syntax_validation():
+    source = "def ok():\n    return 1\n"
+    rules = [
+        {
+            "type": "insert_after",
+            "id": "rule-1",
+            "description": "insert bad syntax",
+            "anchor": "def ok():\n",
+            "content": "def bad(\n",
+            "meta": {"validate_syntax": True},
+        }
+    ]
+
+    result = _assert_deterministic(source, {}, rules)
+
+    assert result["status"] == "error"
+    assert result["errors"][0]["error_type"] == "PatchSyntaxError"
+    details = result["errors"][0]["details"]
+    assert details["line"] == 2
+    assert details["column"] == 1
+    assert details["message"] == "expected an indented block after function definition on line 1"

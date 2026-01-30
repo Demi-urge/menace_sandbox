@@ -482,7 +482,8 @@ def generate_patch(
             - anchor/anchor_kind/content: Required for insert_after.
             - pattern/flags: Required for delete_regex (flags are strings such as
               "IGNORECASE", "MULTILINE", or "DOTALL").
-            - meta: Required mapping of rule metadata.
+            - meta: Required mapping of rule metadata. Set meta["validate_syntax"]
+              to True to force syntax validation of the modified source.
         validate_syntax: Explicit override for syntax validation. When None, validation
             runs automatically for supported languages (Python).
 
@@ -534,20 +535,23 @@ def generate_patch(
             )
 
         syntax_valid: bool | None = None
-        if validate_syntax is not False:
-            detected_language = _detect_language(error_report, parsed_rules)
-            if detected_language and detected_language.strip().lower() == "python":
-                syntax_error = _check_syntax(
-                    result.content,
-                    error_report,
-                    parsed_rules,
-                    language=detected_language,
-                )
-                if syntax_error:
-                    errors.append(syntax_error.to_dict())
-                    syntax_valid = False
-                else:
-                    syntax_valid = True
+        should_validate, detected_language = _should_validate_modified_source(
+            validate_syntax,
+            error_report,
+            parsed_rules,
+        )
+        if should_validate:
+            syntax_error = _check_syntax(
+                result.content,
+                error_report,
+                parsed_rules,
+                language=detected_language,
+            )
+            if syntax_error:
+                errors.append(syntax_error.to_dict())
+                syntax_valid = False
+            else:
+                syntax_valid = True
 
         status = "ok" if not errors else "error"
         data: dict[str, object] = {
@@ -1835,6 +1839,11 @@ def validate_syntax(source: str) -> None:
         raise PatchSyntaxError(
             "Syntax check failed",
             details={
+                "error_type": type(exc).__name__,
+                "message": exc.msg,
+                "line": exc.lineno,
+                "column": exc.offset,
+                "offset": exc.offset,
                 "lineno": exc.lineno,
                 "col_offset": exc.offset,
                 "msg": exc.msg,
@@ -1867,6 +1876,26 @@ def _check_syntax(
         )
         return PatchSyntaxError(exc.message, details=details)
     return None
+
+
+def _should_validate_modified_source(
+    validate_syntax: bool | None,
+    error_report: Mapping[str, Any],
+    rules: Sequence[ReplaceRule | InsertAfterRule | DeleteRegexRule],
+) -> tuple[bool, str | None]:
+    """Determine whether to validate modified source syntax."""
+    if validate_syntax is False:
+        return False, None
+    if validate_syntax is True:
+        return True, "python"
+    for rule in rules:
+        meta = rule.meta or {}
+        if isinstance(meta, Mapping) and meta.get("validate_syntax") is True:
+            return True, "python"
+    language = _detect_language(error_report, rules)
+    if language and language.strip().lower() == "python":
+        return True, language
+    return False, None
 
 
 def _detect_language(
