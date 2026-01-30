@@ -188,7 +188,11 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
             try:
                 result = run_workflow(validated_workflow)
                 results.append(result)
-                if result.get("status") == "ok":
+                workflow_status = result.get("status")
+                workflow_errors = result.get("errors", [])
+                workflow_meta = result.get("meta", {})
+                partial_failure = bool(workflow_errors) or bool(workflow_meta.get("partial_failure"))
+                if workflow_status == "ok" and not partial_failure:
                     ok_count += 1
                 else:
                     error_count += 1
@@ -202,7 +206,8 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                                 "details": {
                                     "workflow_id": workflow_id,
                                     "index": index,
-                                    "errors": result.get("errors", []),
+                                    "errors": workflow_errors,
+                                    "meta": workflow_meta,
                                 },
                             },
                         }
