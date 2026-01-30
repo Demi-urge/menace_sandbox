@@ -425,6 +425,8 @@ def generate_patch(
     source: str,
     error_report: Mapping[str, Any],
     rules: Sequence[Mapping[str, Any]],
+    *,
+    language: str | None = None,
 ) -> dict[str, Any]:
     """Generate a unified diff by applying explicit patch rules.
 
@@ -432,6 +434,7 @@ def generate_patch(
         source: The original source content to modify.
         error_report: Structured metadata about the error context.
         rules: Patch rules to apply in deterministic order.
+        language: Optional explicit language name to trigger syntax checks.
 
     Returns:
         A structured payload containing status, data, errors, and meta fields.
@@ -473,7 +476,12 @@ def generate_patch(
         patch_text = _build_diff(source, updated_source)
         _validate_patch_text(patch_text, resolved_rules)
 
-        syntax_error = _check_syntax(updated_source, error_report, parsed_rules)
+        syntax_error = _check_syntax(
+            updated_source,
+            error_report,
+            parsed_rules,
+            language=language,
+        )
         syntax_valid = syntax_error is None
         errors: list[dict[str, Any]] = []
         if syntax_error:
@@ -1422,29 +1430,45 @@ def _base_meta(
     }
 
 
+def validate_syntax(source: str) -> None:
+    """Validate Python syntax for a given source string."""
+    try:
+        ast.parse(source)
+    except SyntaxError as exc:
+        raise PatchSyntaxError(
+            "Syntax check failed",
+            details={
+                "lineno": exc.lineno,
+                "col_offset": exc.offset,
+                "msg": exc.msg,
+            },
+        ) from exc
+
+
 def _check_syntax(
     source: str,
     error_report: Mapping[str, Any],
     rules: Sequence[ReplaceRule | InsertAfterRule | DeleteRegexRule],
+    *,
+    language: str | None = None,
 ) -> MenaceError | None:
     """Optionally validate syntax of the modified source."""
-    language = _detect_language(error_report, rules)
-    if language != "python":
+    normalized_language = language.strip().lower() if isinstance(language, str) else None
+    if normalized_language is None:
+        normalized_language = _detect_language(error_report, rules)
+    if normalized_language != "python":
         return None
     try:
-        ast.parse(source)
-    except SyntaxError as exc:
-        return PatchSyntaxError(
-            "Syntax check failed",
-            details={
-                "error_type": "SyntaxError",
-                "message": exc.msg,
-                "line": exc.lineno,
-                "offset": exc.offset,
+        validate_syntax(source)
+    except PatchSyntaxError as exc:
+        details = dict(exc.details or {})
+        details.update(
+            {
                 "rule_ids": [rule.rule_id for rule in rules],
                 "rule_count": len(rules),
-            },
+            }
         )
+        return PatchSyntaxError(exc.message, details=details)
     return None
 
 
