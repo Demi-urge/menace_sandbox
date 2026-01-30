@@ -4,23 +4,23 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Iterable
+from typing import Any, Iterable
 
-from menace.errors.exceptions import EvaluatorError
+from menace.errors.exceptions import EvaluationError
 
 logger = logging.getLogger(__name__)
 
 
-def _require_decimal(data: Dict[str, Any], field_name: str) -> Decimal:
+def _require_decimal(data: dict[str, Any], field_name: str) -> Decimal:
     if field_name not in data or data[field_name] is None:
-        raise EvaluatorError(
+        raise EvaluationError(
             f"Missing required field '{field_name}'",
             details={"field": field_name},
         )
 
     value = data[field_name]
     if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
-        raise EvaluatorError(
+        raise EvaluationError(
             f"Field '{field_name}' must be numeric",
             details={"field": field_name, "value_type": type(value).__name__},
         )
@@ -28,27 +28,34 @@ def _require_decimal(data: Dict[str, Any], field_name: str) -> Decimal:
     try:
         return Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
-        raise EvaluatorError(
+        raise EvaluationError(
             f"Field '{field_name}' could not be parsed as a number",
             details={"field": field_name, "value": value},
         ) from exc
 
 
-def _inputs_used(required_fields: Iterable[str]) -> Dict[str, Any]:
+def _inputs_used(required_fields: Iterable[str]) -> dict[str, Any]:
     return {
         "inputs_used": list(required_fields),
     }
 
 
-def evaluate_roi(input_data: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_roi(input_data: dict[str, Any]) -> dict[str, Any]:
     """Evaluate return on investment (ROI) using deterministic numeric logic.
 
     ROI is computed deterministically using the formula ``(revenue - cost) / cost``.
 
+    Expected input fields:
+        - cost: Total cost for the investment. Must be a positive number.
+        - revenue: Total revenue for the investment. Must be numeric.
+
+    Invariants:
+        - Only numeric fields are used in the computation.
+        - Missing or malformed required fields raise ``EvaluationError``.
+        - Cost must be positive to avoid division by zero or negative ROI bases.
+
     Args:
-        input_data: Mapping containing required numeric fields:
-            - cost: Total cost for the investment. Must be a positive number.
-            - revenue: Total revenue for the investment. Must be numeric.
+        input_data: Mapping containing required numeric fields.
 
     Returns:
         Structured evaluation result with the following shape:
@@ -56,6 +63,10 @@ def evaluate_roi(input_data: Dict[str, Any]) -> Dict[str, Any]:
                 "status": "ok",
                 "data": {
                     "roi": Decimal,
+                    "inputs": {
+                        "revenue": Decimal,
+                        "cost": Decimal,
+                    },
                     "components": {
                         "revenue": Decimal,
                         "cost": Decimal,
@@ -70,12 +81,12 @@ def evaluate_roi(input_data: Dict[str, Any]) -> Dict[str, Any]:
             }
 
     Raises:
-        EvaluatorError: Raised when required inputs are missing, invalid, or
+        EvaluationError: Raised when required inputs are missing, invalid, or
             non-numeric, or when cost is zero/negative and ROI cannot be
             computed deterministically.
     """
     if not isinstance(input_data, dict):
-        raise EvaluatorError(
+        raise EvaluationError(
             "ROI evaluator expected a dict payload",
             details={"received_type": type(input_data).__name__},
         )
@@ -85,7 +96,7 @@ def evaluate_roi(input_data: Dict[str, Any]) -> Dict[str, Any]:
     revenue = _require_decimal(input_data, "revenue")
 
     if cost <= 0:
-        raise EvaluatorError(
+        raise EvaluationError(
             "Cost must be a positive number to compute ROI",
             details={"cost": str(cost)},
         )
@@ -106,6 +117,10 @@ def evaluate_roi(input_data: Dict[str, Any]) -> Dict[str, Any]:
         "status": "ok",
         "data": {
             "roi": roi,
+            "inputs": {
+                "revenue": revenue,
+                "cost": cost,
+            },
             "components": {
                 "revenue": revenue,
                 "cost": cost,
