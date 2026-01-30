@@ -1,0 +1,13 @@
+diff --git a/toy.py b/toy.py
+index 1111111..2222222 100644
+--- a/toy.py
++++ b/toy.py
+@@ -1,6 +1,6 @@
+ def add(a, b):
+-    return a - b
++    return a + b
+
+
+ if __name__ == "__main__":
+     print(add(2, 3))
+
