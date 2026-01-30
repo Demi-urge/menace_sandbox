@@ -1368,7 +1368,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from stabilization.response_schemas import (
+from menace_sandbox.stabilization import (
     ValidationError as SimpleValidationError,
     normalize_preset_batch,
 )

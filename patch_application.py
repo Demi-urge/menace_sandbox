@@ -21,7 +21,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any, Iterable, Mapping
 
-from stabilization.response_schemas import (
+from menace_sandbox.stabilization import (
     ValidationError,
     normalize_patch_apply,
     normalize_patch_validation,

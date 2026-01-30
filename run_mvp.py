@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import mvp_workflow
-from stabilization.response_schemas import (
+from menace_sandbox.stabilization import (
     ValidationError,
     normalize_error_response,
     normalize_mvp_response,
