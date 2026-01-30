@@ -38,8 +38,20 @@ class PatchGeneratorTests(unittest.TestCase):
         self.assertEqual(first["meta"], second["meta"])
 
     def test_empty_rules_return_structured_error_payload(self):
-        with self.assertRaises(PatchRuleError):
-            patch_generator.generate_patch("alpha\n", {}, [])
+        result = patch_generator.generate_patch("alpha\n", {}, [])
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(
+            result["data"],
+            {
+                "patch_text": "",
+                "modified_source": "",
+                "applied_rules": [],
+                "changes": [],
+                "audit_trail": [],
+            },
+        )
+        self.assertEqual(result["errors"][0]["type"], "PatchRuleError")
 
     def test_invalid_rules_raise_menace_errors(self):
         with self.assertRaises(PatchRuleError):
@@ -73,9 +85,12 @@ class PatchGeneratorTests(unittest.TestCase):
             validate_syntax=True,
         )
 
+        expected_source = "def ok():\ndef bad(\n    return 1\n"
+
         self.assertEqual(result["status"], "error")
-        self.assertEqual(result["data"], {})
-        self.assertEqual(result["errors"][0]["error_type"], "PatchSyntaxError")
+        self.assertEqual(result["data"]["modified_source"], expected_source)
+        self.assertTrue(result["data"]["patch_text"])
+        self.assertEqual(result["errors"][0]["type"], "PatchSyntaxError")
 
 
 if __name__ == "__main__":

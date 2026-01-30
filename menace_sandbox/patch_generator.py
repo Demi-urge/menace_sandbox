@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import difflib
+import hashlib
+import json
 import re
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Mapping, Sequence
@@ -372,6 +374,7 @@ def _raise_on_conflicts(
                     "line": sample.line_start,
                     "col": sample.col_start,
                     "rule_ids": [rule.rule_id for rule in rules_at_position],
+                    "rule_indices": [rule.index for rule in rules_at_position],
                     "allow_multiple_inserts": [
                         bool(
                             isinstance(rule_lookup.get(rule.rule_id), InsertAfterRule)
@@ -390,13 +393,15 @@ def _raise_on_conflicts(
             if _spans_overlap(rule, other):
                 raise PatchConflictError(
                     "conflicting edits detected",
-                    details={
-                        "rule_id": rule.rule_id,
-                        "conflicting_rule_id": other.rule_id,
-                        "rule_type": rule.rule_type,
-                        "conflicting_rule_type": other.rule_type,
-                        "span": [rule.start, rule.end],
-                        "conflicting_span": [other.start, other.end],
+                details={
+                    "rule_id": rule.rule_id,
+                    "rule_index": rule.index,
+                    "conflicting_rule_id": other.rule_id,
+                    "conflicting_rule_index": other.index,
+                    "rule_type": rule.rule_type,
+                    "conflicting_rule_type": other.rule_type,
+                    "span": [rule.start, rule.end],
+                    "conflicting_span": [other.start, other.end],
                         "line_offsets": {
                             "start_line": rule.line_start,
                             "start_col": rule.col_start,
@@ -494,12 +499,18 @@ def generate_patch(
     rule_summaries: list[dict[str, Any]] = []
     try:
         _validate_inputs(source, error_report, rules)
-        parsed_rules = _parse_rules(rules)
+        parsed_rules = _coerce_rules(rules)
         validate_rules(parsed_rules)
         rule_summaries = _summarize_rules(parsed_rules)
 
         if not parsed_rules:
-            raise PatchRuleError("rules must not be empty", details={"field": "rules"})
+            error = PatchRuleError("rules must not be empty", details={"field": "rules"})
+            return _deterministic_error_payload(
+                error,
+                source=source,
+                rule_summaries=rule_summaries,
+                notes=["empty_rules"],
+            )
 
         errors: list[dict[str, Any]] = []
         try:
@@ -509,6 +520,7 @@ def generate_patch(
             return _failure_result(
                 errors,
                 meta=_build_meta(
+                    source=source,
                     rule_summaries=rule_summaries,
                     applied_count=0,
                     applied_rules=[],
@@ -526,6 +538,7 @@ def generate_patch(
             return _failure_result(
                 errors,
                 meta=_build_meta(
+                    source=source,
                     rule_summaries=rule_summaries,
                     applied_count=0,
                     applied_rules=[],
@@ -583,6 +596,7 @@ def generate_patch(
             "data": data,
             "errors": errors,
             "meta": _build_meta(
+                source=source,
                 rule_summaries=rule_summaries,
                 applied_count=len(result.changes),
                 applied_rules=_serialize_applied_rules(result.resolved_rules),
@@ -591,8 +605,12 @@ def generate_patch(
                 syntax_valid=syntax_valid,
             ),
         }
-    except (PatchRuleError, PatchAnchorError):
-        raise
+    except (PatchRuleError, PatchAnchorError) as exc:
+        return _deterministic_error_payload(
+            exc,
+            source=source,
+            rule_summaries=rule_summaries,
+        )
     except Exception as exc:
         error = exc if isinstance(exc, MenaceError) else MenaceError(
             "unexpected error during patch generation",
@@ -600,6 +618,7 @@ def generate_patch(
         )
         return _deterministic_error_payload(
             error,
+            source=source,
             rule_summaries=rule_summaries,
             applied_rules=[],
         )
@@ -654,25 +673,45 @@ def _summarize_rules(rules: Sequence[Rule]) -> list[dict[str, Any]]:
 
 def _build_meta(
     *,
+    source: str,
     rule_summaries: Sequence[Mapping[str, Any]],
     applied_count: int,
     applied_rules: Sequence[Mapping[str, Any]] | None = None,
     anchor_resolutions: Sequence[Mapping[str, Any]] | None = None,
     changed_line_count: int = 0,
     syntax_valid: bool | None = None,
+    notes: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Build deterministic metadata for generate_patch."""
     applied_rules_list = list(applied_rules or [])
+    rule_application_order = [
+        rule.get("id") for rule in applied_rules_list if isinstance(rule, Mapping) and "id" in rule
+    ]
     return {
         "rule_summaries": list(rule_summaries),
         "rule_count": len(rule_summaries),
         "applied_count": applied_count,
+        "total_changes": applied_count,
         "applied_rule_ids": [rule["id"] for rule in applied_rules_list if "id" in rule],
+        "rule_application_order": rule_application_order,
         "applied_rules": applied_rules_list,
         "anchor_resolutions": list(anchor_resolutions or []),
         "changed_line_count": changed_line_count,
         "syntax_valid": syntax_valid,
+        "validation_results": {"syntax_valid": syntax_valid},
+        "input_hash": _hash_input(source, rule_summaries),
+        "notes": list(notes or []),
     }
+
+
+def _hash_input(source: str, rule_summaries: Sequence[Mapping[str, Any]]) -> str:
+    """Create a deterministic hash of the input source and rule summaries."""
+    payload = {
+        "source": source,
+        "rules": list(rule_summaries),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _failure_result(
@@ -692,11 +731,13 @@ def _failure_result(
 def _deterministic_error_payload(
     error: MenaceError,
     *,
+    source: str,
     rule_summaries: Sequence[Mapping[str, Any]],
     applied_count: int = 0,
     applied_rules: Sequence[Mapping[str, Any]] | None = None,
     anchor_resolutions: Sequence[Mapping[str, Any]] | None = None,
     syntax_valid: bool | None = None,
+    notes: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic error payload with empty data."""
     return {
@@ -704,11 +745,13 @@ def _deterministic_error_payload(
         "data": _empty_data_payload(),
         "errors": [error.to_dict()],
         "meta": _build_meta(
+            source=source,
             rule_summaries=rule_summaries,
             applied_count=applied_count,
             applied_rules=applied_rules,
             anchor_resolutions=anchor_resolutions or [],
             syntax_valid=syntax_valid,
+            notes=notes,
         ),
     }
 
@@ -748,7 +791,7 @@ def _rule_details(index: int, rule: Any, *, rule_id: str | None = None, **extra:
 def _validate_inputs(
     source: str,
     error_report: Mapping[str, Any],
-    rules: Sequence[Mapping[str, Any]],
+    rules: Sequence[Mapping[str, Any]] | Sequence[Rule],
 ) -> None:
     """Validate the top-level inputs for patch generation."""
     if not isinstance(source, str):
@@ -770,6 +813,30 @@ def _validate_inputs(
             "rules must be a sequence",
             details={"field": "rules", "expected": "sequence", "actual_type": type(rules).__name__},
         )
+    for index, rule in enumerate(rules):
+        if isinstance(rule, (ReplaceRule, InsertAfterRule, DeleteRegexRule)):
+            continue
+        if not isinstance(rule, Mapping):
+            raise PatchRuleError(
+                "rule must be a mapping or Rule instance",
+                details=_rule_details(index, rule, expected="mapping or Rule"),
+            )
+
+
+def _coerce_rules(
+    rules: Sequence[Mapping[str, Any]] | Sequence[Rule],
+) -> list[ReplaceRule | InsertAfterRule | DeleteRegexRule]:
+    """Normalize input rule definitions into concrete Rule objects."""
+    if not rules:
+        return []
+    if all(isinstance(rule, Mapping) for rule in rules):
+        return _parse_rules(rules)  # type: ignore[arg-type]
+    if all(isinstance(rule, (ReplaceRule, InsertAfterRule, DeleteRegexRule)) for rule in rules):
+        return list(rules)  # type: ignore[list-item]
+    raise PatchRuleError(
+        "rules must be provided as mappings or Rule objects",
+        details={"field": "rules", "expected": "mapping or Rule"},
+    )
 
 
 def _parse_rules(

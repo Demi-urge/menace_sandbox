@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 
 @dataclass
@@ -25,11 +25,38 @@ class MenaceError(Exception):
 
     def to_dict(self) -> dict[str, Any]:
         """Return a deterministic, serializable view of the error."""
-        return {
+        details = dict(self.details or {})
+        payload: dict[str, Any] = {
+            "type": self.__class__.__name__,
             "error_type": self.__class__.__name__,
             "message": self.message,
-            "details": dict(self.details or {}),
+            "rule_id": details.get("rule_id"),
+            "rule_index": details.get("rule_index"),
+            "details": details,
         }
+        location = _extract_location(details)
+        if location:
+            payload["location"] = location
+        return payload
+
+
+def _extract_location(details: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract optional location context from error details."""
+    location: dict[str, Any] = {}
+    line_offsets = details.get("line_offsets")
+    if isinstance(line_offsets, Mapping):
+        location.update(line_offsets)
+    for key in ("line", "lineno"):
+        if key in details:
+            location["line"] = details[key]
+            break
+    for key in ("column", "col_offset", "col"):
+        if key in details:
+            location["column"] = details[key]
+            break
+    if "span" in details:
+        location["span"] = details["span"]
+    return location
 
 
 @dataclass
