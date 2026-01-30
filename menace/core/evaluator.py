@@ -12,6 +12,24 @@ logger = logging.getLogger(__name__)
 
 
 def _require_decimal(data: dict[str, Any], field_name: str) -> Decimal:
+    """Extract a required numeric field as a ``Decimal``.
+
+    Args:
+        data (dict[str, Any]): Input mapping containing numeric fields.
+        field_name (str): Required field name to extract.
+
+    Returns:
+        Decimal: Parsed decimal value for the requested field.
+
+    Raises:
+        EvaluationError: If the field is missing, ``None``, non-numeric, or
+            cannot be parsed into a ``Decimal`` deterministically.
+
+    Invariants:
+        - ``field_name`` must exist in ``data`` with a non-``None`` value.
+        - Boolean values are rejected even though they are ``int`` subclasses.
+        - Parsing is deterministic for the provided value.
+    """
     if field_name not in data or data[field_name] is None:
         raise EvaluationError(
             f"Missing required field '{field_name}'",
@@ -35,6 +53,21 @@ def _require_decimal(data: dict[str, Any], field_name: str) -> Decimal:
 
 
 def _inputs_used(required_fields: Iterable[str]) -> dict[str, Any]:
+    """Return deterministic metadata listing the inputs used.
+
+    Args:
+        required_fields (Iterable[str]): Field names used in the evaluation.
+
+    Returns:
+        dict[str, Any]: Metadata payload with ``inputs_used`` list.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - The output always contains the ``inputs_used`` key.
+        - The list preserves the order of ``required_fields``.
+    """
     return {
         "inputs_used": list(required_fields),
     }

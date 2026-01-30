@@ -19,10 +19,40 @@ logger = logging.getLogger(__name__)
 
 
 def _error_payload(error: MenaceError) -> dict[str, Any]:
+    """Convert a MenaceError into a structured error payload.
+
+    Args:
+        error (MenaceError): Domain-specific exception instance.
+
+    Returns:
+        dict[str, Any]: Structured error dictionary from ``error.to_dict()``.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - Output is deterministic for a given error instance.
+        - No ``None`` values are introduced by this helper.
+    """
     return error.to_dict()
 
 
 def _unexpected_error_payload(exc: Exception) -> dict[str, Any]:
+    """Create an orchestrator error payload for unexpected exceptions.
+
+    Args:
+        exc (Exception): Unexpected exception to serialize.
+
+    Returns:
+        dict[str, Any]: Structured ``OrchestratorError`` payload.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - Payload includes the exception type and message.
+        - Output keys are stable for identical inputs.
+    """
     return OrchestratorError(
         message="Unexpected orchestrator exception",
         details={
@@ -33,6 +63,25 @@ def _unexpected_error_payload(exc: Exception) -> dict[str, Any]:
 
 
 def _validate_workflow_shape(workflow: Any, index: int) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Validate the basic schema of a workflow definition.
+
+    Args:
+        workflow (Any): Candidate workflow payload to validate.
+        index (int): Index of the workflow in the batch for error context.
+
+    Returns:
+        tuple[dict[str, Any] | None, dict[str, Any] | None]: Tuple of
+        (validated workflow dict or ``None``, error payload or ``None``).
+
+    Raises:
+        None: Validation errors are returned as payloads, not raised.
+
+    Invariants:
+        - ``workflow`` must be a dict with required keys and non-empty
+          ``workflow_id``.
+        - No mutation of the input ``workflow`` occurs.
+        - Validation is deterministic for identical inputs.
+    """
     if workflow is None:
         error = WorkflowValidationError(
             message="Workflow definition cannot be None.",
@@ -263,7 +312,23 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
 
 
 def _derive_status(ok_count: int, error_count: int) -> str:
-    """Return aggregate status based on success/failure counts."""
+    """Return aggregate status based on success/failure counts.
+
+    Args:
+        ok_count (int): Count of successful workflows.
+        error_count (int): Count of workflows with errors.
+
+    Returns:
+        str: ``"ok"`` when at least one success and no errors; otherwise
+        ``"error"``.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - Deterministic mapping for given counts.
+        - Any non-zero error count yields ``"error"``.
+    """
     if error_count:
         return "error"
     if ok_count:
@@ -282,6 +347,28 @@ def _final_response(
     config_meta: dict[str, Any] | None,
     normalized_config: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    """Build the deterministic orchestrator response payload.
+
+    Args:
+        status (str): Aggregated status string.
+        workflows_count (int): Total number of workflows processed.
+        results (list[dict[str, Any]]): Collected workflow results.
+        errors (list[dict[str, Any]]): Collected structured errors.
+        ok_count (int): Number of workflows with ``"ok"`` status.
+        error_count (int): Number of workflows with ``"error"`` status.
+        config_meta (dict[str, Any] | None): Optional config validation metadata.
+        normalized_config (dict[str, Any] | None): Optional normalized config data.
+
+    Returns:
+        dict[str, Any]: Final response payload with data, errors, and metadata.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - Output keys are stable for identical inputs.
+        - ``partial_failure`` is true only when both ok and error counts exist.
+    """
     return {
         "status": status,
         "data": {

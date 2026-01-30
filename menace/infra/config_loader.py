@@ -32,6 +32,21 @@ _REQUIRED_SCHEMA: dict[str, type] = {
 
 
 def _is_valid_int(value: Any) -> bool:
+    """Return True when ``value`` is a non-boolean integer.
+
+    Args:
+        value (Any): Candidate value to validate.
+
+    Returns:
+        bool: ``True`` when ``value`` is an ``int`` but not ``bool``.
+
+    Raises:
+        None: This helper does not raise.
+
+    Invariants:
+        - Booleans are rejected even though they are ``int`` subclasses.
+        - Deterministic for identical inputs.
+    """
     return isinstance(value, int) and not isinstance(value, bool)
 
 
