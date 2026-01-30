@@ -82,6 +82,13 @@ class DeleteRegexRule:
 Rule = ReplaceRule | InsertAfterRule | DeleteRegexRule
 
 
+_RULE_TYPE_ORDER = {
+    "replace": 0,
+    "insert_after": 1,
+    "delete_regex": 2,
+}
+
+
 @dataclass(frozen=True)
 class PatchRuleInput:
     """Schema for patch generation inputs.
@@ -128,6 +135,54 @@ class ResolvedRule:
     line_end: int
     col_start: int
     col_end: int
+
+
+@dataclass(frozen=True)
+class PatchChange:
+    """Applied change details for auditing patch operations.
+
+    Args:
+        rule_id: Identifier of the originating rule.
+        rule_type: Resolved rule type.
+        start: Byte offset start position in the original source.
+        end: Byte offset end position in the original source.
+        line_start: Starting line number in the original source.
+        line_end: Ending line number in the original source.
+        col_start: Starting column number in the original source.
+        col_end: Ending column number in the original source.
+        before: Source snippet before the change.
+        after: Replacement snippet applied for the change.
+    """
+
+    rule_id: str
+    rule_type: str
+    start: int
+    end: int
+    line_start: int
+    line_end: int
+    col_start: int
+    col_end: int
+    before: str
+    after: str
+
+
+@dataclass(frozen=True)
+class PatchAuditEntry:
+    """Minimal audit entry recording ordered rule application."""
+
+    order: int
+    rule_id: str
+    rule_type: str
+    anchor_kind: str
+
+
+@dataclass(frozen=True)
+class PatchResult:
+    """Structured output for applied patch rules."""
+
+    content: str
+    changes: list[PatchChange]
+    audit_trail: list[PatchAuditEntry]
 
 
 def validate_rules(rules: list[Rule]) -> None:
@@ -189,6 +244,176 @@ def validate_rules(rules: list[Rule]) -> None:
                         index, rule, rule_id=rule_id, field="flags", flags=rule.flags
                     ),
                 )
+
+
+def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
+    """Apply deterministic, ordered rules to a source string.
+
+    Rules are applied in a stable order keyed by ``rule_id`` and rule type to
+    guarantee deterministic outcomes regardless of input ordering. Anchors are
+    resolved against the original source using literal matching unless a rule
+    explicitly opts into regex anchors.
+    """
+    if not isinstance(source, str):
+        raise PatchRuleError(
+            "source must be a string",
+            details={"field": "source", "expected": "str", "actual_type": type(source).__name__},
+        )
+    validate_rules(rules)
+
+    ordered_rules = sorted(
+        rules,
+        key=lambda rule: (
+            rule.rule_id,
+            _RULE_TYPE_ORDER[_rule_kind(rule)],
+        ),
+    )
+    rule_lookup = {rule.rule_id: rule for rule in ordered_rules}
+
+    line_index = _build_line_index(source)
+    resolved_rules: list[ResolvedRule] = []
+    for index, rule in enumerate(ordered_rules):
+        resolved_rules.extend(_resolve_rule(source, rule, index, line_index))
+
+    _raise_on_conflicts(resolved_rules, rule_lookup)
+
+    updated_source = _apply_edits(source, resolved_rules)
+    changes = _build_patch_changes(source, resolved_rules)
+    audit_trail = [
+        PatchAuditEntry(
+            order=idx + 1,
+            rule_id=rule.rule_id,
+            rule_type=rule.rule_type,
+            anchor_kind=rule.anchor_kind,
+        )
+        for idx, rule in enumerate(sorted(resolved_rules, key=lambda rule: rule.index))
+    ]
+    return PatchResult(content=updated_source, changes=changes, audit_trail=audit_trail)
+
+
+def _rule_kind(rule: Rule) -> str:
+    """Return the canonical rule type string."""
+    if isinstance(rule, ReplaceRule):
+        return "replace"
+    if isinstance(rule, InsertAfterRule):
+        return "insert_after"
+    if isinstance(rule, DeleteRegexRule):
+        return "delete_regex"
+    raise PatchRuleError(
+        "rule must be a supported Rule type",
+        details={"rule": _serialize_rule_payload(rule)},
+    )
+
+
+def _allows_multiple_inserts(rule: InsertAfterRule) -> bool:
+    """Check whether a rule explicitly permits multiple inserts at one anchor."""
+    if not rule.meta:
+        return False
+    return bool(rule.meta.get("allow_multiple_inserts"))
+
+
+def _raise_on_conflicts(
+    resolved_rules: Sequence[ResolvedRule],
+    rule_lookup: Mapping[str, Rule],
+) -> None:
+    """Raise PatchConflictError when edits overlap or collide."""
+    inserts_by_position: dict[int, list[ResolvedRule]] = {}
+    for rule in resolved_rules:
+        if rule.start == rule.end:
+            inserts_by_position.setdefault(rule.start, []).append(rule)
+
+    for position, rules_at_position in inserts_by_position.items():
+        if len(rules_at_position) < 2:
+            continue
+        allowed = all(
+            isinstance(rule_lookup.get(rule.rule_id), InsertAfterRule)
+            and _allows_multiple_inserts(rule_lookup[rule.rule_id])  # type: ignore[index]
+            for rule in rules_at_position
+        )
+        if not allowed:
+            sample = rules_at_position[0]
+            raise PatchConflictError(
+                "multiple inserts at the same anchor are not allowed",
+                details={
+                    "position": position,
+                    "line": sample.line_start,
+                    "col": sample.col_start,
+                    "rule_ids": [rule.rule_id for rule in rules_at_position],
+                    "allow_multiple_inserts": [
+                        bool(
+                            isinstance(rule_lookup.get(rule.rule_id), InsertAfterRule)
+                            and _allows_multiple_inserts(rule_lookup[rule.rule_id])  # type: ignore[index]
+                        )
+                        for rule in rules_at_position
+                    ],
+                },
+            )
+
+    ordered = sorted(resolved_rules, key=lambda rule: (rule.start, rule.end, rule.index))
+    for idx, rule in enumerate(ordered):
+        for other in ordered[idx + 1 :]:
+            if other.start >= rule.end and rule.start != rule.end:
+                break
+            if _spans_overlap(rule, other):
+                raise PatchConflictError(
+                    "conflicting edits detected",
+                    details={
+                        "rule_id": rule.rule_id,
+                        "conflicting_rule_id": other.rule_id,
+                        "rule_type": rule.rule_type,
+                        "conflicting_rule_type": other.rule_type,
+                        "span": [rule.start, rule.end],
+                        "conflicting_span": [other.start, other.end],
+                        "line_offsets": {
+                            "start_line": rule.line_start,
+                            "start_col": rule.col_start,
+                            "end_line": rule.line_end,
+                            "end_col": rule.col_end,
+                        },
+                        "conflicting_line_offsets": {
+                            "start_line": other.line_start,
+                            "start_col": other.col_start,
+                            "end_line": other.line_end,
+                            "end_col": other.col_end,
+                        },
+                    },
+                )
+
+
+def _spans_overlap(first: ResolvedRule, second: ResolvedRule) -> bool:
+    """Return True when two spans overlap in the original source."""
+    first_is_insert = first.start == first.end
+    second_is_insert = second.start == second.end
+    if first_is_insert and second_is_insert:
+        return first.start == second.start
+    if first_is_insert:
+        return second.start <= first.start < second.end
+    if second_is_insert:
+        return first.start <= second.start < first.end
+    return max(first.start, second.start) < min(first.end, second.end)
+
+
+def _build_patch_changes(
+    source: str,
+    resolved_rules: Sequence[ResolvedRule],
+) -> list[PatchChange]:
+    """Build a deterministic list of applied patch changes."""
+    ordered = sorted(resolved_rules, key=lambda rule: rule.index)
+    return [
+        PatchChange(
+            rule_id=rule.rule_id,
+            rule_type=rule.rule_type,
+            start=rule.start,
+            end=rule.end,
+            line_start=rule.line_start,
+            line_end=rule.line_end,
+            col_start=rule.col_start,
+            col_end=rule.col_end,
+            before=source[rule.start : rule.end],
+            after=rule.replacement,
+        )
+        for rule in ordered
+    ]
 
 
 def generate_patch(
