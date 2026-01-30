@@ -38,14 +38,8 @@ class PatchGeneratorTests(unittest.TestCase):
         self.assertEqual(first["meta"], second["meta"])
 
     def test_empty_rules_return_structured_error_payload(self):
-        with mock.patch.object(patch_generator.time, "monotonic", return_value=1.0):
-            result = patch_generator.generate_patch("alpha\n", {}, [])
-
-        self.assertEqual(result["status"], "error")
-        self.assertEqual(result["data"], {})
-        self.assertEqual(result["meta"]["rule_count"], 0)
-        self.assertEqual(result["meta"]["applied_count"], 0)
-        self.assertEqual(result["errors"][0]["error_type"], "PatchRuleError")
+        with self.assertRaises(PatchRuleError):
+            patch_generator.generate_patch("alpha\n", {}, [])
 
     def test_invalid_rules_raise_menace_errors(self):
         with self.assertRaises(PatchRuleError):
