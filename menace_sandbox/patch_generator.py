@@ -110,6 +110,7 @@ class ResolvedRule:
 
     Args:
         rule_id: Identifier of the originating rule.
+        description: Human-readable summary of the rule intent.
         rule_type: Resolved rule type.
         anchor: Anchor text or pattern.
         anchor_kind: Whether the anchor was literal or regex.
@@ -124,6 +125,7 @@ class ResolvedRule:
     """
 
     rule_id: str
+    description: str
     rule_type: str
     anchor: str
     anchor_kind: str
@@ -143,6 +145,7 @@ class PatchChange:
 
     Args:
         rule_id: Identifier of the originating rule.
+        description: Human-readable summary of the rule intent.
         rule_type: Resolved rule type.
         start: Byte offset start position in the original source.
         end: Byte offset end position in the original source.
@@ -155,6 +158,7 @@ class PatchChange:
     """
 
     rule_id: str
+    description: str
     rule_type: str
     start: int
     end: int
@@ -402,6 +406,7 @@ def _build_patch_changes(
     return [
         PatchChange(
             rule_id=rule.rule_id,
+            description=rule.description,
             rule_type=rule.rule_type,
             start=rule.start,
             end=rule.end,
@@ -841,6 +846,7 @@ def _resolve_rule(
         return [
             _build_resolved_rule(
                 rule.rule_id,
+                rule.description,
                 "replace",
                 rule.anchor,
                 rule.anchor_kind,
@@ -863,6 +869,7 @@ def _resolve_rule(
         return [
             _build_resolved_rule(
                 rule.rule_id,
+                rule.description,
                 "insert_after",
                 rule.anchor,
                 rule.anchor_kind,
@@ -885,6 +892,7 @@ def _resolve_rule(
         return [
             _build_resolved_rule(
                 rule.rule_id,
+                rule.description,
                 "delete_regex",
                 rule.pattern,
                 "regex",
@@ -1031,6 +1039,7 @@ def _select_single_match(
 
 def _build_resolved_rule(
     rule_id: str,
+    description: str,
     rule_type: str,
     anchor: str,
     anchor_kind: str,
@@ -1045,6 +1054,7 @@ def _build_resolved_rule(
     line_end, col_end = _line_and_column(line_index, end)
     return ResolvedRule(
         rule_id=rule_id,
+        description=description,
         rule_type=rule_type,
         anchor=anchor,
         anchor_kind=anchor_kind,
@@ -1163,6 +1173,189 @@ def _lines_for_diff(text: str) -> list[str]:
     if text.endswith("\n"):
         lines.append("")
     return [f"{line}\n" for line in lines]
+
+
+_PATCH_MAGIC = "MENACE-PATCH 1"
+_PATCH_COUNT_PREFIX = "change-count: "
+_PATCH_RULE_PREFIX = "@@@ rule "
+_PATCH_DESCRIPTION_PREFIX = "@@@ description "
+_PATCH_TYPE_PREFIX = "@@@ type "
+_PATCH_RANGE_PREFIX = "@@@ range "
+_PATCH_HUNK_HEADER = re.compile(r"^@@ -(?P<start>\d+),(?P<count>\d+) \+(?P<start_new>\d+),(?P<count_new>\d+) @@$")
+_PATCH_RANGE = re.compile(
+    r"^@@@ range bytes (?P<byte_start>\d+)-(?P<byte_end>\d+) "
+    r"lines (?P<line_start>\d+)-(?P<line_end>\d+) "
+    r"cols (?P<col_start>\d+)-(?P<col_end>\d+)$"
+)
+
+
+def render_patch(result: PatchResult) -> str:
+    """Render a deterministic patch format with explicit metadata headers."""
+    if not isinstance(result, PatchResult):
+        raise PatchRuleError(
+            "result must be a PatchResult",
+            details={"field": "result", "actual_type": type(result).__name__},
+        )
+    change_count = len(result.changes)
+    lines = [_PATCH_MAGIC, f"{_PATCH_COUNT_PREFIX}{change_count}"]
+    for change in result.changes:
+        description = change.description
+        if not isinstance(description, str):
+            raise PatchRuleError(
+                "description must be a string",
+                details={"rule_id": change.rule_id, "actual_type": type(description).__name__},
+            )
+        lines.append(f"{_PATCH_RULE_PREFIX}{change.rule_id}")
+        lines.append(f"{_PATCH_DESCRIPTION_PREFIX}{description}")
+        lines.append(f"{_PATCH_TYPE_PREFIX}{change.rule_type}")
+        lines.append(
+            f"{_PATCH_RANGE_PREFIX}bytes {change.start}-{change.end} "
+            f"lines {change.line_start}-{change.line_end} "
+            f"cols {change.col_start}-{change.col_end}"
+        )
+        before_lines = _split_patch_lines(change.before)
+        after_lines = _split_patch_lines(change.after)
+        if not before_lines and not after_lines:
+            raise PatchRuleError(
+                "patch hunks must include at least one change line",
+                details={"rule_id": change.rule_id},
+            )
+        lines.append(
+            f"@@ -{change.line_start},{len(before_lines)} "
+            f"+{change.line_start},{len(after_lines)} @@"
+        )
+        lines.extend(f"-{line}" for line in before_lines)
+        lines.extend(f"+{line}" for line in after_lines)
+    patch_text = "\n".join(lines)
+    validate_patch_text(patch_text)
+    return patch_text
+
+
+def validate_patch_text(patch_text: str) -> None:
+    """Validate rendered patch text, raising on format violations."""
+    if not isinstance(patch_text, str):
+        raise PatchRuleError(
+            "patch_text must be a string",
+            details={"field": "patch_text", "actual_type": type(patch_text).__name__},
+        )
+    if not patch_text:
+        raise PatchRuleError("patch_text must not be empty", details={"field": "patch_text"})
+    lines = patch_text.splitlines()
+    if not lines or lines[0] != _PATCH_MAGIC:
+        raise PatchRuleError(
+            "patch_text header is invalid",
+            details={"expected": _PATCH_MAGIC, "actual": lines[0] if lines else None},
+        )
+    if len(lines) < 2 or not lines[1].startswith(_PATCH_COUNT_PREFIX):
+        raise PatchRuleError(
+            "patch_text missing change-count header",
+            details={"expected_prefix": _PATCH_COUNT_PREFIX},
+        )
+    count_str = lines[1][len(_PATCH_COUNT_PREFIX) :].strip()
+    if not count_str.isdigit():
+        raise PatchRuleError(
+            "change-count must be an integer",
+            details={"value": count_str},
+        )
+    expected_changes = int(count_str)
+    idx = 2
+    parsed_changes = 0
+    while idx < len(lines):
+        if not lines[idx].startswith(_PATCH_RULE_PREFIX):
+            raise PatchRuleError(
+                "patch_text missing rule header",
+                details={"line": idx + 1, "value": lines[idx]},
+            )
+        rule_id = lines[idx][len(_PATCH_RULE_PREFIX) :].strip()
+        idx += 1
+        if idx >= len(lines) or not lines[idx].startswith(_PATCH_DESCRIPTION_PREFIX):
+            raise PatchRuleError(
+                "patch_text missing description header",
+                details={"line": idx + 1},
+            )
+        description = lines[idx][len(_PATCH_DESCRIPTION_PREFIX) :]
+        idx += 1
+        if idx >= len(lines) or not lines[idx].startswith(_PATCH_TYPE_PREFIX):
+            raise PatchRuleError(
+                "patch_text missing type header",
+                details={"line": idx + 1},
+            )
+        rule_type = lines[idx][len(_PATCH_TYPE_PREFIX) :].strip()
+        if not rule_type:
+            raise PatchRuleError(
+                "type header must not be empty",
+                details={"rule_id": rule_id},
+            )
+        idx += 1
+        if idx >= len(lines) or not lines[idx].startswith(_PATCH_RANGE_PREFIX):
+            raise PatchRuleError(
+                "patch_text missing range header",
+                details={"line": idx + 1, "rule_id": rule_id},
+            )
+        range_line = lines[idx]
+        range_match = _PATCH_RANGE.match(range_line)
+        if not range_match:
+            raise PatchRuleError(
+                "range header is invalid",
+                details={"rule_id": rule_id, "value": range_line},
+            )
+        line_start = int(range_match.group("line_start"))
+        idx += 1
+        if idx >= len(lines):
+            raise PatchRuleError(
+                "patch_text missing hunk header",
+                details={"rule_id": rule_id},
+            )
+        hunk_match = _PATCH_HUNK_HEADER.match(lines[idx])
+        if not hunk_match:
+            raise PatchRuleError(
+                "hunk header is invalid",
+                details={"rule_id": rule_id, "value": lines[idx]},
+            )
+        hunk_start = int(hunk_match.group("start"))
+        before_count = int(hunk_match.group("count"))
+        after_count = int(hunk_match.group("count_new"))
+        idx += 1
+        if before_count == 0 and after_count == 0:
+            raise PatchRuleError(
+                "hunk must contain at least one change line",
+                details={"rule_id": rule_id},
+            )
+        if hunk_start != line_start:
+            raise PatchConflictError(
+                "hunk header line start does not match metadata",
+                details={"rule_id": rule_id, "metadata_start": line_start, "hunk_start": hunk_start},
+            )
+        for _ in range(before_count):
+            if idx >= len(lines) or not lines[idx].startswith("-"):
+                raise PatchConflictError(
+                    "hunk deletions do not match header count",
+                    details={"rule_id": rule_id, "description": description},
+                )
+            idx += 1
+        for _ in range(after_count):
+            if idx >= len(lines) or not lines[idx].startswith("+"):
+                raise PatchConflictError(
+                    "hunk insertions do not match header count",
+                    details={"rule_id": rule_id, "description": description},
+                )
+            idx += 1
+        parsed_changes += 1
+    if parsed_changes != expected_changes:
+        raise PatchConflictError(
+            "change-count does not match parsed hunks",
+            details={"expected": expected_changes, "actual": parsed_changes},
+        )
+
+
+def _split_patch_lines(text: str) -> list[str]:
+    """Split text into stable patch lines, preserving trailing newline."""
+    if not text:
+        return []
+    lines = text.splitlines()
+    if text.endswith("\n"):
+        lines.append("")
+    return lines
 
 
 def _serialize_rules(resolved_rules: Sequence[ResolvedRule]) -> list[dict[str, Any]]:
