@@ -457,115 +457,118 @@ def generate_patch(
     parsed_rules: list[Rule] = []
     rule_summaries: list[dict[str, Any]] = []
     try:
-        _validate_inputs(source, error_report, rules)
-        parsed_rules = _parse_rules(rules)
-        validate_rules(parsed_rules)
-        rule_summaries = _summarize_rules(parsed_rules)
-    except MenaceError as exc:
-        return _failure_result(
-            [exc.to_dict()],
-            meta=_build_meta(
-                rule_summaries=[],
-                applied_count=0,
-                anchor_resolutions=[],
-                syntax_valid=None,
-            ),
-        )
-
-    if not parsed_rules:
-        error = PatchRuleError("rules must not be empty", details={"field": "rules"})
-        return _failure_result(
-            [error.to_dict()],
-            meta=_build_meta(
-                rule_summaries=[],
-                applied_count=0,
-                anchor_resolutions=[],
-                syntax_valid=None,
-            ),
-        )
-
-    errors: list[dict[str, Any]] = []
-    try:
-        result = apply_rules(source, parsed_rules)
-    except PatchConflictError as exc:
-        errors.append(exc.to_dict())
-        return _failure_result(
-            errors,
-            meta=_build_meta(
-                rule_summaries=rule_summaries,
-                applied_count=0,
-                anchor_resolutions=[],
-                syntax_valid=None,
-            ),
-        )
-
-    try:
-        patch_text = render_patch(result)
-    except MenaceError as exc:
-        errors.append(exc.to_dict())
-        return _failure_result(
-            errors,
-            meta=_build_meta(
-                rule_summaries=rule_summaries,
-                applied_count=0,
-                anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
-                syntax_valid=None,
-            ),
-        )
-
-    syntax_valid: bool | None = None
-    if validate_syntax is not False:
-        detected_language = _detect_language(error_report, parsed_rules)
-        if detected_language and detected_language.strip().lower() == "python":
-            syntax_error = _check_syntax(
-                result.content,
-                error_report,
-                parsed_rules,
-                language=detected_language,
+        try:
+            _validate_inputs(source, error_report, rules)
+            parsed_rules = _parse_rules(rules)
+            validate_rules(parsed_rules)
+            rule_summaries = _summarize_rules(parsed_rules)
+        except (PatchRuleError, PatchAnchorError) as exc:
+            return _deterministic_error_payload(exc, rule_summaries=[])
+        except MenaceError as exc:
+            return _failure_result(
+                [exc.to_dict()],
+                meta=_build_meta(
+                    rule_summaries=[],
+                    applied_count=0,
+                    anchor_resolutions=[],
+                    syntax_valid=None,
+                ),
             )
-            if syntax_error:
-                errors.append(syntax_error.to_dict())
-                syntax_valid = False
-            else:
-                syntax_valid = True
 
-    status = "ok" if not errors else "error"
-    data: dict[str, object] = {
-        "patch_text": patch_text,
-        "updated_source": result.content,
-        "applied_rules": _serialize_rules(result.resolved_rules),
-        "changes": [
-            {
-                "rule_id": change.rule_id,
-                "rule_type": change.rule_type,
-                "description": change.description,
-                "spans": {"start": change.start, "end": change.end},
-                "line_offsets": {
-                    "start_line": change.line_start,
-                    "start_col": change.col_start,
-                    "end_line": change.line_end,
-                    "end_col": change.col_end,
-                },
-                "before": change.before,
-                "after": change.after,
-            }
-            for change in result.changes
-        ],
-        "audit_trail": [asdict(entry) for entry in result.audit_trail],
-    }
+        if not parsed_rules:
+            error = PatchRuleError("rules must not be empty", details={"field": "rules"})
+            return _deterministic_error_payload(error, rule_summaries=[])
 
-    return {
-        "status": status,
-        "data": data,
-        "errors": errors,
-        "meta": _build_meta(
-            rule_summaries=rule_summaries,
-            applied_count=len(result.changes),
-            anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
-            changed_line_count=_count_changed_lines(patch_text),
-            syntax_valid=syntax_valid,
-        ),
-    }
+        errors: list[dict[str, Any]] = []
+        try:
+            result = apply_rules(source, parsed_rules)
+        except (PatchRuleError, PatchAnchorError) as exc:
+            return _deterministic_error_payload(exc, rule_summaries=rule_summaries)
+        except PatchConflictError as exc:
+            errors.append(exc.to_dict())
+            return _failure_result(
+                errors,
+                meta=_build_meta(
+                    rule_summaries=rule_summaries,
+                    applied_count=0,
+                    anchor_resolutions=[],
+                    syntax_valid=None,
+                ),
+            )
+
+        try:
+            patch_text = render_patch(result)
+        except MenaceError as exc:
+            errors.append(exc.to_dict())
+            return _failure_result(
+                errors,
+                meta=_build_meta(
+                    rule_summaries=rule_summaries,
+                    applied_count=0,
+                    anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
+                    syntax_valid=None,
+                ),
+            )
+
+        syntax_valid: bool | None = None
+        if validate_syntax is not False:
+            detected_language = _detect_language(error_report, parsed_rules)
+            if detected_language and detected_language.strip().lower() == "python":
+                syntax_error = _check_syntax(
+                    result.content,
+                    error_report,
+                    parsed_rules,
+                    language=detected_language,
+                )
+                if syntax_error:
+                    errors.append(syntax_error.to_dict())
+                    syntax_valid = False
+                else:
+                    syntax_valid = True
+
+        status = "ok" if not errors else "error"
+        data: dict[str, object] = {
+            "patch_text": patch_text,
+            "updated_source": result.content,
+            "applied_rules": _serialize_rules(result.resolved_rules),
+            "changes": [
+                {
+                    "rule_id": change.rule_id,
+                    "rule_type": change.rule_type,
+                    "description": change.description,
+                    "spans": {"start": change.start, "end": change.end},
+                    "line_offsets": {
+                        "start_line": change.line_start,
+                        "start_col": change.col_start,
+                        "end_line": change.line_end,
+                        "end_col": change.col_end,
+                    },
+                    "before": change.before,
+                    "after": change.after,
+                }
+                for change in result.changes
+            ],
+            "audit_trail": [asdict(entry) for entry in result.audit_trail],
+        }
+
+        return {
+            "status": status,
+            "data": data,
+            "errors": errors,
+            "meta": _build_meta(
+                rule_summaries=rule_summaries,
+                applied_count=len(result.changes),
+                anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
+                changed_line_count=_count_changed_lines(patch_text),
+                syntax_valid=syntax_valid,
+            ),
+        }
+    except Exception as exc:
+        error = exc if isinstance(exc, MenaceError) else MenaceError(
+            "unexpected error during patch generation",
+            details={"error_type": type(exc).__name__, "message": str(exc)},
+        )
+        return _deterministic_error_payload(error, rule_summaries=rule_summaries)
 
 
 def _validate_generate_patch_inputs(
@@ -651,6 +654,28 @@ def _failure_result(
         },
         "errors": list(errors),
         "meta": dict(meta),
+    }
+
+
+def _deterministic_error_payload(
+    error: MenaceError,
+    *,
+    rule_summaries: Sequence[Mapping[str, Any]],
+    applied_count: int = 0,
+    anchor_resolutions: Sequence[Mapping[str, Any]] | None = None,
+    syntax_valid: bool | None = None,
+) -> dict[str, Any]:
+    """Return a deterministic error payload with empty data."""
+    return {
+        "status": "error",
+        "data": {},
+        "errors": [error.to_dict()],
+        "meta": _build_meta(
+            rule_summaries=rule_summaries,
+            applied_count=applied_count,
+            anchor_resolutions=anchor_resolutions or [],
+            syntax_valid=syntax_valid,
+        ),
     }
 
 
