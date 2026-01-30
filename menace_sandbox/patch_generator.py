@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import difflib
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Mapping, Sequence
 
 from menace.errors import (
@@ -13,7 +13,7 @@ from menace.errors import (
     PatchAnchorError,
     PatchConflictError,
     PatchRuleError,
-    ValidationError,
+    PatchSyntaxError,
 )
 
 
@@ -74,61 +74,78 @@ def generate_patch(
     Returns:
         A structured payload containing status, data, errors, and meta fields.
     """
-    _validate_inputs(source, error_report, rules)
-    parsed_rules = _parse_rules(rules)
-    if not parsed_rules:
-        error = ValidationError("No patch rules provided", details={"rule_count": 0})
-        return _failure_result(
-            [error.to_dict()],
-            meta=_base_meta(source, [], syntax_valid=None, rule_count=0),
-        )
-    line_index = _build_line_index(source)
+    safe_source = source if isinstance(source, str) else ""
+    try:
+        _validate_inputs(source, error_report, rules)
+        parsed_rules = _parse_rules(rules)
+        if not parsed_rules:
+            error = PatchRuleError(
+                "No patch rules provided",
+                details={"rule_count": 0, "rules": []},
+            )
+            return _failure_result(
+                [error.to_dict()],
+                meta=_base_meta(safe_source, [], syntax_valid=None, rule_count=0),
+            )
+        line_index = _build_line_index(source)
 
-    resolved_rules: list[ResolvedRule] = []
-    for index, rule in enumerate(parsed_rules):
-        resolved_rules.extend(_resolve_rule(source, rule, index, line_index))
+        resolved_rules: list[ResolvedRule] = []
+        for index, rule in enumerate(parsed_rules):
+            resolved_rules.extend(_resolve_rule(source, rule, index, line_index))
 
-    conflict_error = _detect_conflicts(resolved_rules)
-    if conflict_error:
-        return _failure_result(
-            [conflict_error],
-            meta=_base_meta(
-                source,
-                resolved_rules,
-                syntax_valid=None,
-                rule_count=len(parsed_rules),
-            ),
-        )
+        conflict_error = _detect_conflicts(resolved_rules)
+        if conflict_error:
+            return _failure_result(
+                [conflict_error],
+                meta=_base_meta(
+                    source,
+                    resolved_rules,
+                    syntax_valid=None,
+                    rule_count=len(parsed_rules),
+                ),
+            )
 
-    updated_source = _apply_edits(source, resolved_rules)
-    patch_text = _build_diff(source, updated_source)
+        updated_source = _apply_edits(source, resolved_rules)
+        patch_text = _build_diff(source, updated_source)
 
-    syntax_error = _check_syntax(updated_source, error_report, parsed_rules)
-    syntax_valid = syntax_error is None
-    errors: list[dict[str, Any]] = []
-    if syntax_error:
-        errors.append(syntax_error.to_dict())
+        syntax_error = _check_syntax(updated_source, error_report, parsed_rules)
+        syntax_valid = syntax_error is None
+        errors: list[dict[str, Any]] = []
+        if syntax_error:
+            errors.append(syntax_error.to_dict())
 
-    data = {
-        "patch_text": patch_text,
-        "modified_source": updated_source,
-        "applied_rules": _serialize_rules(resolved_rules),
-    }
-    meta = _base_meta(source, resolved_rules, syntax_valid=syntax_valid, rule_count=len(parsed_rules))
-    meta.update(
-        {
-            "changed_line_count": _count_changed_lines(patch_text),
-            "anchor_resolutions": _serialize_anchor_resolutions(resolved_rules),
+        data = {
+            "patch_text": patch_text,
+            "modified_source": updated_source,
+            "applied_rules": _serialize_rules(resolved_rules),
         }
-    )
+        meta = _base_meta(
+            source, resolved_rules, syntax_valid=syntax_valid, rule_count=len(parsed_rules)
+        )
+        meta.update(
+            {
+                "changed_line_count": _count_changed_lines(patch_text),
+                "anchor_resolutions": _serialize_anchor_resolutions(resolved_rules),
+            }
+        )
 
-    status = "ok" if not errors else "error"
-    return {
-        "status": status,
-        "data": data,
-        "errors": errors,
-        "meta": meta,
-    }
+        status = "ok" if not errors else "error"
+        return {
+            "status": status,
+            "data": data,
+            "errors": errors,
+            "meta": meta,
+        }
+    except MenaceError as exc:
+        rule_count = (
+            len(rules)
+            if isinstance(rules, Sequence) and not isinstance(rules, (str, bytes))
+            else 0
+        )
+        return _failure_result(
+            [exc.to_dict()],
+            meta=_base_meta(safe_source, [], syntax_valid=None, rule_count=rule_count),
+        )
 
 
 def _failure_result(
@@ -149,6 +166,27 @@ def _failure_result(
     }
 
 
+def _serialize_rule_payload(rule: Any) -> Any:
+    """Return a JSON-friendly rule payload for error details."""
+    if is_dataclass(rule):
+        return asdict(rule)
+    if isinstance(rule, Mapping):
+        return dict(rule)
+    return rule
+
+
+def _rule_details(index: int, rule: Any, *, rule_id: str | None = None, **extra: Any) -> dict[str, Any]:
+    """Build structured error details for a rule."""
+    details: dict[str, Any] = {
+        "rule_index": index,
+        "rule": _serialize_rule_payload(rule),
+    }
+    if rule_id is not None:
+        details["rule_id"] = rule_id
+    details.update(extra)
+    return details
+
+
 def _validate_inputs(
     source: str,
     error_report: Mapping[str, Any],
@@ -158,17 +196,21 @@ def _validate_inputs(
     if not isinstance(source, str):
         raise PatchRuleError(
             "source must be a string",
-            details={"field": "source", "expected": "str"},
+            details={"field": "source", "expected": "str", "actual_type": type(source).__name__},
         )
     if not isinstance(error_report, Mapping):
         raise PatchRuleError(
             "error_report must be a mapping",
-            details={"field": "error_report", "expected": "mapping"},
+            details={
+                "field": "error_report",
+                "expected": "mapping",
+                "actual_type": type(error_report).__name__,
+            },
         )
     if not isinstance(rules, Sequence) or isinstance(rules, (str, bytes)):
         raise PatchRuleError(
             "rules must be a sequence",
-            details={"field": "rules", "expected": "sequence"},
+            details={"field": "rules", "expected": "sequence", "actual_type": type(rules).__name__},
         )
 
 
@@ -182,14 +224,14 @@ def _parse_rules(
         if not isinstance(rule, Mapping):
             raise PatchRuleError(
                 "rule must be a mapping",
-                details={"index": index, "expected": "mapping"},
+                details=_rule_details(index, rule, expected="mapping"),
             )
         rule_type = _require_non_empty_str(rule, "type", index)
         rule_id = _require_non_empty_str(rule, "id", index)
         if rule_id in seen_ids:
             raise PatchRuleError(
                 "rule id must be unique",
-                details={"index": index, "id": rule_id},
+                details=_rule_details(index, rule, rule_id=rule_id),
             )
         seen_ids.add(rule_id)
         if rule_type == "replace":
@@ -201,11 +243,13 @@ def _parse_rules(
         else:
             raise PatchRuleError(
                 "Unknown rule type",
-                details={
-                    "index": index,
-                    "rule_type": rule_type,
-                    "supported_types": ["delete_regex", "insert_after", "replace"],
-                },
+                details=_rule_details(
+                    index,
+                    rule,
+                    rule_id=rule_id,
+                    rule_type=rule_type,
+                    supported_types=["delete_regex", "insert_after", "replace"],
+                ),
             )
     return parsed
 
@@ -238,19 +282,19 @@ def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> De
     if not isinstance(flags, Sequence) or isinstance(flags, (str, bytes)):
         raise PatchRuleError(
             "delete_regex flags must be a sequence",
-            details={"index": index, "id": rule_id, "field": "flags"},
+            details=_rule_details(index, rule, rule_id=rule_id, field="flags"),
         )
     compiled_flags = 0
     for flag in flags:
         if not isinstance(flag, str) or not flag.strip():
             raise PatchRuleError(
                 "delete_regex flag must be a non-empty string",
-                details={"index": index, "id": rule_id, "flag": flag},
+                details=_rule_details(index, rule, rule_id=rule_id, flag=flag),
             )
         if flag not in {"IGNORECASE", "MULTILINE", "DOTALL"}:
             raise PatchRuleError(
                 "delete_regex flag is invalid",
-                details={"index": index, "id": rule_id, "flag": flag},
+                details=_rule_details(index, rule, rule_id=rule_id, flag=flag),
             )
         compiled_flags |= _FLAG_MAP[flag]
     try:
@@ -258,7 +302,7 @@ def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> De
     except re.error as exc:
         raise PatchRuleError(
             "delete_regex pattern is invalid",
-            details={"index": index, "id": rule_id, "message": str(exc)},
+            details=_rule_details(index, rule, rule_id=rule_id, message=str(exc)),
         ) from exc
     meta = _parse_meta(rule, index, rule_id)
     return DeleteRegexRule(rule_id=rule_id, pattern=pattern, flags=compiled_flags, meta=meta)
@@ -282,7 +326,7 @@ def _ensure_only_keys(
     if extra:
         raise PatchRuleError(
             "rule has unexpected fields",
-            details={"index": index, "id": rule_id, "unexpected": extra},
+            details=_rule_details(index, rule, rule_id=rule_id, unexpected=extra),
         )
 
 
@@ -292,12 +336,12 @@ def _require_non_empty_str(rule: Mapping[str, Any], field: str, index: int) -> s
     if not isinstance(value, str):
         raise PatchRuleError(
             f"{field} must be a string",
-            details={"index": index, "field": field},
+            details=_rule_details(index, rule, field=field),
         )
     if not value.strip():
         raise PatchRuleError(
             f"{field} must be a non-empty string",
-            details={"index": index, "field": field},
+            details=_rule_details(index, rule, field=field),
         )
     return value
 
@@ -308,12 +352,12 @@ def _parse_anchor_kind(rule: Mapping[str, Any], index: int, rule_id: str) -> str
     if not isinstance(anchor_kind, str) or not anchor_kind.strip():
         raise PatchRuleError(
             "anchor_kind must be a non-empty string",
-            details={"index": index, "id": rule_id, "field": "anchor_kind"},
+            details=_rule_details(index, rule, rule_id=rule_id, field="anchor_kind"),
         )
     if anchor_kind not in {"literal", "regex"}:
         raise PatchRuleError(
             "anchor_kind must be literal or regex",
-            details={"index": index, "id": rule_id, "anchor_kind": anchor_kind},
+            details=_rule_details(index, rule, rule_id=rule_id, anchor_kind=anchor_kind),
         )
     return anchor_kind
 
@@ -326,7 +370,7 @@ def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[st
     if not isinstance(meta, Mapping):
         raise PatchRuleError(
             "meta must be a mapping",
-            details={"index": index, "id": rule_id, "field": "meta"},
+            details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
         )
     return meta
 
@@ -339,7 +383,14 @@ def _resolve_rule(
 ) -> list[ResolvedRule]:
     """Resolve a rule into one or more concrete edits."""
     if isinstance(rule, ReplaceRule):
-        start, end = _resolve_anchor(source, rule.anchor, rule.anchor_kind, rule.rule_id)
+        start, end = _resolve_anchor(
+            source,
+            rule.anchor,
+            rule.anchor_kind,
+            rule.rule_id,
+            rule_index=index,
+            rule_payload=rule,
+        )
         return [
             _build_resolved_rule(
                 rule.rule_id,
@@ -354,7 +405,14 @@ def _resolve_rule(
             )
         ]
     if isinstance(rule, InsertAfterRule):
-        start, end = _resolve_anchor(source, rule.anchor, rule.anchor_kind, rule.rule_id)
+        start, end = _resolve_anchor(
+            source,
+            rule.anchor,
+            rule.anchor_kind,
+            rule.rule_id,
+            rule_index=index,
+            rule_payload=rule,
+        )
         return [
             _build_resolved_rule(
                 rule.rule_id,
@@ -369,7 +427,14 @@ def _resolve_rule(
             )
         ]
     if isinstance(rule, DeleteRegexRule):
-        spans = _resolve_delete_lines(source, rule.pattern, rule.flags, rule.rule_id)
+        spans = _resolve_delete_lines(
+            source,
+            rule.pattern,
+            rule.flags,
+            rule.rule_id,
+            rule_index=index,
+            rule_payload=rule,
+        )
         return [
             _build_resolved_rule(
                 rule.rule_id,
@@ -386,7 +451,11 @@ def _resolve_rule(
         ]
     raise PatchRuleError(
         "Unknown rule type",
-        details={"id": getattr(rule, "rule_id", None)},
+        details=_rule_details(
+            index,
+            rule,
+            rule_id=getattr(rule, "rule_id", None),
+        ),
     )
 
 
@@ -395,6 +464,9 @@ def _resolve_delete_lines(
     pattern: str,
     flags: int,
     rule_id: str,
+    *,
+    rule_index: int,
+    rule_payload: DeleteRegexRule,
 ) -> list[tuple[int, int]]:
     """Resolve delete rules into line spans matching the regex."""
     compiled = re.compile(pattern, flags)
@@ -409,18 +481,43 @@ def _resolve_delete_lines(
     if not spans:
         raise PatchAnchorError(
             "delete_regex pattern matched no lines",
-            details={"id": rule_id, "pattern": pattern},
+            details=_rule_details(
+                rule_index,
+                rule_payload,
+                rule_id=rule_id,
+                anchor_search={
+                    "pattern": pattern,
+                    "flags": flags,
+                    "match_count": 0,
+                    "lines_checked": len(line_index),
+                },
+            ),
         )
     return spans
 
 
-def _resolve_anchor(source: str, anchor: str, anchor_kind: str, rule_id: str) -> tuple[int, int]:
+def _resolve_anchor(
+    source: str,
+    anchor: str,
+    anchor_kind: str,
+    rule_id: str,
+    *,
+    rule_index: int,
+    rule_payload: ReplaceRule | InsertAfterRule,
+) -> tuple[int, int]:
     """Resolve an anchor to a single span in the source."""
     if anchor_kind == "literal":
         matches = _find_literal_matches(source, anchor)
     else:
         matches = _find_regex_matches(source, anchor, 0)
-    return _select_single_match(matches, rule_id, anchor)
+    return _select_single_match(
+        matches,
+        rule_id,
+        anchor,
+        anchor_kind=anchor_kind,
+        rule_index=rule_index,
+        rule_payload=rule_payload,
+    )
 
 
 def _find_literal_matches(text: str, anchor: str) -> list[tuple[int, int]]:
@@ -446,17 +543,41 @@ def _select_single_match(
     matches: Sequence[tuple[int, int]],
     rule_id: str,
     anchor: str,
+    *,
+    anchor_kind: str,
+    rule_index: int,
+    rule_payload: ReplaceRule | InsertAfterRule,
 ) -> tuple[int, int]:
     """Ensure a single match is selected for a rule anchor."""
     if not matches:
         raise PatchAnchorError(
             "anchor not found",
-            details={"id": rule_id, "anchor": anchor},
+            details=_rule_details(
+                rule_index,
+                rule_payload,
+                rule_id=rule_id,
+                anchor_search={
+                    "anchor": anchor,
+                    "anchor_kind": anchor_kind,
+                    "match_count": 0,
+                    "matches": [],
+                },
+            ),
         )
     if len(matches) > 1:
         raise PatchAnchorError(
             "anchor is ambiguous",
-            details={"id": rule_id, "anchor": anchor, "match_count": len(matches)},
+            details=_rule_details(
+                rule_index,
+                rule_payload,
+                rule_id=rule_id,
+                anchor_search={
+                    "anchor": anchor,
+                    "anchor_kind": anchor_kind,
+                    "match_count": len(matches),
+                    "matches": list(matches),
+                },
+            ),
         )
     return matches[0]
 
@@ -652,13 +773,15 @@ def _check_syntax(
     try:
         ast.parse(source)
     except SyntaxError as exc:
-        return ValidationError(
+        return PatchSyntaxError(
             "Syntax check failed",
             details={
                 "error_type": "SyntaxError",
                 "message": exc.msg,
                 "line": exc.lineno,
                 "offset": exc.offset,
+                "rule_ids": [rule.rule_id for rule in rules],
+                "rule_count": len(rules),
             },
         )
     return None
