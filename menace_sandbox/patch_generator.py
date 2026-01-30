@@ -28,6 +28,8 @@ class ReplaceRule:
         anchor: Target text or regex pattern to locate.
         replacement: Replacement content to apply.
         anchor_kind: Whether the anchor is treated as literal or regex.
+        count: Optional maximum number of replacements; None means all matches.
+        allow_zero_matches: Whether zero matches are allowed without error.
         meta: Structured metadata associated with the rule.
     """
 
@@ -36,6 +38,8 @@ class ReplaceRule:
     anchor: str
     replacement: str
     anchor_kind: str
+    count: int | None = None
+    allow_zero_matches: bool = False
     meta: Mapping[str, Any]
 
 
@@ -69,6 +73,7 @@ class DeleteRegexRule:
         description: Human-readable summary of the rule intent.
         pattern: Regex pattern to remove from the source.
         flags: Compiled regex flags for the pattern.
+        allow_zero_matches: Whether zero matches are allowed without error.
         meta: Structured metadata associated with the rule.
     """
 
@@ -76,6 +81,7 @@ class DeleteRegexRule:
     description: str
     pattern: str
     flags: int
+    allow_zero_matches: bool = False
     meta: Mapping[str, Any]
 
 
@@ -208,6 +214,8 @@ def validate_rules(rules: list[Rule]) -> None:
                 details=_rule_details(index, rule, expected="Rule"),
             )
 
+        _reject_non_literal_transformations(rule, index)
+
         rule_id = rule.rule_id
         if not isinstance(rule_id, str) or not rule_id.strip():
             raise PatchRuleError(
@@ -242,6 +250,19 @@ def validate_rules(rules: list[Rule]) -> None:
                 rule.replacement, index, rule, rule_id, field="replacement"
             )
             _validate_anchor(rule.anchor, rule.anchor_kind, index, rule, rule_id)
+            if rule.anchor_kind != "literal":
+                raise PatchRuleError(
+                    "replace rules must use literal anchors",
+                    details=_rule_details(
+                        index,
+                        rule,
+                        rule_id=rule_id,
+                        field="anchor_kind",
+                        anchor_kind=rule.anchor_kind,
+                    ),
+                )
+            _validate_replace_count(rule.count, index, rule, rule_id)
+            _validate_allow_zero_matches(rule.allow_zero_matches, index, rule, rule_id)
         elif isinstance(rule, InsertAfterRule):
             _require_non_empty_target(rule.anchor, index, rule, rule_id, field="anchor")
             _require_non_empty_target(rule.content, index, rule, rule_id, field="content")
@@ -255,6 +276,7 @@ def validate_rules(rules: list[Rule]) -> None:
                         index, rule, rule_id=rule_id, field="flags", flags=rule.flags
                     ),
                 )
+            _validate_allow_zero_matches(rule.allow_zero_matches, index, rule, rule_id)
 
 
 def apply_rules(source: str, rules: list[Rule]) -> PatchResult:
@@ -455,6 +477,8 @@ def generate_patch(
             - id: Unique rule identifier.
             - description: Required, non-empty string description.
             - anchor/anchor_kind/replacement: Required for replace.
+            - count: Optional integer for replace max replacements, or "all".
+            - allow_zero_matches: Optional bool to permit zero matches.
             - anchor/anchor_kind/content: Required for insert_after.
             - pattern/flags: Required for delete_regex (flags are strings such as
               "IGNORECASE", "MULTILINE", or "DOTALL").
@@ -788,7 +812,17 @@ def _parse_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> Replace
     """Parse a replace rule definition."""
     _ensure_only_keys(
         rule,
-        {"type", "id", "description", "anchor", "anchor_kind", "replacement", "meta"},
+        {
+            "type",
+            "id",
+            "description",
+            "anchor",
+            "anchor_kind",
+            "replacement",
+            "count",
+            "allow_zero_matches",
+            "meta",
+        },
         index,
         rule_id,
     )
@@ -796,6 +830,8 @@ def _parse_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> Replace
     anchor = _require_non_empty_str(rule, "anchor", index)
     replacement = _require_non_empty_str(rule, "replacement", index)
     anchor_kind = _parse_anchor_kind(rule, index, rule_id)
+    count = _parse_replace_count(rule, index, rule_id)
+    allow_zero_matches = _parse_allow_zero_matches(rule, index, rule_id)
     meta = _parse_meta(rule, index, rule_id)
     return ReplaceRule(
         rule_id=rule_id,
@@ -803,6 +839,8 @@ def _parse_replace(rule: Mapping[str, Any], index: int, rule_id: str) -> Replace
         anchor=anchor,
         replacement=replacement,
         anchor_kind=anchor_kind,
+        count=count,
+        allow_zero_matches=allow_zero_matches,
         meta=meta,
     )
 
@@ -834,7 +872,7 @@ def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> De
     """Parse a delete-regex rule definition."""
     _ensure_only_keys(
         rule,
-        {"type", "id", "description", "pattern", "flags", "meta"},
+        {"type", "id", "description", "pattern", "flags", "allow_zero_matches", "meta"},
         index,
         rule_id,
     )
@@ -866,12 +904,14 @@ def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> De
             "delete_regex pattern is invalid",
             details=_rule_details(index, rule, rule_id=rule_id, message=str(exc)),
         ) from exc
+    allow_zero_matches = _parse_allow_zero_matches(rule, index, rule_id)
     meta = _parse_meta(rule, index, rule_id)
     return DeleteRegexRule(
         rule_id=rule_id,
         description=description,
         pattern=pattern,
         flags=compiled_flags,
+        allow_zero_matches=allow_zero_matches,
         meta=meta,
     )
 
@@ -959,11 +999,14 @@ def _validate_anchor(
     rule_id: str,
 ) -> None:
     """Ensure anchors are deterministic and unambiguous."""
-    if anchor_kind == "regex" and not (anchor.startswith("^") and anchor.endswith("$")):
-        raise PatchRuleError(
-            "regex anchors must be fully anchored with ^ and $",
-            details=_rule_details(index, rule, rule_id=rule_id, anchor=anchor),
-        )
+    if anchor_kind == "regex":
+        try:
+            re.compile(anchor)
+        except re.error as exc:
+            raise PatchRuleError(
+                "anchor regex is invalid",
+                details=_rule_details(index, rule, rule_id=rule_id, anchor=anchor, message=str(exc)),
+            ) from exc
 
 
 def _parse_anchor_kind(rule: Mapping[str, Any], index: int, rule_id: str) -> str:
@@ -980,6 +1023,124 @@ def _parse_anchor_kind(rule: Mapping[str, Any], index: int, rule_id: str) -> str
             details=_rule_details(index, rule, rule_id=rule_id, anchor_kind=anchor_kind),
         )
     return anchor_kind
+
+
+def _parse_replace_count(rule: Mapping[str, Any], index: int, rule_id: str) -> int | None:
+    """Parse optional count for replace rules."""
+    if "count" not in rule:
+        return None
+    value = rule.get("count")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.strip().lower() == "all":
+            return None
+        raise PatchRuleError(
+            "replace count must be an integer or 'all'",
+            details=_rule_details(index, rule, rule_id=rule_id, field="count", value=value),
+        )
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PatchRuleError(
+            "replace count must be an integer",
+            details=_rule_details(index, rule, rule_id=rule_id, field="count", value=value),
+        )
+    if value <= 0:
+        raise PatchRuleError(
+            "replace count must be greater than zero",
+            details=_rule_details(index, rule, rule_id=rule_id, field="count", value=value),
+        )
+    return value
+
+
+def _parse_allow_zero_matches(rule: Mapping[str, Any], index: int, rule_id: str) -> bool:
+    """Parse optional allow_zero_matches field."""
+    value = rule.get("allow_zero_matches", False)
+    if not isinstance(value, bool):
+        raise PatchRuleError(
+            "allow_zero_matches must be a boolean",
+            details=_rule_details(index, rule, rule_id=rule_id, field="allow_zero_matches"),
+        )
+    return value
+
+
+def _validate_replace_count(
+    count: int | None,
+    index: int,
+    rule: Rule,
+    rule_id: str,
+) -> None:
+    """Validate replace count on parsed rules."""
+    if count is None:
+        return
+    if not isinstance(count, int) or count <= 0:
+        raise PatchRuleError(
+            "replace count must be a positive integer",
+            details=_rule_details(index, rule, rule_id=rule_id, field="count", value=count),
+        )
+
+
+def _validate_allow_zero_matches(
+    allow_zero_matches: bool,
+    index: int,
+    rule: Rule,
+    rule_id: str,
+) -> None:
+    """Validate allow_zero_matches on parsed rules."""
+    if not isinstance(allow_zero_matches, bool):
+        raise PatchRuleError(
+            "allow_zero_matches must be a boolean",
+            details=_rule_details(
+                index,
+                rule,
+                rule_id=rule_id,
+                field="allow_zero_matches",
+                value=allow_zero_matches,
+            ),
+        )
+
+
+_DISALLOWED_TRANSFORMATION_PATTERN = re.compile(
+    r"\b(auto[- ]?format|formatting|reformat|refactor|reindent|lint|prettier|black|isort|"
+    r"organize imports|sort imports)\b",
+    re.IGNORECASE,
+)
+
+
+def _reject_non_literal_transformations(rule: Rule, index: int) -> None:
+    """Reject rule metadata that implies formatting/refactor operations."""
+    description = getattr(rule, "description", "")
+    if isinstance(description, str) and _DISALLOWED_TRANSFORMATION_PATTERN.search(description):
+        raise PatchRuleError(
+            "rule description indicates formatting/refactor operation",
+            details=_rule_details(index, rule, rule_id=getattr(rule, "rule_id", None)),
+        )
+    meta = getattr(rule, "meta", None)
+    if not isinstance(meta, Mapping):
+        return
+    for key, value in meta.items():
+        if isinstance(key, str) and _DISALLOWED_TRANSFORMATION_PATTERN.search(key):
+            if bool(value):
+                raise PatchRuleError(
+                    "rule metadata indicates formatting/refactor operation",
+                    details=_rule_details(
+                        index,
+                        rule,
+                        rule_id=getattr(rule, "rule_id", None),
+                        field=key,
+                        value=value,
+                    ),
+                )
+        if isinstance(value, str) and _DISALLOWED_TRANSFORMATION_PATTERN.search(value):
+            raise PatchRuleError(
+                "rule metadata indicates formatting/refactor operation",
+                details=_rule_details(
+                    index,
+                    rule,
+                    rule_id=getattr(rule, "rule_id", None),
+                    field=key,
+                    value=value,
+                ),
+            )
 
 
 def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[str, Any]:
@@ -1006,10 +1167,11 @@ def _resolve_rule(
 ) -> list[ResolvedRule]:
     """Resolve a rule into one or more concrete edits."""
     if isinstance(rule, ReplaceRule):
-        start, end = _resolve_anchor(
+        spans = _resolve_replace(
             source,
             rule.anchor,
-            rule.anchor_kind,
+            rule.count,
+            rule.allow_zero_matches,
             rule.rule_id,
             rule_index=index,
             rule_payload=rule,
@@ -1021,12 +1183,13 @@ def _resolve_rule(
                 "replace",
                 rule.anchor,
                 rule.anchor_kind,
-                start,
-                end,
+                span_start,
+                span_end,
                 rule.replacement,
                 index,
                 line_index,
             )
+            for span_start, span_end in spans
         ]
     if isinstance(rule, InsertAfterRule):
         start, end = _resolve_anchor(
@@ -1056,6 +1219,7 @@ def _resolve_rule(
             source,
             rule.pattern,
             rule.flags,
+            rule.allow_zero_matches,
             rule.rule_id,
             rule_index=index,
             rule_payload=rule,
@@ -1089,6 +1253,7 @@ def _resolve_delete_lines(
     source: str,
     pattern: str,
     flags: int,
+    allow_zero_matches: bool,
     rule_id: str,
     *,
     rule_index: int,
@@ -1104,7 +1269,7 @@ def _resolve_delete_lines(
         line_content = line_text[:-1] if line_text.endswith("\n") else line_text
         if compiled.search(line_content):
             spans.append((line_start, line_end))
-    if not spans:
+    if not spans and not allow_zero_matches:
         raise PatchAnchorError(
             "delete_regex pattern matched no lines",
             details=_rule_details(
@@ -1116,10 +1281,46 @@ def _resolve_delete_lines(
                     "flags": flags,
                     "match_count": 0,
                     "lines_checked": len(line_index),
+                    "allow_zero_matches": allow_zero_matches,
                 },
             ),
         )
     return spans
+
+
+def _resolve_replace(
+    source: str,
+    anchor: str,
+    count: int | None,
+    allow_zero_matches: bool,
+    rule_id: str,
+    *,
+    rule_index: int,
+    rule_payload: ReplaceRule,
+) -> list[tuple[int, int]]:
+    """Resolve literal replace rules into one or more match spans."""
+    matches = _find_literal_matches_non_overlapping(source, anchor)
+    if not matches:
+        if allow_zero_matches:
+            return []
+        raise PatchAnchorError(
+            "anchor not found",
+            details=_rule_details(
+                rule_index,
+                rule_payload,
+                rule_id=rule_id,
+                anchor_search={
+                    "anchor": anchor,
+                    "anchor_kind": "literal",
+                    "match_count": 0,
+                    "matches": [],
+                    "allow_zero_matches": allow_zero_matches,
+                },
+            ),
+        )
+    if count is None:
+        return list(matches)
+    return list(matches[:count])
 
 
 def _resolve_anchor(
@@ -1156,6 +1357,19 @@ def _find_literal_matches(text: str, anchor: str) -> list[tuple[int, int]]:
             break
         matches.append((idx, idx + len(anchor)))
         start = idx + 1
+    return matches
+
+
+def _find_literal_matches_non_overlapping(text: str, anchor: str) -> list[tuple[int, int]]:
+    """Return non-overlapping literal match spans for a substring."""
+    matches: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        idx = text.find(anchor, start)
+        if idx == -1:
+            break
+        matches.append((idx, idx + len(anchor)))
+        start = idx + len(anchor)
     return matches
 
 
