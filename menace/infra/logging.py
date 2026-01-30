@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 
@@ -12,27 +13,24 @@ class StructuredLogError(ValueError):
     """Raised when structured logging inputs are invalid."""
 
 
-def get_logger(name: str, level: int) -> logging.Logger:
+def get_logger(name: str) -> logging.Logger:
     """Return a configured logger for deterministic structured output.
 
     Args:
         name: Logger name used by the standard library logging registry.
-        level: Numeric logging level for the logger instance.
 
     Returns:
         A configured :class:`logging.Logger` instance.
 
     Raises:
-        StructuredLogError: If ``name`` is empty or ``level`` is not an integer.
+        StructuredLogError: If ``name`` is empty.
     """
 
     if not isinstance(name, str) or not name:
         raise StructuredLogError("name must be a non-empty string")
-    if not isinstance(level, int):
-        raise StructuredLogError("level must be an integer logging level")
 
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(logging.INFO)
     logger.propagate = False
 
     if not _has_structured_handler(logger):
@@ -45,34 +43,30 @@ def get_logger(name: str, level: int) -> logging.Logger:
 
 def log_event(
     logger: logging.Logger,
-    level: int,
-    message: str,
-    meta: Mapping[str, Any] | None = None,
+    event: str,
+    context: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit a structured log entry using the provided logger.
 
     Args:
         logger: Logger obtained from :func:`get_logger`.
-        level: Numeric logging level for this log entry.
-        message: Human-readable log message.
-        meta: Optional structured metadata for the log entry.
+        event: Event identifier or message to emit.
+        context: Optional structured context for the log entry.
 
     Raises:
-        StructuredLogError: If ``message`` is empty, ``level`` is invalid, or ``meta``
-            is not a mapping with string keys.
+        StructuredLogError: If ``event`` is empty, ``logger`` is invalid, or
+            ``context`` is not a mapping with string keys.
     """
 
-    if not isinstance(level, int):
-        raise StructuredLogError("level must be an integer logging level")
-    if not isinstance(message, str) or not message:
-        raise StructuredLogError("message must be a non-empty string")
+    if not isinstance(logger, logging.Logger):
+        raise StructuredLogError("logger must be a logging.Logger")
+    if not isinstance(event, str) or not event:
+        raise StructuredLogError("event must be a non-empty string")
 
-    normalized_meta = _normalize_meta(meta)
-    extra: dict[str, Any] = {}
-    if normalized_meta is not None:
-        extra["meta"] = normalized_meta
+    normalized_context = _normalize_context(context)
+    extra: dict[str, Any] = {"event": event, "context": normalized_context}
 
-    logger.log(level, message, extra=extra)
+    logger.info(event, extra=extra)
 
 
 class _StructuredFormatter(logging.Formatter):
@@ -80,20 +74,15 @@ class _StructuredFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
+            "timestamp": _format_timestamp(record.created),
             "level": record.levelname.lower(),
-            "message": record.getMessage(),
+            "event": getattr(record, "event", record.getMessage()),
+            "context": getattr(record, "context", {}),
         }
-
-        if record.name:
-            payload["logger"] = record.name
-
-        meta = getattr(record, "meta", None)
-        if meta is not None:
-            payload["meta"] = meta
 
         return json.dumps(
             payload,
-            sort_keys=True,
+            sort_keys=False,
             separators=(",", ":"),
             ensure_ascii=False,
             default=str,
@@ -110,17 +99,23 @@ def _has_structured_handler(logger: logging.Logger) -> bool:
     return False
 
 
-def _normalize_meta(meta: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """Normalize optional meta mapping for structured log payloads."""
+def _normalize_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Normalize optional context mapping for structured log payloads."""
 
-    if meta is None:
-        return None
-    if not isinstance(meta, Mapping):
-        raise StructuredLogError("meta must be a mapping")
+    if context is None:
+        return {}
+    if not isinstance(context, Mapping):
+        raise StructuredLogError("context must be a mapping")
 
     normalized: dict[str, Any] = {}
-    for key, value in meta.items():
+    for key, value in context.items():
         if not isinstance(key, str) or not key:
-            raise StructuredLogError("meta keys must be non-empty strings")
+            raise StructuredLogError("context keys must be non-empty strings")
         normalized[key] = value
     return normalized
+
+
+def _format_timestamp(created: float) -> str:
+    """Format epoch seconds into a deterministic ISO-8601 timestamp."""
+
+    return datetime.fromtimestamp(created, tz=timezone.utc).isoformat()
