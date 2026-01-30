@@ -21,27 +21,25 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
             workflow_id (str, required, non-empty)
             steps (list[dict], required, max length 100)
             payload (dict[str, Any], required, non-empty)
-            meta (dict[str, Any], optional)
+            metadata (dict[str, Any], optional)
 
     Returns:
         dict[str, Any]: Dictionary with the schema:
             status (str): "ok" when all steps succeed, "error" when any step fails
             data (dict): workflow_id, payload, steps
             errors (list[dict]): structured errors captured during step execution
-            metadata (dict): workflow_id plus any input meta, along with
+            metadata (dict): workflow_id plus any input metadata, along with
                 deterministic step-failure indicators:
                 - partial_failure (bool): True when any step error exists
                 - error_count (int): count of step-level errors
                 - failed_steps (list[int]): indices of steps that failed
-            meta (dict): Deprecated alias for ``metadata`` retained for backward
-                compatibility. Both keys return identical payloads.
 
     Raises:
         ValidationError: If the input schema or step definitions are invalid.
         WorkflowError: If an unexpected execution failure occurs.
     """
 
-    workflow_id, steps, payload, meta = _validate_workflow_definition(input)
+    workflow_id, steps, payload, metadata_input = _validate_workflow_definition(input)
 
     LOGGER.info(
         "workflow_runner.start",
@@ -108,7 +106,7 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
     failed_steps = sorted({error.get("step_index") for error in errors if error.get("step_index") is not None})
     metadata = {
         "workflow_id": workflow_id,
-        **meta,
+        **metadata_input,
         "partial_failure": partial_failure,
         "error_count": len(errors),
         "failed_steps": failed_steps,
@@ -122,7 +120,6 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
         },
         "errors": errors,
         "metadata": metadata,
-        "meta": metadata,
     }
 
 
@@ -138,7 +135,7 @@ def _validate_workflow_definition(
     Returns:
         tuple[str, list[dict[str, Any]], dict[str, Any], dict[str, Any]]: Ordered
         tuple of ``workflow_id``, validated ``steps``, ``payload``, and normalized
-        ``meta`` dictionary.
+        ``metadata`` dictionary.
 
     Raises:
         ValidationError: If the workflow schema is invalid, required fields are
@@ -155,7 +152,7 @@ def _validate_workflow_definition(
             details={"received_type": type(input_data).__name__},
         )
 
-    allowed_keys = {"workflow_id", "steps", "payload", "meta"}
+    allowed_keys = {"workflow_id", "steps", "payload", "metadata"}
     unexpected_keys = set(input_data.keys()) - allowed_keys
     if unexpected_keys:
         raise ValidationError(
@@ -215,17 +212,17 @@ def _validate_workflow_definition(
         )
     _validate_payload_values(payload, workflow_id)
 
-    meta = input_data.get("meta") or {}
-    if not isinstance(meta, dict):
+    metadata = input_data.get("metadata") or {}
+    if not isinstance(metadata, dict):
         raise ValidationError(
-            "meta must be a dictionary when provided",
-            details={"workflow_id": workflow_id, "meta_type": type(meta).__name__},
+            "metadata must be a dictionary when provided",
+            details={"workflow_id": workflow_id, "metadata_type": type(metadata).__name__},
         )
 
     for index, step in enumerate(steps):
         _validate_step(step, workflow_id, index)
 
-    return workflow_id, steps, payload, meta
+    return workflow_id, steps, payload, metadata
 
 
 def _validate_payload_values(payload: dict[str, Any], workflow_id: str) -> None:

@@ -128,11 +128,11 @@ def _validate_workflow_shape(workflow: Any, index: int) -> tuple[dict[str, Any] 
         )
         return None, _error_payload(error)
 
-    meta = workflow.get("meta")
-    if meta is not None and not isinstance(meta, dict):
+    metadata = workflow.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
         error = WorkflowValidationError(
-            message="meta must be a dictionary when provided.",
-            details={"index": index, "workflow_id": workflow_id, "meta_type": type(meta).__name__},
+            message="metadata must be a dictionary when provided.",
+            details={"index": index, "workflow_id": workflow_id, "metadata_type": type(metadata).__name__},
         )
         return None, _error_payload(error)
 
@@ -146,7 +146,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
         - ``workflows`` must be a list (empty list is allowed and returns zeroed
           results).
         - Each workflow must be a dictionary containing ``workflow_id`` (str),
-          ``steps`` (list), ``payload`` (dict), and optional ``meta`` (dict).
+          ``steps`` (list), ``payload`` (dict), and optional ``metadata`` (dict).
         - ``config`` is validated through :func:`menace.infra.config_loader.load_config`.
         - Workflows run in input order exactly once (no recursion, retries, or
           reordering).
@@ -158,11 +158,10 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
         - ``metadata``: counts + status summary + config validation metadata
-        - ``meta``: deprecated alias for ``metadata`` (mirrors the payload)
 
         Each entry in ``data["results"]`` is a workflow result that includes a
         top-level ``metadata`` key. The workflow ``metadata`` payload includes
-        ``workflow_id``, any input ``meta`` fields, and deterministic failure
+        ``workflow_id``, any input ``metadata`` fields, and deterministic failure
         indicators: ``partial_failure`` (bool), ``error_count`` (int), and
         ``failed_steps`` (list[int]).
     """
@@ -252,7 +251,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results.append(result)
                 workflow_status = result.get("status")
                 workflow_errors = result.get("errors", [])
-                workflow_metadata = result.get("metadata", result.get("meta", {}))
+                workflow_metadata = result.get("metadata", {})
                 if workflow_status == "ok":
                     ok_count += 1
                 else:
@@ -396,5 +395,4 @@ def _final_response(
         },
         "errors": errors,
         "metadata": metadata,
-        "meta": metadata,
     }
