@@ -199,7 +199,11 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                             "error": {
                                 "error_type": "WorkflowError",
                                 "message": "Workflow completed with errors.",
-                                "details": {"errors": result.get("errors", [])},
+                                "details": {
+                                    "workflow_id": workflow_id,
+                                    "index": index,
+                                    "errors": result.get("errors", []),
+                                },
                             },
                         }
                     )
