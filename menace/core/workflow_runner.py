@@ -33,6 +33,7 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
                 - partial_failure (bool): True when any step error exists
                 - error_count (int): count of step-level errors
                 - failed_steps (list[int]): indices of steps that failed
+            Note: The top-level key is ``meta`` (not ``metadata``).
 
     Raises:
         ValidationError: If the input schema or step definitions are invalid.
