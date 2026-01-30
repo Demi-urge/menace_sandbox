@@ -53,13 +53,13 @@ def _require_decimal(data: dict[str, Any], field_name: str) -> Decimal:
 
 
 def _inputs_used(required_fields: Iterable[str]) -> dict[str, Any]:
-    """Return deterministic meta listing the inputs used.
+    """Return deterministic metadata listing the inputs used.
 
     Args:
         required_fields (Iterable[str]): Field names used in the evaluation.
 
     Returns:
-        dict[str, Any]: Meta payload with ``inputs_used`` list.
+        dict[str, Any]: Metadata payload with ``inputs_used`` list.
 
     Raises:
         None: This helper does not raise.
@@ -108,10 +108,6 @@ def evaluate_roi(input_data: dict[str, Any]) -> dict[str, Any]:
                 },
                 "errors": [],
                 "metadata": {
-                    "inputs_used": ["cost", "revenue"],
-                    "formula": "(revenue - cost) / cost",
-                },
-                "meta": {
                     "inputs_used": ["cost", "revenue"],
                     "formula": "(revenue - cost) / cost",
                 },
@@ -170,5 +166,4 @@ def evaluate_roi(input_data: dict[str, Any]) -> dict[str, Any]:
         },
         "errors": [],
         "metadata": metadata,
-        "meta": metadata,
     }
