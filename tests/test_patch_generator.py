@@ -1,11 +1,22 @@
+from menace.errors import ValidationError
 from menace_sandbox import patch_generator
 
 
 def test_generate_patch_deterministic_output():
     source = "alpha\nbravo\n"
     rules = [
-        {"type": "replace", "line": 1, "content": "alpha-1", "id": "rule-1"},
-        {"type": "insert_after", "line": 2, "content": "charlie", "id": "rule-2"},
+        {
+            "type": "replace",
+            "id": "rule-1",
+            "anchor": "alpha",
+            "replacement": "alpha-1",
+        },
+        {
+            "type": "insert_after",
+            "id": "rule-2",
+            "anchor": "bravo\n",
+            "content": "charlie\n",
+        },
     ]
     error_report = {"file_path": "module.py"}
 
@@ -14,52 +25,66 @@ def test_generate_patch_deterministic_output():
 
     assert first == second
     assert list(first.keys()) == ["status", "data", "errors", "meta"]
-    assert list(first["meta"].keys()) == ["applied_rules", "line_counts", "change_summary"]
+    assert first["status"] == "ok"
+    assert first["data"]["modified_source"] == "alpha-1\nbravo\ncharlie\n"
+    assert first["data"]["applied_rules"][0]["id"] == "rule-1"
 
 
-def test_generate_patch_validation_errors_returned():
+def test_generate_patch_validation_errors_raise():
     source = "alpha\nbravo\n"
     error_report = {}
-    cases = [
-        ([{"type": "unknown", "line": 1, "content": "x"}], "Unknown rule type"),
-        (["not-a-mapping"], "rule must be a mapping"),
-        ([{"type": "replace", "line": "one", "content": "x"}], "rule line must be an integer"),
+
+    try:
+        patch_generator.generate_patch(source, error_report, [{"type": "unknown", "id": "x"}])
+    except ValidationError as exc:
+        assert exc.message == "Unknown rule type"
+    else:
+        raise AssertionError("Expected ValidationError")
+
+
+def test_generate_patch_missing_anchor_raises():
+    source = "alpha\nbravo\n"
+    rules = [
+        {
+            "type": "insert_after",
+            "id": "rule-1",
+            "anchor": "charlie",
+            "content": "delta",
+        }
     ]
 
-    for rules, message in cases:
-        result = patch_generator.generate_patch(source, error_report, rules)
-        assert result["status"] == "failed"
-        assert result["errors"]
-        error = result["errors"][0]
-        assert error["error_type"] == "ValidationError"
-        assert error["message"] == message
-
-
-def test_generate_patch_impossible_anchor_fails():
-    source = "alpha\nbravo\n"
-    rules = [{"type": "insert_after", "line": 99, "content": "charlie"}]
-
-    result = patch_generator.generate_patch(source, {}, rules)
-
-    assert result["status"] == "failed"
-    assert result["errors"][0]["error_type"] == "ValidationError"
-    assert result["errors"][0]["message"] == "insert anchor is out of range"
+    try:
+        patch_generator.generate_patch(source, {}, rules)
+    except ValidationError as exc:
+        assert exc.message == "anchor not found"
+    else:
+        raise AssertionError("Expected ValidationError")
 
 
 def test_generate_patch_conflicting_replacements_fail():
     source = "alpha\nbravo\n"
     rules = [
-        {"type": "replace", "line": 1, "content": "alpha-1", "id": "rule-a"},
-        {"type": "replace", "line": 1, "content": "alpha-2", "id": "rule-b"},
+        {
+            "type": "replace",
+            "id": "rule-a",
+            "anchor": "alpha",
+            "replacement": "alpha-1",
+        },
+        {
+            "type": "replace",
+            "id": "rule-b",
+            "anchor": "alpha",
+            "replacement": "alpha-2",
+        },
     ]
 
     result = patch_generator.generate_patch(source, {}, rules)
 
-    assert result["status"] == "failed"
+    assert result["status"] == "error"
     error = result["errors"][0]
     assert error["error_type"] == "ValidationError"
-    assert error["message"] == "replace conflicts with previous rule"
-    assert error["details"]["conflicting_rule_id"] == "rule-a"
+    assert error["message"] == "conflicting edits detected"
+    assert error["details"]["conflicting_rule_id"] == "rule-b"
 
 
 def test_generate_patch_empty_rules_noop():
@@ -67,24 +92,26 @@ def test_generate_patch_empty_rules_noop():
 
     result = patch_generator.generate_patch(source, {}, [])
 
-    assert result["status"] == "success"
-    assert result["data"]["diff"] == ""
-    assert result["data"]["source"] == source
+    assert result["status"] == "ok"
+    assert result["data"]["patch_text"] == ""
+    assert result["data"]["modified_source"] == source
     assert result["errors"] == []
-    assert result["meta"] == {
-        "applied_rules": [],
-        "line_counts": {"before": 2, "after": 2},
-        "change_summary": {"inserted": 0, "deleted": 0, "replaced": 0},
-    }
 
 
 def test_generate_patch_syntax_error_reported():
     source = "def ok():\n    return 1\n"
-    rules = [{"type": "insert_before", "line": 1, "content": "def bad("}]
+    rules = [
+        {
+            "type": "insert_after",
+            "id": "rule-1",
+            "anchor": "def ok():\n",
+            "content": "def bad(\n",
+        }
+    ]
 
     result = patch_generator.generate_patch(source, {"file_path": "example.py"}, rules)
 
-    assert result["status"] == "failed"
+    assert result["status"] == "error"
     assert result["errors"]
     error = result["errors"][0]
     assert error["error_type"] == "ValidationError"
