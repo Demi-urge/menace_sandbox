@@ -157,7 +157,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
         - ``status``: ``ok`` | ``error``
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
-        - ``metadata``: counts + status summary + config validation metadata
+        - ``meta``: counts + status summary + config validation metadata
     """
 
     results: list[dict[str, Any]] = []
@@ -245,7 +245,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results.append(result)
                 workflow_status = result.get("status")
                 workflow_errors = result.get("errors", [])
-                workflow_metadata = result.get("metadata", {})
+                workflow_meta = result.get("meta", {})
                 if workflow_status == "ok":
                     ok_count += 1
                 else:
@@ -257,7 +257,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                             "index": index,
                             "status": workflow_status,
                             "errors": workflow_errors,
-                            "metadata": workflow_metadata,
+                            "meta": workflow_meta,
                         },
                     )
                     errors.append(
@@ -360,7 +360,7 @@ def _final_response(
         normalized_config (dict[str, Any] | None): Optional normalized config data.
 
     Returns:
-        dict[str, Any]: Final response payload with data, errors, and metadata.
+        dict[str, Any]: Final response payload with data, errors, and meta.
 
     Raises:
         None: This helper does not raise.
@@ -376,7 +376,7 @@ def _final_response(
             "config": normalized_config,
         },
         "errors": errors,
-        "metadata": {
+        "meta": {
             "workflow_count": workflows_count,
             "result_count": len(results),
             "ok_count": ok_count,
