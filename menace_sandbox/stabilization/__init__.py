@@ -9,6 +9,7 @@ from .response_schemas import (
     normalize_patch_validation,
     normalize_preset_batch,
 )
+from .roi import compute_roi_delta
 
 __all__ = [
     "ValidationError",
@@ -18,4 +19,5 @@ __all__ = [
     "normalize_patch_validation",
     "normalize_preset_batch",
     "stabilize_completion",
+    "compute_roi_delta",
 ]

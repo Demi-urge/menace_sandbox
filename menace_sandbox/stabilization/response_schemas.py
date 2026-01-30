@@ -4,6 +4,8 @@ from typing import Any, Mapping
 
 from simple_validation import SimpleField, SimpleSchema, ValidationError, fields
 
+from .roi import compute_roi_delta
+
 
 class MvpResponseSchema(SimpleSchema):
     objective = fields.Str()
@@ -86,7 +88,22 @@ def normalize_mvp_response(payload: Mapping[str, Any] | None) -> dict[str, Any]:
         "duration_ms": 0,
         "success": False,
     }
-    return _normalize_payload(payload, MvpResponseSchema, defaults)
+    raw = dict(payload) if isinstance(payload, Mapping) else {}
+    prior_roi = raw.get(
+        "prior_roi",
+        raw.get(
+            "roi_prior",
+            raw.get("previous_roi", raw.get("roi_previous", raw.get("roi_before"))),
+        ),
+    )
+    current_roi = raw.get("roi_score", raw.get("current_roi", raw.get("roi_current")))
+    if "roi_score" not in raw and current_roi is not None:
+        raw["roi_score"] = current_roi
+    if prior_roi is None and current_roi is None:
+        raw.setdefault("roi_delta", defaults["roi_delta"])
+    else:
+        raw["roi_delta"] = compute_roi_delta(prior_roi, current_roi)
+    return _normalize_payload(raw, MvpResponseSchema, defaults)
 
 
 def normalize_error_response(payload: Mapping[str, Any] | None) -> dict[str, Any]:
