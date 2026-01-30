@@ -424,7 +424,7 @@ def _build_patch_changes(
 def generate_patch(
     source: str,
     error_report: dict[str, object],
-    rules: list[Rule],
+    rules: Sequence[Mapping[str, Any]] | Sequence[Rule],
     *,
     validate_syntax: bool | None = None,
 ) -> dict[str, object]:
@@ -440,8 +440,15 @@ def generate_patch(
     Returns:
         A structured payload containing status, data, errors, and meta fields.
     """
-    _validate_generate_patch_inputs(source, error_report, rules)
-    if not rules:
+    parsed_rules: list[Rule]
+    if all(isinstance(rule, Mapping) for rule in rules):
+        _validate_inputs(source, error_report, rules)
+        parsed_rules = _parse_rules(rules)
+    else:
+        _validate_generate_patch_inputs(source, error_report, rules)
+        parsed_rules = list(rules)
+
+    if not parsed_rules:
         error = PatchRuleError("rules must not be empty", details={"field": "rules"})
         return {
             "status": "error",
@@ -452,12 +459,12 @@ def generate_patch(
                 applied_count=0,
             ),
         }
-    validate_rules(rules)
-    rule_summaries = _summarize_rules(rules)
+    validate_rules(parsed_rules)
+    rule_summaries = _summarize_rules(parsed_rules)
 
     errors: list[dict[str, Any]] = []
     try:
-        result = apply_rules(source, rules)
+        result = apply_rules(source, parsed_rules)
     except PatchConflictError as exc:
         errors.append(exc.to_dict())
         return {
@@ -485,7 +492,7 @@ def generate_patch(
         }
 
     if validate_syntax is not False:
-        syntax_error = _check_syntax(result.content, error_report, rules)
+        syntax_error = _check_syntax(result.content, error_report, parsed_rules)
         if syntax_error:
             errors.append(syntax_error.to_dict())
 
