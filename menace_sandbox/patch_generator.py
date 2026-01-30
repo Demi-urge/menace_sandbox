@@ -12,9 +12,9 @@ from menace.errors import (
     MenaceError,
     PatchAnchorError,
     PatchConflictError,
+    PatchParseError,
     PatchRuleError,
     PatchSyntaxError,
-    ValidationError,
 )
 
 
@@ -137,10 +137,10 @@ def validate_rules(rules: list[Rule]) -> None:
         rules: Rule objects to validate.
 
     Raises:
-        ValidationError: If a rule violates deterministic constraints.
+        PatchRuleError: If a rule violates deterministic constraints.
     """
     if not isinstance(rules, list):
-        raise ValidationError(
+        raise PatchRuleError(
             "rules must be provided as a list",
             details={"field": "rules", "expected": "list", "actual_type": type(rules).__name__},
         )
@@ -148,24 +148,24 @@ def validate_rules(rules: list[Rule]) -> None:
     allowed_flag_mask = re.IGNORECASE | re.MULTILINE | re.DOTALL
     for index, rule in enumerate(rules):
         if not isinstance(rule, (ReplaceRule, InsertAfterRule, DeleteRegexRule)):
-            raise ValidationError(
+            raise PatchRuleError(
                 "rule must be a supported Rule type",
                 details=_rule_details(index, rule, expected="Rule"),
             )
 
         rule_id = rule.rule_id
         if not isinstance(rule_id, str) or not rule_id.strip():
-            raise ValidationError(
+            raise PatchRuleError(
                 "rule_id is required",
                 details=_rule_details(index, rule, field="rule_id"),
             )
         if not isinstance(rule.description, str) or not rule.description.strip():
-            raise ValidationError(
+            raise PatchRuleError(
                 "description is required",
                 details=_rule_details(index, rule, rule_id=rule_id, field="description"),
             )
         if rule.meta is None or not isinstance(rule.meta, Mapping) or not rule.meta:
-            raise ValidationError(
+            raise PatchRuleError(
                 "meta is required",
                 details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
             )
@@ -183,7 +183,7 @@ def validate_rules(rules: list[Rule]) -> None:
         elif isinstance(rule, DeleteRegexRule):
             _require_non_empty_target(rule.pattern, index, rule, rule_id, field="pattern")
             if rule.flags & ~allowed_flag_mask:
-                raise ValidationError(
+                raise PatchRuleError(
                     "regex flags are not supported",
                     details=_rule_details(
                         index, rule, rule_id=rule_id, field="flags", flags=rule.flags
@@ -241,6 +241,7 @@ def generate_patch(
 
         updated_source = _apply_edits(source, resolved_rules)
         patch_text = _build_diff(source, updated_source)
+        _validate_patch_text(patch_text, resolved_rules)
 
         syntax_error = _check_syntax(updated_source, error_report, parsed_rules)
         syntax_valid = syntax_error is None
@@ -546,7 +547,7 @@ def _require_non_empty_target(
 ) -> None:
     """Ensure a rule target string is non-empty."""
     if not isinstance(target, str) or not target.strip():
-        raise ValidationError(
+        raise PatchRuleError(
             f"{field} must be a non-empty string",
             details=_rule_details(index, rule, rule_id=rule_id, field=field),
         )
@@ -561,7 +562,7 @@ def _validate_anchor(
 ) -> None:
     """Ensure anchors are deterministic and unambiguous."""
     if anchor_kind == "regex" and not (anchor.startswith("^") and anchor.endswith("$")):
-        raise ValidationError(
+        raise PatchRuleError(
             "regex anchors must be fully anchored with ^ and $",
             details=_rule_details(index, rule, rule_id=rule_id, anchor=anchor),
         )
@@ -908,6 +909,27 @@ def _build_diff(before: str, after: str) -> str:
         lineterm="",
     )
     return "\n".join(diff_lines)
+
+
+def _validate_patch_text(patch_text: str, resolved_rules: Sequence[ResolvedRule]) -> None:
+    """Ensure the generated patch text is parseable."""
+    if not patch_text:
+        return
+    lines = patch_text.splitlines()
+    has_header = any(line.startswith("--- ") for line in lines) and any(
+        line.startswith("+++ ") for line in lines
+    )
+    has_hunk = any(line.startswith("@@") for line in lines)
+    if not has_header or not has_hunk:
+        raise PatchParseError(
+            "Generated patch text is not a valid unified diff",
+            details={
+                "has_header": has_header,
+                "has_hunk": has_hunk,
+                "rule_ids": [rule.rule_id for rule in resolved_rules],
+                "rule_count": len(resolved_rules),
+            },
+        )
 
 
 def _lines_for_diff(text: str) -> list[str]:

@@ -16,7 +16,7 @@ class MenaceError(Exception):
     """
 
     message: str
-    details: dict[str, Any] | None = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.details is None:
@@ -63,13 +63,18 @@ class PatchConflictError(ValidationError):
 
 
 @dataclass
+class EvaluationError(MenaceError):
+    """Raised when evaluation logic cannot compute a deterministic result."""
+
+
+@dataclass
 class PatchSyntaxError(ValidationError):
     """Raised when a generated patch introduces syntax errors."""
 
 
 @dataclass
-class EvaluationError(MenaceError):
-    """Raised when evaluation logic cannot compute a deterministic result."""
+class PatchParseError(EvaluationError):
+    """Raised when a generated patch cannot be parsed or validated."""
 
 
 @dataclass
