@@ -1,4 +1,4 @@
-from menace.errors import ValidationError
+from menace.errors import PatchAnchorError, PatchRuleError, ValidationError
 from menace_sandbox import patch_generator
 
 
@@ -36,10 +36,10 @@ def test_generate_patch_validation_errors_raise():
 
     try:
         patch_generator.generate_patch(source, error_report, [{"type": "unknown", "id": "x"}])
-    except ValidationError as exc:
+    except PatchRuleError as exc:
         assert exc.message == "Unknown rule type"
     else:
-        raise AssertionError("Expected ValidationError")
+        raise AssertionError("Expected PatchRuleError")
 
 
 def test_generate_patch_missing_anchor_raises():
@@ -55,10 +55,10 @@ def test_generate_patch_missing_anchor_raises():
 
     try:
         patch_generator.generate_patch(source, {}, rules)
-    except ValidationError as exc:
+    except PatchAnchorError as exc:
         assert exc.message == "anchor not found"
     else:
-        raise AssertionError("Expected ValidationError")
+        raise AssertionError("Expected PatchAnchorError")
 
 
 def test_generate_patch_conflicting_replacements_fail():
@@ -82,7 +82,7 @@ def test_generate_patch_conflicting_replacements_fail():
 
     assert result["status"] == "error"
     error = result["errors"][0]
-    assert error["error_type"] == "ValidationError"
+    assert error["error_type"] == "PatchConflictError"
     assert error["message"] == "conflicting edits detected"
     assert error["details"]["conflicting_rule_id"] == "rule-b"
 

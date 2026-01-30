@@ -8,7 +8,13 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from menace.errors import MenaceError, ValidationError
+from menace.errors import (
+    MenaceError,
+    PatchAnchorError,
+    PatchConflictError,
+    PatchRuleError,
+    ValidationError,
+)
 
 
 @dataclass(frozen=True)
@@ -126,17 +132,17 @@ def _validate_inputs(
     rules: Sequence[Mapping[str, Any]],
 ) -> None:
     if not isinstance(source, str):
-        raise ValidationError(
+        raise PatchRuleError(
             "source must be a string",
             details={"field": "source", "expected": "str"},
         )
     if not isinstance(error_report, Mapping):
-        raise ValidationError(
+        raise PatchRuleError(
             "error_report must be a mapping",
             details={"field": "error_report", "expected": "mapping"},
         )
     if not isinstance(rules, Sequence) or isinstance(rules, (str, bytes)):
-        raise ValidationError(
+        raise PatchRuleError(
             "rules must be a sequence",
             details={"field": "rules", "expected": "sequence"},
         )
@@ -147,14 +153,14 @@ def _parse_rules(rules: Sequence[Mapping[str, Any]]) -> list[ReplaceRule | Inser
     seen_ids: set[str] = set()
     for index, rule in enumerate(rules):
         if not isinstance(rule, Mapping):
-            raise ValidationError(
+            raise PatchRuleError(
                 "rule must be a mapping",
                 details={"index": index, "expected": "mapping"},
             )
         rule_type = _require_non_empty_str(rule, "type", index)
         rule_id = _require_non_empty_str(rule, "id", index)
         if rule_id in seen_ids:
-            raise ValidationError(
+            raise PatchRuleError(
                 "rule id must be unique",
                 details={"index": index, "id": rule_id},
             )
@@ -166,7 +172,7 @@ def _parse_rules(rules: Sequence[Mapping[str, Any]]) -> list[ReplaceRule | Inser
         elif rule_type == "delete_regex":
             parsed.append(_parse_delete_regex(rule, index, rule_id))
         else:
-            raise ValidationError(
+            raise PatchRuleError(
                 "Unknown rule type",
                 details={
                     "index": index,
@@ -200,19 +206,19 @@ def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> De
     pattern = _require_non_empty_str(rule, "pattern", index)
     flags = rule.get("flags", [])
     if not isinstance(flags, Sequence) or isinstance(flags, (str, bytes)):
-        raise ValidationError(
+        raise PatchRuleError(
             "delete_regex flags must be a sequence",
             details={"index": index, "id": rule_id, "field": "flags"},
         )
     compiled_flags = 0
     for flag in flags:
         if not isinstance(flag, str) or not flag.strip():
-            raise ValidationError(
+            raise PatchRuleError(
                 "delete_regex flag must be a non-empty string",
                 details={"index": index, "id": rule_id, "flag": flag},
             )
         if flag not in {"IGNORECASE", "MULTILINE", "DOTALL"}:
-            raise ValidationError(
+            raise PatchRuleError(
                 "delete_regex flag is invalid",
                 details={"index": index, "id": rule_id, "flag": flag},
             )
@@ -220,7 +226,7 @@ def _parse_delete_regex(rule: Mapping[str, Any], index: int, rule_id: str) -> De
     try:
         re.compile(pattern, compiled_flags)
     except re.error as exc:
-        raise ValidationError(
+        raise PatchRuleError(
             "delete_regex pattern is invalid",
             details={"index": index, "id": rule_id, "message": str(exc)},
         ) from exc
@@ -243,7 +249,7 @@ def _ensure_only_keys(
 ) -> None:
     extra = sorted(key for key in rule.keys() if key not in allowed_keys)
     if extra:
-        raise ValidationError(
+        raise PatchRuleError(
             "rule has unexpected fields",
             details={"index": index, "id": rule_id, "unexpected": extra},
         )
@@ -252,12 +258,12 @@ def _ensure_only_keys(
 def _require_non_empty_str(rule: Mapping[str, Any], field: str, index: int) -> str:
     value = rule.get(field)
     if not isinstance(value, str):
-        raise ValidationError(
+        raise PatchRuleError(
             f"{field} must be a string",
             details={"index": index, "field": field},
         )
     if not value.strip():
-        raise ValidationError(
+        raise PatchRuleError(
             f"{field} must be a non-empty string",
             details={"index": index, "field": field},
         )
@@ -267,12 +273,12 @@ def _require_non_empty_str(rule: Mapping[str, Any], field: str, index: int) -> s
 def _parse_anchor_kind(rule: Mapping[str, Any], index: int, rule_id: str) -> str:
     anchor_kind = rule.get("anchor_kind", "literal")
     if not isinstance(anchor_kind, str) or not anchor_kind.strip():
-        raise ValidationError(
+        raise PatchRuleError(
             "anchor_kind must be a non-empty string",
             details={"index": index, "id": rule_id, "field": "anchor_kind"},
         )
     if anchor_kind not in {"literal", "regex"}:
-        raise ValidationError(
+        raise PatchRuleError(
             "anchor_kind must be literal or regex",
             details={"index": index, "id": rule_id, "anchor_kind": anchor_kind},
         )
@@ -284,7 +290,7 @@ def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[st
         return None
     meta = rule.get("meta")
     if not isinstance(meta, Mapping):
-        raise ValidationError(
+        raise PatchRuleError(
             "meta must be a mapping",
             details={"index": index, "id": rule_id, "field": "meta"},
         )
@@ -336,7 +342,7 @@ def _resolve_rule(
             index,
             line_index,
         )
-    raise ValidationError(
+    raise PatchRuleError(
         "Unknown rule type",
         details={"id": getattr(rule, "rule_id", None)},
     )
@@ -378,12 +384,12 @@ def _select_single_match(
     anchor: str,
 ) -> tuple[int, int]:
     if not matches:
-        raise ValidationError(
+        raise PatchAnchorError(
             "anchor not found",
             details={"id": rule_id, "anchor": anchor},
         )
     if len(matches) > 1:
-        raise ValidationError(
+        raise PatchAnchorError(
             "anchor is ambiguous",
             details={"id": rule_id, "anchor": anchor, "match_count": len(matches)},
         )
@@ -442,7 +448,7 @@ def _detect_conflicts(resolved_rules: Sequence[ResolvedRule]) -> dict[str, Any] 
     for idx, rule in enumerate(resolved_rules):
         for other in resolved_rules[idx + 1 :]:
             if _rules_conflict(rule, other):
-                error = ValidationError(
+                error = PatchConflictError(
                     "conflicting edits detected",
                     details={
                         "rule_id": rule.rule_id,
