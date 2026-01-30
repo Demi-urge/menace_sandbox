@@ -63,6 +63,11 @@ class PatchConflictError(ValidationError):
 
 
 @dataclass
+class PatchSyntaxError(ValidationError):
+    """Raised when a generated patch introduces syntax errors."""
+
+
+@dataclass
 class EvaluationError(MenaceError):
     """Raised when evaluation logic cannot compute a deterministic result."""
 
