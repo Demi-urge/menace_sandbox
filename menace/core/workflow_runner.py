@@ -25,7 +25,7 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
 
     Returns:
         dict[str, Any]: Dictionary with the schema:
-            status (str): "success" or "partial_failure"
+            status (str): "ok" when all steps succeed, "error" when any step fails
             data (dict): workflow_id, payload, steps
             errors (list[dict]): structured errors captured during step execution
             meta (dict): workflow_id plus any input meta
@@ -51,7 +51,7 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
             step_type = step["type"]
             if step_type == "set_field":
                 payload_state[step["field"]] = step["value"]
-                step_results.append(_step_result(index, step_type, "success"))
+                step_results.append(_step_result(index, step_type, "ok"))
                 continue
 
             if step_type == "copy_field":
@@ -68,12 +68,12 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
                     step_results.append(_step_result(index, step_type, "error", error))
                     continue
                 payload_state[step["target"]] = payload_state[source]
-                step_results.append(_step_result(index, step_type, "success"))
+                step_results.append(_step_result(index, step_type, "ok"))
                 continue
 
             if step_type == "merge_payload":
                 payload_state.update(step["data"])
-                step_results.append(_step_result(index, step_type, "success"))
+                step_results.append(_step_result(index, step_type, "ok"))
                 continue
 
             raise ValidationError(
@@ -92,11 +92,11 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
             "workflow_runner.complete",
             extra={
                 "workflow_id": workflow_id,
-                "status": "partial_failure" if errors else "success",
+                "status": "error" if errors else "ok",
             },
         )
 
-    status = "success" if not errors else "partial_failure"
+    status = "ok" if not errors else "error"
     return {
         "status": status,
         "data": {

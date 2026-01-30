@@ -99,7 +99,7 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
 
     Returns:
         A dictionary with the schema:
-        - ``status``: ``ok`` | ``partial_failure`` | ``error``
+        - ``status``: ``ok`` | ``error``
         - ``data``: ``{"results": [...], "config": {...}}``
         - ``errors``: list of deterministic error payloads
         - ``meta``: counts + status summary + config validation metadata
@@ -108,7 +108,6 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     ok_count = 0
-    partial_count = 0
     error_count = 0
     config_meta: dict[str, Any] | None = None
     normalized_config: dict[str, Any] | None = None
@@ -125,7 +124,6 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results=results,
                 errors=[{"workflow_id": None, "index": None, "error": _error_payload(error)}],
                 ok_count=0,
-                partial_count=0,
                 error_count=1,
                 config_meta=None,
                 normalized_config=None,
@@ -142,7 +140,6 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results=results,
                 errors=[{"workflow_id": None, "index": None, "error": _error_payload(error)}],
                 ok_count=0,
-                partial_count=0,
                 error_count=1,
                 config_meta=None,
                 normalized_config=None,
@@ -160,7 +157,6 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results=results,
                 errors=errors,
                 ok_count=0,
-                partial_count=0,
                 error_count=1,
                 config_meta=None,
                 normalized_config=None,
@@ -174,7 +170,6 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                 results=results,
                 errors=errors,
                 ok_count=0,
-                partial_count=0,
                 error_count=0,
                 config_meta=config_meta,
                 normalized_config=normalized_config,
@@ -193,17 +188,16 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
             try:
                 result = run_workflow(validated_workflow)
                 results.append(result)
-                if result.get("status") == "success":
+                if result.get("status") == "ok":
                     ok_count += 1
                 else:
-                    partial_count += 1
                     error_count += 1
                     errors.append(
                         {
                             "workflow_id": workflow_id,
                             "index": index,
                             "error": {
-                                "error_type": "WorkflowPartialFailure",
+                                "error_type": "WorkflowError",
                                 "message": "Workflow completed with errors.",
                                 "details": {"errors": result.get("errors", [])},
                             },
@@ -228,14 +222,13 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
                     }
                 )
 
-        status = _derive_status(ok_count, partial_count, error_count)
+        status = _derive_status(ok_count, error_count)
         return _final_response(
             status=status,
             workflows_count=len(workflows),
             results=results,
             errors=errors,
             ok_count=ok_count,
-            partial_count=partial_count,
             error_count=error_count,
             config_meta=config_meta,
             normalized_config=normalized_config,
@@ -248,21 +241,18 @@ def run_orchestrator(workflows: list[dict[str, Any]], config: dict[str, Any]) ->
             results=results,
             errors=[{"workflow_id": None, "index": None, "error": _unexpected_error_payload(exc)}],
             ok_count=0,
-            partial_count=0,
             error_count=1,
             config_meta=None,
             normalized_config=None,
         )
 
 
-def _derive_status(ok_count: int, partial_count: int, error_count: int) -> str:
-    if error_count and ok_count:
-        return "partial_failure"
-    if error_count and not ok_count and partial_count:
-        return "partial_failure"
+def _derive_status(ok_count: int, error_count: int) -> str:
     if error_count:
         return "error"
-    return "ok"
+    if ok_count:
+        return "ok"
+    return "error"
 
 
 def _final_response(
@@ -272,7 +262,6 @@ def _final_response(
     results: list[dict[str, Any]],
     errors: list[dict[str, Any]],
     ok_count: int,
-    partial_count: int,
     error_count: int,
     config_meta: dict[str, Any] | None,
     normalized_config: dict[str, Any] | None,
@@ -288,11 +277,9 @@ def _final_response(
             "workflow_count": workflows_count,
             "result_count": len(results),
             "ok_count": ok_count,
-            "partial_failure_count": partial_count,
             "error_count": error_count,
             "status_summary": {
-                "success": ok_count,
-                "partial_failure": partial_count,
+                "ok": ok_count,
                 "error": error_count,
             },
             "config_meta": config_meta,
