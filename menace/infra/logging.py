@@ -1,4 +1,4 @@
-"""Deterministic structured logging helpers."""
+"""Deterministic structured logging helpers backed by LoggingError."""
 
 from __future__ import annotations
 
@@ -8,9 +8,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-
-class StructuredLogError(ValueError):
-    """Raised when structured logging inputs are invalid."""
+from menace.errors.exceptions import LoggingError
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -23,11 +21,14 @@ def get_logger(name: str) -> logging.Logger:
         A configured :class:`logging.Logger` instance.
 
     Raises:
-        StructuredLogError: If ``name`` is empty.
+        LoggingError: If ``name`` is empty.
     """
 
     if not isinstance(name, str) or not name:
-        raise StructuredLogError("name must be a non-empty string")
+        raise LoggingError(
+            "Logger name must be a non-empty string.",
+            details={"name": name},
+        )
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
@@ -54,14 +55,20 @@ def log_event(
         context: Optional structured context for the log entry.
 
     Raises:
-        StructuredLogError: If ``event`` is empty, ``logger`` is invalid, or
+        LoggingError: If ``event`` is empty, ``logger`` is invalid, or
             ``context`` is not a mapping with string keys.
     """
 
     if not isinstance(logger, logging.Logger):
-        raise StructuredLogError("logger must be a logging.Logger")
+        raise LoggingError(
+            "Logger must be an instance of logging.Logger.",
+            details={"logger_type": type(logger).__name__},
+        )
     if not isinstance(event, str) or not event:
-        raise StructuredLogError("event must be a non-empty string")
+        raise LoggingError(
+            "Event must be a non-empty string.",
+            details={"event": event},
+        )
 
     normalized_context = _normalize_context(context)
     extra: dict[str, Any] = {"event": event, "context": normalized_context}
@@ -105,12 +112,18 @@ def _normalize_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
     if context is None:
         return {}
     if not isinstance(context, Mapping):
-        raise StructuredLogError("context must be a mapping")
+        raise LoggingError(
+            "Context must be a mapping when provided.",
+            details={"context_type": type(context).__name__},
+        )
 
     normalized: dict[str, Any] = {}
     for key, value in context.items():
         if not isinstance(key, str) or not key:
-            raise StructuredLogError("context keys must be non-empty strings")
+            raise LoggingError(
+                "Context keys must be non-empty strings.",
+                details={"context_key": key},
+            )
         normalized[key] = value
     return normalized
 
