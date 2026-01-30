@@ -36,7 +36,7 @@ class ReplaceRule:
     anchor: str
     replacement: str
     anchor_kind: str
-    meta: Mapping[str, Any] | None
+    meta: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class InsertAfterRule:
     anchor: str
     content: str
     anchor_kind: str
-    meta: Mapping[str, Any] | None
+    meta: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ class DeleteRegexRule:
     description: str
     pattern: str
     flags: int
-    meta: Mapping[str, Any] | None
+    meta: Mapping[str, Any]
 
 
 Rule = ReplaceRule | InsertAfterRule | DeleteRegexRule
@@ -442,12 +442,12 @@ def generate_patch(
         rules: Patch rules to apply. Each rule is a mapping with:
             - type: "replace", "insert_after", or "delete_regex".
             - id: Unique rule identifier.
-            - description: Optional, non-empty string description.
+            - description: Required, non-empty string description.
             - anchor/anchor_kind/replacement: Required for replace.
             - anchor/anchor_kind/content: Required for insert_after.
             - pattern/flags: Required for delete_regex (flags are strings such as
               "IGNORECASE", "MULTILINE", or "DOTALL").
-            - meta: Optional mapping of rule metadata.
+            - meta: Required mapping of rule metadata.
         validate_syntax: Explicit override for syntax validation. When None, validation
             runs automatically for supported languages (Python).
 
@@ -903,9 +903,12 @@ def _require_non_empty_str(rule: Mapping[str, Any], field: str, index: int) -> s
 
 
 def _parse_description(rule: Mapping[str, Any], index: int, rule_id: str) -> str:
-    """Parse an optional description field."""
+    """Parse a required description field."""
     if "description" not in rule:
-        return ""
+        raise PatchRuleError(
+            "description is required",
+            details=_rule_details(index, rule, rule_id=rule_id, field="description"),
+        )
     description = rule.get("description")
     if not isinstance(description, str):
         raise PatchRuleError(
@@ -967,10 +970,13 @@ def _parse_anchor_kind(rule: Mapping[str, Any], index: int, rule_id: str) -> str
     return anchor_kind
 
 
-def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[str, Any] | None:
-    """Parse optional meta data for a rule."""
+def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[str, Any]:
+    """Parse required meta data for a rule."""
     if "meta" not in rule:
-        return None
+        raise PatchRuleError(
+            "meta is required",
+            details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
+        )
     meta = rule.get("meta")
     if not isinstance(meta, Mapping):
         raise PatchRuleError(
