@@ -107,6 +107,10 @@ def evaluate_roi(input_data: dict[str, Any]) -> dict[str, Any]:
                     },
                 },
                 "errors": [],
+                "metadata": {
+                    "inputs_used": ["cost", "revenue"],
+                    "formula": "(revenue - cost) / cost",
+                },
                 "meta": {
                     "inputs_used": ["cost", "revenue"],
                     "formula": "(revenue - cost) / cost",
@@ -146,6 +150,10 @@ def evaluate_roi(input_data: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
+    metadata = {
+        **_inputs_used(required_fields),
+        "formula": "(revenue - cost) / cost",
+    }
     return {
         "status": "ok",
         "data": {
@@ -161,8 +169,6 @@ def evaluate_roi(input_data: dict[str, Any]) -> dict[str, Any]:
             },
         },
         "errors": [],
-        "meta": {
-            **_inputs_used(required_fields),
-            "formula": "(revenue - cost) / cost",
-        },
+        "metadata": metadata,
+        "meta": metadata,
     }

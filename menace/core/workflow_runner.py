@@ -28,12 +28,13 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
             status (str): "ok" when all steps succeed, "error" when any step fails
             data (dict): workflow_id, payload, steps
             errors (list[dict]): structured errors captured during step execution
-            meta (dict): workflow_id plus any input meta, along with
+            metadata (dict): workflow_id plus any input meta, along with
                 deterministic step-failure indicators:
                 - partial_failure (bool): True when any step error exists
                 - error_count (int): count of step-level errors
                 - failed_steps (list[int]): indices of steps that failed
-            Note: The top-level key is ``meta`` (not ``metadata``).
+            meta (dict): Deprecated alias for ``metadata`` retained for backward
+                compatibility. Both keys return identical payloads.
 
     Raises:
         ValidationError: If the input schema or step definitions are invalid.
@@ -105,6 +106,13 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
     partial_failure = bool(errors)
     status = "ok" if not partial_failure else "error"
     failed_steps = sorted({error.get("step_index") for error in errors if error.get("step_index") is not None})
+    metadata = {
+        "workflow_id": workflow_id,
+        **meta,
+        "partial_failure": partial_failure,
+        "error_count": len(errors),
+        "failed_steps": failed_steps,
+    }
     return {
         "status": status,
         "data": {
@@ -113,13 +121,8 @@ def run_workflow(input: dict[str, Any]) -> dict[str, Any]:
             "steps": step_results,
         },
         "errors": errors,
-        "meta": {
-            "workflow_id": workflow_id,
-            **meta,
-            "partial_failure": partial_failure,
-            "error_count": len(errors),
-            "failed_steps": failed_steps,
-        },
+        "metadata": metadata,
+        "meta": metadata,
     }
 
 
