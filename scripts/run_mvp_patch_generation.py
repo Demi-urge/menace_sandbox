@@ -134,9 +134,13 @@ AssertionError: expected 5, got -1
         "Target file path is toy.py.",
     ]
 
+    backend = os.getenv("MVP_LLM_BACKEND", "heuristic").lower()
+    model = os.getenv("MVP_LLM_MODEL", "heuristic")
     client = _build_client()
     prompt = _build_prompt(objective)
+    print(f"LLMClient.generate start backend={backend} model={model}")
     result = client.generate(prompt, context_builder=object())
+    print(f"LLMClient.generate end backend={backend} model={model}")
 
     def wrapper(_prompt: str, timeout_s: int | None = None) -> str:
         _ = timeout_s
