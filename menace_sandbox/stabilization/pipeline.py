@@ -6,6 +6,7 @@ from typing import Any, Dict
 import re
 
 from completion_validator import validate_completion
+from error_ontology import classify_exception
 
 from .logging_wrapper import StabilizationLoggingWrapper
 
@@ -35,6 +36,15 @@ def _sanitize_errors(text: str) -> tuple[str, str | None]:
         error = error or _ERROR_LINE_PATTERN.match(text).group(0).strip()
         text = ""
     return text, error
+
+
+def _classify_error(error: str | None) -> str | None:
+    if not error:
+        return None
+    try:
+        return str(classify_exception(Exception(error), error))
+    except Exception:
+        return None
 
 
 def _extract_raw_text(raw_output: Any) -> tuple[str, str | None]:
@@ -75,6 +85,7 @@ def stabilize_completion(
         normalized = _strip_code_fences(raw_text)
         sanitized, sanitized_error = _sanitize_errors(normalized)
         error = sanitized_error or raw_error
+        error_category = _classify_error(error)
 
         logger.log_normalization(
             raw_text=raw_text,
@@ -93,6 +104,7 @@ def stabilize_completion(
             ok=ok,
             reason=reason,
             diagnostics_count=len(validation.diagnostics),
+            error_category=error_category,
         )
 
         payload: Dict[str, Any] = {
@@ -101,13 +113,19 @@ def stabilize_completion(
             "normalized_text": sanitized,
             "raw_text": raw_text,
             "error": error,
+            "error_category": error_category,
             "reason": reason,
             "diagnostics": list(validation.diagnostics),
         }
         if source:
             payload["source"] = source
 
-        logger.log_handoff(ok=ok, error=error, reason=reason)
+        logger.log_handoff(
+            ok=ok,
+            error=error,
+            reason=reason,
+            error_category=error_category,
+        )
         return payload
     finally:
         logger.close()
