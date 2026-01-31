@@ -606,6 +606,7 @@ def generate_patch(
         data: dict[str, object] = {
             "patch_text": patch_text,
             "modified_source": result.content,
+            "updated_source": result.content,
             "applied_rules": _serialize_rules(result.resolved_rules),
             "changes": [
                 {
@@ -802,6 +803,7 @@ def _empty_data_payload() -> dict[str, Any]:
     return {
         "patch_text": "",
         "modified_source": "",
+        "updated_source": "",
         "applied_rules": [],
         "changes": [],
         "audit_trail": [],
