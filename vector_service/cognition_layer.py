@@ -31,6 +31,8 @@ retrieval ranker used by the context builder.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Tuple
+from decimal import Decimal
+import math
 import sqlite3
 import time
 import asyncio
@@ -930,7 +932,52 @@ class CognitionLayer:
                     prior_roi = history[-1]
             except Exception:
                 prior_roi = None
-        kwargs["roi_delta"] = compute_roi_delta(prior_roi, roi_after)
+
+        def _is_valid_roi(value: Any) -> bool:
+            if isinstance(value, bool):
+                return False
+            if isinstance(value, Decimal):
+                return value.is_finite()
+            if isinstance(value, (int, float)):
+                return math.isfinite(float(value))
+            return False
+
+        roi_delta_result: dict[str, Any]
+        if _is_valid_roi(prior_roi) and _is_valid_roi(roi_after):
+            before_metrics = {"roi": prior_roi}
+            after_metrics = {"roi": roi_after}
+            roi_delta_result = compute_roi_delta(before_metrics, after_metrics)
+        else:
+            roi_delta_errors: list[dict[str, Any]] = []
+            if not _is_valid_roi(prior_roi):
+                roi_delta_errors.append(
+                    {
+                        "code": "missing_or_invalid_roi",
+                        "message": "Prior ROI is missing or non-numeric.",
+                        "key": "prior_roi",
+                        "value_repr": repr(prior_roi),
+                    }
+                )
+            if not _is_valid_roi(roi_after):
+                roi_delta_errors.append(
+                    {
+                        "code": "missing_or_invalid_roi",
+                        "message": "Current ROI is missing or non-numeric.",
+                        "key": "roi_after",
+                        "value_repr": repr(roi_after),
+                    }
+                )
+            roi_delta_result = {"status": "error", "data": None, "errors": roi_delta_errors}
+
+        if roi_delta_result.get("status") == "ok":
+            kwargs["roi_delta"] = roi_delta_result["data"]["delta_total"]
+        else:
+            kwargs["roi_delta"] = None
+            kwargs["roi_delta_errors"] = roi_delta_result.get("errors", [])
+            logger.warning(
+                "ROI delta unavailable for patch outcome.",
+                extra={"roi_delta_errors": kwargs["roi_delta_errors"]},
+            )
         import inspect
 
         try:

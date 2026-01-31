@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from decimal import Decimal
+import math
 
 from simple_validation import SimpleField, SimpleSchema, ValidationError, fields
 
@@ -16,6 +18,7 @@ class MvpResponseSchema(SimpleSchema):
     evaluation_error = fields.Str()
     roi_score = fields.Float()
     roi_delta = fields.Float()
+    roi_delta_errors = fields.List(SimpleField(type=dict))
     started_at = fields.Str()
     finished_at = fields.Str()
     duration_ms = fields.Int()
@@ -89,7 +92,8 @@ def normalize_mvp_response(payload: Mapping[str, Any] | None) -> dict[str, Any]:
         "execution_error": "",
         "evaluation_error": "",
         "roi_score": 0.0,
-        "roi_delta": 0.0,
+        "roi_delta": None,
+        "roi_delta_errors": [],
         "started_at": "",
         "finished_at": "",
         "duration_ms": 0,
@@ -106,10 +110,48 @@ def normalize_mvp_response(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     current_roi = raw.get("roi_score", raw.get("current_roi", raw.get("roi_current")))
     if "roi_score" not in raw and current_roi is not None:
         raw["roi_score"] = current_roi
-    if prior_roi is None and current_roi is None:
-        raw.setdefault("roi_delta", defaults["roi_delta"])
+
+    def _is_valid_roi(value: Any) -> bool:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, Decimal):
+            return value.is_finite()
+        if isinstance(value, (int, float)):
+            return math.isfinite(float(value))
+        return False
+
+    roi_delta_errors: list[dict[str, Any]] = []
+    if _is_valid_roi(prior_roi) and _is_valid_roi(current_roi):
+        before_metrics = {"roi": prior_roi}
+        after_metrics = {"roi": current_roi}
+        roi_delta_result = compute_roi_delta(before_metrics, after_metrics)
+        if roi_delta_result.get("status") == "ok":
+            raw["roi_delta"] = roi_delta_result["data"]["delta_total"]
+        else:
+            raw["roi_delta"] = None
+            roi_delta_errors.extend(roi_delta_result.get("errors", []))
     else:
-        raw["roi_delta"] = compute_roi_delta(prior_roi, current_roi)
+        raw["roi_delta"] = None
+        if not _is_valid_roi(prior_roi):
+            roi_delta_errors.append(
+                {
+                    "code": "missing_or_invalid_roi",
+                    "message": "Prior ROI is missing or non-numeric.",
+                    "key": "prior_roi",
+                    "value_repr": repr(prior_roi),
+                }
+            )
+        if not _is_valid_roi(current_roi):
+            roi_delta_errors.append(
+                {
+                    "code": "missing_or_invalid_roi",
+                    "message": "Current ROI is missing or non-numeric.",
+                    "key": "current_roi",
+                    "value_repr": repr(current_roi),
+                }
+            )
+    if roi_delta_errors:
+        raw["roi_delta_errors"] = roi_delta_errors
     return _normalize_payload(raw, MvpResponseSchema, defaults)
 
 
