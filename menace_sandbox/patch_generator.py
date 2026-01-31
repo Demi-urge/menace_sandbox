@@ -642,13 +642,9 @@ def generate_patch(
                 syntax_valid=syntax_valid,
             ),
         }
-    except (PatchRuleError, PatchAnchorError) as exc:
-        return _deterministic_error_payload(
-            exc,
-            source=source,
-            rule_summaries=rule_summaries,
-        )
     except Exception as exc:
+        if isinstance(exc, (PatchRuleError, PatchAnchorError)):
+            raise
         error = exc if isinstance(exc, MenaceError) else MenaceError(
             "unexpected error during patch generation",
             details={"error_type": type(exc).__name__, "message": str(exc)},
