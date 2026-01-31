@@ -214,79 +214,101 @@ def validate_patch(
     errors: list[dict[str, object]] = []
     rule_errors: list[PatchRuleError] = []
     syntax_errors: list[PatchSyntaxError] = []
+    original_index = _empty_index()
+    patched_index = _empty_index()
+    appended_rule_errors = False
+    appended_syntax_errors = False
 
-    validated_rules, validation_errors = validate_rules(rules)
-    rule_errors.extend(validation_errors)
+    try:
+        validated_rules, validation_errors = validate_rules(rules)
+        rule_errors.extend(validation_errors)
 
-    original_tree, original_index, original_nodes = _build_ast_index(
-        original,
-        "original",
-        module_name=module_name,
-        errors=syntax_errors,
-    )
-    patched_tree, patched_index, patched_nodes = _build_ast_index(
-        patched,
-        "patched",
-        module_name=module_name,
-        errors=syntax_errors,
-    )
+        original_tree, original_index, original_nodes = _build_ast_index(
+            original,
+            "original",
+            module_name=module_name,
+            errors=syntax_errors,
+        )
+        patched_tree, patched_index, patched_nodes = _build_ast_index(
+            patched,
+            "patched",
+            module_name=module_name,
+            errors=syntax_errors,
+        )
 
-    if syntax_errors:
-        errors.extend(error.to_dict() for error in syntax_errors)
+        if syntax_errors:
+            errors.extend(error.to_dict() for error in syntax_errors)
+            appended_syntax_errors = True
 
-    if original_tree and patched_tree:
-        for validated_rule in validated_rules:
-            rule = validated_rule.payload
-            rule_type = validated_rule.rule_type
-            rule_index = validated_rule.rule_index
-            if rule_type == "required_imports":
-                _apply_required_imports(
-                    rule,
-                    patched_index,
-                    rule_errors,
-                    rule_index=rule_index,
-                )
-            elif rule_type == "signature_match":
-                _apply_signature_matching(
-                    rule,
-                    original_nodes,
-                    patched_nodes,
-                    rule_errors,
-                    rule_index=rule_index,
-                )
-            elif rule_type == "forbidden_patterns":
-                _apply_forbidden_patterns(
-                    rule,
-                    patched_tree,
-                    rule_errors,
-                    rule_index=rule_index,
-                )
-            elif rule_type == "mandatory_returns":
-                _apply_mandatory_returns(
-                    rule,
-                    patched_nodes,
-                    rule_errors,
-                    rule_index=rule_index,
-                )
-            elif rule_type == "unchanged_code":
-                _apply_unchanged_code(
-                    rule,
-                    original_tree,
-                    patched_tree,
-                    original_nodes,
-                    patched_nodes,
-                    rule_errors,
-                    rule_index=rule_index,
-                )
-            else:
-                rule_errors.append(
-                    PatchRuleError(
-                        "unsupported rule type",
-                        details={"rule_index": rule_index, "rule_type": rule_type},
+        if original_tree and patched_tree:
+            for validated_rule in validated_rules:
+                rule = validated_rule.payload
+                rule_type = validated_rule.rule_type
+                rule_index = validated_rule.rule_index
+                if rule_type == "required_imports":
+                    _apply_required_imports(
+                        rule,
+                        patched_index,
+                        rule_errors,
+                        rule_index=rule_index,
                     )
-                )
+                elif rule_type == "signature_match":
+                    _apply_signature_matching(
+                        rule,
+                        original_nodes,
+                        patched_nodes,
+                        rule_errors,
+                        rule_index=rule_index,
+                    )
+                elif rule_type == "forbidden_patterns":
+                    _apply_forbidden_patterns(
+                        rule,
+                        patched_tree,
+                        rule_errors,
+                        rule_index=rule_index,
+                    )
+                elif rule_type == "mandatory_returns":
+                    _apply_mandatory_returns(
+                        rule,
+                        patched_nodes,
+                        rule_errors,
+                        rule_index=rule_index,
+                    )
+                elif rule_type == "unchanged_code":
+                    _apply_unchanged_code(
+                        rule,
+                        original_tree,
+                        patched_tree,
+                        original_nodes,
+                        patched_nodes,
+                        rule_errors,
+                        rule_index=rule_index,
+                    )
+                else:
+                    rule_errors.append(
+                        PatchRuleError(
+                            "unsupported rule type",
+                            details={"rule_index": rule_index, "rule_type": rule_type},
+                        )
+                    )
 
-    errors.extend(error.to_dict() for error in rule_errors)
+        if rule_errors:
+            errors.extend(error.to_dict() for error in rule_errors)
+            appended_rule_errors = True
+    except Exception as exc:
+        if syntax_errors and not appended_syntax_errors:
+            errors.extend(error.to_dict() for error in syntax_errors)
+        if rule_errors and not appended_rule_errors:
+            errors.extend(error.to_dict() for error in rule_errors)
+        errors.append(
+            ValidationError(
+                "unexpected validation error",
+                details={
+                    "exception_type": exc.__class__.__name__,
+                    "exception_message": str(exc),
+                },
+            ).to_dict()
+        )
 
     data: dict[str, object] = {
         "original_index": original_index,
