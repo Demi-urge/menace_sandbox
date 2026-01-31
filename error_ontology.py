@@ -2,10 +2,11 @@ from __future__ import annotations
 
 """Centralised error taxonomy for Menace.
 
-:class:`ErrorCategory` defines the fixed error taxonomy required by the
-stabilisation pipeline. The legacy taxonomy is preserved as
-:class:`LegacyErrorCategory` for backward compatibility. A static mapping
-between the two keeps integrations stable during migration.
+This module defines a non-expanding, fixed taxonomy and a deterministic
+classifier. Classification is purely literal: explicit ``isinstance`` checks
+for known exception types and literal substring matching for known tokens. The
+taxonomy is immutable (no dynamic extension) and the matching order is fixed
+and documented to keep outcomes stable across runs.
 """
 
 try:  # pragma: no cover - ensure script execution resolves package imports
@@ -56,6 +57,22 @@ class ErrorCategory(str, Enum):
 
 FixedErrorCategory = ErrorCategory
 
+# Fixed, non-expanding taxonomy list used for deterministic ordering.
+ERROR_TAXONOMY: Tuple[str, ...] = (
+    ErrorCategory.SyntaxError.value,
+    ErrorCategory.ImportError.value,
+    ErrorCategory.TypeErrorMismatch.value,
+    ErrorCategory.ContractViolation.value,
+    ErrorCategory.EdgeCaseFailure.value,
+    ErrorCategory.UnhandledException.value,
+    ErrorCategory.InvalidInput.value,
+    ErrorCategory.MissingReturn.value,
+    ErrorCategory.ConfigError.value,
+    ErrorCategory.Other.value,
+)
+
+_TAXONOMY_RANK: Dict[str, int] = {name: index for index, name in enumerate(ERROR_TAXONOMY)}
+
 
 class LegacyErrorCategory(str, Enum):
     """Legacy error taxonomy retained for backward compatibility (not exported)."""
@@ -76,18 +93,18 @@ class LegacyErrorCategory(str, Enum):
 
 ErrorType = ErrorCategory
 
-ErrorInput = Union[str, BaseException, Mapping[str, object], Sequence[object]]
+ErrorInput = Union[str, BaseException, type[BaseException], Mapping[str, object], Sequence[object]]
 ErrorInputs = Union[ErrorInput, None]
 
 
 class ClassificationRule(TypedDict):
-    kind: Literal["exception", "phrase"]
+    kind: Literal["exception", "token"]
     match: Union[type[BaseException], str]
     category: ErrorCategory
     matched_rule: str
 
 
-_CLASSIFICATION_RULES: Tuple[ClassificationRule, ...] = (
+_EXCEPTION_RULES: Tuple[ClassificationRule, ...] = (
     {
         "kind": "exception",
         "match": SyntaxError,
@@ -99,12 +116,6 @@ _CLASSIFICATION_RULES: Tuple[ClassificationRule, ...] = (
         "match": ImportError,
         "category": ErrorCategory.ImportError,
         "matched_rule": "exception:ImportError",
-    },
-    {
-        "kind": "exception",
-        "match": ModuleNotFoundError,
-        "category": ErrorCategory.ImportError,
-        "matched_rule": "exception:ModuleNotFoundError",
     },
     {
         "kind": "exception",
@@ -136,167 +147,70 @@ _CLASSIFICATION_RULES: Tuple[ClassificationRule, ...] = (
         "category": ErrorCategory.EdgeCaseFailure,
         "matched_rule": "exception:IndexError",
     },
+)
+
+# Fixed literal token priority. If multiple matches appear, the first match
+# in this list is selected (deterministic ordering).
+_TOKEN_RULES: Tuple[ClassificationRule, ...] = (
     {
-        "kind": "phrase",
-        "match": "syntax error",
+        "kind": "token",
+        "match": "SyntaxError",
         "category": ErrorCategory.SyntaxError,
-        "matched_rule": "phrase:syntax error",
+        "matched_rule": "token:SyntaxError",
     },
     {
-        "kind": "phrase",
-        "match": "no module named",
+        "kind": "token",
+        "match": "ImportError",
         "category": ErrorCategory.ImportError,
-        "matched_rule": "phrase:no module named",
+        "matched_rule": "token:ImportError",
     },
     {
-        "kind": "phrase",
-        "match": "cannot import",
-        "category": ErrorCategory.ImportError,
-        "matched_rule": "phrase:cannot import",
-    },
-    {
-        "kind": "phrase",
-        "match": "import error",
-        "category": ErrorCategory.ImportError,
-        "matched_rule": "phrase:import error",
-    },
-    {
-        "kind": "phrase",
-        "match": "typeerror",
+        "kind": "token",
+        "match": "TypeError",
         "category": ErrorCategory.TypeErrorMismatch,
-        "matched_rule": "phrase:typeerror",
+        "matched_rule": "token:TypeError",
     },
     {
-        "kind": "phrase",
-        "match": "type error",
-        "category": ErrorCategory.TypeErrorMismatch,
-        "matched_rule": "phrase:type error",
-    },
-    {
-        "kind": "phrase",
-        "match": "type mismatch",
-        "category": ErrorCategory.TypeErrorMismatch,
-        "matched_rule": "phrase:type mismatch",
-    },
-    {
-        "kind": "phrase",
-        "match": "assertion failed",
+        "kind": "token",
+        "match": "ContractViolation",
         "category": ErrorCategory.ContractViolation,
-        "matched_rule": "phrase:assertion failed",
+        "matched_rule": "token:ContractViolation",
     },
     {
-        "kind": "phrase",
-        "match": "contract violation",
-        "category": ErrorCategory.ContractViolation,
-        "matched_rule": "phrase:contract violation",
-    },
-    {
-        "kind": "phrase",
-        "match": "precondition failed",
-        "category": ErrorCategory.ContractViolation,
-        "matched_rule": "phrase:precondition failed",
-    },
-    {
-        "kind": "phrase",
-        "match": "postcondition failed",
-        "category": ErrorCategory.ContractViolation,
-        "matched_rule": "phrase:postcondition failed",
-    },
-    {
-        "kind": "phrase",
-        "match": "edge case",
+        "kind": "token",
+        "match": "EdgeCaseFailure",
         "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "phrase:edge case",
+        "matched_rule": "token:EdgeCaseFailure",
     },
     {
-        "kind": "phrase",
-        "match": "corner case",
-        "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "phrase:corner case",
-    },
-    {
-        "kind": "phrase",
-        "match": "keyerror",
-        "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "phrase:keyerror",
-    },
-    {
-        "kind": "phrase",
-        "match": "indexerror",
-        "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "phrase:indexerror",
-    },
-    {
-        "kind": "phrase",
-        "match": "index out of range",
-        "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "phrase:index out of range",
-    },
-    {
-        "kind": "phrase",
-        "match": "unhandled exception",
+        "kind": "token",
+        "match": "UnhandledException",
         "category": ErrorCategory.UnhandledException,
-        "matched_rule": "phrase:unhandled exception",
+        "matched_rule": "token:UnhandledException",
     },
     {
-        "kind": "phrase",
-        "match": "uncaught exception",
-        "category": ErrorCategory.UnhandledException,
-        "matched_rule": "phrase:uncaught exception",
-    },
-    {
-        "kind": "phrase",
-        "match": "invalid input",
+        "kind": "token",
+        "match": "InvalidInput",
         "category": ErrorCategory.InvalidInput,
-        "matched_rule": "phrase:invalid input",
+        "matched_rule": "token:InvalidInput",
     },
     {
-        "kind": "phrase",
-        "match": "invalid argument",
-        "category": ErrorCategory.InvalidInput,
-        "matched_rule": "phrase:invalid argument",
-    },
-    {
-        "kind": "phrase",
-        "match": "bad request",
-        "category": ErrorCategory.InvalidInput,
-        "matched_rule": "phrase:bad request",
-    },
-    {
-        "kind": "phrase",
-        "match": "missing return",
+        "kind": "token",
+        "match": "MissingReturn",
         "category": ErrorCategory.MissingReturn,
-        "matched_rule": "phrase:missing return",
+        "matched_rule": "token:MissingReturn",
     },
     {
-        "kind": "phrase",
-        "match": "did not return",
-        "category": ErrorCategory.MissingReturn,
-        "matched_rule": "phrase:did not return",
-    },
-    {
-        "kind": "phrase",
-        "match": "returned none",
-        "category": ErrorCategory.MissingReturn,
-        "matched_rule": "phrase:returned none",
-    },
-    {
-        "kind": "phrase",
-        "match": "missing config",
+        "kind": "token",
+        "match": "ConfigError",
         "category": ErrorCategory.ConfigError,
-        "matched_rule": "phrase:missing config",
+        "matched_rule": "token:ConfigError",
     },
     {
-        "kind": "phrase",
-        "match": "configuration error",
-        "category": ErrorCategory.ConfigError,
-        "matched_rule": "phrase:configuration error",
-    },
-    {
-        "kind": "phrase",
-        "match": "config error",
-        "category": ErrorCategory.ConfigError,
-        "matched_rule": "phrase:config error",
+        "kind": "token",
+        "match": "Other",
+        "category": ErrorCategory.Other,
+        "matched_rule": "token:Other",
     },
 )
 
@@ -327,6 +241,38 @@ FIXED_TO_LEGACY_CATEGORY: Mapping[ErrorCategory, LegacyErrorCategory] = {
 }
 
 
+class ClassificationItem(TypedDict):
+    index: int
+    status: str
+    input_kind: str
+    matched_rule_id: str
+    normalized: str
+
+
+class ClassificationData(TypedDict):
+    input_kind: str
+    normalized: str
+    matched_token: str | None
+    matched_rule_id: str
+    bundle: List[ClassificationItem] | None
+
+
+class ClassificationResult(TypedDict):
+    status: str
+    data: ClassificationData
+    errors: List[str]
+    meta: Dict[str, Any]
+
+
+_DICT_KEY_ORDER: Tuple[str, ...] = (
+    "exception",
+    "traceback",
+    "message",
+    "error",
+    "errors",
+)
+
+
 def _mapping_to_text(payload: Mapping[str, Any]) -> str:
     if not payload:
         return ""
@@ -334,86 +280,183 @@ def _mapping_to_text(payload: Mapping[str, Any]) -> str:
     return f"{{{pairs}}}"
 
 
-def _normalize_inputs(raw: ErrorInputs) -> Tuple[List[Union[str, BaseException]], List[str]]:
+def _safe_text(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+def _extract_from_mapping(payload: Mapping[str, object]) -> object:
+    for key in _DICT_KEY_ORDER:
+        if key in payload:
+            return payload[key]
+    return payload
+
+
+def _normalize_input(raw: ErrorInputs) -> Tuple[str, object | None, List[str]]:
     errors: List[str] = []
-    segments: List[Union[str, BaseException]] = []
-
     if raw is None:
-        return segments, errors
-
+        return "empty", None, errors
     if isinstance(raw, BaseException):
-        iterable: Iterable[ErrorInput] = (raw,)
-    elif isinstance(raw, str):
-        iterable = (raw,)
-    elif isinstance(raw, Mapping):
-        iterable = tuple(raw.values())
-    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
-        iterable = raw
-    else:
-        iterable = (raw,)
-
-    for item in iterable:
-        if isinstance(item, BaseException):
-            segments.append(item)
-        elif isinstance(item, str):
-            segments.append(item)
-        elif isinstance(item, Mapping):
-            segments.append(_mapping_to_text(item))
-        elif isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)):
-            segments.append(str(item))
-        else:
-            errors.append(f"Unsupported input type: {type(item).__name__}")
-
-    return segments, errors
+        return "exception_instance", raw, errors
+    if isinstance(raw, type) and issubclass(raw, BaseException):
+        return "exception_type", raw, errors
+    if isinstance(raw, str):
+        return "string", raw, errors
+    if isinstance(raw, Mapping):
+        extracted = _extract_from_mapping(raw)
+        return "mapping", extracted, errors
+    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+        return "sequence", raw, errors
+    errors.append(f"Unsupported input type: {type(raw).__name__}")
+    return "other", raw, errors
 
 
-def _segment_to_text(item: Union[str, BaseException]) -> str:
-    if isinstance(item, BaseException):
-        return f"{item.__class__.__name__}: {item}"
-    return item
-
-
-def _is_empty_input(segments: List[Union[str, BaseException]]) -> bool:
-    if not segments:
-        return True
-    if any(isinstance(item, BaseException) for item in segments):
-        return False
-    return all(not str(item).strip() for item in segments)
-
-
-def _classify_from_exception(exc: BaseException) -> Tuple[ErrorCategory, str]:
-    for rule in _CLASSIFICATION_RULES:
-        if rule["kind"] != "exception":
-            continue
+def _classify_exception(exc: BaseException) -> Tuple[ErrorCategory, str, str]:
+    for rule in _EXCEPTION_RULES:
         match = rule["match"]
         if isinstance(match, type) and isinstance(exc, match):
-            return rule["category"], rule["matched_rule"]
-    return ErrorCategory.Other, "exception:unmatched"
+            return rule["category"], rule["matched_rule"], match.__name__
+    return ErrorCategory.Other, "exception:unmatched", exc.__class__.__name__
 
 
-def _classify_from_text(normalized_text: str) -> Tuple[ErrorCategory, str]:
-    if not normalized_text.strip():
-        return ErrorCategory.Other, "text:empty"
-    for rule in _CLASSIFICATION_RULES:
-        if rule["kind"] != "phrase":
-            continue
+def _classify_exception_type(exc_type: type[BaseException]) -> Tuple[ErrorCategory, str, str]:
+    for rule in _EXCEPTION_RULES:
         match = rule["match"]
-        if isinstance(match, str) and match in normalized_text:
-            return rule["category"], rule["matched_rule"]
-    return ErrorCategory.Other, "text:unmatched"
+        if isinstance(match, type) and issubclass(exc_type, match):
+            return rule["category"], rule["matched_rule"], match.__name__
+    return ErrorCategory.Other, "exception_type:unmatched", exc_type.__name__
 
 
-class ClassificationData(TypedDict):
-    category: str
-    source: str
-    matched_rule: str | None
+def _classify_text(text: str) -> Tuple[ErrorCategory, str, str | None]:
+    if not text.strip():
+        return ErrorCategory.Other, "text:empty", None
+    for rule in _TOKEN_RULES:
+        token = rule["match"]
+        if isinstance(token, str) and token in text:
+            return rule["category"], rule["matched_rule"], token
+    return ErrorCategory.Other, "text:unmatched", None
 
 
-class ClassificationResult(TypedDict):
-    status: Literal["ok", "fallback"]
-    data: ClassificationData
-    errors: List[str]
-    meta: Dict[str, Any]
+def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, List[str]]:
+    errors: List[str] = []
+    input_kind, normalized, kind_errors = _normalize_input(value)
+    errors.extend(kind_errors)
+
+    if input_kind == "empty":
+        item: ClassificationItem = {
+            "index": 0,
+            "status": ErrorCategory.Other.value,
+            "input_kind": input_kind,
+            "matched_rule_id": "empty:other",
+            "normalized": "",
+        }
+        return ErrorCategory.Other, item, errors
+
+    if input_kind == "exception_instance" and isinstance(normalized, BaseException):
+        category, rule_id, _ = _classify_exception(normalized)
+        item = {
+            "index": 0,
+            "status": category.value,
+            "input_kind": input_kind,
+            "matched_rule_id": rule_id,
+            "normalized": _safe_text(normalized),
+        }
+        return category, item, errors
+
+    if input_kind == "exception_type" and isinstance(normalized, type):
+        category, rule_id, _ = _classify_exception_type(normalized)
+        item = {
+            "index": 0,
+            "status": category.value,
+            "input_kind": input_kind,
+            "matched_rule_id": rule_id,
+            "normalized": normalized.__name__,
+        }
+        return category, item, errors
+
+    if input_kind == "sequence" and isinstance(normalized, Sequence):
+        category = ErrorCategory.Other
+        item = {
+            "index": 0,
+            "status": category.value,
+            "input_kind": input_kind,
+            "matched_rule_id": "sequence:defer",
+            "normalized": _safe_text(normalized),
+        }
+        return category, item, errors
+
+    if input_kind == "mapping" and isinstance(value, Mapping):
+        extracted = _extract_from_mapping(value)
+        if isinstance(extracted, BaseException):
+            category, rule_id, _ = _classify_exception(extracted)
+            item = {
+                "index": 0,
+                "status": category.value,
+                "input_kind": input_kind,
+                "matched_rule_id": rule_id,
+                "normalized": _safe_text(extracted),
+            }
+            return category, item, errors
+        if isinstance(extracted, type) and issubclass(extracted, BaseException):
+            category, rule_id, _ = _classify_exception_type(extracted)
+            item = {
+                "index": 0,
+                "status": category.value,
+                "input_kind": input_kind,
+                "matched_rule_id": rule_id,
+                "normalized": extracted.__name__,
+            }
+            return category, item, errors
+        text = _safe_text(extracted)
+        category, rule_id, _ = _classify_text(text)
+        item = {
+            "index": 0,
+            "status": category.value,
+            "input_kind": input_kind,
+            "matched_rule_id": rule_id,
+            "normalized": text,
+        }
+        return category, item, errors
+
+    text = _safe_text(normalized)
+    category, rule_id, token = _classify_text(text)
+    item = {
+        "index": 0,
+        "status": category.value,
+        "input_kind": input_kind,
+        "matched_rule_id": rule_id,
+        "normalized": text,
+    }
+    if token:
+        item["normalized"] = text
+    return category, item, errors
+
+
+def _classify_bundle(
+    items: Sequence[object],
+) -> Tuple[str, List[ClassificationItem], Dict[str, Any], List[str]]:
+    bundle_items: List[ClassificationItem] = []
+    bundle_errors: List[str] = []
+    selected_index: int | None = None
+    selected_rank: int | None = None
+    selected_status = ErrorCategory.Other.value
+
+    for index, item in enumerate(items):
+        category, data, item_errors = _classify_single(item)
+        data["index"] = index
+        bundle_items.append(data)
+        bundle_errors.extend(item_errors)
+        rank = _TAXONOMY_RANK.get(category.value, len(ERROR_TAXONOMY))
+        if selected_rank is None or rank < selected_rank:
+            selected_rank = rank
+            selected_status = category.value
+            selected_index = index
+
+    meta: Dict[str, Any] = {
+        "bundle_rule": "lowest_taxonomy_rank_then_first",
+        "bundle_selected_index": selected_index,
+        "bundle_size": len(bundle_items),
+    }
+    return selected_status, bundle_items, meta, bundle_errors
 
 
 def classify_error(raw: ErrorInputs) -> ClassificationResult:
@@ -422,98 +465,120 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
     Parameters
     ----------
     raw:
-        Exception instance, traceback string, log string, or list/tuple of those.
+        Exception instance, exception type, traceback string, log string,
+        dictionary with conventional keys, or list/tuple of those.
 
     Notes
     -----
-    Rule ordering is deterministic: exception rules are evaluated in the order
-    listed in ``_CLASSIFICATION_RULES``, followed by phrase rules in that same
-    order. Text inputs are normalized once (lowercased) and evaluated using
-    literal substring checks (no regex or recursive parsing).
+    Matching order is deterministic:
+    1) Explicit ``isinstance`` checks for known exception types.
+    2) Literal substring matching in the fixed ``_TOKEN_RULES`` list.
 
-    For multi-error bundles (sequences or mappings with multiple values), the
-    merge policy is stable and deterministic: iterate in input order and select
-    the first non-``Other`` classification; if none match, return ``Other``.
+    For multi-error bundles (lists/tuples), each element is classified in input
+    order. The resulting status is selected by severity using the fixed
+    taxonomy order (earlier entries are more severe); if multiple entries share
+    the same severity, the first in input order is selected.
+
+    For dictionaries, the classifier inspects keys in the fixed order defined
+    by ``_DICT_KEY_ORDER`` (``exception``, ``traceback``, ``message``, ``error``,
+    ``errors``) and classifies using the first present key.
     """
 
-    segments, errors = _normalize_inputs(raw)
+    input_kind, normalized, errors = _normalize_input(raw)
 
-    if _is_empty_input(segments):
-        data: ClassificationData = {
-            "category": ErrorCategory.Other.value,
-            "source": "text",
-            "matched_rule": None,
-        }
+    if input_kind == "empty" or (isinstance(normalized, str) and not normalized.strip()):
         return {
-            "status": "ok",
-            "data": data,
+            "status": ErrorCategory.Other.value,
+            "data": {
+                "input_kind": input_kind,
+                "normalized": "",
+                "matched_token": None,
+                "matched_rule_id": "empty:other",
+                "bundle": None,
+            },
             "errors": [],
             "meta": {
-                "input_length": 0,
-                "segment_count": len(segments),
-                "input_kind": "empty",
-                "matched_rule": None,
+                "classifier_version": "1.0",
+                "input_kind": input_kind,
+                "matched_rule_id": "empty:other",
             },
         }
 
-    classifications: List[Tuple[ErrorCategory, str, str]] = []
-    for item in segments:
-        if isinstance(item, BaseException):
-            category, matched_rule = _classify_from_exception(item)
-            source = "exception"
-        else:
-            normalized = str(item).lower()
-            category, matched_rule = _classify_from_text(normalized)
-            source = "text"
-        classifications.append((category, matched_rule, source))
-
-    category = ErrorCategory.Other
-    matched_rule: str | None = "bundle:all_other"
-    source = "bundle"
-    selected_index: int | None = None
-    if len(classifications) == 1:
-        category, matched_rule, source = classifications[0]
-    else:
-        for index, (candidate, candidate_rule, candidate_source) in enumerate(
-            classifications
+    if input_kind == "mapping" and isinstance(normalized, Mapping):
+        normalized = _extract_from_mapping(normalized)
+        if isinstance(normalized, Sequence) and not isinstance(
+            normalized, (str, bytes, bytearray)
         ):
-            if candidate is not ErrorCategory.Other:
-                category = candidate
-                matched_rule = candidate_rule
-                source = candidate_source
-                selected_index = index
-                break
+            input_kind = "sequence"
+        else:
+            input_kind = "mapping"
 
-    meta: Dict[str, Any] = {
-        "input_length": sum(len(_segment_to_text(segment)) for segment in segments),
-        "segment_count": len(segments),
-    }
-    if len(segments) > 1:
-        meta["bundle_size"] = len(segments)
-        meta["bundle_selection"] = "first_non_other"
-        meta["bundle_selected_index"] = selected_index
-        meta["merge_policy"] = "first_non_other_in_order"
-    if matched_rule.startswith("bundle:"):
-        meta["bundle_rule"] = matched_rule
-    if matched_rule and matched_rule.startswith("phrase:"):
-        meta["matched_phrase"] = matched_rule.split("phrase:", 1)[1]
-    if matched_rule and matched_rule.startswith("exception:"):
-        meta["matched_exception"] = matched_rule.split("exception:", 1)[1]
-    status = "ok"
-    if errors or category is ErrorCategory.Other:
-        status = "fallback"
-        if category is ErrorCategory.Other and not errors:
-            errors = ["Unable to classify input."]
+    if input_kind == "sequence" and isinstance(normalized, Sequence):
+        status, bundle_items, bundle_meta, bundle_errors = _classify_bundle(normalized)
+        matched_rule_id = "bundle:classification"
+        return {
+            "status": status,
+            "data": {
+                "input_kind": input_kind,
+                "normalized": _safe_text(normalized),
+                "matched_token": None,
+                "matched_rule_id": matched_rule_id,
+                "bundle": bundle_items,
+            },
+            "errors": errors + bundle_errors,
+            "meta": {
+                "classifier_version": "1.0",
+                "input_kind": input_kind,
+                "matched_rule_id": matched_rule_id,
+                **bundle_meta,
+            },
+        }
 
+    if input_kind == "mapping":
+        category, item, item_errors = _classify_single(normalized)
+        errors.extend(item_errors)
+        matched_rule_id = item["matched_rule_id"]
+        matched_token = None
+        if matched_rule_id.startswith("token:"):
+            matched_token = matched_rule_id.split("token:", 1)[1]
+        return {
+            "status": category.value,
+            "data": {
+                "input_kind": input_kind,
+                "normalized": item["normalized"],
+                "matched_token": matched_token,
+                "matched_rule_id": matched_rule_id,
+                "bundle": None,
+            },
+            "errors": errors,
+            "meta": {
+                "classifier_version": "1.0",
+                "input_kind": input_kind,
+                "matched_rule_id": matched_rule_id,
+            },
+        }
+
+    category, item, item_errors = _classify_single(normalized)
+    errors.extend(item_errors)
+    matched_rule_id = item["matched_rule_id"]
+    matched_token = None
+    if matched_rule_id.startswith("token:"):
+        matched_token = matched_rule_id.split("token:", 1)[1]
     return {
-        "status": status,
+        "status": category.value,
         "data": {
-            "category": category.value,
-            "source": source,
-            "matched_rule": matched_rule,
+            "input_kind": input_kind,
+            "normalized": item["normalized"],
+            "matched_token": matched_token,
+            "matched_rule_id": matched_rule_id,
+            "bundle": None,
         },
         "errors": errors,
-        "meta": meta,
+        "meta": {
+            "classifier_version": "1.0",
+            "input_kind": input_kind,
+            "matched_rule_id": matched_rule_id,
+        },
     }
 
 
@@ -521,7 +586,7 @@ def classify_exception(exc: Exception, stack: str) -> LegacyErrorCategory:
     """Legacy exception classification that delegates to the fixed taxonomy."""
 
     result = classify_error([exc, stack])
-    fixed_category = result["data"]["category"]
+    fixed_category = result["status"]
     try:
         mapped = FIXED_TO_LEGACY_CATEGORY.get(
             ErrorCategory(fixed_category), LegacyErrorCategory.Unknown
@@ -535,6 +600,7 @@ __all__ = [
     "ErrorCategory",
     "ErrorType",
     "FixedErrorCategory",
+    "ERROR_TAXONOMY",
     "classify_error",
     "classify_exception",
 ]
