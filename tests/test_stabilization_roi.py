@@ -1,3 +1,4 @@
+import decimal
 from decimal import Decimal
 
 import pytest
@@ -11,8 +12,8 @@ def test_identical_metrics_return_zero_delta() -> None:
     response = compute_roi_delta(metrics, metrics)
 
     assert response["status"] == "ok"
-    assert response["data"]["deltas"] == {"alpha": 0.0, "beta": 0.0}
-    assert response["data"]["total_delta"] == 0.0
+    assert response["data"]["deltas"] == {"alpha": Decimal("0.0"), "beta": Decimal("0.0")}
+    assert response["data"]["total"] == Decimal("0.0")
     assert response["errors"] == []
     assert response["meta"]["keys"] == ["alpha", "beta"]
 
@@ -25,11 +26,11 @@ def test_mixed_values_compute_arithmetic_deltas() -> None:
 
     assert response["status"] == "ok"
     assert response["data"]["deltas"] == {
-        "alpha": 2.0,
-        "beta": -1.0,
-        "gamma": -2.5,
+        "alpha": Decimal("2.0"),
+        "beta": Decimal("-1.0"),
+        "gamma": Decimal("-2.5"),
     }
-    assert response["data"]["total_delta"] == -1.5
+    assert response["data"]["total"] == Decimal("-1.5")
 
 
 def test_negative_and_large_values_compute_raw_deltas() -> None:
@@ -40,10 +41,10 @@ def test_negative_and_large_values_compute_raw_deltas() -> None:
 
     assert response["status"] == "ok"
     assert response["data"]["deltas"] == {
-        "alpha": -1500000.5,
-        "beta": 3333.0,
+        "alpha": Decimal("-1500000.5"),
+        "beta": Decimal("3333.0"),
     }
-    assert response["data"]["total_delta"] == -1496667.5
+    assert response["data"]["total"] == Decimal("-1496667.5")
     assert response["meta"]["keys"] == ["alpha", "beta"]
 
 
@@ -52,7 +53,7 @@ def test_empty_metrics_succeed_with_zero_totals() -> None:
 
     assert response["status"] == "ok"
     assert response["data"]["deltas"] == {}
-    assert response["data"]["total_delta"] == 0
+    assert response["data"]["total"] == Decimal("0")
     assert response["meta"]["count"] == 0
 
 
@@ -63,7 +64,7 @@ def test_schema_mismatch_missing_keys_returns_error() -> None:
     response = compute_roi_delta(before, after)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["meta"]["count"] == 2
     assert response["meta"]["error_count"] == 1
     assert response["errors"] == [
@@ -83,7 +84,7 @@ def test_schema_mismatch_extra_keys_returns_error() -> None:
     response = compute_roi_delta(before, after)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["meta"]["keys"] == ["alpha", "beta"]
     assert response["errors"] == [
         {
@@ -108,7 +109,7 @@ def test_non_mapping_inputs_return_input_type_error(
     response = compute_roi_delta(before_metrics, after_metrics)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["meta"]["error_count"] == 1
     expected_field = "before_metrics" if not isinstance(before_metrics, dict) else "after_metrics"
     assert response["errors"] == [
@@ -132,7 +133,7 @@ def test_non_numeric_values_return_non_numeric_value_error(value: object) -> Non
     response = compute_roi_delta(before, after)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["errors"] == [
         {
             "type": "RoiDeltaValidationError",
@@ -158,7 +159,7 @@ def test_non_finite_values_return_non_finite_value_error(value: object) -> None:
     response = compute_roi_delta(before, after)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["errors"] == [
         {
             "type": "RoiDeltaValidationError",
@@ -181,7 +182,7 @@ def test_non_finite_values_in_before_metrics_error(value: float) -> None:
     response = compute_roi_delta(before, after)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["errors"] == [
         {
             "type": "RoiDeltaValidationError",
@@ -213,13 +214,13 @@ def test_delta_sum_matches_expected_per_key_deltas() -> None:
 
     assert response["status"] == "ok"
     deltas = response["data"]["deltas"]
-    assert response["data"]["total_delta"] == sum(deltas.values(), 0)
+    assert response["data"]["total"] == sum(deltas.values(), Decimal("0"))
     assert deltas == {
-        "alpha": 0.5,
-        "beta": -3.0,
-        "gamma": 1.0,
+        "alpha": Decimal("0.5"),
+        "beta": Decimal("-3.0"),
+        "gamma": Decimal("1.0"),
     }
-    assert response["data"]["total_delta"] == -1.5
+    assert response["data"]["total"] == Decimal("-1.5")
 
 
 def test_missing_keys_are_not_treated_as_zero() -> None:
@@ -229,7 +230,7 @@ def test_missing_keys_are_not_treated_as_zero() -> None:
     response = compute_roi_delta(before, after)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["meta"]["keys"] == ["alpha", "beta"]
     assert response["meta"]["error_count"] == 1
 
@@ -242,7 +243,7 @@ def test_boolean_values_are_rejected(value: bool) -> None:
     response = compute_roi_delta(before, after)
 
     assert response["status"] == "error"
-    assert response["data"] == {"deltas": {}, "total_delta": 0}
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["errors"] == [
         {
             "type": "RoiDeltaValidationError",
@@ -266,10 +267,10 @@ def test_large_values_are_deterministic_and_unscaled() -> None:
 
     assert result_one == result_two
     assert result_one["data"]["deltas"] == {
-        "alpha": 7,
-        "beta": -12,
+        "alpha": Decimal("7"),
+        "beta": Decimal("-12"),
     }
-    assert result_one["data"]["total_delta"] == -5
+    assert result_one["data"]["total"] == Decimal("-5")
 
 
 def test_decimal_inputs_return_decimal_deltas() -> None:
@@ -283,4 +284,46 @@ def test_decimal_inputs_return_decimal_deltas() -> None:
         "alpha": Decimal("1.5"),
         "beta": Decimal("3"),
     }
-    assert response["data"]["total_delta"] == Decimal("4.5")
+    assert response["data"]["total"] == Decimal("4.5")
+
+
+def test_overflow_in_delta_returns_error() -> None:
+    before = {"alpha": Decimal("-9.99e9")}
+    after = {"alpha": Decimal("9.99e9")}
+
+    with decimal.localcontext() as context:
+        context.Emax = 9
+        context.traps[decimal.Overflow] = False
+        response = compute_roi_delta(before, after)
+
+    assert response["status"] == "error"
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
+    assert response["errors"] == [
+        {
+            "type": "RoiDeltaValidationError",
+            "code": "delta_value_error",
+            "message": "Computed delta value must be finite.",
+            "details": {"key": "alpha", "delta_repr": "Decimal('Infinity')"},
+        }
+    ]
+
+
+def test_overflow_in_total_returns_error() -> None:
+    before = {"alpha": Decimal("0"), "beta": Decimal("0")}
+    after = {"alpha": Decimal("9.99e9"), "beta": Decimal("9.99e9")}
+
+    with decimal.localcontext() as context:
+        context.Emax = 9
+        context.traps[decimal.Overflow] = False
+        response = compute_roi_delta(before, after)
+
+    assert response["status"] == "error"
+    assert response["data"] == {"deltas": {}, "total": Decimal("0")}
+    assert response["errors"] == [
+        {
+            "type": "RoiDeltaValidationError",
+            "code": "total_value_error",
+            "message": "Computed total delta must be finite.",
+            "details": {"total_delta_repr": "Decimal('Infinity')"},
+        }
+    ]

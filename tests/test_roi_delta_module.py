@@ -1,11 +1,13 @@
+import decimal
 import math
 import unittest
+from decimal import Decimal
 
 from menace_sandbox.stabilization.roi import compute_roi_delta
 
 
 class TestRoiDeltaModule(unittest.TestCase):
-    def test_success_path_with_sorted_keys_and_deltas(self) -> None:
+    def test_success_path_with_deterministic_keys_and_deltas(self) -> None:
         before = {"b": 1.5, "a": 2.0}
         after = {"b": 2.5, "a": 1.0}
 
@@ -14,13 +16,13 @@ class TestRoiDeltaModule(unittest.TestCase):
         self.assertEqual(response["status"], "ok")
         self.assertEqual(
             response["data"],
-            {"deltas": {"a": -1.0, "b": 1.0}, "total_delta": 0.0},
+            {"deltas": {"a": Decimal("-1.0"), "b": Decimal("1.0")}, "total": Decimal("0.0")},
         )
         self.assertEqual(response["errors"], [])
         self.assertEqual(
             response["meta"],
             {
-                "keys": ["a", "b"],
+                "keys": ["b", "a"],
                 "count": 2,
                 "error_count": 0,
                 "before_count": 2,
@@ -32,7 +34,7 @@ class TestRoiDeltaModule(unittest.TestCase):
         response = compute_roi_delta({}, {})
 
         self.assertEqual(response["status"], "ok")
-        self.assertEqual(response["data"], {"deltas": {}, "total_delta": 0})
+        self.assertEqual(response["data"], {"deltas": {}, "total": Decimal("0")})
         self.assertEqual(response["errors"], [])
         self.assertEqual(
             response["meta"],
@@ -52,7 +54,7 @@ class TestRoiDeltaModule(unittest.TestCase):
         response = compute_roi_delta(before, after)
 
         self.assertEqual(response["status"], "error")
-        self.assertEqual(response["data"], {"deltas": {}, "total_delta": 0})
+        self.assertEqual(response["data"], {"deltas": {}, "total": Decimal("0")})
         self.assertEqual(response["meta"]["keys"], ["alpha", "beta", "gamma"])
         self.assertEqual(response["meta"]["count"], 3)
         self.assertEqual(response["meta"]["error_count"], 1)
@@ -79,7 +81,7 @@ class TestRoiDeltaModule(unittest.TestCase):
                 response = compute_roi_delta({"alpha": 1.0}, {"alpha": value})
 
                 self.assertEqual(response["status"], "error")
-                self.assertEqual(response["data"], {"deltas": {}, "total_delta": 0})
+                self.assertEqual(response["data"], {"deltas": {}, "total": Decimal("0")})
                 self.assertEqual(response["meta"]["error_count"], 1)
                 self.assertEqual(response["errors"], [
                     {
@@ -122,7 +124,7 @@ class TestRoiDeltaModule(unittest.TestCase):
         self.assertEqual(response["status"], "ok")
         self.assertEqual(
             response["data"],
-            {"deltas": {"alpha": -5, "beta": 7}, "total_delta": 2},
+            {"deltas": {"alpha": Decimal("-5"), "beta": Decimal("7")}, "total": Decimal("2")},
         )
 
     def test_determinism_and_missing_data_defaults(self) -> None:
@@ -136,9 +138,49 @@ class TestRoiDeltaModule(unittest.TestCase):
 
         missing_response = compute_roi_delta({"alpha": 1.0, "beta": 2.0}, {"alpha": 1.0})
         self.assertEqual(missing_response["status"], "error")
-        self.assertEqual(missing_response["data"], {"deltas": {}, "total_delta": 0})
+        self.assertEqual(missing_response["data"], {"deltas": {}, "total": Decimal("0")})
         self.assertEqual(missing_response["meta"]["before_count"], 2)
         self.assertEqual(missing_response["meta"]["after_count"], 1)
+
+    def test_overflow_in_delta_returns_error(self) -> None:
+        before = {"alpha": Decimal("-9.99e9")}
+        after = {"alpha": Decimal("9.99e9")}
+
+        with decimal.localcontext() as context:
+            context.Emax = 9
+            context.traps[decimal.Overflow] = False
+            response = compute_roi_delta(before, after)
+
+        self.assertEqual(response["status"], "error")
+        self.assertEqual(response["data"], {"deltas": {}, "total": Decimal("0")})
+        self.assertEqual(response["errors"], [
+            {
+                "type": "RoiDeltaValidationError",
+                "code": "delta_value_error",
+                "message": "Computed delta value must be finite.",
+                "details": {"key": "alpha", "delta_repr": "Decimal('Infinity')"},
+            }
+        ])
+
+    def test_overflow_in_total_returns_error(self) -> None:
+        before = {"alpha": Decimal("0"), "beta": Decimal("0")}
+        after = {"alpha": Decimal("9.99e9"), "beta": Decimal("9.99e9")}
+
+        with decimal.localcontext() as context:
+            context.Emax = 9
+            context.traps[decimal.Overflow] = False
+            response = compute_roi_delta(before, after)
+
+        self.assertEqual(response["status"], "error")
+        self.assertEqual(response["data"], {"deltas": {}, "total": Decimal("0")})
+        self.assertEqual(response["errors"], [
+            {
+                "type": "RoiDeltaValidationError",
+                "code": "total_value_error",
+                "message": "Computed total delta must be finite.",
+                "details": {"total_delta_repr": "Decimal('Infinity')"},
+            }
+        ])
 
 
 if __name__ == "__main__":
