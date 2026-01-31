@@ -1,6 +1,6 @@
 import pytest
 
-from error_ontology import ErrorCategory, classify_error
+from error_ontology import ErrorCategory, classify_error, _TOKEN_RULES
 
 
 @pytest.mark.parametrize(
@@ -20,16 +20,16 @@ from error_ontology import ErrorCategory, classify_error
 def test_fixed_taxonomy_reachable(payload, expected):
     result = classify_error(payload)
 
-    assert result["status"] == "ok"
-    assert result["data"]["category"] == expected
+    assert result["status"] == expected
+    assert result["data"]["matched_rule_id"]
 
 
 def test_empty_input_returns_other():
     result = classify_error("")
 
-    assert result["status"] == "fallback"
+    assert result["status"] == ErrorCategory.Other.value
     assert result["errors"] == []
-    assert result["data"]["category"] == ErrorCategory.Other.value
+    assert result["data"]["matched_rule_id"] == "empty:other"
 
 
 def test_identical_inputs_are_deterministic():
@@ -38,7 +38,7 @@ def test_identical_inputs_are_deterministic():
     first = classify_error(payload)
     second = classify_error(payload)
 
-    assert first["data"]["category"] == second["data"]["category"]
+    assert first["status"] == second["status"]
     assert first["meta"] == second["meta"]
 
 
@@ -49,17 +49,31 @@ def test_bundle_ambiguity_defaults_to_other():
     result = classify_error(payload)
     reversed_result = classify_error(reversed_payload)
 
-    assert result["status"] == "fallback"
-    assert reversed_result["status"] == "fallback"
-    assert result["data"]["category"] == ErrorCategory.Other.value
-    assert reversed_result["data"]["category"] == ErrorCategory.Other.value
+    assert result["status"] == ErrorCategory.Other.value
+    assert reversed_result["status"] == ErrorCategory.Other.value
+    assert [item["status"] for item in result["data"]["bundle"]] == [
+        ErrorCategory.ConfigError.value,
+        ErrorCategory.SyntaxError.value,
+    ]
+    assert [item["status"] for item in reversed_result["data"]["bundle"]] == [
+        ErrorCategory.SyntaxError.value,
+        ErrorCategory.ConfigError.value,
+    ]
 
 
 def test_unknown_inputs_map_to_other():
     exception_result = classify_error(RuntimeError("boom"))
     text_result = classify_error("this does not match any phrase")
 
-    assert exception_result["status"] == "fallback"
-    assert text_result["status"] == "fallback"
-    assert exception_result["data"]["category"] == ErrorCategory.Other.value
-    assert text_result["data"]["category"] == ErrorCategory.Other.value
+    assert exception_result["status"] == ErrorCategory.Other.value
+    assert text_result["status"] == ErrorCategory.Other.value
+    assert exception_result["data"]["matched_rule_id"] == "exception:unmatched"
+    assert text_result["data"]["matched_rule_id"] == "text:unmatched"
+
+
+def test_literal_phrase_matches_each_fixed_token_rule():
+    for rule in _TOKEN_RULES:
+        token = rule["match"]
+        result = classify_error(f"before {token} after")
+        assert result["status"] == rule["category"].value
+        assert result["data"]["matched_token"] == token
