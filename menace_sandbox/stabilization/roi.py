@@ -8,6 +8,36 @@ failures return structured error records instead of silently coercing values.
 If any metric is provided as a ``Decimal`` then all values are deterministically
 converted to ``Decimal`` using ``Decimal(str(value))`` to avoid binary float
 artifacts.
+
+Canonical response contract for :func:`compute_roi_delta`:
+
+```
+{
+  "status": "ok" | "error",
+  "data": {
+    "deltas": {<metric_key>: <delta_number>},
+    "total_delta": <sum_of_deltas>
+  },
+  "errors": [
+    {
+      "type": "RoiDeltaValidationError",
+      "code": "invalid_schema" | "metric_type_error" | "metric_value_error",
+      "message": <string>,
+      "details": <dict>
+    }
+  ],
+  "meta": {
+    "keys": [<metric_key>],
+    "count": <int>,
+    "error_count": <int>,
+    "before_count": <int>,
+    "after_count": <int>
+  }
+}
+```
+
+Empty inputs return ``status: "ok"`` with ``data.deltas`` as ``{}`` and
+``data.total_delta`` set to ``0``.
 """
 from __future__ import annotations
 
@@ -42,9 +72,20 @@ def _metric_value_error(
     value: Number | Decimal,
     source: str,
 ) -> RoiDeltaValidationError:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        return RoiDeltaValidationError(
+            "Metric value must be an int, float, or Decimal (bool not allowed).",
+            code="metric_type_error",
+            details={
+                "key": key,
+                "source": source,
+                "value_repr": repr(value),
+            },
+        )
     return RoiDeltaValidationError(
         "Metric value must be a finite int, float, or Decimal (bool not allowed).",
-        {
+        code="metric_value_error",
+        details={
             "key": key,
             "source": source,
             "value_repr": repr(value),
@@ -61,14 +102,16 @@ def _validate_metrics(
         errors.append(
             RoiDeltaValidationError(
                 "before_metrics must be a mapping.",
-                {"field": "before_metrics"},
+                code="invalid_schema",
+                details={"field": "before_metrics"},
             )
         )
     if not isinstance(after_metrics, Mapping):
         errors.append(
             RoiDeltaValidationError(
                 "after_metrics must be a mapping.",
-                {"field": "after_metrics"},
+                code="invalid_schema",
+                details={"field": "after_metrics"},
             )
         )
     if errors:
@@ -82,7 +125,8 @@ def _validate_metrics(
         errors.append(
             RoiDeltaValidationError(
                 "before_metrics and after_metrics must have identical keys.",
-                {"missing": missing_keys, "extra": extra_keys},
+                code="invalid_schema",
+                details={"missing": missing_keys, "extra": extra_keys},
             )
         )
         return _sorted_keys(before_keys | after_keys), errors
@@ -114,10 +158,11 @@ def compute_roi_delta(
     """
 
     keys, errors = _validate_metrics(before_metrics, after_metrics)
+    data = {"deltas": {}, "total_delta": 0}
     if errors:
         return {
-            "status": "fail",
-            "data": {},
+            "status": "error",
+            "data": data,
             "errors": [error.to_record() for error in errors],
             "meta": {
                 "keys": keys,
@@ -131,7 +176,7 @@ def compute_roi_delta(
     if not keys:
         return {
             "status": "ok",
-            "data": {},
+            "data": data,
             "errors": [],
             "meta": {
                 "keys": [],

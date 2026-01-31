@@ -16,14 +16,22 @@ class MenaceRuleSchemaError(PatchRuleError):
 class RoiDeltaValidationError(ValueError):
     """Raised when ROI delta inputs are invalid."""
 
-    def __init__(self, message: str, details: dict[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        details: dict[str, object] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
+        self.code = code
         self.details = details or {}
 
     def to_record(self) -> dict[str, object]:
         return {
             "type": self.__class__.__name__,
+            "code": self.code,
             "message": self.message,
             "details": self.details,
         }

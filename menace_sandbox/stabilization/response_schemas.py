@@ -140,7 +140,7 @@ def normalize_mvp_response(payload: Mapping[str, Any] | None) -> dict[str, Any]:
                         "value_repr": repr(delta_map),
                     }
                 )
-            if roi_delta_result.get("status") == "fail" and not roi_delta_result.get("errors"):
+            if roi_delta_result.get("status") == "error" and not roi_delta_result.get("errors"):
                 roi_delta_errors.append(
                     {
                         "code": "roi_delta_failed",
