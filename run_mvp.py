@@ -8,12 +8,8 @@ import re
 import sys
 from pathlib import Path
 
-import mvp_workflow
-from menace_sandbox.stabilization import (
-    ValidationError,
-    normalize_error_response,
-    normalize_mvp_response,
-)
+from menace_sandbox import mvp_brain
+from menace_sandbox.stabilization import normalize_error_response
 
 
 class _CliArgumentError(Exception):
@@ -100,11 +96,7 @@ def _run(argv: list[str] | None) -> int:
         _emit_json(_error_payload(error))
         return 1
 
-    try:
-        result = normalize_mvp_response(mvp_workflow.execute_task(payload))
-    except ValidationError:
-        _emit_json(_error_payload("response schema validation failed"))
-        return 1
+    result = mvp_brain.run_mvp_pipeline(payload)
     _emit_json(result)
     return 0
 
