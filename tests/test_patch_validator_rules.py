@@ -1,4 +1,4 @@
-from menace_sandbox.stabilization.patch_validator import validate_patch
+from patch_validator import validate_patch
 
 
 ORIGINAL_CODE = """
@@ -66,9 +66,7 @@ def test_validate_patch_invalid_syntax_emits_syntax_error_entries() -> None:
     _assert_payload_shape(result)
 
     assert result["status"] == "failed"
-    syntax_error = next(
-        error for error in result["errors"] if error["type"] == "PatchSyntaxError"
-    )
+    syntax_error = next(error for error in result["errors"] if error["type"] == "PatchSyntaxError")
     assert syntax_error["details"]["source"] == "patched"
     _find_error_by_code(result["errors"], "syntax_error")
 
@@ -160,9 +158,7 @@ def test_validate_patch_rejects_malformed_rule_schema_fields() -> None:
     _assert_payload_shape(result)
 
     assert result["status"] == "failed"
-    validation_errors = [
-        error for error in result["errors"] if error["type"] == "PatchValidationError"
-    ]
+    validation_errors = [error for error in result["errors"] if error["type"] == "PatchValidationError"]
     assert validation_errors
 
     messages = {error["message"] for error in validation_errors}

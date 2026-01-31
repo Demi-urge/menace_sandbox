@@ -1,6 +1,6 @@
 import pytest
 
-from menace_sandbox.stabilization.patch_code_validator import validate_patch
+from patch_validator import validate_patch
 
 
 ORIGINAL_FUNCTION = """
@@ -20,23 +20,19 @@ def test_validate_patch_empty_patched_source_fails_signature_match() -> None:
         [
             {
                 "type": "signature_match",
-                "functions": ["greet"],
-                "rule_id": "sig-empty-patched",
-            }
+                "id": "sig-empty-patched",
+                "params": {"functions": ["greet"]},
+            },
         ],
     )
 
-    assert result["status"] == "fail"
-    error = _find_error(result, "signature mismatch")
+    assert result["status"] == "failed"
+    error = _find_error(result, "function signature missing")
     assert error["type"] == "PatchRuleError"
-    assert error["details"]["mismatches"] == [
-        {
-            "function": "greet",
-            "error": "missing_function",
-            "original": True,
-            "patched": False,
-        }
-    ]
+    mismatch = error["details"]["mismatch"]
+    assert mismatch["symbol"] == "greet"
+    assert mismatch["original"] is True
+    assert mismatch["patched"] is False
 
 
 def test_validate_patch_invalid_syntax_reports_patch_error() -> None:
@@ -45,15 +41,18 @@ def test_validate_patch_invalid_syntax_reports_patch_error() -> None:
         "def broken(:\n    pass",
         [
             {
-                "type": "syntax",
-                "rule_id": "syntax-check",
-            }
+                "type": "syntax_compile",
+                "id": "syntax-check",
+                "params": {"sources": ["patched"]},
+            },
         ],
     )
 
-    assert result["status"] == "fail"
+    assert result["status"] == "failed"
     syntax_error = next(err for err in result["errors"] if err["type"] == "PatchSyntaxError")
     assert syntax_error["details"]["source"] == "patched"
+    rule_error = _find_error(result, "syntax error")
+    assert rule_error["details"]["code"] == "syntax_error"
 
 
 def test_validate_patch_missing_function_required_by_rule() -> None:
@@ -66,15 +65,15 @@ def other():
         [
             {
                 "type": "signature_match",
-                "functions": ["greet"],
-                "rule_id": "sig-missing",
+                "id": "sig-missing",
+                "params": {"functions": ["greet"]},
             }
         ],
     )
 
-    assert result["status"] == "fail"
-    mismatch = _find_error(result, "signature mismatch")["details"]["mismatches"][0]
-    assert mismatch["error"] == "missing_function"
+    assert result["status"] == "failed"
+    mismatch = _find_error(result, "function signature missing")["details"]["mismatch"]
+    assert mismatch["error"] == "missing_symbol"
     assert mismatch["original"] is True
     assert mismatch["patched"] is False
 
@@ -85,19 +84,17 @@ def test_validate_patch_unchanged_code_fails_rule_that_demands_changes() -> None
         ORIGINAL_FUNCTION,
         [
             {
-                "type": "static_contracts",
-                "functions": ["greet"],
-                "require_docstring": True,
-                "rule_id": "docstring-required",
-            }
+                "type": "signature_match",
+                "id": "change-required",
+                "params": {"functions": ["greet"], "require_changes": True},
+            },
         ],
     )
 
-    assert result["status"] == "fail"
-    error = _find_error(result, "static contract failure")
-    assert error["details"]["failures"] == [
-        {"function": "greet", "error": "missing_docstring"}
-    ]
+    assert result["status"] == "failed"
+    error = _find_error(result, "required change not detected")
+    assert error["details"]["code"] == "unchanged_target"
+    assert error["details"]["target"]["symbol"] == "greet"
 
 
 def test_validate_patch_signature_mismatch_between_versions() -> None:
@@ -110,15 +107,15 @@ def greet(name, title=None):
         [
             {
                 "type": "signature_match",
-                "functions": ["greet"],
-                "rule_id": "sig-mismatch",
-            }
+                "id": "sig-mismatch",
+                "params": {"functions": ["greet"]},
+            },
         ],
     )
 
-    assert result["status"] == "fail"
-    mismatch = _find_error(result, "signature mismatch")["details"]["mismatches"][0]
-    assert mismatch["function"] == "greet"
+    assert result["status"] == "failed"
+    mismatch = _find_error(result, "function signature mismatch")["details"]["mismatch"]
+    assert mismatch["symbol"] == "greet"
     assert "original" in mismatch
     assert "patched" in mismatch
 
@@ -128,27 +125,27 @@ def test_validate_patch_rejects_malformed_rules_deterministically() -> None:
         ORIGINAL_FUNCTION,
         ORIGINAL_FUNCTION,
         [
-            {"rule_id": "missing-type"},
-            {"type": "signature_match", "rule_id": "missing-functions"},
-            {"type": 123, "rule_id": "bad-type"},
+            {"id": "missing-type"},
+            {"type": "signature_match", "id": "missing-params"},
+            {"type": 123, "id": "bad-type", "params": {}},
         ],
     )
 
-    assert result["status"] == "fail"
-    messages = {error["message"] for error in result["errors"] if error["type"] == "PatchRuleError"}
+    assert result["status"] == "failed"
+    messages = {error["message"] for error in result["errors"] if error["type"] == "PatchValidationError"}
+    assert "rule missing required field" in messages
     assert "rule type must be a string" in messages
-    assert "signature_match requires function names" in messages
 
 
 @pytest.mark.parametrize(
     "rules",
     [
         pytest.param(
-            [{"type": "required_imports", "imports": []}],
+            [{"id": "missing-imports", "type": "required_imports", "params": {"imports": "oops"}}],
             id="missing-imports",
         ),
         pytest.param(
-            [{"type": "forbidden_patterns"}],
+            [{"id": "missing-forbidden-constraints", "type": "forbidden_patterns", "params": {}}],
             id="missing-forbidden-constraints",
         ),
     ],
@@ -160,5 +157,5 @@ def test_validate_patch_malformed_rules_payloads(rules) -> None:
         rules,
     )
 
-    assert result["status"] == "fail"
-    assert any(error["type"] == "PatchRuleError" for error in result["errors"])
+    assert result["status"] == "failed"
+    assert any(error["type"] == "PatchValidationError" for error in result["errors"])
