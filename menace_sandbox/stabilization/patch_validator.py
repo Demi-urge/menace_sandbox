@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-from menace.errors import PatchRuleError, PatchSyntaxError, ValidationError
+from menace.errors import PatchRuleError, PatchSyntaxError, PatchValidationError, ValidationError
 
 from .response_schemas import normalize_patch_validation
 
@@ -218,6 +218,8 @@ def validate_patch(
     patched_index = _empty_index()
     appended_rule_errors = False
     appended_syntax_errors = False
+    current_rule_id: str | None = None
+    current_rule_index: int | None = None
 
     try:
         validated_rules, validation_errors = validate_rules(rules)
@@ -242,6 +244,8 @@ def validate_patch(
 
         if original_tree and patched_tree:
             for validated_rule in validated_rules:
+                current_rule_id = validated_rule.rule_id
+                current_rule_index = validated_rule.rule_index
                 rule = validated_rule.payload
                 rule_type = validated_rule.rule_type
                 rule_index = validated_rule.rule_index
@@ -291,6 +295,8 @@ def validate_patch(
                             details={"rule_index": rule_index, "rule_type": rule_type},
                         )
                     )
+                current_rule_id = None
+                current_rule_index = None
 
         if rule_errors:
             errors.extend(error.to_dict() for error in rule_errors)
@@ -300,15 +306,29 @@ def validate_patch(
             errors.extend(error.to_dict() for error in syntax_errors)
         if rule_errors and not appended_rule_errors:
             errors.extend(error.to_dict() for error in rule_errors)
-        errors.append(
-            ValidationError(
-                "unexpected validation error",
-                details={
-                    "exception_type": exc.__class__.__name__,
-                    "exception_message": str(exc),
-                },
-            ).to_dict()
-        )
+        if isinstance(exc, ValidationError):
+            if current_rule_id is not None or current_rule_index is not None:
+                details = dict(exc.details or {})
+                if current_rule_id is not None:
+                    details.setdefault("rule_id", current_rule_id)
+                if current_rule_index is not None:
+                    details.setdefault("rule_index", current_rule_index)
+                exc.details = details
+            errors.append(exc.to_dict())
+        else:
+            errors.append(
+                PatchValidationError(
+                    "unexpected validation error",
+                    details={
+                        "exception_type": exc.__class__.__name__,
+                        "exception_message": str(exc),
+                        "rule_id": current_rule_id,
+                        "rule_index": current_rule_index,
+                        "module": module_name,
+                        "stage": "validate_patch",
+                    },
+                ).to_dict()
+            )
 
     data: dict[str, object] = {
         "original_index": original_index,
@@ -376,6 +396,7 @@ def _syntax_error_payload(exc: SyntaxError, label: str) -> PatchSyntaxError:
         "source": label,
         "lineno": exc.lineno,
         "offset": exc.offset,
+        "col_offset": exc.offset,
         "text": exc.text,
     }
     return PatchSyntaxError(f"syntax error in {label}", details=details)

@@ -54,6 +54,8 @@ def _extract_location(details: Mapping[str, Any]) -> dict[str, Any]:
         if key in details:
             location["column"] = details[key]
             break
+    if "column" not in location and "offset" in details:
+        location["column"] = details["offset"]
     if "span" in details:
         location["span"] = details["span"]
     return location
@@ -132,6 +134,16 @@ class EvaluationError(MenaceError):
 @dataclass
 class PatchSyntaxError(ValidationError):
     """Raised when a generated patch introduces syntax errors.
+
+    Args:
+        message: Human-readable error message describing the failure.
+        details: Optional structured context describing the failure.
+    """
+
+
+@dataclass
+class PatchValidationError(ValidationError):
+    """Raised when patch validation fails unexpectedly.
 
     Args:
         message: Human-readable error message describing the failure.
