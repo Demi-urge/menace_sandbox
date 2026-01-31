@@ -150,67 +150,146 @@ _EXCEPTION_RULES: Tuple[ClassificationRule, ...] = (
 )
 
 # Fixed literal token priority. If multiple matches appear, the first match
-# in this list is selected (deterministic ordering).
+# in this list is selected (deterministic ordering). Tokens are lowercase
+# literals matched against a lowercased input string.
 _TOKEN_RULES: Tuple[ClassificationRule, ...] = (
     {
         "kind": "token",
-        "match": "SyntaxError",
+        "match": "syntax error",
         "category": ErrorCategory.SyntaxError,
-        "matched_rule": "token:SyntaxError",
+        "matched_rule": "token:syntax error",
     },
     {
         "kind": "token",
-        "match": "ImportError",
+        "match": "invalid syntax",
+        "category": ErrorCategory.SyntaxError,
+        "matched_rule": "token:invalid syntax",
+    },
+    {
+        "kind": "token",
+        "match": "import error",
         "category": ErrorCategory.ImportError,
-        "matched_rule": "token:ImportError",
+        "matched_rule": "token:import error",
     },
     {
         "kind": "token",
-        "match": "TypeError",
+        "match": "no module named",
+        "category": ErrorCategory.ImportError,
+        "matched_rule": "token:no module named",
+    },
+    {
+        "kind": "token",
+        "match": "module not found",
+        "category": ErrorCategory.ImportError,
+        "matched_rule": "token:module not found",
+    },
+    {
+        "kind": "token",
+        "match": "type error",
         "category": ErrorCategory.TypeErrorMismatch,
-        "matched_rule": "token:TypeError",
+        "matched_rule": "token:type error",
     },
     {
         "kind": "token",
-        "match": "ContractViolation",
+        "match": "type mismatch",
+        "category": ErrorCategory.TypeErrorMismatch,
+        "matched_rule": "token:type mismatch",
+    },
+    {
+        "kind": "token",
+        "match": "unsupported operand",
+        "category": ErrorCategory.TypeErrorMismatch,
+        "matched_rule": "token:unsupported operand",
+    },
+    {
+        "kind": "token",
+        "match": "contract violation",
         "category": ErrorCategory.ContractViolation,
-        "matched_rule": "token:ContractViolation",
+        "matched_rule": "token:contract violation",
     },
     {
         "kind": "token",
-        "match": "EdgeCaseFailure",
+        "match": "assertion failed",
+        "category": ErrorCategory.ContractViolation,
+        "matched_rule": "token:assertion failed",
+    },
+    {
+        "kind": "token",
+        "match": "assertion error",
+        "category": ErrorCategory.ContractViolation,
+        "matched_rule": "token:assertion error",
+    },
+    {
+        "kind": "token",
+        "match": "index out of range",
         "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "token:EdgeCaseFailure",
+        "matched_rule": "token:index out of range",
     },
     {
         "kind": "token",
-        "match": "UnhandledException",
+        "match": "key error",
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "token:key error",
+    },
+    {
+        "kind": "token",
+        "match": "edge case",
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "token:edge case",
+    },
+    {
+        "kind": "token",
+        "match": "unhandled exception",
         "category": ErrorCategory.UnhandledException,
-        "matched_rule": "token:UnhandledException",
+        "matched_rule": "token:unhandled exception",
     },
     {
         "kind": "token",
-        "match": "InvalidInput",
+        "match": "unexpected exception",
+        "category": ErrorCategory.UnhandledException,
+        "matched_rule": "token:unexpected exception",
+    },
+    {
+        "kind": "token",
+        "match": "invalid input",
         "category": ErrorCategory.InvalidInput,
-        "matched_rule": "token:InvalidInput",
+        "matched_rule": "token:invalid input",
     },
     {
         "kind": "token",
-        "match": "MissingReturn",
+        "match": "bad input",
+        "category": ErrorCategory.InvalidInput,
+        "matched_rule": "token:bad input",
+    },
+    {
+        "kind": "token",
+        "match": "missing return",
         "category": ErrorCategory.MissingReturn,
-        "matched_rule": "token:MissingReturn",
+        "matched_rule": "token:missing return",
     },
     {
         "kind": "token",
-        "match": "ConfigError",
+        "match": "no return statement",
+        "category": ErrorCategory.MissingReturn,
+        "matched_rule": "token:no return statement",
+    },
+    {
+        "kind": "token",
+        "match": "config error",
         "category": ErrorCategory.ConfigError,
-        "matched_rule": "token:ConfigError",
+        "matched_rule": "token:config error",
     },
     {
         "kind": "token",
-        "match": "Other",
-        "category": ErrorCategory.Other,
-        "matched_rule": "token:Other",
+        "match": "configuration error",
+        "category": ErrorCategory.ConfigError,
+        "matched_rule": "token:configuration error",
+    },
+    {
+        "kind": "token",
+        "match": "missing config",
+        "category": ErrorCategory.ConfigError,
+        "matched_rule": "token:missing config",
     },
 )
 
@@ -247,6 +326,7 @@ class ClassificationItem(TypedDict):
     input_kind: str
     matched_rule_id: str
     normalized: str
+    matched_token: str | None
 
 
 class ClassificationData(TypedDict):
@@ -329,9 +409,10 @@ def _classify_exception_type(exc_type: type[BaseException]) -> Tuple[ErrorCatego
 def _classify_text(text: str) -> Tuple[ErrorCategory, str, str | None]:
     if not text.strip():
         return ErrorCategory.Other, "text:empty", None
+    normalized = text.lower()
     for rule in _TOKEN_RULES:
         token = rule["match"]
-        if isinstance(token, str) and token in text:
+        if isinstance(token, str) and token in normalized:
             return rule["category"], rule["matched_rule"], token
     return ErrorCategory.Other, "text:unmatched", None
 
@@ -348,6 +429,7 @@ def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, 
             "input_kind": input_kind,
             "matched_rule_id": "empty:other",
             "normalized": "",
+            "matched_token": None,
         }
         return ErrorCategory.Other, item, errors
 
@@ -359,6 +441,7 @@ def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, 
             "input_kind": input_kind,
             "matched_rule_id": rule_id,
             "normalized": _safe_text(normalized),
+            "matched_token": None,
         }
         return category, item, errors
 
@@ -370,6 +453,7 @@ def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, 
             "input_kind": input_kind,
             "matched_rule_id": rule_id,
             "normalized": normalized.__name__,
+            "matched_token": None,
         }
         return category, item, errors
 
@@ -381,6 +465,7 @@ def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, 
             "input_kind": input_kind,
             "matched_rule_id": "sequence:defer",
             "normalized": _safe_text(normalized),
+            "matched_token": None,
         }
         return category, item, errors
 
@@ -394,6 +479,7 @@ def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, 
                 "input_kind": input_kind,
                 "matched_rule_id": rule_id,
                 "normalized": _safe_text(extracted),
+                "matched_token": None,
             }
             return category, item, errors
         if isinstance(extracted, type) and issubclass(extracted, BaseException):
@@ -404,16 +490,18 @@ def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, 
                 "input_kind": input_kind,
                 "matched_rule_id": rule_id,
                 "normalized": extracted.__name__,
+                "matched_token": None,
             }
             return category, item, errors
         text = _safe_text(extracted)
-        category, rule_id, _ = _classify_text(text)
+        category, rule_id, token = _classify_text(text)
         item = {
             "index": 0,
             "status": category.value,
             "input_kind": input_kind,
             "matched_rule_id": rule_id,
             "normalized": text,
+            "matched_token": token,
         }
         return category, item, errors
 
@@ -425,6 +513,7 @@ def _classify_single(value: object) -> Tuple[ErrorCategory, ClassificationItem, 
         "input_kind": input_kind,
         "matched_rule_id": rule_id,
         "normalized": text,
+        "matched_token": token,
     }
     if token:
         item["normalized"] = text
@@ -472,7 +561,8 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
     -----
     Matching order is deterministic:
     1) Explicit ``isinstance`` checks for known exception types.
-    2) Literal substring matching in the fixed ``_TOKEN_RULES`` list.
+    2) Literal substring matching in the fixed ``_TOKEN_RULES`` list after
+       lowercasing the input text.
 
     For multi-error bundles (lists/tuples), each element is classified in input
     order. The resulting status is selected by severity using the fixed
@@ -538,9 +628,7 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
         category, item, item_errors = _classify_single(normalized)
         errors.extend(item_errors)
         matched_rule_id = item["matched_rule_id"]
-        matched_token = None
-        if matched_rule_id.startswith("token:"):
-            matched_token = matched_rule_id.split("token:", 1)[1]
+        matched_token = item["matched_token"]
         return {
             "status": category.value,
             "data": {
@@ -561,9 +649,7 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
     category, item, item_errors = _classify_single(normalized)
     errors.extend(item_errors)
     matched_rule_id = item["matched_rule_id"]
-    matched_token = None
-    if matched_rule_id.startswith("token:"):
-        matched_token = matched_rule_id.split("token:", 1)[1]
+    matched_token = item["matched_token"]
     return {
         "status": category.value,
         "data": {
