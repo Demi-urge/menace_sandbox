@@ -125,11 +125,21 @@ def normalize_mvp_response(payload: Mapping[str, Any] | None) -> dict[str, Any]:
         before_metrics = {"roi": prior_roi}
         after_metrics = {"roi": current_roi}
         roi_delta_result = compute_roi_delta(before_metrics, after_metrics)
-        if roi_delta_result.get("status") == "ok":
-            raw["roi_delta"] = roi_delta_result["data"]["delta_total"]
+        delta_map = roi_delta_result.get("data", {}).get("delta", {})
+        if roi_delta_result.get("status") == "ok" and "roi" in delta_map:
+            raw["roi_delta"] = delta_map["roi"]
         else:
             raw["roi_delta"] = None
             roi_delta_errors.extend(roi_delta_result.get("errors", []))
+            if roi_delta_result.get("status") == "ok" and "roi" not in delta_map:
+                roi_delta_errors.append(
+                    {
+                        "code": "missing_roi_delta",
+                        "message": "ROI delta result missing expected 'roi' key.",
+                        "key": "roi",
+                        "value_repr": repr(delta_map),
+                    }
+                )
     else:
         raw["roi_delta"] = None
         if not _is_valid_roi(prior_roi):
