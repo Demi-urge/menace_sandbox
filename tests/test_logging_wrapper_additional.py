@@ -184,3 +184,34 @@ def test_nested_wrap_safety():
 
     assert len(handler.records) == 2
     assert {record.function for record in handler.records} == {"inner", "outer"}
+
+
+def test_opaque_object_sanitized_without_memory_address():
+    logger_name = "tests.logging_wrapper.opaque"
+
+    class Opaque:
+        __slots__ = ()
+
+        def __repr__(self) -> str:
+            return f"<Opaque at {hex(id(self))}>"
+
+        def __getattribute__(self, name: str):
+            if name in {"__dict__", "__slots__"}:
+                raise AttributeError
+            return super().__getattribute__(name)
+
+    def echo(value):
+        return value
+
+    wrapped = wrap_with_logging(echo, config={"logger_name": logger_name})
+    with capture_logger(logger_name) as handler:
+        wrapped(Opaque())
+        wrapped(Opaque())
+
+    assert len(handler.records) == 2
+    first_args = handler.records[0].extra_args
+    second_args = handler.records[1].extra_args
+    assert first_args == second_args == [{"type": "Opaque"}]
+    assert handler.records[0].return_value == {"type": "Opaque"}
+    payload = json.dumps(handler.records[0].return_value)
+    assert "0x" not in payload
