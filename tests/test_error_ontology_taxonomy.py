@@ -8,7 +8,7 @@ from menace.error_ontology import ErrorCategory, classify_error
     [
         ("syntax error: invalid syntax", ErrorCategory.SyntaxError.value, "syntax error"),
         ("import error: no module named x", ErrorCategory.ImportError.value, "import error"),
-        ("type error: unsupported operand", ErrorCategory.TypeErrorMismatch.value, "type error"),
+        ("type mismatch: unsupported operand", ErrorCategory.TypeErrorMismatch.value, "type mismatch"),
         (
             "contract violation: invariant failed",
             ErrorCategory.ContractViolation.value,
@@ -23,7 +23,7 @@ from menace.error_ontology import ErrorCategory, classify_error
         ("invalid input: bad payload", ErrorCategory.InvalidInput.value, "invalid input"),
         ("missing return: handler", ErrorCategory.MissingReturn.value, "missing return"),
         ("config error: missing config", ErrorCategory.ConfigError.value, "config error"),
-        ("Other: unspecified", ErrorCategory.Other.value, None),
+        ("Other: unspecified", ErrorCategory.Other.value, "other"),
     ],
 )
 def test_literal_tokens_map_to_expected_categories(raw, expected_status, expected_token):
@@ -62,11 +62,11 @@ def test_empty_inputs_return_other(raw):
 
 
 def test_partial_traceback_without_traceback_token_classifies_by_literal_tokens():
-    raw = "File 'x.py', line 1: TypeError: unsupported operand"
+    raw = "File 'x.py', line 1: type mismatch: unsupported operand"
     result = classify_error(raw)
 
     assert result["status"] == ErrorCategory.TypeErrorMismatch.value
-    assert result["data"]["matched_token"] == "unsupported operand"
+    assert result["data"]["matched_token"] == "type mismatch"
 
 
 def test_multi_error_bundle_returns_other_and_aggregates_data():
@@ -112,7 +112,7 @@ def test_identical_inputs_produce_identical_outputs():
 
 
 def test_contextual_data_does_not_change_classification():
-    raw = "type error: cannot add"
+    raw = "type mismatch: cannot add"
     base = classify_error(raw)
     bundle = classify_error([raw, "Other: ignore"])
     mapping = classify_error({"error": raw, "errors": "Other: ignore"})

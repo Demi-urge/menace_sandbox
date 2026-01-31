@@ -4,8 +4,8 @@ from menace.error_ontology import ErrorCategory, classify_error, _TOKEN_RULES
 
 
 @pytest.mark.parametrize("raw", [
-    "TypeError: unsupported operand",
-    {"error": "type error", "detail": "bad"},
+    "TypeError: type mismatch",
+    {"error": "type mismatch", "detail": "bad"},
 ])
 def test_classify_error_returns_required_keys_and_types(raw):
     result = classify_error(raw)
@@ -37,7 +37,7 @@ def test_identical_inputs_yield_identical_categories():
 
 
 def test_unrelated_context_does_not_change_literal_match():
-    base = "type error: cannot add"
+    base = "type mismatch: cannot add"
     augmented = f"{base} | extra context unrelated to error"
     assert (
         classify_error(base)["status"]
@@ -71,7 +71,7 @@ def test_multi_error_bundle_and_unknown_exception_return_other():
 
 
 def test_mapping_with_sequence_normalizes_to_bundle():
-    payload = {"errors": ["TypeError: unsupported operand", "Other: fallback"]}
+    payload = {"errors": ["type mismatch in handler", "Other: fallback"]}
     result = classify_error(payload)
 
     assert result["status"] == ErrorCategory.Other.value
@@ -92,7 +92,7 @@ def test_mapping_with_sequence_normalizes_to_bundle():
     "unhandled exception: boom",
     "invalid input payload",
     "missing return in handler",
-    "configuration error: missing config",
+    "config error: missing config",
 ])
 def test_classify_error_returns_only_fixed_taxonomy_values(raw):
     allowed = {category.value for category in ErrorCategory}
