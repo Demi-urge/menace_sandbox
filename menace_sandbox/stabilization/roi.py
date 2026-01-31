@@ -1,8 +1,17 @@
-"""Deterministic ROI delta calculation with strict schema validation."""
+"""Deterministic ROI delta calculation with explicit validation contracts.
+
+This module performs audit-friendly, linear-time delta computation with no
+normalization, weighting, or inference. Non-mapping inputs raise ``TypeError``,
+and mismatched key sets raise ``ValueError``. Metric values must be numeric and
+finite; booleans are explicitly disallowed even though they subclass ``int``.
+Validation failures return structured error records.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 import math
+from numbers import Real
 from typing import Any, Mapping
 
 
@@ -15,8 +24,9 @@ class InvalidMetricsSchemaError(Exception):
 
     def to_record(self) -> dict[str, Any]:
         return {
-            "code": "invalid_schema",
+            "type": "invalid_schema",
             "message": self.message,
+            "field": self.details.get("field", "schema"),
             "details": self.details,
         }
 
@@ -31,7 +41,7 @@ class MetricTypeError(Exception):
 
     def to_record(self) -> dict[str, Any]:
         return {
-            "code": "metric_type_error",
+            "type": "metric_type_error",
             "message": self.message,
             "key": self.key,
             "value_repr": repr(self.value),
@@ -48,7 +58,7 @@ class MetricValueError(Exception):
 
     def to_record(self) -> dict[str, Any]:
         return {
-            "code": "metric_value_error",
+            "type": "metric_value_error",
             "message": self.message,
             "key": self.key,
             "value_repr": repr(self.value),
@@ -59,40 +69,31 @@ def _format_keys(keys: set[object]) -> list[str]:
     return sorted([str(key) for key in keys])
 
 
+def _is_finite_number(value: Any) -> bool:
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    return math.isfinite(float(value))
+
+
 def _validate_metrics(
     before_metrics: Mapping[str, Any],
     after_metrics: Mapping[str, Any],
 ) -> tuple[list[str], list[Exception]]:
     errors: list[Exception] = []
     if not isinstance(before_metrics, Mapping):
-        errors.append(
-            InvalidMetricsSchemaError(
-                message="before_metrics must be a mapping.",
-                details={"input": "before_metrics", "value_repr": repr(before_metrics)},
-            )
-        )
+        raise TypeError("before_metrics must be a mapping.")
     if not isinstance(after_metrics, Mapping):
-        errors.append(
-            InvalidMetricsSchemaError(
-                message="after_metrics must be a mapping.",
-                details={"input": "after_metrics", "value_repr": repr(after_metrics)},
-            )
-        )
-    if errors:
-        return [], errors
+        raise TypeError("after_metrics must be a mapping.")
 
     before_keys = set(before_metrics.keys())
     after_keys = set(after_metrics.keys())
     missing_keys = _format_keys(before_keys - after_keys)
     extra_keys = _format_keys(after_keys - before_keys)
     if missing_keys or extra_keys:
-        errors.append(
-            InvalidMetricsSchemaError(
-                message="before_metrics and after_metrics must have identical keys.",
-                details={"missing_keys": missing_keys, "extra_keys": extra_keys},
-            )
+        raise ValueError(
+            "before_metrics and after_metrics must have identical keys. "
+            f"Missing: {missing_keys}. Extra: {extra_keys}."
         )
-        return _format_keys(before_keys), errors
 
     invalid_key_types = [
         key for key in before_keys if not isinstance(key, str)
@@ -101,7 +102,10 @@ def _validate_metrics(
         errors.append(
             InvalidMetricsSchemaError(
                 message="All metric keys must be strings.",
-                details={"invalid_keys": [repr(key) for key in invalid_key_types]},
+                details={
+                    "field": "keys",
+                    "invalid_keys": [repr(key) for key in invalid_key_types],
+                },
             )
         )
         return _format_keys(before_keys), errors
@@ -109,17 +113,17 @@ def _validate_metrics(
     ordered_keys = sorted(before_keys)
     for key in ordered_keys:
         value = before_metrics[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (Real, Decimal)):
             errors.append(MetricTypeError(key=key, value=value))
             continue
-        if not math.isfinite(float(value)):
+        if not _is_finite_number(value):
             errors.append(MetricValueError(key=key, value=value))
 
         value = after_metrics[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (Real, Decimal)):
             errors.append(MetricTypeError(key=key, value=value))
             continue
-        if not math.isfinite(float(value)):
+        if not _is_finite_number(value):
             errors.append(MetricValueError(key=key, value=value))
 
     return ordered_keys, errors
@@ -132,7 +136,9 @@ def compute_roi_delta(
     """Compute deterministic ROI deltas with strict schema validation.
 
     Returns a structured payload with status, data, errors, and deterministic
-    metadata derived from the metric keys.
+    metadata derived from the metric keys. Raises ``TypeError`` for non-mapping
+    inputs and ``ValueError`` for mismatched key sets. Booleans are explicitly
+    rejected as metric values.
     """
 
     keys, errors = _validate_metrics(before_metrics, after_metrics)
@@ -146,23 +152,25 @@ def compute_roi_delta(
                 if hasattr(error, "to_record")
             ],
             "meta": {
-                "input_keys": keys,
-                "key_count": len(keys),
+                "keys": keys,
+                "count": len(keys),
                 "error_count": len(errors),
             },
         }
 
     deltas = {key: float(after_metrics[key]) - float(before_metrics[key]) for key in keys}
+    total_delta = sum(deltas.values())
 
     return {
         "status": "ok",
         "data": {
-            "delta": deltas,
+            "deltas": deltas,
+            "total": total_delta,
         },
         "errors": [],
         "meta": {
-            "input_keys": keys,
-            "key_count": len(keys),
+            "keys": keys,
+            "count": len(keys),
             "error_count": 0,
         },
     }
