@@ -1,23 +1,20 @@
-"""Convenience wrappers for structured logging."""
+"""Convenience wrappers for deterministic structured logging."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import fields, is_dataclass
-from datetime import datetime
 import functools
-import inspect
 import logging
 import time
 import traceback
 from typing import Any, TypeVar
 
-from logging_utils import get_logger, log_record
-
 T = TypeVar("T")
 
+_WRAPPED_MARKER = "__menace_logging_wrapped__"
+
 _DEFAULT_CONFIG: dict[str, Any] = {
-    "logger_name": "menace.logging_wrapper",
+    "logger_name": "menace.logging_wrappers",
     "event_name": "function_call",
     "include_args": True,
     "include_return": True,
@@ -49,8 +46,7 @@ def _sanitize_mapping(
     _depth: int,
     _seen: set[int],
 ) -> dict[str, Any]:
-    items = list(mapping.items())
-    items.sort(key=lambda item: str(item[0]))
+    items = sorted(mapping.items(), key=lambda item: str(item[0]))
     if max_items >= 0 and len(items) > max_items:
         items = items[:max_items]
         truncated = True
@@ -58,8 +54,7 @@ def _sanitize_mapping(
         truncated = False
     sanitized: dict[str, Any] = {}
     for key, value in items:
-        key_str = str(key)
-        sanitized[key_str] = _sanitize(
+        sanitized[str(key)] = _sanitize(
             value,
             max_depth=max_depth,
             max_items=max_items,
@@ -106,30 +101,6 @@ def _sanitize_sequence(
     return sanitized
 
 
-def _sanitize_dataclass(
-    obj: Any,
-    *,
-    max_depth: int,
-    max_items: int,
-    max_string: int,
-    truncate_marker: str,
-    _depth: int,
-    _seen: set[int],
-) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    for field in fields(obj):
-        data[field.name] = _sanitize(
-            getattr(obj, field.name),
-            max_depth=max_depth,
-            max_items=max_items,
-            max_string=max_string,
-            truncate_marker=truncate_marker,
-            _depth=_depth + 1,
-            _seen=_seen,
-        )
-    return data
-
-
 def _sanitize_object(
     obj: Any,
     *,
@@ -140,24 +111,22 @@ def _sanitize_object(
     _depth: int,
     _seen: set[int],
 ) -> dict[str, Any]:
-    data: dict[str, Any] = {}
     if hasattr(obj, "__dict__"):
-        data.update(
-            _sanitize_mapping(
-                obj.__dict__,
-                max_depth=max_depth,
-                max_items=max_items,
-                max_string=max_string,
-                truncate_marker=truncate_marker,
-                _depth=_depth + 1,
-                _seen=_seen,
-            )
+        return _sanitize_mapping(
+            obj.__dict__,
+            max_depth=max_depth,
+            max_items=max_items,
+            max_string=max_string,
+            truncate_marker=truncate_marker,
+            _depth=_depth + 1,
+            _seen=_seen,
         )
     if hasattr(obj, "__slots__"):
         slots = getattr(obj, "__slots__")
         if isinstance(slots, str):
             slots = [slots]
-        for slot in slots:
+        data: dict[str, Any] = {}
+        for slot in sorted(slots):
             if hasattr(obj, slot):
                 data[str(slot)] = _sanitize(
                     getattr(obj, slot),
@@ -168,7 +137,8 @@ def _sanitize_object(
                     _depth=_depth + 1,
                     _seen=_seen,
                 )
-    return data
+        return data
+    return {"type": type(obj).__name__}
 
 
 def _sanitize(
@@ -234,29 +204,15 @@ def _sanitize(
             _seen=_seen,
         )
 
-    if is_dataclass(value):
-        return _sanitize_dataclass(
-            value,
-            max_depth=max_depth,
-            max_items=max_items,
-            max_string=max_string,
-            truncate_marker=truncate_marker,
-            _depth=_depth,
-            _seen=_seen,
-        )
-
-    if hasattr(value, "__dict__") or hasattr(value, "__slots__"):
-        return _sanitize_object(
-            value,
-            max_depth=max_depth,
-            max_items=max_items,
-            max_string=max_string,
-            truncate_marker=truncate_marker,
-            _depth=_depth,
-            _seen=_seen,
-        )
-
-    return {"type": type(value).__name__}
+    return _sanitize_object(
+        value,
+        max_depth=max_depth,
+        max_items=max_items,
+        max_string=max_string,
+        truncate_marker=truncate_marker,
+        _depth=_depth,
+        _seen=_seen,
+    )
 
 
 def wrap_with_logging(
@@ -264,7 +220,7 @@ def wrap_with_logging(
     config: Mapping[str, Any] | None = None,
 ) -> Callable[..., T]:
     """Return callable wrapped with structured logging."""
-    if getattr(func, "__menace_logging_wrapped__", False):
+    if getattr(func, _WRAPPED_MARKER, False):
         return func
 
     cfg = dict(_DEFAULT_CONFIG)
@@ -281,8 +237,9 @@ def wrap_with_logging(
     max_string = int(cfg["max_string"])
     truncate_marker = str(cfg["truncate_marker"])
 
-    logger = get_logger(logger_name)
+    logger = logging.getLogger(logger_name)
 
+    @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> T:
         start = time.monotonic()
         try:
@@ -294,7 +251,6 @@ def wrap_with_logging(
                 "function": func.__name__,
                 "module": getattr(func, "__module__", None),
                 "duration_s": duration,
-                "timestamp": datetime.utcnow().isoformat(),
             }
             if include_args:
                 record["args"] = _sanitize(
@@ -319,11 +275,7 @@ def wrap_with_logging(
                         exc.__class__, exc, exc.__traceback__
                     ),
                 }
-            logger.log(
-                logging.INFO,
-                event_name,
-                extra=log_record(**record),
-            )
+            logger.info(event_name, extra={"payload": record})
             raise
 
         duration = time.monotonic() - start
@@ -332,7 +284,6 @@ def wrap_with_logging(
             "function": func.__name__,
             "module": getattr(func, "__module__", None),
             "duration_s": duration,
-            "timestamp": datetime.utcnow().isoformat(),
         }
         if include_args:
             record["args"] = _sanitize(
@@ -363,16 +314,10 @@ def wrap_with_logging(
                 "value": sanitized_return,
                 "is_none": result is None,
             }
-        logger.log(
-            logging.INFO,
-            event_name,
-            extra=log_record(**record),
-        )
+        logger.info(event_name, extra={"payload": record})
         return result
 
-    functools.update_wrapper(wrapper, func)
-    wrapper.__signature__ = inspect.signature(func)
-    wrapper.__menace_logging_wrapped__ = True
+    setattr(wrapper, _WRAPPED_MARKER, True)
     return wrapper
 
 
