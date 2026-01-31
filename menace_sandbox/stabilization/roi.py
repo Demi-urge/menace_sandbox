@@ -1,14 +1,18 @@
 """Deterministic ROI delta calculation with explicit validation contracts.
 
 This module performs audit-friendly, linear-time delta computation with no
-normalization, weighting, or inference. Metric values must be finite ``int`` or
-``float`` values; booleans are explicitly disallowed even though they subclass
-``int``. Empty inputs are treated as a valid no-op. Validation failures return
-structured error records instead of silently coercing values.
+normalization, weighting, or inference. Metric values must be finite ``int``,
+``float``, or ``Decimal`` values; booleans are explicitly disallowed even though
+they subclass ``int``. Empty inputs are treated as a valid no-op. Validation
+failures return structured error records instead of silently coercing values.
+If any metric is provided as a ``Decimal`` then all values are deterministically
+converted to ``Decimal`` using ``Decimal(str(value))`` to avoid binary float
+artifacts.
 """
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 from numbers import Number
 from typing import Mapping
 
@@ -19,21 +23,27 @@ def _sorted_keys(keys: set[str]) -> list[str]:
     return sorted(keys)
 
 
-def _is_valid_metric_value(value: Number) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+def _is_valid_metric_value(value: Number | Decimal) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def _to_decimal(value: Number | Decimal) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _metric_value_error(
     key: str,
-    value: Number,
+    value: Number | Decimal,
     source: str,
 ) -> RoiDeltaValidationError:
     return RoiDeltaValidationError(
-        "Metric value must be a finite int or float (bool not allowed).",
+        "Metric value must be a finite int, float, or Decimal (bool not allowed).",
         {
             "key": key,
             "source": source,
@@ -43,8 +53,8 @@ def _metric_value_error(
 
 
 def _validate_metrics(
-    before_metrics: Mapping[str, Number],
-    after_metrics: Mapping[str, Number],
+    before_metrics: Mapping[str, Number | Decimal],
+    after_metrics: Mapping[str, Number | Decimal],
 ) -> tuple[list[str], list[RoiDeltaValidationError]]:
     errors: list[RoiDeltaValidationError] = []
     if not isinstance(before_metrics, Mapping):
@@ -91,14 +101,16 @@ def _validate_metrics(
 
 
 def compute_roi_delta(
-    before_metrics: Mapping[str, Number],
-    after_metrics: Mapping[str, Number],
+    before_metrics: Mapping[str, Number | Decimal],
+    after_metrics: Mapping[str, Number | Decimal],
 ) -> dict[str, object]:
     """Compute deterministic ROI deltas with strict schema validation.
 
     Returns a structured payload with status, data, errors, and deterministic
     metadata derived from the metric keys. Empty mappings are treated as a
-    valid no-op. Booleans are explicitly rejected as metric values.
+    valid no-op. Booleans are explicitly rejected as metric values. If any
+    metric value is a ``Decimal``, all arithmetic is performed with ``Decimal``
+    values derived via ``Decimal(str(value))`` for deterministic precision.
     """
 
     keys, errors = _validate_metrics(before_metrics, after_metrics)
@@ -130,12 +142,19 @@ def compute_roi_delta(
             },
         }
 
-    deltas: dict[str, Number] = {}
+    use_decimal = any(
+        isinstance(before_metrics[key], Decimal) or isinstance(after_metrics[key], Decimal)
+        for key in keys
+    )
+    deltas: dict[str, Number | Decimal] = {}
     for key in keys:
         before_value = before_metrics[key]
         after_value = after_metrics[key]
+        if use_decimal:
+            before_value = _to_decimal(before_value)
+            after_value = _to_decimal(after_value)
         deltas[key] = after_value - before_value
-    total_delta = sum(deltas.values())
+    total_delta = sum(deltas.values(), Decimal("0") if use_decimal else 0)
 
     return {
         "status": "ok",
