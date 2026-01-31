@@ -28,10 +28,17 @@ def test_mismatched_schema_returns_structured_error() -> None:
     assert response["data"] == {"deltas": {}, "total": Decimal("0")}
     assert response["errors"] == [
         {
-            "type": "RoiDeltaValidationError",
-            "code": "invalid_schema",
+            "type": "ValidationError",
+            "error_type": "ValidationError",
             "message": "before_metrics and after_metrics must have identical keys.",
-            "details": {"missing": ["alpha"], "extra": ["beta"]},
+            "rule_id": None,
+            "rule_index": None,
+            "code": "invalid_schema",
+            "details": {
+                "code": "invalid_schema",
+                "missing": ["alpha"],
+                "extra": ["beta"],
+            },
         }
     ]
     assert response["meta"]["keys"] == ["alpha", "beta"]
