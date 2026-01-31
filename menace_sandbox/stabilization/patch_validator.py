@@ -26,6 +26,7 @@ _DISALLOWED_LITERALS = {
 }
 
 _SUPPORTED_RULE_TYPES = {
+    "syntax",
     "syntax_compile",
     "required_imports",
     "signature_match",
@@ -344,6 +345,8 @@ def validate_patch(
                             patched_nodes=patched_nodes,
                             original_signatures=original_signatures,
                             patched_signatures=patched_signatures,
+                            original_index=original_index,
+                            patched_index=patched_index,
                             syntax_errors=syntax_errors,
                         )
                     elif original_tree and patched_tree:
@@ -357,6 +360,8 @@ def validate_patch(
                             patched_nodes=patched_nodes,
                             original_signatures=original_signatures,
                             patched_signatures=patched_signatures,
+                            original_index=original_index,
+                            patched_index=patched_index,
                             syntax_errors=syntax_errors,
                         )
                     else:
@@ -705,6 +710,12 @@ def _validate_syntax_compile_params(
         )
         if normalized:
             params = {**params, "sources": normalized}
+    _validate_require_changes_param(
+        params,
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
     return dict(params), errors
 
 
@@ -765,6 +776,12 @@ def _validate_required_imports_params(
                     actual_type=type(level).__name__,
                 )
             )
+    _validate_require_changes_param(
+        params,
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
     return dict(params), errors
 
 
@@ -814,6 +831,12 @@ def _validate_signature_match_params(
         normalized["functions"] = functions
     if classes:
         normalized["classes"] = classes
+    _validate_require_changes_param(
+        normalized,
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
     return normalized, errors
 
 
@@ -854,6 +877,12 @@ def _validate_forbidden_patterns_params(
             rule_id=rule_id,
             errors=errors,
         )
+    _validate_require_changes_param(
+        normalized,
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
     return normalized, errors
 
 
@@ -914,6 +943,12 @@ def _validate_static_contracts_params(
         normalized["functions"] = functions
     if must_raise:
         normalized["must_raise"] = must_raise
+    _validate_require_changes_param(
+        normalized,
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
     return normalized, errors
 
 
@@ -965,7 +1000,35 @@ def _validate_mandatory_returns_params(
     normalized = dict(params)
     if functions:
         normalized["functions"] = functions
+    _validate_require_changes_param(
+        normalized,
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
     return normalized, errors
+
+
+def _validate_require_changes_param(
+    params: Mapping[str, object],
+    *,
+    rule_index: int,
+    rule_id: object | None,
+    errors: list[PatchValidationError],
+) -> None:
+    if "require_changes" not in params:
+        return
+    require_changes = params.get("require_changes")
+    if not isinstance(require_changes, bool):
+        errors.append(
+            _schema_error(
+                "require_changes must be a boolean",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="require_changes",
+                actual_type=type(require_changes).__name__,
+            )
+        )
 
 
 def _validate_rule_schema(
@@ -1074,7 +1137,7 @@ def _validate_rule_schema(
         params_mapping = params if isinstance(params, Mapping) else {}
         normalized_params: dict[str, object] = dict(params_mapping)
         param_errors: list[PatchValidationError] = []
-        if rule_type == "syntax_compile":
+        if rule_type in {"syntax", "syntax_compile"}:
             normalized_params, param_errors = _validate_syntax_compile_params(
                 params_mapping, rule_index=rule_index, rule_id=raw_rule_id
             )
@@ -1629,6 +1692,8 @@ def _dispatch_rule(
     patched_nodes: dict[str, ast.AST],
     original_signatures: dict[str, dict[str, dict[str, object]]],
     patched_signatures: dict[str, dict[str, dict[str, object]]],
+    original_index: dict[str, object],
+    patched_index: dict[str, object],
     syntax_errors: list[PatchSyntaxError],
 ) -> tuple[list[PatchRuleError], dict[str, object]]:
     rule_errors: list[PatchRuleError] = []
@@ -1639,7 +1704,7 @@ def _dispatch_rule(
         "status": "passed",
         "data": {},
     }
-    if rule_type == "syntax_compile":
+    if rule_type in {"syntax", "syntax_compile"}:
         summary["data"] = _apply_syntax_compile(rule, syntax_errors, rule_errors, rule_index=rule_index)
     elif rule_type == "required_imports":
         summary["data"] = _apply_required_imports(rule, patched_tree, rule_errors, rule_index=rule_index)
@@ -1664,12 +1729,134 @@ def _dispatch_rule(
                 details={"rule_index": rule_index, "rule_type": rule_type, "code": "unsupported_rule"},
             )
         )
+    change_summary = _apply_change_requirement(
+        rule,
+        original_tree,
+        patched_tree,
+        original_nodes,
+        patched_nodes,
+        original_index,
+        patched_index,
+        rule_errors,
+        rule_index=rule_index,
+    )
+    if change_summary is not None:
+        summary["data"]["change_requirement"] = change_summary
     if rule_errors:
         summary["status"] = "failed"
         summary["error_count"] = len(rule_errors)
     else:
         summary["error_count"] = 0
     return rule_errors, summary
+
+
+def _apply_change_requirement(
+    rule: Mapping[str, object],
+    original_tree: ast.Module,
+    patched_tree: ast.Module,
+    original_nodes: dict[str, ast.AST],
+    patched_nodes: dict[str, ast.AST],
+    original_index: dict[str, object],
+    patched_index: dict[str, object],
+    rule_errors: list[PatchRuleError],
+    *,
+    rule_index: int,
+) -> dict[str, object] | None:
+    if not rule.get("require_changes"):
+        return None
+    functions = rule.get("functions") or rule.get("function")
+    classes = rule.get("classes") or rule.get("class")
+    if isinstance(functions, str):
+        functions = [functions]
+    if isinstance(classes, str):
+        classes = [classes]
+    if not isinstance(functions, list):
+        functions = []
+    if not isinstance(classes, list):
+        classes = []
+    unchanged: list[dict[str, object]] = []
+    missing: list[dict[str, object]] = []
+    for name in functions:
+        original_node = original_nodes.get(f"function:{name}")
+        patched_node = patched_nodes.get(f"function:{name}")
+        if original_node is None or patched_node is None:
+            missing_item = {"symbol": name, "kind": "function"}
+            missing.append(missing_item)
+            rule_errors.append(
+                PatchRuleError(
+                    "required change target missing",
+                    details={
+                        "rule_index": rule_index,
+                        "code": "change_target_missing",
+                        "target": missing_item,
+                    },
+                )
+            )
+            continue
+        if _node_dump(original_node) == _node_dump(patched_node):
+            unchanged_item = {"symbol": name, "kind": "function"}
+            unchanged.append(unchanged_item)
+            rule_errors.append(
+                PatchRuleError(
+                    "required change not detected",
+                    details={
+                        "rule_index": rule_index,
+                        "code": "unchanged_target",
+                        "target": unchanged_item,
+                    },
+                )
+            )
+    for name in classes:
+        original_node = original_nodes.get(f"class:{name}")
+        patched_node = patched_nodes.get(f"class:{name}")
+        if original_node is None or patched_node is None:
+            missing_item = {"symbol": name, "kind": "class"}
+            missing.append(missing_item)
+            rule_errors.append(
+                PatchRuleError(
+                    "required change target missing",
+                    details={
+                        "rule_index": rule_index,
+                        "code": "change_target_missing",
+                        "target": missing_item,
+                    },
+                )
+            )
+            continue
+        if _node_dump(original_node) == _node_dump(patched_node):
+            unchanged_item = {"symbol": name, "kind": "class"}
+            unchanged.append(unchanged_item)
+            rule_errors.append(
+                PatchRuleError(
+                    "required change not detected",
+                    details={
+                        "rule_index": rule_index,
+                        "code": "unchanged_target",
+                        "target": unchanged_item,
+                    },
+                )
+            )
+    module_hash_original = original_index.get("hash")
+    module_hash_patched = patched_index.get("hash")
+    module_changed = module_hash_original != module_hash_patched
+    if not functions and not classes:
+        if not module_changed:
+            rule_errors.append(
+                PatchRuleError(
+                    "required change not detected",
+                    details={
+                        "rule_index": rule_index,
+                        "code": "unchanged_module",
+                        "original_hash": module_hash_original,
+                        "patched_hash": module_hash_patched,
+                    },
+                )
+            )
+    return {
+        "module_changed": module_changed,
+        "unchanged": unchanged,
+        "missing": missing,
+    }
 
 
 def _extract_imports(tree: ast.Module) -> list[dict[str, object]]:
