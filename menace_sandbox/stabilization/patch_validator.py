@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
+import time
 from pathlib import Path
 import re
-from typing import Iterable
 
 from menace.errors import PatchRuleError, PatchSyntaxError, PatchValidationError, ValidationError
 
@@ -202,159 +203,203 @@ def validate_patch_text(
     )
 
 
+def _hash_source(source: str) -> str:
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _normalize_rules(
+    rules: Sequence[Mapping[str, object]] | Mapping[str, object]
+) -> tuple[list[dict[str, object]], PatchRuleError | None]:
+    if isinstance(rules, Mapping):
+        if "rules" in rules:
+            candidate = rules.get("rules")
+            if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes, bytearray)):
+                return list(candidate), None
+            return (
+                [],
+                PatchRuleError(
+                    "rules must be a list",
+                    details={"field": "rules", "actual_type": type(candidate).__name__},
+                ),
+            )
+        if all(isinstance(value, Mapping) for value in rules.values()):
+            return [dict(value) for value in rules.values()], None
+        return (
+            [],
+            PatchRuleError(
+                "rules must be a list or mapping of rule definitions",
+                details={"field": "rules", "actual_type": type(rules).__name__},
+            ),
+        )
+    if isinstance(rules, Sequence) and not isinstance(rules, (str, bytes, bytearray)):
+        return list(rules), None
+    return (
+        [],
+        PatchRuleError(
+            "rules must be a list or mapping of rule definitions",
+            details={"field": "rules", "actual_type": type(rules).__name__},
+        ),
+    )
+
+
 def validate_patch(
     original: str,
     patched: str,
-    rules: list[dict[str, object]],
+    rules: Sequence[Mapping[str, object]] | Mapping[str, object],
     *,
     module_name: str | None = None,
+    metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Validate patch updates using deterministic, static AST-based rules.
+    """Validate patch updates using deterministic, static AST-based rules."""
 
-    Args:
-        original: The original (pre-patch) source code as a string.
-        patched: The patched source code as a string.
-        rules: A list of rule dictionaries describing validation requirements.
-        module_name: Optional module name used for error reporting context.
-
-    Returns:
-        A normalized patch validation payload with the schema:
-        ``{"valid": bool, "flags": list[str], "context": dict[str, object]}``,
-        where ``context`` includes fields such as ``errors``, ``rule_errors``,
-        ``module_name``, ``original_lines``, and ``patched_lines``.
-
-    This function is pure/static: it does not execute code or perform side
-    effects; it only inspects the provided source strings.
-
-    Example:
-        >>> from menace_sandbox.stabilization import validate_patch
-        >>> result = validate_patch(
-        ...     original="def add(a, b):\\n    return a + b\\n",
-        ...     patched="def add(a, b):\\n    return a + b + 1\\n",
-        ...     rules=[{"type": "signature_match", "name": "add"}],
-        ... )
-        >>> result["valid"]
-        True
-    """
-
+    start_time = time.perf_counter()
     errors: list[dict[str, object]] = []
     rule_errors: list[PatchRuleError] = []
     syntax_errors: list[PatchSyntaxError] = []
     original_index = _empty_index()
     patched_index = _empty_index()
-    appended_rule_errors = False
-    appended_syntax_errors = False
     current_rule_id: str | None = None
     current_rule_index: int | None = None
 
+    source_hashes = {
+        "original_source_hash": _hash_source(original) if isinstance(original, str) else "",
+        "patched_source_hash": _hash_source(patched) if isinstance(patched, str) else "",
+    }
+
+    if metadata is None and isinstance(rules, Mapping):
+        rules_meta = rules.get("meta")
+        if isinstance(rules_meta, Mapping):
+            metadata = rules_meta
+
+    rules_list, rules_error = _normalize_rules(rules)
+    if rules_error is not None:
+        rule_errors.append(rules_error)
+        errors.append(rules_error.to_dict())
+
+    if not isinstance(original, str):
+        errors.append(
+            PatchValidationError(
+                "original code must be a string",
+                details={"field": "original", "actual_type": type(original).__name__},
+            ).to_dict()
+        )
+    if not isinstance(patched, str):
+        errors.append(
+            PatchValidationError(
+                "patched code must be a string",
+                details={"field": "patched", "actual_type": type(patched).__name__},
+            ).to_dict()
+        )
+    if metadata is not None and not isinstance(metadata, Mapping):
+        errors.append(
+            PatchValidationError(
+                "metadata must be a mapping",
+                details={"field": "metadata", "actual_type": type(metadata).__name__},
+            ).to_dict()
+        )
+
     try:
-        validated_rules, validation_errors = validate_rules(rules)
-        rule_errors.extend(validation_errors)
+        if isinstance(original, str) and isinstance(patched, str):
+            validated_rules, validation_errors = validate_rules(rules_list)
+            rule_errors.extend(validation_errors)
 
-        original_tree, original_index, original_nodes = _build_ast_index(
-            original,
-            "original",
-            module_name=module_name,
-            errors=syntax_errors,
-        )
-        patched_tree, patched_index, patched_nodes = _build_ast_index(
-            patched,
-            "patched",
-            module_name=module_name,
-            errors=syntax_errors,
-        )
-
-        if syntax_errors:
-            errors.extend(error.to_dict() for error in syntax_errors)
-            appended_syntax_errors = True
-
-        if original_tree and patched_tree:
-            for validated_rule in validated_rules:
-                current_rule_id = validated_rule.rule_id
-                current_rule_index = validated_rule.rule_index
-                rule = validated_rule.payload
-                rule_type = validated_rule.rule_type
-                rule_index = validated_rule.rule_index
-                if rule_type == "required_imports":
-                    _apply_required_imports(
-                        rule,
-                        patched_index,
-                        rule_errors,
-                        rule_index=rule_index,
-                    )
-                elif rule_type == "signature_match":
-                    _apply_signature_matching(
-                        rule,
-                        original_nodes,
-                        patched_nodes,
-                        rule_errors,
-                        rule_index=rule_index,
-                    )
-                elif rule_type == "forbidden_patterns":
-                    _apply_forbidden_patterns(
-                        rule,
-                        patched_tree,
-                        rule_errors,
-                        rule_index=rule_index,
-                    )
-                elif rule_type == "mandatory_returns":
-                    _apply_mandatory_returns(
-                        rule,
-                        patched_nodes,
-                        rule_errors,
-                        rule_index=rule_index,
-                    )
-                elif rule_type == "unchanged_code":
-                    _apply_unchanged_code(
-                        rule,
-                        original_tree,
-                        patched_tree,
-                        original_nodes,
-                        patched_nodes,
-                        rule_errors,
-                        rule_index=rule_index,
-                    )
-                else:
-                    rule_errors.append(
-                        PatchRuleError(
-                            "unsupported rule type",
-                            details={"rule_index": rule_index, "rule_type": rule_type},
-                        )
-                    )
-                current_rule_id = None
-                current_rule_index = None
-
-        if rule_errors:
-            errors.extend(error.to_dict() for error in rule_errors)
-            appended_rule_errors = True
-    except Exception as exc:
-        if syntax_errors and not appended_syntax_errors:
-            errors.extend(error.to_dict() for error in syntax_errors)
-        if rule_errors and not appended_rule_errors:
-            errors.extend(error.to_dict() for error in rule_errors)
-        if isinstance(exc, ValidationError):
-            if current_rule_id is not None or current_rule_index is not None:
-                details = dict(exc.details or {})
-                if current_rule_id is not None:
-                    details.setdefault("rule_id", current_rule_id)
-                if current_rule_index is not None:
-                    details.setdefault("rule_index", current_rule_index)
-                exc.details = details
-            errors.append(exc.to_dict())
-        else:
-            errors.append(
-                PatchValidationError(
-                    "unexpected validation error",
-                    details={
-                        "exception_type": exc.__class__.__name__,
-                        "exception_message": str(exc),
-                        "rule_id": current_rule_id,
-                        "rule_index": current_rule_index,
-                        "module": module_name,
-                        "stage": "validate_patch",
-                    },
-                ).to_dict()
+            original_tree, original_index, original_nodes = _build_ast_index(
+                original,
+                "original",
+                module_name=module_name,
+                errors=syntax_errors,
             )
+            patched_tree, patched_index, patched_nodes = _build_ast_index(
+                patched,
+                "patched",
+                module_name=module_name,
+                errors=syntax_errors,
+            )
+
+            if syntax_errors:
+                errors.extend(error.to_dict() for error in syntax_errors)
+
+            if original_tree and patched_tree:
+                for validated_rule in validated_rules:
+                    current_rule_id = validated_rule.rule_id
+                    current_rule_index = validated_rule.rule_index
+                    rule = validated_rule.payload
+                    rule_type = validated_rule.rule_type
+                    rule_index = validated_rule.rule_index
+                    if rule_type == "required_imports":
+                        _apply_required_imports(
+                            rule,
+                            patched_index,
+                            rule_errors,
+                            rule_index=rule_index,
+                        )
+                    elif rule_type == "signature_match":
+                        _apply_signature_matching(
+                            rule,
+                            original_nodes,
+                            patched_nodes,
+                            rule_errors,
+                            rule_index=rule_index,
+                        )
+                    elif rule_type == "forbidden_patterns":
+                        _apply_forbidden_patterns(
+                            rule,
+                            patched_tree,
+                            rule_errors,
+                            rule_index=rule_index,
+                        )
+                    elif rule_type == "mandatory_returns":
+                        _apply_mandatory_returns(
+                            rule,
+                            patched_nodes,
+                            rule_errors,
+                            rule_index=rule_index,
+                        )
+                    elif rule_type == "unchanged_code":
+                        _apply_unchanged_code(
+                            rule,
+                            original_tree,
+                            patched_tree,
+                            original_nodes,
+                            patched_nodes,
+                            rule_errors,
+                            rule_index=rule_index,
+                        )
+                    else:
+                        rule_errors.append(
+                            PatchRuleError(
+                                "unsupported rule type",
+                                details={"rule_index": rule_index, "rule_type": rule_type},
+                            )
+                        )
+                    current_rule_id = None
+                    current_rule_index = None
+
+            if rule_errors:
+                errors.extend(error.to_dict() for error in rule_errors)
+    except ValidationError as exc:
+        if current_rule_id is not None or current_rule_index is not None:
+            details = dict(exc.details or {})
+            if current_rule_id is not None:
+                details.setdefault("rule_id", current_rule_id)
+            if current_rule_index is not None:
+                details.setdefault("rule_index", current_rule_index)
+            exc.details = details
+        errors.append(exc.to_dict())
+    except Exception as exc:
+        errors.append(
+            PatchValidationError(
+                "unexpected validation error",
+                details={
+                    "exception_type": exc.__class__.__name__,
+                    "exception_message": str(exc),
+                    "rule_id": current_rule_id,
+                    "rule_index": current_rule_index,
+                    "module": module_name,
+                    "stage": "validate_patch",
+                },
+            ).to_dict()
+        )
 
     data: dict[str, object] = {
         "original_index": original_index,
@@ -363,8 +408,9 @@ def validate_patch(
 
     meta: dict[str, object] = {
         "module": module_name,
-        "rule_count": len(rules),
+        "rule_count": len(rules_list),
         "error_count": len(errors),
+        "rule_error_count": len(rule_errors),
         "original_function_count": len(original_index["functions"]),
         "patched_function_count": len(patched_index["functions"]),
         "original_class_count": len(original_index["classes"]),
@@ -373,15 +419,14 @@ def validate_patch(
         "patched_import_count": len(patched_index["imports"]),
         "original_hash": original_index["hash"],
         "patched_hash": patched_index["hash"],
+        "elapsed_ms": int((time.perf_counter() - start_time) * 1000),
+        **source_hashes,
     }
+    if metadata is not None and isinstance(metadata, Mapping):
+        meta["metadata"] = dict(metadata)
 
-    status = "pass" if not errors else "fail"
-    return {
-        "status": status,
-        "data": data,
-        "errors": errors,
-        "meta": meta,
-    }
+    status = "passed" if not errors else "failed"
+    return {"status": status, "data": data, "errors": errors, "meta": meta}
 
 
 def _build_ast_index(
