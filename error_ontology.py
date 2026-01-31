@@ -27,162 +27,179 @@ if "_bootstrap" in globals() and _bootstrap is not None:  # pragma: no cover - s
     _bootstrap(__name__, __file__)
 
 from enum import Enum
-from typing import Dict, Mapping, Type
-
-from urllib.error import HTTPError
-
-try:  # pragma: no cover - optional dependency
-    from requests.exceptions import HTTPError as RequestsHTTPError  # type: ignore
-except Exception:  # pragma: no cover - requests may not be installed
-    RequestsHTTPError = None  # type: ignore
-
-try:  # pragma: no cover - support running as module or package
-    from .sandbox_recovery_manager import SandboxRecoveryError
-except Exception:  # pragma: no cover - module not a package
-    from sandbox_recovery_manager import SandboxRecoveryError  # type: ignore
+from typing import Any, Dict, Iterable, List, Sequence, Tuple, Union
 
 
 class ErrorCategory(str, Enum):
-    """High level categories for error classification."""
+    """Fixed error taxonomy for classification."""
 
-    SemanticBug = "semantic_bug"
-    RuntimeFault = "runtime_fault"
-    DependencyMismatch = "dependency_mismatch"
-    LogicMisfire = "logic_misfire"
-    ResourceLimit = "resource_limit"
-    Timeout = "timeout"
-    ExternalAPI = "external_api"
-    MetricBottleneck = "metric_bottleneck"
-    Unknown = "unknown"
+    SyntaxError = "SyntaxError"
+    ImportError = "ImportError"
+    TypeErrorMismatch = "TypeError-Mismatch"
+    ContractViolation = "ContractViolation"
+    EdgeCaseFailure = "EdgeCaseFailure"
+    UnhandledException = "UnhandledException"
+    InvalidInput = "InvalidInput"
+    MissingReturn = "MissingReturn"
+    ConfigError = "ConfigError"
+    Other = "Other"
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.value
 
-    # Legacy uppercase aliases for backwards compatibility
-    SEMANTIC_BUG = SemanticBug
-    RUNTIME_FAULT = RuntimeFault
-    DEPENDENCY_MISMATCH = DependencyMismatch
-    LOGIC_MISFIRE = LogicMisfire
-    RESOURCE_LIMIT = ResourceLimit
-    TIMEOUT = Timeout
-    EXTERNAL_API = ExternalAPI
-    METRIC_BOTTLENECK = MetricBottleneck
-    UNKNOWN = Unknown
 
-
-# Backwards compatibility for legacy imports
 ErrorType = ErrorCategory
 
-# Exception, keyword and module mappings for classification
-EXCEPTION_TYPE_MAP: Dict[Type[BaseException], ErrorCategory] = {
-    AssertionError: ErrorCategory.LogicMisfire,
-    KeyError: ErrorCategory.RuntimeFault,
-    IndexError: ErrorCategory.RuntimeFault,
-    FileNotFoundError: ErrorCategory.RuntimeFault,
-    ImportError: ErrorCategory.DependencyMismatch,
-    ModuleNotFoundError: ErrorCategory.DependencyMismatch,
-    ZeroDivisionError: ErrorCategory.RuntimeFault,
-    AttributeError: ErrorCategory.RuntimeFault,
-    PermissionError: ErrorCategory.RuntimeFault,
-    MemoryError: ErrorCategory.ResourceLimit,
-    TimeoutError: ErrorCategory.Timeout,
-    ConnectionError: ErrorCategory.ExternalAPI,
-    HTTPError: ErrorCategory.ExternalAPI,
-    OSError: ErrorCategory.DependencyMismatch,
-    SandboxRecoveryError: ErrorCategory.RuntimeFault,
-    TypeError: ErrorCategory.SemanticBug,
-    ValueError: ErrorCategory.SemanticBug,
-}
+_ExceptionInput = Union[BaseException, str]
+_Input = Union[_ExceptionInput, Sequence[_ExceptionInput]]
 
-if RequestsHTTPError is not None:
-    EXCEPTION_TYPE_MAP[RequestsHTTPError] = ErrorCategory.ExternalAPI  # type: ignore[index]
+_EXCEPTION_TYPE_MAP: Tuple[Tuple[type[BaseException], ErrorCategory], ...] = (
+    (SyntaxError, ErrorCategory.SyntaxError),
+    (ImportError, ErrorCategory.ImportError),
+    (ModuleNotFoundError, ErrorCategory.ImportError),
+    (TypeError, ErrorCategory.TypeErrorMismatch),
+    (AssertionError, ErrorCategory.ContractViolation),
+    (ValueError, ErrorCategory.InvalidInput),
+)
 
-KEYWORD_MAP: Mapping[str, ErrorCategory] = {
-    "dependency missing": ErrorCategory.DependencyMismatch,
-    "module not found": ErrorCategory.DependencyMismatch,
-    "missing dependency": ErrorCategory.DependencyMismatch,
-    "no module named": ErrorCategory.DependencyMismatch,
-    "cannot import name": ErrorCategory.DependencyMismatch,
-    "dependency conflict": ErrorCategory.DependencyMismatch,
-    "version conflict": ErrorCategory.DependencyMismatch,
-    "not implemented": ErrorCategory.LogicMisfire,
-    "assertion failed": ErrorCategory.LogicMisfire,
-    "division by zero": ErrorCategory.RuntimeFault,
-    "zero division": ErrorCategory.RuntimeFault,
-    "attribute error": ErrorCategory.RuntimeFault,
-    "attribute not found": ErrorCategory.RuntimeFault,
-    "unexpected type": ErrorCategory.SemanticBug,
-    "wrong type": ErrorCategory.SemanticBug,
-    "out of memory": ErrorCategory.ResourceLimit,
-    "memory limit": ErrorCategory.ResourceLimit,
-    "timed out": ErrorCategory.Timeout,
-    "timeout": ErrorCategory.Timeout,
-    "external api": ErrorCategory.ExternalAPI,
-    "service unavailable": ErrorCategory.ExternalAPI,
-    "connection refused": ErrorCategory.ExternalAPI,
-    "permission denied": ErrorCategory.RuntimeFault,
-    "access denied": ErrorCategory.RuntimeFault,
-    "401 unauthorized": ErrorCategory.ExternalAPI,
-    "403 forbidden": ErrorCategory.ExternalAPI,
-    "404 not found": ErrorCategory.ExternalAPI,
-    "429 too many requests": ErrorCategory.ExternalAPI,
-    "500 internal server error": ErrorCategory.ExternalAPI,
-    "502 bad gateway": ErrorCategory.ExternalAPI,
-    "504 gateway timeout": ErrorCategory.Timeout,
-    "cuda error": ErrorCategory.ResourceLimit,
-    "gpu error": ErrorCategory.ResourceLimit,
-    "gpu out of memory": ErrorCategory.ResourceLimit,
-    "accelerator error": ErrorCategory.ResourceLimit,
-    "metric bottleneck": ErrorCategory.MetricBottleneck,
-}
-
-MODULE_MAP: Mapping[str, ErrorCategory] = {
-    "importlib": ErrorCategory.DependencyMismatch,
-    "pkg_resources": ErrorCategory.DependencyMismatch,
-    "pip": ErrorCategory.DependencyMismatch,
-    "psutil": ErrorCategory.ResourceLimit,
-    "asyncio": ErrorCategory.Timeout,
-    "requests": ErrorCategory.ExternalAPI,
-}
+_PHRASE_MAP: Tuple[Tuple[str, ErrorCategory], ...] = (
+    ("syntax error", ErrorCategory.SyntaxError),
+    ("no module named", ErrorCategory.ImportError),
+    ("cannot import", ErrorCategory.ImportError),
+    ("import error", ErrorCategory.ImportError),
+    ("typeerror", ErrorCategory.TypeErrorMismatch),
+    ("type error", ErrorCategory.TypeErrorMismatch),
+    ("type mismatch", ErrorCategory.TypeErrorMismatch),
+    ("assertion failed", ErrorCategory.ContractViolation),
+    ("contract violation", ErrorCategory.ContractViolation),
+    ("precondition failed", ErrorCategory.ContractViolation),
+    ("postcondition failed", ErrorCategory.ContractViolation),
+    ("edge case", ErrorCategory.EdgeCaseFailure),
+    ("corner case", ErrorCategory.EdgeCaseFailure),
+    ("unhandled exception", ErrorCategory.UnhandledException),
+    ("uncaught exception", ErrorCategory.UnhandledException),
+    ("invalid input", ErrorCategory.InvalidInput),
+    ("invalid argument", ErrorCategory.InvalidInput),
+    ("bad request", ErrorCategory.InvalidInput),
+    ("missing return", ErrorCategory.MissingReturn),
+    ("did not return", ErrorCategory.MissingReturn),
+    ("returned none", ErrorCategory.MissingReturn),
+    ("missing config", ErrorCategory.ConfigError),
+    ("configuration error", ErrorCategory.ConfigError),
+    ("config error", ErrorCategory.ConfigError),
+)
 
 
-def classify_exception(exc: Exception, stack: str) -> ErrorCategory:
-    """Best effort classification of an exception.
+def _iter_segments(raw: _Input) -> Tuple[List[str], List[str]]:
+    errors: List[str] = []
+    segments: List[str] = []
+
+    if isinstance(raw, (list, tuple)):
+        iterable: Iterable[_ExceptionInput] = raw
+    else:
+        iterable = (raw,)
+
+    for item in iterable:
+        if isinstance(item, BaseException):
+            segments.append(f"{item.__class__.__name__}: {item}")
+        elif isinstance(item, str):
+            segments.append(item)
+        else:
+            errors.append(f"Unsupported input type: {type(item).__name__}")
+
+    return segments, errors
+
+
+def _classify_from_exception(exc: BaseException) -> Tuple[ErrorCategory, str]:
+    for etype, category in _EXCEPTION_TYPE_MAP:
+        if isinstance(exc, etype):
+            return category, f"exception:{etype.__name__}"
+    return ErrorCategory.Other, "exception:unmatched"
+
+
+def _classify_from_text(text: str) -> Tuple[ErrorCategory, str]:
+    if not text.strip():
+        return ErrorCategory.Other, "text:empty"
+    lowered = text.lower()
+    for phrase, category in _PHRASE_MAP:
+        if phrase in lowered:
+            return category, f"phrase:{phrase}"
+    return ErrorCategory.Other, "text:unmatched"
+
+
+def classify_error(raw: _Input) -> Dict[str, Any]:
+    """Classify structured or unstructured error inputs.
 
     Parameters
     ----------
-    exc:
-        The raised exception instance.
-    stack:
-        A formatted stack trace or textual context.
+    raw:
+        Exception instance, traceback string, log string, or list/tuple of those.
     """
 
-    # Match by explicit exception type
-    for etype, category in EXCEPTION_TYPE_MAP.items():
-        if isinstance(exc, etype):
-            return category
+    segments, errors = _iter_segments(raw)
+    if errors:
+        return {
+            "status": "error",
+            "data": {},
+            "errors": errors,
+            "meta": {
+                "input_length": len(segments),
+                "segment_count": len(segments),
+            },
+        }
 
-    low = stack.lower()
+    category = ErrorCategory.Other
+    matched_rule = "unmatched"
+    source = "unknown"
 
-    # Match by simple keyword search
-    for phrase, category in KEYWORD_MAP.items():
-        if phrase in low:
-            return category
+    for item in (raw if isinstance(raw, (list, tuple)) else (raw,)):
+        if isinstance(item, BaseException):
+            category, matched_rule = _classify_from_exception(item)
+            source = "exception"
+        elif isinstance(item, str):
+            category, matched_rule = _classify_from_text(item)
+            source = "text"
+        else:
+            category = ErrorCategory.Other
+            matched_rule = "unsupported"
+            source = "unknown"
 
-    # Match by module signals
-    module = getattr(exc, "__module__", "")
-    for mod, category in MODULE_MAP.items():
-        if mod in module or mod in low:
-            return category
+        if category is not ErrorCategory.Other:
+            break
 
-    return ErrorCategory.Unknown
+    meta: Dict[str, Any] = {
+        "input_length": sum(len(segment) for segment in segments),
+        "segment_count": len(segments),
+    }
+    if matched_rule.startswith("phrase:"):
+        meta["matched_phrase"] = matched_rule.split("phrase:", 1)[1]
+
+    return {
+        "status": "ok",
+        "data": {
+            "category": category,
+            "source": source,
+            "matched_rule": matched_rule,
+        },
+        "errors": [],
+        "meta": meta,
+    }
+
+
+def classify_exception(exc: Exception, stack: str) -> ErrorCategory:
+    """Legacy exception classification that delegates to the fixed taxonomy."""
+
+    result = classify_error([exc, stack])
+    data = result.get("data", {})
+    category = data.get("category")
+    if isinstance(category, ErrorCategory):
+        return category
+    return ErrorCategory.Other
 
 
 __all__ = [
     "ErrorCategory",
     "ErrorType",
+    "classify_error",
     "classify_exception",
-    "EXCEPTION_TYPE_MAP",
-    "KEYWORD_MAP",
-    "MODULE_MAP",
 ]
