@@ -346,7 +346,7 @@ def _normalize_inputs(raw: ErrorInputs) -> Tuple[List[Union[str, BaseException]]
     elif isinstance(raw, str):
         iterable = (raw,)
     elif isinstance(raw, Mapping):
-        iterable = (raw,)
+        iterable = tuple(raw.values())
     elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
         iterable = raw
     else:
@@ -359,6 +359,8 @@ def _normalize_inputs(raw: ErrorInputs) -> Tuple[List[Union[str, BaseException]]
             segments.append(item)
         elif isinstance(item, Mapping):
             segments.append(_mapping_to_text(item))
+        elif isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)):
+            segments.append(str(item))
         else:
             errors.append(f"Unsupported input type: {type(item).__name__}")
 
@@ -404,7 +406,7 @@ def _classify_from_text(normalized_text: str) -> Tuple[ErrorCategory, str]:
 class ClassificationData(TypedDict):
     category: str
     source: str
-    matched_rule: str
+    matched_rule: str | None
 
 
 class ClassificationResult(TypedDict):
@@ -426,27 +428,31 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
     -----
     Rule ordering is deterministic: exception rules are evaluated in the order
     listed in ``_CLASSIFICATION_RULES``, followed by phrase rules in that same
-    order. Text inputs are normalized once (lowercased) before matching.
+    order. Text inputs are normalized once (lowercased) and evaluated using
+    literal substring checks (no regex or recursive parsing).
+
+    For multi-error bundles (sequences or mappings with multiple values), the
+    merge policy is stable and deterministic: iterate in input order and select
+    the first non-``Other`` classification; if none match, return ``Other``.
     """
 
     segments, errors = _normalize_inputs(raw)
 
     if _is_empty_input(segments):
-        status: Literal["ok", "fallback"] = "fallback"
         data: ClassificationData = {
             "category": ErrorCategory.Other.value,
             "source": "text",
-            "matched_rule": "text:empty",
+            "matched_rule": None,
         }
         return {
-            "status": status,
+            "status": "ok",
             "data": data,
-            "errors": errors,
+            "errors": [],
             "meta": {
                 "input_length": 0,
                 "segment_count": len(segments),
-                "empty_input": True,
-                "note": "empty or whitespace-only input",
+                "input_kind": "empty",
+                "matched_rule": None,
             },
         }
 
@@ -462,7 +468,7 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
         classifications.append((category, matched_rule, source))
 
     category = ErrorCategory.Other
-    matched_rule = "bundle:all_other"
+    matched_rule: str | None = "bundle:all_other"
     source = "bundle"
     selected_index: int | None = None
     if len(classifications) == 1:
@@ -486,15 +492,18 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
         meta["bundle_size"] = len(segments)
         meta["bundle_selection"] = "first_non_other"
         meta["bundle_selected_index"] = selected_index
+        meta["merge_policy"] = "first_non_other_in_order"
     if matched_rule.startswith("bundle:"):
         meta["bundle_rule"] = matched_rule
-    if matched_rule.startswith("phrase:"):
+    if matched_rule and matched_rule.startswith("phrase:"):
         meta["matched_phrase"] = matched_rule.split("phrase:", 1)[1]
-    if matched_rule.startswith("exception:"):
+    if matched_rule and matched_rule.startswith("exception:"):
         meta["matched_exception"] = matched_rule.split("exception:", 1)[1]
     status = "ok"
     if errors or category is ErrorCategory.Other:
         status = "fallback"
+        if category is ErrorCategory.Other and not errors:
+            errors = ["Unable to classify input."]
 
     return {
         "status": status,
