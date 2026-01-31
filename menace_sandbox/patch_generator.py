@@ -242,7 +242,12 @@ def validate_rules(rules: list[Rule]) -> None:
                 "description is required",
                 details=_rule_details(index, rule, rule_id=rule_id, field="description"),
             )
-        if rule.meta is not None and not isinstance(rule.meta, Mapping):
+        if rule.meta is None:
+            raise PatchRuleError(
+                "meta is required",
+                details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
+            )
+        if not isinstance(rule.meta, Mapping):
             raise PatchRuleError(
                 "meta must be a mapping",
                 details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
@@ -523,7 +528,7 @@ def generate_patch(
             - anchor/anchor_kind/content: Required for insert_after.
             - pattern/flags: Required for delete_regex (flags are strings such as
               "IGNORECASE", "MULTILINE", or "DOTALL").
-            - meta: Optional mapping of rule metadata. Set meta["validate_syntax"]
+            - meta: Required mapping of rule metadata. Set meta["validate_syntax"]
               to True to force syntax validation of the modified source.
         validate_syntax: Explicit override for syntax validation. When None, validation
             runs automatically for supported languages (Python).
@@ -1261,12 +1266,18 @@ def _reject_non_literal_transformations(rule: Rule, index: int) -> None:
 
 
 def _parse_meta(rule: Mapping[str, Any], index: int, rule_id: str) -> Mapping[str, Any]:
-    """Parse optional meta data for a rule."""
+    """Parse required meta data for a rule."""
     if "meta" not in rule:
-        return {}
+        raise PatchRuleError(
+            "meta is required",
+            details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
+        )
     meta = rule.get("meta")
     if meta is None:
-        return {}
+        raise PatchRuleError(
+            "meta is required",
+            details=_rule_details(index, rule, rule_id=rule_id, field="meta"),
+        )
     if not isinstance(meta, Mapping):
         raise PatchRuleError(
             "meta must be a mapping",
