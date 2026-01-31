@@ -967,14 +967,18 @@ class CognitionLayer:
                         "value_repr": repr(roi_after),
                     }
                 )
-            roi_delta_result = {"status": "error", "data": None, "errors": roi_delta_errors}
+            roi_delta_result = {
+                "status": "fail",
+                "data": {},
+                "errors": roi_delta_errors,
+                "meta": {},
+            }
 
         roi_delta_errors = roi_delta_result.get("errors", [])
-        delta_map = roi_delta_result.get("data", {}).get("delta", {})
+        delta_map = roi_delta_result.get("data", {}).get("deltas", {})
         if roi_delta_result.get("status") == "ok" and "roi" in delta_map:
             kwargs["roi_delta"] = delta_map["roi"]
         else:
-            kwargs["roi_delta"] = None
             if roi_delta_result.get("status") == "ok" and "roi" not in delta_map:
                 roi_delta_errors = [
                     *roi_delta_errors,
