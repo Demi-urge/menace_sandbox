@@ -23,6 +23,7 @@ import importlib
 import importlib.util
 import logging
 import shutil
+import traceback
 import uuid
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Mapping
@@ -1847,6 +1848,39 @@ def _sandbox_main(
         scenario: str | None = None,
     ) -> None:
         workflow_id = section or "workflow"
+        max_retries = max(0, int(os.getenv("SANDBOX_WORKFLOW_RETRY_MAX", "1")))
+
+        def _extract_error_payload(exc: BaseException) -> dict[str, Any]:
+            error_text = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
+            return {
+                "source_code": snippet or "",
+                "error": error_text,
+                "stderr": error_text,
+                "stdout": "",
+                "returncode": 1,
+                "prior_roi": tracker.roi_history[-1]
+                if getattr(tracker, "roi_history", None)
+                else None,
+            }
+
+        def _allow_retry(pipeline_result: Mapping[str, Any]) -> bool:
+            validation = pipeline_result.get("validation")
+            valid_patch = bool(
+                validation.get("valid") if isinstance(validation, Mapping) else False
+            )
+            roi_delta = pipeline_result.get("roi_delta")
+            delta_total = 0.0
+            if isinstance(roi_delta, Mapping):
+                data = roi_delta.get("data")
+                if isinstance(data, Mapping):
+                    try:
+                        delta_total = float(data.get("total", 0.0))
+                    except (TypeError, ValueError):
+                        delta_total = 0.0
+            return valid_patch and delta_total > 0
+
         def _record_metrics() -> None:
             if sandbox_cpu_percent is None or sandbox_memory_mb is None:
                 return
@@ -1883,69 +1917,111 @@ def _sandbox_main(
                 pass
 
         def _run() -> bool:
-            try:
-                _sandbox_cycle_runner(ctx, section, snippet, tracker, scenario)
-                return True
-            except Exception as exc:
-                err_logger.log(exc, section, "sandbox_runner")
-                if sandbox_crashes_total is not None:
-                    try:
-                        sandbox_crashes_total.inc()
-                    except Exception:
-                        pass
-                return False
-            finally:
-                _record_metrics()
-                forecaster = getattr(ctx.sandbox, "error_forecaster", None)
-                qfix = getattr(ctx.sandbox, "quick_fix_engine", None)
-                if forecaster:
-                    try:
-                        forecaster.train()
-                        bots: list[str] = []
+            from menace_sandbox.mvp_brain import run_mvp_pipeline
+            from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+
+            logged_attempt = wrap_with_logging(
+                _sandbox_cycle_runner,
+                {"log_event_prefix": "sandbox.workflow.attempt."},
+            )
+            logged_pipeline = wrap_with_logging(
+                run_mvp_pipeline,
+                {"log_event_prefix": "sandbox.workflow.failure.pipeline."},
+            )
+
+            attempts = max_retries + 1
+            for attempt_index in range(1, attempts + 1):
+                try:
+                    logged_attempt(ctx, section, snippet, tracker, scenario)
+                    return True
+                except Exception as exc:
+                    # Workflow error handling path for sandbox orchestration.
+                    err_logger.log(exc, section, "sandbox_runner")
+                    if sandbox_crashes_total is not None:
                         try:
-                            df = forecaster.metrics_db.fetch(None)
-                            if hasattr(df, "empty"):
-                                if not getattr(df, "empty", True):
-                                    bots = list(dict.fromkeys(df["bot"].tolist()))
-                            elif isinstance(df, list):
-                                bots = list(
-                                    dict.fromkeys(r.get("bot") for r in df if r.get("bot"))
-                                )
+                            sandbox_crashes_total.inc()
                         except Exception:
-                            bots = []
-                        for b in bots:
-                            try:
-                                probs = forecaster.predict_error_prob(b, steps=1)
-                            except Exception:
-                                continue
-                            if probs and probs[0] > 0.8:
-                                modules: list[str] = []
-                                if getattr(ctx.sandbox, "graph", None):
-                                    try:
-                                        chain_nodes = forecaster.predict_failure_chain(
-                                            b, ctx.sandbox.graph, steps=3
-                                        )
-                                        modules = [
-                                            n.split(":", 1)[1]
-                                            for n in chain_nodes
-                                            if n.startswith("module:")
-                                        ]
-                                    except Exception:
-                                        modules = []
-                                if modules:
-                                    logger.info(
-                                        "predicted high risk",
-                                        extra=log_record(bot=b, modules=modules),
-                                    )
-                                if qfix:
-                                    try:
-                                        qfix.run(b)
-                                    except Exception:
-                                        logger.exception(
-                                            "quick fix engine failed for %s", b
-                                        )
+                            pass
+                    pipeline_result: Mapping[str, Any] = {}
+                    try:
+                        pipeline_result = logged_pipeline(_extract_error_payload(exc))
                     except Exception:
-                        logger.exception("error forecasting failed")
+                        logger.exception("workflow failure pipeline crashed")
+                    allow_retry = _allow_retry(pipeline_result)
+                    logger.info(
+                        "evaluated workflow retry gate",
+                        extra=log_record(
+                            workflow_id=workflow_id,
+                            attempt=attempt_index,
+                            max_attempts=attempts,
+                            allow_retry=allow_retry,
+                            validation_flags=list(
+                                (pipeline_result.get("validation") or {}).get(
+                                    "flags", []
+                                )
+                            )
+                            if isinstance(pipeline_result, Mapping)
+                            else [],
+                        ),
+                    )
+                    if not allow_retry or attempt_index >= attempts:
+                        return False
+                finally:
+                    _record_metrics()
+                    forecaster = getattr(ctx.sandbox, "error_forecaster", None)
+                    qfix = getattr(ctx.sandbox, "quick_fix_engine", None)
+                    if forecaster:
+                        try:
+                            forecaster.train()
+                            bots: list[str] = []
+                            try:
+                                df = forecaster.metrics_db.fetch(None)
+                                if hasattr(df, "empty"):
+                                    if not getattr(df, "empty", True):
+                                        bots = list(dict.fromkeys(df["bot"].tolist()))
+                                elif isinstance(df, list):
+                                    bots = list(
+                                        dict.fromkeys(
+                                            r.get("bot") for r in df if r.get("bot")
+                                        )
+                                    )
+                            except Exception:
+                                bots = []
+                            for b in bots:
+                                try:
+                                    probs = forecaster.predict_error_prob(b, steps=1)
+                                except Exception:
+                                    continue
+                                if probs and probs[0] > 0.8:
+                                    modules: list[str] = []
+                                    if getattr(ctx.sandbox, "graph", None):
+                                        try:
+                                            chain_nodes = (
+                                                forecaster.predict_failure_chain(
+                                                    b, ctx.sandbox.graph, steps=3
+                                                )
+                                            )
+                                            modules = [
+                                                n.split(":", 1)[1]
+                                                for n in chain_nodes
+                                                if n.startswith("module:")
+                                            ]
+                                        except Exception:
+                                            modules = []
+                                    if modules:
+                                        logger.info(
+                                            "predicted high risk",
+                                            extra=log_record(bot=b, modules=modules),
+                                        )
+                                    if qfix:
+                                        try:
+                                            qfix.run(b)
+                                        except Exception:
+                                            logger.exception(
+                                                "quick fix engine failed for %s", b
+                                            )
+                        except Exception:
+                            logger.exception("error forecasting failed")
 
         scorer = CompositeWorkflowScorer(
             ctx.data_bot.db, ctx.pathway_db, tracker=tracker
