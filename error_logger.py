@@ -61,9 +61,12 @@ else:  # pragma: no cover - runtime stub
 from pydantic import BaseModel, Field
 
 try:
-    from .error_ontology import ErrorCategory, classify_exception
+    from .error_ontology import LegacyErrorCategory as ErrorCategory, classify_exception
 except ImportError:  # pragma: no cover - package fallback
-    from error_ontology import ErrorCategory, classify_exception  # type: ignore
+    from error_ontology import (  # type: ignore
+        LegacyErrorCategory as ErrorCategory,
+        classify_exception,
+    )
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
