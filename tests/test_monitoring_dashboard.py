@@ -15,7 +15,7 @@ def test_data_routes(tmp_path):
         eb.TelemetryEvent(
             bot_id="b",
             task_id="t",
-            error_type=eb.ErrorType.RUNTIME_FAULT,
+            error_type=eb.ErrorType.Other,
             stack_trace="",
             root_module="m",
         )
@@ -43,5 +43,4 @@ def test_schedule_reports(monkeypatch, tmp_path):
     monkeypatch.setattr(md.ReportGenerationBot, "schedule", fake_schedule)
     dash.schedule_reports(metrics=["cpu"], recipients=["a@example.com"], interval=1)
     assert called['ok'] == ["cpu"]
-
 

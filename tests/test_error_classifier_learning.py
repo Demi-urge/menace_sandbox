@@ -27,8 +27,8 @@ def test_classifier_updates_from_db(tmp_path, monkeypatch, scope, src):
     event = TelemetryEvent(
         task_id=None,
         bot_id=None,
-        error_type=ErrorType.SEMANTIC_BUG,
-        category=ErrorType.SEMANTIC_BUG,
+        error_type=ErrorType.InvalidInput,
+        category=ErrorType.InvalidInput,
         root_cause="special failure",
         stack_trace="Traceback... special failure",
         root_module="mod",
@@ -49,4 +49,4 @@ def test_classifier_updates_from_db(tmp_path, monkeypatch, scope, src):
     assert "special failure" in clf.semantic_map
 
     data = yaml.safe_load(cfg_path.read_text())
-    assert "special failure" in data["SemanticBug"]["semantic"]
+    assert "special failure" in data["InvalidInput"]["semantic"]

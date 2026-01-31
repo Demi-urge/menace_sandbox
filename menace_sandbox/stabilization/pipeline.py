@@ -6,7 +6,7 @@ from typing import Any, Dict
 import re
 
 from completion_validator import validate_completion
-from error_ontology import classify_exception
+from error_ontology import classify_error
 
 from .logging_wrapper import StabilizationLoggingWrapper
 
@@ -42,7 +42,7 @@ def _classify_error(error: str | None) -> str | None:
     if not error:
         return None
     try:
-        return str(classify_exception(Exception(error), error))
+        return classify_error(error)["data"]["category"]
     except Exception:
         return None
 

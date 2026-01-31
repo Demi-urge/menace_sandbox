@@ -173,7 +173,7 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch, scope, src):
     for _ in range(3):
         db.add_telemetry(
             elog.TelemetryEvent(
-                error_type=elog.ErrorType.RUNTIME_FAULT,
+                error_type=elog.ErrorType.EdgeCaseFailure,
                 stack_trace=trace,
                 root_module="bot",
                 module="bot",
@@ -209,7 +209,7 @@ def test_feedback_threshold(tmp_path, monkeypatch):
     for _ in range(2):
         db.add_telemetry(
             elog.TelemetryEvent(
-                error_type=elog.ErrorType.RUNTIME_FAULT,
+                error_type=elog.ErrorType.EdgeCaseFailure,
                 stack_trace=trace,
                 root_module="bot",
                 module="bot",
