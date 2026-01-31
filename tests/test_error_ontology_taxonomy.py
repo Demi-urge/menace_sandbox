@@ -1,0 +1,124 @@
+import pytest
+
+from menace.error_ontology import ErrorCategory, classify_error
+
+
+@pytest.mark.parametrize(
+    "raw, expected_status, expected_token",
+    [
+        ("SyntaxError: invalid syntax", ErrorCategory.SyntaxError.value, "SyntaxError"),
+        ("ImportError: no module named x", ErrorCategory.ImportError.value, "ImportError"),
+        ("TypeError: unsupported operand", ErrorCategory.TypeErrorMismatch.value, "TypeError"),
+        (
+            "ContractViolation: invariant failed",
+            ErrorCategory.ContractViolation.value,
+            "ContractViolation",
+        ),
+        (
+            "EdgeCaseFailure: missing key",
+            ErrorCategory.EdgeCaseFailure.value,
+            "EdgeCaseFailure",
+        ),
+        (
+            "UnhandledException: boom",
+            ErrorCategory.UnhandledException.value,
+            "UnhandledException",
+        ),
+        ("InvalidInput: bad payload", ErrorCategory.InvalidInput.value, "InvalidInput"),
+        ("MissingReturn: handler", ErrorCategory.MissingReturn.value, "MissingReturn"),
+        ("ConfigError: missing config", ErrorCategory.ConfigError.value, "ConfigError"),
+        ("Other: unspecified", ErrorCategory.Other.value, "Other"),
+    ],
+)
+def test_literal_tokens_map_to_expected_categories(raw, expected_status, expected_token):
+    result = classify_error(raw)
+
+    assert result["status"] == expected_status
+    assert result["data"]["matched_token"] == expected_token
+    assert result["data"]["matched_rule_id"] == f"token:{expected_token}"
+
+
+@pytest.mark.parametrize(
+    "exc, expected_status",
+    [
+        (SyntaxError("bad"), ErrorCategory.SyntaxError.value),
+        (ImportError("missing"), ErrorCategory.ImportError.value),
+        (TypeError("bad"), ErrorCategory.TypeErrorMismatch.value),
+        (AssertionError("contract"), ErrorCategory.ContractViolation.value),
+        (ValueError("invalid"), ErrorCategory.InvalidInput.value),
+        (KeyError("missing"), ErrorCategory.EdgeCaseFailure.value),
+    ],
+)
+def test_exception_instances_map_to_expected_categories(exc, expected_status):
+    result = classify_error(exc)
+
+    assert result["status"] == expected_status
+    assert result["data"]["matched_rule_id"].startswith("exception:")
+
+
+@pytest.mark.parametrize("raw", [None, "", "   "])
+def test_empty_inputs_return_other(raw):
+    result = classify_error(raw)
+
+    assert result["status"] == ErrorCategory.Other.value
+    assert result["data"]["matched_rule_id"] == "empty:other"
+
+
+def test_partial_traceback_without_traceback_token_classifies_by_literal_tokens():
+    raw = "File 'x.py', line 1: TypeError: boom"
+    result = classify_error(raw)
+
+    assert result["status"] == ErrorCategory.TypeErrorMismatch.value
+    assert result["data"]["matched_token"] == "TypeError"
+
+
+def test_multi_error_bundle_selects_lowest_rank_and_aggregates_data():
+    raw = ["InvalidInput: bad", "SyntaxError: nope", "Other: fallback"]
+    result = classify_error(raw)
+
+    assert result["status"] == ErrorCategory.SyntaxError.value
+    assert result["data"]["bundle"] is not None
+    assert [item["status"] for item in result["data"]["bundle"]] == [
+        ErrorCategory.InvalidInput.value,
+        ErrorCategory.SyntaxError.value,
+        ErrorCategory.Other.value,
+    ]
+    assert result["meta"]["bundle_selected_index"] == 1
+
+
+def test_multi_error_bundle_tuple_has_deterministic_status():
+    raw = (ValueError("bad"), "UnhandledException: boom")
+    result = classify_error(raw)
+
+    assert result["status"] == ErrorCategory.UnhandledException.value
+    assert result["data"]["bundle"] is not None
+    assert len(result["data"]["bundle"]) == 2
+
+
+def test_mapping_uses_deterministic_key_order():
+    payload = {
+        "error": "TypeError: bad",
+        "traceback": "SyntaxError: nope",
+        "message": "UnhandledException: boom",
+    }
+    result = classify_error(payload)
+
+    assert result["status"] == ErrorCategory.SyntaxError.value
+    assert result["data"]["matched_rule_id"] == "token:SyntaxError"
+
+
+def test_identical_inputs_produce_identical_outputs():
+    raw = "InvalidInput: bad payload"
+
+    assert classify_error(raw) == classify_error(raw)
+
+
+def test_contextual_data_does_not_change_classification():
+    raw = "TypeError: cannot add"
+    base = classify_error(raw)
+    bundle = classify_error([raw, "Other: ignore"])
+    mapping = classify_error({"error": raw, "errors": "Other: ignore"})
+
+    assert base["status"] == ErrorCategory.TypeErrorMismatch.value
+    assert bundle["data"]["bundle"][0]["status"] == base["status"]
+    assert mapping["status"] == base["status"]
