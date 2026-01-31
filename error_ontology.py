@@ -321,27 +321,6 @@ class ClassificationResult(TypedDict):
     meta: Dict[str, Any]
 
 
-def _select_bundle_category(
-    classifications: Sequence[Tuple[ErrorCategory, str, str]],
-) -> Tuple[ErrorCategory, str, str]:
-    if not classifications:
-        return ErrorCategory.Other, "bundle:empty", "bundle"
-
-    non_other = [
-        (category, matched_rule, source)
-        for category, matched_rule, source in classifications
-        if category is not ErrorCategory.Other
-    ]
-    if not non_other:
-        return ErrorCategory.Other, "bundle:unmatched", "bundle"
-
-    unique = {category for category, _, _ in non_other}
-    if len(unique) > 1:
-        return ErrorCategory.Other, "bundle:ambiguous", "bundle"
-
-    return non_other[0]
-
-
 def classify_error(raw: ErrorInputs | None) -> ClassificationResult:
     """Classify structured or unstructured error inputs.
 
@@ -368,6 +347,7 @@ def classify_error(raw: ErrorInputs | None) -> ClassificationResult:
                 "input_length": 0,
                 "segment_count": len(segments),
                 "empty_input": True,
+                "note": "empty or whitespace-only input",
             },
         }
 
@@ -381,7 +361,22 @@ def classify_error(raw: ErrorInputs | None) -> ClassificationResult:
             source = "text"
         classifications.append((category, matched_rule, source))
 
-    category, matched_rule, source = _select_bundle_category(classifications)
+    category = ErrorCategory.Other
+    matched_rule = "bundle:all_other"
+    source = "bundle"
+    selected_index: int | None = None
+    if len(classifications) == 1:
+        category, matched_rule, source = classifications[0]
+    else:
+        for index, (candidate, candidate_rule, candidate_source) in enumerate(
+            classifications
+        ):
+            if candidate is not ErrorCategory.Other:
+                category = candidate
+                matched_rule = candidate_rule
+                source = candidate_source
+                selected_index = index
+                break
 
     meta: Dict[str, Any] = {
         "input_length": sum(len(_segment_to_text(segment)) for segment in segments),
@@ -389,21 +384,14 @@ def classify_error(raw: ErrorInputs | None) -> ClassificationResult:
     }
     if len(segments) > 1:
         meta["bundle_size"] = len(segments)
+        meta["bundle_selection"] = "first_non_other"
+        meta["bundle_selected_index"] = selected_index
     if matched_rule.startswith("bundle:"):
         meta["bundle_rule"] = matched_rule
     if matched_rule.startswith("phrase:"):
         meta["matched_phrase"] = matched_rule.split("phrase:", 1)[1]
     if matched_rule.startswith("exception:"):
         meta["matched_exception"] = matched_rule.split("exception:", 1)[1]
-    if matched_rule == "bundle:ambiguous":
-        meta["bundle_categories"] = sorted(
-            {
-                category.value
-                for category, _, _ in classifications
-                if category is not ErrorCategory.Other
-            }
-        )
-
     status = "ok"
     if errors or category is ErrorCategory.Other:
         status = "fallback"
