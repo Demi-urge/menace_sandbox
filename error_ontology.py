@@ -27,7 +27,7 @@ if "_bootstrap" in globals() and _bootstrap is not None:  # pragma: no cover - s
     _bootstrap(__name__, __file__)
 
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, Union
 
 
 class ErrorCategory(str, Enum):
@@ -50,7 +50,7 @@ class ErrorCategory(str, Enum):
 
 ErrorType = ErrorCategory
 
-_ExceptionInput = Union[BaseException, str]
+_ExceptionInput = Union[BaseException, str, Mapping[str, Any]]
 _Input = Union[_ExceptionInput, Sequence[_ExceptionInput]]
 
 _EXCEPTION_TYPE_MAP: Tuple[Tuple[type[BaseException], ErrorCategory], ...] = (
@@ -90,24 +90,67 @@ _PHRASE_MAP: Tuple[Tuple[str, ErrorCategory], ...] = (
 )
 
 
-def _iter_segments(raw: _Input) -> Tuple[List[str], List[str]]:
-    errors: List[str] = []
-    segments: List[str] = []
+_CATEGORY_PRIORITY: Tuple[ErrorCategory, ...] = (
+    ErrorCategory.SyntaxError,
+    ErrorCategory.ImportError,
+    ErrorCategory.TypeErrorMismatch,
+    ErrorCategory.ContractViolation,
+    ErrorCategory.EdgeCaseFailure,
+    ErrorCategory.UnhandledException,
+    ErrorCategory.InvalidInput,
+    ErrorCategory.MissingReturn,
+    ErrorCategory.ConfigError,
+    ErrorCategory.Other,
+)
 
-    if isinstance(raw, (list, tuple)):
-        iterable: Iterable[_ExceptionInput] = raw
+
+def _mapping_to_text(payload: Mapping[str, Any]) -> str:
+    if not payload:
+        return ""
+    pairs = ", ".join(f"{key!r}: {value!r}" for key, value in payload.items())
+    return f"{{{pairs}}}"
+
+
+def _normalize_inputs(raw: _Input) -> Tuple[List[Union[str, BaseException]], List[str]]:
+    errors: List[str] = []
+    segments: List[Union[str, BaseException]] = []
+
+    if isinstance(raw, BaseException):
+        iterable: Iterable[_ExceptionInput] = (raw,)
+    elif isinstance(raw, str):
+        iterable = (raw,)
+    elif isinstance(raw, Mapping):
+        iterable = (raw,)
+    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+        iterable = raw
     else:
         iterable = (raw,)
 
     for item in iterable:
         if isinstance(item, BaseException):
-            segments.append(f"{item.__class__.__name__}: {item}")
+            segments.append(item)
         elif isinstance(item, str):
             segments.append(item)
+        elif isinstance(item, Mapping):
+            segments.append(_mapping_to_text(item))
         else:
             errors.append(f"Unsupported input type: {type(item).__name__}")
 
     return segments, errors
+
+
+def _segment_to_text(item: Union[str, BaseException]) -> str:
+    if isinstance(item, BaseException):
+        return f"{item.__class__.__name__}: {item}"
+    return item
+
+
+def _is_empty_input(segments: List[Union[str, BaseException]]) -> bool:
+    if not segments:
+        return True
+    if any(isinstance(item, BaseException) for item in segments):
+        return False
+    return all(not str(item).strip() for item in segments)
 
 
 def _classify_from_exception(exc: BaseException) -> Tuple[ErrorCategory, str]:
@@ -136,7 +179,7 @@ def classify_error(raw: _Input) -> Dict[str, Any]:
         Exception instance, traceback string, log string, or list/tuple of those.
     """
 
-    segments, errors = _iter_segments(raw)
+    segments, errors = _normalize_inputs(raw)
     if errors:
         return {
             "status": "error",
@@ -148,27 +191,47 @@ def classify_error(raw: _Input) -> Dict[str, Any]:
             },
         }
 
-    category = ErrorCategory.Other
-    matched_rule = "unmatched"
-    source = "unknown"
+    if _is_empty_input(segments):
+        return {
+            "status": "ok",
+            "data": {
+                "category": ErrorCategory.Other,
+                "source": "text",
+                "matched_rule": "text:empty",
+            },
+            "errors": [],
+            "meta": {
+                "input_length": 0,
+                "segment_count": len(segments),
+                "empty_input": True,
+            },
+        }
 
-    for item in (raw if isinstance(raw, (list, tuple)) else (raw,)):
+    classifications: List[Tuple[ErrorCategory, str, str]] = []
+    for item in segments:
         if isinstance(item, BaseException):
             category, matched_rule = _classify_from_exception(item)
             source = "exception"
-        elif isinstance(item, str):
-            category, matched_rule = _classify_from_text(item)
-            source = "text"
         else:
-            category = ErrorCategory.Other
-            matched_rule = "unsupported"
-            source = "unknown"
+            category, matched_rule = _classify_from_text(str(item))
+            source = "text"
+        classifications.append((category, matched_rule, source))
 
-        if category is not ErrorCategory.Other:
+    category = ErrorCategory.Other
+    matched_rule = "unmatched"
+    source = "unknown"
+    for priority in _CATEGORY_PRIORITY:
+        for seg_category, seg_rule, seg_source in classifications:
+            if seg_category is priority:
+                category = seg_category
+                matched_rule = seg_rule
+                source = seg_source
+                break
+        if category is priority:
             break
 
     meta: Dict[str, Any] = {
-        "input_length": sum(len(segment) for segment in segments),
+        "input_length": sum(len(_segment_to_text(segment)) for segment in segments),
         "segment_count": len(segments),
     }
     if matched_rule.startswith("phrase:"):
