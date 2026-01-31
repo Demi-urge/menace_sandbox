@@ -61,6 +61,12 @@ def _is_valid_metric_value(value: Number | Decimal) -> bool:
     return isinstance(value, (int, float)) and math.isfinite(value)
 
 
+def _is_finite_value(value: Number | Decimal) -> bool:
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
 def _to_decimal(value: Number | Decimal) -> Decimal:
     if isinstance(value, Decimal):
         return value
@@ -157,12 +163,17 @@ def compute_roi_delta(
     values derived via ``Decimal(str(value))`` for deterministic precision.
     """
 
-    keys, errors = _validate_metrics(before_metrics, after_metrics)
     data = {"deltas": {}, "total_delta": 0}
-    if errors:
+
+    def _error_payload(
+        keys: list[str],
+        errors: list[RoiDeltaValidationError],
+        use_decimal: bool = False,
+    ) -> dict[str, object]:
+        zero_value = Decimal("0") if use_decimal else 0
         return {
             "status": "error",
-            "data": data,
+            "data": {"deltas": {}, "total_delta": zero_value},
             "errors": [error.to_record() for error in errors],
             "meta": {
                 "keys": keys,
@@ -172,6 +183,10 @@ def compute_roi_delta(
                 "after_count": len(after_metrics) if isinstance(after_metrics, Mapping) else 0,
             },
         }
+
+    keys, errors = _validate_metrics(before_metrics, after_metrics)
+    if errors:
+        return _error_payload(keys, errors)
 
     if not keys:
         return {
@@ -198,8 +213,33 @@ def compute_roi_delta(
         if use_decimal:
             before_value = _to_decimal(before_value)
             after_value = _to_decimal(after_value)
-        deltas[key] = after_value - before_value
+        delta_value = after_value - before_value
+        if not _is_finite_value(delta_value):
+            return _error_payload(
+                keys,
+                [
+                    RoiDeltaValidationError(
+                        "Computed delta value must be finite.",
+                        code="delta_value_error",
+                        details={"key": key, "delta_repr": repr(delta_value)},
+                    )
+                ],
+                use_decimal=use_decimal,
+            )
+        deltas[key] = delta_value
     total_delta = sum(deltas.values(), Decimal("0") if use_decimal else 0)
+    if not _is_finite_value(total_delta):
+        return _error_payload(
+            keys,
+            [
+                RoiDeltaValidationError(
+                    "Computed total delta must be finite.",
+                    code="total_value_error",
+                    details={"total_delta_repr": repr(total_delta)},
+                )
+            ],
+            use_decimal=use_decimal,
+        )
 
     return {
         "status": "ok",
