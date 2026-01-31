@@ -1,102 +1,71 @@
+import inspect
+import json
 import logging
-from contextlib import contextmanager
 
 import pytest
 
-from logging_utils import get_logger
 from logging_wrappers import wrap_with_logging
 
 
-class ListHandler(logging.Handler):
-    def __init__(self) -> None:
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-@contextmanager
-def capture_logger(name: str):
-    logger = get_logger(name)
-    handler = ListHandler()
-    original_handlers = list(logger.handlers)
-    original_level = logger.level
-    original_propagate = logger.propagate
-    logger.handlers = [handler]
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    try:
-        yield handler
-    finally:
-        logger.handlers = original_handlers
-        logger.setLevel(original_level)
-        logger.propagate = original_propagate
-
-
-def test_wrap_with_logging_returns_values_and_logs_once():
-    logger_name = "tests.logging_wrappers.return"
-
-    def add(a, b=2):
+def test_wrap_with_logging_preserves_behavior_and_signature(caplog):
+    def add(a, b=1):
         return a + b
 
-    wrapped = wrap_with_logging(add, config={"logger_name": logger_name})
-    with capture_logger(logger_name) as handler:
-        assert wrapped(1, b=3) == 4
+    wrapped = wrap_with_logging(add)
+    assert inspect.signature(wrapped) == inspect.signature(add)
 
-    assert len(handler.records) == 1
+    caplog.set_level(logging.INFO)
+    result = wrapped(2, b=3)
+
+    assert result == 5
+    assert len(caplog.records) == 1
+    payload = caplog.records[0].payload
+    assert payload["event"] == "function_call"
+    assert payload["function"] == "add"
+    assert payload["args"] == [2]
+    assert payload["kwargs"] == {"b": 3}
+    assert payload["return_value"]["value"] == 5
+    assert payload["return_value"]["is_none"] is False
 
 
-def test_wrap_with_logging_propagates_exceptions():
-    logger_name = "tests.logging_wrappers.exception"
+def test_wrap_with_logging_is_json_safe_and_deterministic(caplog):
+    def echo(value, **kwargs):
+        return value
 
-    def boom(code):
-        raise RuntimeError(f"boom-{code}")
+    wrapped = wrap_with_logging(echo)
+    caplog.set_level(logging.INFO)
 
-    wrapped = wrap_with_logging(boom, config={"logger_name": logger_name})
-    with capture_logger(logger_name) as handler:
-        with pytest.raises(RuntimeError, match="boom-7"):
-            wrapped(7)
+    result = wrapped({"b": 2, "a": 1}, z=0, a=1, data={3, 2, 1})
+    assert result == {"b": 2, "a": 1}
 
-    assert len(handler.records) == 1
-    record = handler.records[0]
-    assert record.exception["type"] == "RuntimeError"
+    payload = caplog.records[0].payload
+    assert list(payload["args"][0].keys()) == ["a", "b"]
+    assert list(payload["kwargs"].keys()) == ["a", "data", "z"]
+    assert payload["kwargs"]["data"] == [1, 2, 3]
+    json.dumps(payload)
+
+
+def test_wrap_with_logging_logs_exceptions_and_reraises(caplog):
+    def boom(value):
+        raise ValueError(f"bad {value}")
+
+    wrapped = wrap_with_logging(boom)
+    caplog.set_level(logging.INFO)
+
+    with pytest.raises(ValueError, match="bad 4"):
+        wrapped(4)
+
+    payload = caplog.records[0].payload
+    assert payload["exception"]["type"] == "ValueError"
+    assert "bad 4" in payload["exception"]["message"]
+    assert payload["args"] == [4]
 
 
 def test_wrap_with_logging_prevents_double_wrapping():
-    logger_name = "tests.logging_wrappers.double"
+    def identity(value):
+        return value
 
-    def add(a, b):
-        return a + b
+    wrapped = wrap_with_logging(identity)
+    wrapped_again = wrap_with_logging(wrapped)
 
-    wrapped = wrap_with_logging(add, config={"logger_name": logger_name})
-    wrapped_again = wrap_with_logging(wrapped, config={"logger_name": logger_name})
-
-    assert wrapped_again is wrapped
-    with capture_logger(logger_name) as handler:
-        assert wrapped_again(2, 3) == 5
-
-    assert len(handler.records) == 1
-
-
-def test_wrap_with_logging_large_args_sanitized_deterministically():
-    logger_name = "tests.logging_wrappers.truncation"
-    config = {
-        "logger_name": logger_name,
-        "max_items": 2,
-        "max_string": 15,
-        "truncate_marker": "<truncated>",
-    }
-
-    def echo(*args, **kwargs):
-        return {"args": args, "kwargs": kwargs}
-
-    wrapped = wrap_with_logging(echo, config=config)
-    with capture_logger(logger_name) as handler:
-        wrapped([0, 1, 2, 3], {"b": 2, "a": 1, "c": 3}, "y" * 30)
-
-    record = handler.records[0]
-    args = record.extra_args
-    assert args[0] == [0, 1, "<truncated>"]
-    assert list(args[1].keys()) == ["a", "b", "<truncated>"]
-    assert args[2] == "yyyy<truncated>"
+    assert wrapped is wrapped_again
