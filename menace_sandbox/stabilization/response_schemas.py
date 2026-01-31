@@ -39,6 +39,13 @@ class PatchApplySchema(SimpleSchema):
     flags = fields.List(fields.Str())
 
 
+class PatchCodeValidationSchema(SimpleSchema):
+    status = fields.Str()
+    data = SimpleField(type=dict)
+    errors = fields.List(SimpleField(type=dict))
+    meta = SimpleField(type=dict)
+
+
 class AutonomousPresetBatchSchema(SimpleSchema):
     presets = fields.List(SimpleField(type=dict))
     preset_source = fields.Str()
@@ -121,6 +128,11 @@ def normalize_patch_apply(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return _normalize_payload(payload, PatchApplySchema, defaults)
 
 
+def normalize_patch_code_validation(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    defaults = {"status": "fail", "data": {}, "errors": [], "meta": {}}
+    return _normalize_payload(payload, PatchCodeValidationSchema, defaults)
+
+
 def normalize_preset_batch(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     defaults = {"presets": [], "preset_source": "", "actions": []}
     return _normalize_payload(payload, AutonomousPresetBatchSchema, defaults, extra_key="extra")
@@ -132,5 +144,6 @@ __all__ = [
     "normalize_error_response",
     "normalize_patch_validation",
     "normalize_patch_apply",
+    "normalize_patch_code_validation",
     "normalize_preset_batch",
 ]
