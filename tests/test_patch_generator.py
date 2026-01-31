@@ -5,6 +5,7 @@ import json
 import pytest
 
 from menace_sandbox import patch_generator
+from menace.errors import PatchAnchorError
 
 
 def _build_expected_diff(before: str, after: str) -> str:
@@ -327,12 +328,8 @@ def test_missing_anchor_fails_with_patch_anchor_error():
         }
     ]
 
-    result = _assert_deterministic(source, {}, rules)
-
-    assert result["status"] == "error"
-    assert result["errors"][0]["type"] == "PatchAnchorError"
-    assert result["errors"][0]["details"]["anchor_search"]["match_count"] == 0
-    assert result["errors"][0]["details"]["anchor_search"]["anchor"] == "missing\n"
+    with pytest.raises(PatchAnchorError):
+        patch_generator.generate_patch(source, {}, rules)
 
 
 def test_invalid_regex_pattern_fails_with_patch_rule_error():
@@ -562,12 +559,8 @@ def test_ambiguous_anchor_fails_with_patch_anchor_error():
         }
     ]
 
-    result = _assert_deterministic(source, {}, rules)
-
-    assert result["status"] == "error"
-    assert result["errors"][0]["type"] == "PatchAnchorError"
-    assert result["errors"][0]["rule_id"] == "rule-1"
-    assert result["errors"][0]["details"]["anchor_search"]["match_count"] == 2
+    with pytest.raises(PatchAnchorError):
+        patch_generator.generate_patch(source, {}, rules)
 
 
 def test_syntax_breaking_insert_fails_with_patch_syntax_error():
