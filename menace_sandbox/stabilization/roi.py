@@ -1,15 +1,16 @@
 """Deterministic ROI delta calculation with explicit validation contracts.
 
 This module performs audit-friendly, linear-time delta computation with no
-normalization, weighting, or inference. Non-mapping inputs raise ``TypeError``,
-and mismatched key sets raise ``ValueError``. Metric values must be numeric and
+normalization, weighting, or inference. Metric values must be numeric and
 finite; booleans are explicitly disallowed even though they subclass ``int``.
-Validation failures return structured error records.
+Empty inputs are treated as a valid no-op and return zero totals. Validation
+failures return structured error records instead of silently coercing values.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from fractions import Fraction
 import math
 from numbers import Real
 from typing import Any, Mapping
@@ -25,6 +26,7 @@ class InvalidMetricsSchemaError(Exception):
     def to_record(self) -> dict[str, Any]:
         return {
             "type": "invalid_schema",
+            "code": "invalid_schema",
             "message": self.message,
             "field": self.details.get("field", "schema"),
             "details": self.details,
@@ -37,14 +39,19 @@ class MetricTypeError(Exception):
 
     key: str
     value: Any
-    message: str = "Metric value must be an int or float (bool not allowed)."
+    source: str
+    message: str = "Metric value must be numeric (bool not allowed)."
 
     def to_record(self) -> dict[str, Any]:
         return {
             "type": "metric_type_error",
-            "message": self.message,
+            "code": "metric_type_error",
+            "message": (
+                f"{self.message} Offending key: {self.key} (source: {self.source})."
+            ),
             "key": self.key,
             "value_repr": repr(self.value),
+            "source": self.source,
         }
 
 
@@ -54,14 +61,19 @@ class MetricValueError(Exception):
 
     key: str
     value: Any
+    source: str
     message: str = "Metric value must be finite."
 
     def to_record(self) -> dict[str, Any]:
         return {
             "type": "metric_value_error",
-            "message": self.message,
+            "code": "metric_value_error",
+            "message": (
+                f"{self.message} Offending key: {self.key} (source: {self.source})."
+            ),
             "key": self.key,
             "value_repr": repr(self.value),
+            "source": self.source,
         }
 
 
@@ -72,7 +84,24 @@ def _format_keys(keys: set[object]) -> list[str]:
 def _is_finite_number(value: Any) -> bool:
     if isinstance(value, Decimal):
         return value.is_finite()
-    return math.isfinite(float(value))
+    if isinstance(value, Fraction):
+        return True
+    if isinstance(value, (int, float)):
+        return math.isfinite(value)
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+def _coerce_numeric(value: Any) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, Fraction):
+        return Decimal(value.numerator) / Decimal(value.denominator)
+    if isinstance(value, float):
+        return Decimal(str(value))
+    return Decimal(value)
 
 
 def _validate_metrics(
@@ -81,19 +110,41 @@ def _validate_metrics(
 ) -> tuple[list[str], list[Exception]]:
     errors: list[Exception] = []
     if not isinstance(before_metrics, Mapping):
-        raise TypeError("before_metrics must be a mapping.")
+        errors.append(
+            InvalidMetricsSchemaError(
+                message="before_metrics must be a mapping.",
+                details={"field": "before_metrics"},
+            )
+        )
+        return [], errors
     if not isinstance(after_metrics, Mapping):
-        raise TypeError("after_metrics must be a mapping.")
+        errors.append(
+            InvalidMetricsSchemaError(
+                message="after_metrics must be a mapping.",
+                details={"field": "after_metrics"},
+            )
+        )
+        return [], errors
 
     before_keys = set(before_metrics.keys())
     after_keys = set(after_metrics.keys())
     missing_keys = _format_keys(before_keys - after_keys)
     extra_keys = _format_keys(after_keys - before_keys)
     if missing_keys or extra_keys:
-        raise ValueError(
-            "before_metrics and after_metrics must have identical keys. "
-            f"Missing: {missing_keys}. Extra: {extra_keys}."
+        errors.append(
+            InvalidMetricsSchemaError(
+                message=(
+                    "before_metrics and after_metrics must have identical keys. "
+                    f"Missing: {missing_keys}. Extra: {extra_keys}."
+                ),
+                details={
+                    "field": "keys",
+                    "missing": missing_keys,
+                    "extra": extra_keys,
+                },
+            )
         )
+        return _format_keys(before_keys | after_keys), errors
 
     invalid_key_types = [
         key for key in before_keys if not isinstance(key, str)
@@ -112,19 +163,25 @@ def _validate_metrics(
 
     ordered_keys = sorted(before_keys)
     for key in ordered_keys:
-        value = before_metrics[key]
-        if isinstance(value, bool) or not isinstance(value, (Real, Decimal)):
-            errors.append(MetricTypeError(key=key, value=value))
-            continue
-        if not _is_finite_number(value):
-            errors.append(MetricValueError(key=key, value=value))
+        before_value = before_metrics[key]
+        if isinstance(before_value, bool) or not isinstance(before_value, (Real, Decimal)):
+            errors.append(
+                MetricTypeError(key=key, value=before_value, source="before_metrics")
+            )
+        elif not _is_finite_number(before_value):
+            errors.append(
+                MetricValueError(key=key, value=before_value, source="before_metrics")
+            )
 
-        value = after_metrics[key]
-        if isinstance(value, bool) or not isinstance(value, (Real, Decimal)):
-            errors.append(MetricTypeError(key=key, value=value))
-            continue
-        if not _is_finite_number(value):
-            errors.append(MetricValueError(key=key, value=value))
+        after_value = after_metrics[key]
+        if isinstance(after_value, bool) or not isinstance(after_value, (Real, Decimal)):
+            errors.append(
+                MetricTypeError(key=key, value=after_value, source="after_metrics")
+            )
+        elif not _is_finite_number(after_value):
+            errors.append(
+                MetricValueError(key=key, value=after_value, source="after_metrics")
+            )
 
     return ordered_keys, errors
 
@@ -136,9 +193,8 @@ def compute_roi_delta(
     """Compute deterministic ROI deltas with strict schema validation.
 
     Returns a structured payload with status, data, errors, and deterministic
-    metadata derived from the metric keys. Raises ``TypeError`` for non-mapping
-    inputs and ``ValueError`` for mismatched key sets. Booleans are explicitly
-    rejected as metric values.
+    metadata derived from the metric keys. Empty mappings are treated as a
+    valid no-op. Booleans are explicitly rejected as metric values.
     """
 
     keys, errors = _validate_metrics(before_metrics, after_metrics)
@@ -158,8 +214,12 @@ def compute_roi_delta(
             },
         }
 
-    deltas = {key: float(after_metrics[key]) - float(before_metrics[key]) for key in keys}
-    total_delta = sum(deltas.values())
+    deltas: dict[str, Decimal] = {}
+    for key in keys:
+        before_value = _coerce_numeric(before_metrics[key])
+        after_value = _coerce_numeric(after_metrics[key])
+        deltas[key] = after_value - before_value
+    total_delta = sum(deltas.values(), Decimal("0"))
 
     return {
         "status": "ok",
