@@ -9,30 +9,6 @@ taxonomy is immutable (no dynamic extension) and the matching order is fixed
 and documented to keep outcomes stable across runs.
 """
 
-try:  # pragma: no cover - ensure script execution resolves package imports
-    from import_compat import bootstrap as _bootstrap
-except Exception:  # pragma: no cover - helper unavailable
-    from pathlib import Path
-    import sys
-
-    _bootstrap = None  # type: ignore
-    _here = Path(__file__).resolve()
-    for _candidate in (_here.parent, *_here.parents):
-        compat_path = _candidate / "import_compat.py"
-        if compat_path.exists():
-            candidate_str = str(_candidate)
-            if candidate_str not in sys.path:
-                sys.path.insert(0, candidate_str)
-            try:
-                from import_compat import bootstrap as _bootstrap  # type: ignore
-            except Exception:
-                _bootstrap = None  # type: ignore
-            else:
-                break
-
-if "_bootstrap" in globals() and _bootstrap is not None:  # pragma: no cover - script usage
-    _bootstrap(__name__, __file__)
-
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Literal, Mapping, Sequence, Tuple, TypedDict, Union
 
