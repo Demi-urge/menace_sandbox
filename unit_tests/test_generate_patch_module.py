@@ -1,6 +1,7 @@
 import unittest
 
 import generate_patch
+from menace.errors import PatchAnchorError, PatchConflictError, PatchRuleError
 
 
 class GeneratePatchModuleTests(unittest.TestCase):
@@ -36,35 +37,29 @@ class GeneratePatchModuleTests(unittest.TestCase):
         self.assertEqual(first["data"]["patch_text"], second["data"]["patch_text"])
         self.assertEqual(first["meta"], second["meta"])
 
-    def test_generate_patch_module_empty_rules_returns_structured_error(self):
+    def test_generate_patch_module_empty_rules_raises(self):
         source = "alpha\n"
         rules = []
 
-        module_result = generate_patch.generate_patch(source, {}, rules)
+        with self.assertRaises(PatchRuleError):
+            generate_patch.generate_patch(source, {}, rules)
 
-        self.assertEqual(module_result["status"], "error")
-        self.assertEqual(module_result["errors"][0]["type"], "PatchRuleError")
-
-    def test_generate_patch_module_conflicting_edits_return_structured_error(self):
+    def test_generate_patch_module_conflicting_edits_raise(self):
         source = "alpha\n"
         rules = [
             self._replace_rule(rule_id="rule-a", replacement="beta"),
             self._replace_rule(rule_id="rule-b", replacement="gamma"),
         ]
 
-        module_result = generate_patch.generate_patch(source, {}, rules)
+        with self.assertRaises(PatchConflictError):
+            generate_patch.generate_patch(source, {}, rules)
 
-        self.assertEqual(module_result["status"], "error")
-        self.assertEqual(module_result["errors"][0]["type"], "PatchConflictError")
-
-    def test_generate_patch_module_invalid_anchor_returns_structured_error(self):
+    def test_generate_patch_module_invalid_anchor_raises(self):
         source = "alpha\n"
         rules = [self._replace_rule(rule_id="rule-1", anchor="missing")]
 
-        module_result = generate_patch.generate_patch(source, {}, rules)
-
-        self.assertEqual(module_result["status"], "error")
-        self.assertEqual(module_result["errors"][0]["type"], "PatchAnchorError")
+        with self.assertRaises(PatchAnchorError):
+            generate_patch.generate_patch(source, {}, rules)
 
     def test_generate_patch_module_syntax_error_returns_structured_error(self):
         source = "def ok():\n    return 1\n"
