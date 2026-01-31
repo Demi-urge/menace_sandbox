@@ -32,7 +32,7 @@ class TestRoiDeltaModule(unittest.TestCase):
         response = compute_roi_delta({}, {})
 
         self.assertEqual(response["status"], "ok")
-        self.assertEqual(response["data"], {})
+        self.assertEqual(response["data"], {"deltas": {}, "total_delta": 0})
         self.assertEqual(response["errors"], [])
         self.assertEqual(
             response["meta"],
@@ -51,14 +51,15 @@ class TestRoiDeltaModule(unittest.TestCase):
 
         response = compute_roi_delta(before, after)
 
-        self.assertEqual(response["status"], "fail")
-        self.assertEqual(response["data"], {})
+        self.assertEqual(response["status"], "error")
+        self.assertEqual(response["data"], {"deltas": {}, "total_delta": 0})
         self.assertEqual(response["meta"]["keys"], ["alpha", "beta", "gamma"])
         self.assertEqual(response["meta"]["count"], 3)
         self.assertEqual(response["meta"]["error_count"], 1)
         self.assertEqual(response["errors"], [
             {
                 "type": "RoiDeltaValidationError",
+                "code": "invalid_schema",
                 "message": "before_metrics and after_metrics must have identical keys.",
                 "details": {"missing": ["alpha"], "extra": ["gamma"]},
             }
@@ -77,13 +78,18 @@ class TestRoiDeltaModule(unittest.TestCase):
             with self.subTest(value=value):
                 response = compute_roi_delta({"alpha": 1.0}, {"alpha": value})
 
-                self.assertEqual(response["status"], "fail")
-                self.assertEqual(response["data"], {})
+                self.assertEqual(response["status"], "error")
+                self.assertEqual(response["data"], {"deltas": {}, "total_delta": 0})
                 self.assertEqual(response["meta"]["error_count"], 1)
                 self.assertEqual(response["errors"], [
                     {
                         "type": "RoiDeltaValidationError",
-                        "message": "Metric value must be a finite int or float (bool not allowed).",
+                        "code": "metric_type_error" if not isinstance(value, (int, float)) or isinstance(value, bool) else "metric_value_error",
+                        "message": (
+                            "Metric value must be an int, float, or Decimal (bool not allowed)."
+                            if not isinstance(value, (int, float)) or isinstance(value, bool)
+                            else "Metric value must be a finite int, float, or Decimal (bool not allowed)."
+                        ),
                         "details": {
                             "key": "alpha",
                             "source": source,
@@ -93,11 +99,12 @@ class TestRoiDeltaModule(unittest.TestCase):
                 ])
 
         response = compute_roi_delta({"alpha": math.nan}, {"alpha": 1.0})
-        self.assertEqual(response["status"], "fail")
+        self.assertEqual(response["status"], "error")
         self.assertEqual(response["errors"], [
             {
                 "type": "RoiDeltaValidationError",
-                "message": "Metric value must be a finite int or float (bool not allowed).",
+                "code": "metric_value_error",
+                "message": "Metric value must be a finite int, float, or Decimal (bool not allowed).",
                 "details": {
                     "key": "alpha",
                     "source": "before_metrics",
@@ -128,8 +135,8 @@ class TestRoiDeltaModule(unittest.TestCase):
         self.assertEqual(result_one, result_two)
 
         missing_response = compute_roi_delta({"alpha": 1.0, "beta": 2.0}, {"alpha": 1.0})
-        self.assertEqual(missing_response["status"], "fail")
-        self.assertEqual(missing_response["data"], {})
+        self.assertEqual(missing_response["status"], "error")
+        self.assertEqual(missing_response["data"], {"deltas": {}, "total_delta": 0})
         self.assertEqual(missing_response["meta"]["before_count"], 2)
         self.assertEqual(missing_response["meta"]["after_count"], 1)
 

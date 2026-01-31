@@ -968,8 +968,8 @@ class CognitionLayer:
                     }
                 )
             roi_delta_result = {
-                "status": "fail",
-                "data": {},
+                "status": "error",
+                "data": {"deltas": {}, "total_delta": 0},
                 "errors": roi_delta_errors,
                 "meta": {},
             }
