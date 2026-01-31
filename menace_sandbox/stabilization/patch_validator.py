@@ -209,7 +209,33 @@ def validate_patch(
     *,
     module_name: str | None = None,
 ) -> dict[str, object]:
-    """Validate patch updates using deterministic AST-based rules."""
+    """Validate patch updates using deterministic, static AST-based rules.
+
+    Args:
+        original: The original (pre-patch) source code as a string.
+        patched: The patched source code as a string.
+        rules: A list of rule dictionaries describing validation requirements.
+        module_name: Optional module name used for error reporting context.
+
+    Returns:
+        A normalized patch validation payload with the schema:
+        ``{"valid": bool, "flags": list[str], "context": dict[str, object]}``,
+        where ``context`` includes fields such as ``errors``, ``rule_errors``,
+        ``module_name``, ``original_lines``, and ``patched_lines``.
+
+    This function is pure/static: it does not execute code or perform side
+    effects; it only inspects the provided source strings.
+
+    Example:
+        >>> from menace_sandbox.stabilization import validate_patch
+        >>> result = validate_patch(
+        ...     original="def add(a, b):\\n    return a + b\\n",
+        ...     patched="def add(a, b):\\n    return a + b + 1\\n",
+        ...     rules=[{"type": "signature_match", "name": "add"}],
+        ... )
+        >>> result["valid"]
+        True
+    """
 
     errors: list[dict[str, object]] = []
     rule_errors: list[PatchRuleError] = []
