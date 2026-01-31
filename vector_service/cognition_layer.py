@@ -969,11 +969,23 @@ class CognitionLayer:
                 )
             roi_delta_result = {"status": "error", "data": None, "errors": roi_delta_errors}
 
-        if roi_delta_result.get("status") == "ok":
-            kwargs["roi_delta"] = roi_delta_result["data"]["delta_total"]
+        roi_delta_errors = roi_delta_result.get("errors", [])
+        delta_map = roi_delta_result.get("data", {}).get("delta", {})
+        if roi_delta_result.get("status") == "ok" and "roi" in delta_map:
+            kwargs["roi_delta"] = delta_map["roi"]
         else:
             kwargs["roi_delta"] = None
-            kwargs["roi_delta_errors"] = roi_delta_result.get("errors", [])
+            if roi_delta_result.get("status") == "ok" and "roi" not in delta_map:
+                roi_delta_errors = [
+                    *roi_delta_errors,
+                    {
+                        "code": "missing_roi_delta",
+                        "message": "ROI delta result missing expected 'roi' key.",
+                        "key": "roi",
+                        "value_repr": repr(delta_map),
+                    },
+                ]
+            kwargs["roi_delta_errors"] = roi_delta_errors
             logger.warning(
                 "ROI delta unavailable for patch outcome.",
                 extra={"roi_delta_errors": kwargs["roi_delta_errors"]},
