@@ -39,17 +39,17 @@ def test_validate_patch_empty_patched_content_fails_with_clear_error() -> None:
         [
             {
                 "type": "signature_match",
-                "target": "function",
-                "match": "signature",
-                "functions": ["greet"],
-                "rule_id": "sig-missing",
+                "id": "sig-missing",
+                "params": {
+                    "functions": ["greet"],
+                },
             }
         ],
     )
 
     _assert_payload_shape(result)
 
-    assert result["status"] == "fail"
+    assert result["status"] == "failed"
     assert result["errors"], "Expected errors for empty patched content"
     assert any(error["message"] == "function signature missing" for error in result["errors"])
     for error in result["errors"]:
@@ -67,7 +67,7 @@ def test_validate_patch_reports_patch_syntax_error() -> None:
 
     _assert_payload_shape(result)
 
-    assert result["status"] == "fail"
+    assert result["status"] == "failed"
     assert any(error["type"] == "PatchSyntaxError" for error in result["errors"])
 
 
@@ -78,17 +78,17 @@ def test_validate_patch_missing_required_function() -> None:
         [
             {
                 "type": "mandatory_returns",
-                "target": "function",
-                "match": "return",
-                "functions": ["compute"],
-                "rule_id": "mandatory-return",
+                "id": "mandatory-return",
+                "params": {
+                    "functions": ["compute"],
+                },
             }
         ],
     )
 
     _assert_payload_shape(result)
 
-    assert result["status"] == "fail"
+    assert result["status"] == "failed"
     assert any(error["message"] == "mandatory return requirement failed" for error in result["errors"])
     for error in result["errors"]:
         if error["message"] == "mandatory return requirement failed":
@@ -103,18 +103,18 @@ def test_validate_patch_detects_static_contract_violation() -> None:
         [
             {
                 "type": "static_contracts",
-                "target": "function",
-                "match": "docstring",
-                "functions": ["compute"],
-                "require_docstring": True,
-                "rule_id": "missing-docstring",
+                "id": "missing-docstring",
+                "params": {
+                    "functions": ["compute"],
+                    "require_docstring": True,
+                },
             }
         ],
     )
 
     _assert_payload_shape(result)
 
-    assert result["status"] == "fail"
+    assert result["status"] == "failed"
     assert any(error["message"] == "static contract violation" for error in result["errors"])
     for error in result["errors"]:
         if error["message"] == "static contract violation":
@@ -137,17 +137,17 @@ def compute(x, y):
         [
             {
                 "type": "signature_match",
-                "target": "function",
-                "match": "signature",
-                "functions": ["greet"],
-                "rule_id": "sig-change",
+                "id": "sig-change",
+                "params": {
+                    "functions": ["greet"],
+                },
             }
         ],
     )
 
     _assert_payload_shape(result)
 
-    assert result["status"] == "fail"
+    assert result["status"] == "failed"
     assert any(error["message"] == "function signature mismatch" for error in result["errors"])
     for error in result["errors"]:
         if error["message"] == "function signature mismatch":
@@ -162,17 +162,16 @@ def test_validate_patch_malformed_rules_return_rule_error() -> None:
         [
             {
                 "type": 123,
-                "target": "module",
-                "match": "hash",
-                "rule_id": "bad-rule",
+                "id": "bad-rule",
+                "params": {},
             }
         ],
     )
 
     _assert_payload_shape(result)
 
-    assert result["status"] == "fail"
-    rule_errors = [error for error in result["errors"] if error["type"] == "PatchRuleError"]
+    assert result["status"] == "failed"
+    rule_errors = [error for error in result["errors"] if error["type"] == "PatchValidationError"]
     assert rule_errors
     assert any("rule type must be a string" == error["message"] for error in rule_errors)
     for error in rule_errors:
@@ -188,23 +187,23 @@ def test_validate_patch_reports_multiple_failures() -> None:
         [
             {
                 "type": "required_imports",
-                "target": "module",
-                "match": "imports",
-                "imports": [{"kind": "import", "module": "json"}],
+                "id": "required-imports",
+                "params": {"imports": [{"kind": "import", "module": "json"}]},
             },
             {
                 "type": "static_contracts",
-                "target": "function",
-                "match": "docstring",
-                "functions": ["compute"],
-                "require_docstring": True,
+                "id": "missing-docstring",
+                "params": {
+                    "functions": ["compute"],
+                    "require_docstring": True,
+                },
             },
         ],
     )
 
     _assert_payload_shape(result)
 
-    assert result["status"] == "fail"
+    assert result["status"] == "failed"
     messages = {error["message"] for error in result["errors"]}
     assert "required import missing" in messages
     assert "static contract violation" in messages

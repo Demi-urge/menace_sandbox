@@ -38,9 +38,6 @@ _SUPPORTED_RULE_TYPES = {
 @dataclass(frozen=True)
 class ValidatedRule:
     rule_type: str
-    target: str
-    match: str
-    severity: str | None
     rule_id: str | None
     rule_index: int
     payload: dict[str, object]
@@ -256,6 +253,7 @@ def validate_patch(
     start_time = time.perf_counter()
     errors: list[dict[str, object]] = []
     rule_errors: list[PatchRuleError] = []
+    schema_errors: list[ValidationError] = []
     syntax_errors: list[PatchSyntaxError] = []
     original_index = _empty_index()
     patched_index = _empty_index()
@@ -275,8 +273,14 @@ def validate_patch(
 
     rules_list, rules_error = _normalize_rules(rules)
     if rules_error is not None:
-        rule_errors.append(rules_error)
-        errors.append(rules_error.to_dict())
+        schema_errors.append(rules_error)
+
+    validated_rules: list[ValidatedRule] = []
+    if not schema_errors:
+        validated_rules, schema_errors = validate_rules(rules_list)
+
+    if schema_errors:
+        errors.extend(error.to_dict() for error in schema_errors)
 
     if not isinstance(original, str):
         errors.append(
@@ -301,10 +305,7 @@ def validate_patch(
         )
 
     try:
-        if isinstance(original, str) and isinstance(patched, str):
-            validated_rules, validation_errors = validate_rules(rules_list)
-            rule_errors.extend(validation_errors)
-
+        if isinstance(original, str) and isinstance(patched, str) and not schema_errors:
             original_tree, original_index, original_nodes = _build_ast_index(
                 original,
                 "original",
@@ -412,7 +413,7 @@ def validate_patch(
         "module": module_name,
         "rule_count": len(rules_list),
         "error_count": len(errors),
-        "rule_error_count": len(rule_errors),
+        "rule_error_count": len(rule_errors) + len(schema_errors),
         "original_function_count": len(original_index["functions"]),
         "patched_function_count": len(patched_index["functions"]),
         "original_class_count": len(original_index["classes"]),
@@ -628,13 +629,352 @@ def _signature_payload(signature: dict[str, object], *, include_annotations: boo
 def validate_rules(
     rules: list[dict[str, object]],
 ) -> tuple[list[ValidatedRule], list[ValidationError]]:
-    """Validate patch rules against a minimal schema."""
-    errors: list[PatchRuleError] = []
+    """Validate patch rules against the schema."""
+    return _validate_rule_schema(rules)
+
+
+def _schema_error(
+    message: str,
+    *,
+    rule_index: int,
+    rule_id: object | None,
+    **details: object,
+) -> PatchValidationError:
+    payload = {"rule_index": rule_index}
+    if rule_id is not None:
+        payload["rule_id"] = rule_id
+    payload.update(details)
+    return PatchValidationError(message, details=payload)
+
+
+def _normalize_str_list(
+    value: object,
+    *,
+    field: str,
+    rule_index: int,
+    rule_id: object | None,
+    errors: list[PatchValidationError],
+) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        invalid = [item for item in value if not isinstance(item, str)]
+        if invalid:
+            errors.append(
+                _schema_error(
+                    "rule params must contain string items",
+                    rule_index=rule_index,
+                    rule_id=rule_id,
+                    field=field,
+                    invalid_value=invalid[0],
+                )
+            )
+            return []
+        return value
+    errors.append(
+        _schema_error(
+            "rule params must be a list",
+            rule_index=rule_index,
+            rule_id=rule_id,
+            field=field,
+            actual_type=type(value).__name__,
+        )
+    )
+    return []
+
+
+def _validate_syntax_compile_params(
+    params: Mapping[str, object],
+    *,
+    rule_index: int,
+    rule_id: object | None,
+) -> tuple[dict[str, object], list[PatchValidationError]]:
+    errors: list[PatchValidationError] = []
+    sources = params.get("sources") if "sources" in params else params.get("source")
+    if sources is not None:
+        normalized = _normalize_str_list(
+            sources,
+            field="sources",
+            rule_index=rule_index,
+            rule_id=rule_id,
+            errors=errors,
+        )
+        if normalized:
+            params = {**params, "sources": normalized}
+    return dict(params), errors
+
+
+def _validate_required_imports_params(
+    params: Mapping[str, object],
+    *,
+    rule_index: int,
+    rule_id: object | None,
+) -> tuple[dict[str, object], list[PatchValidationError]]:
+    errors: list[PatchValidationError] = []
+    imports = params.get("imports")
+    if not isinstance(imports, list):
+        errors.append(
+            _schema_error(
+                "required_imports requires an imports list",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="imports",
+                actual_type=type(imports).__name__,
+            )
+        )
+        return dict(params), errors
+    for index, item in enumerate(imports):
+        if not isinstance(item, dict):
+            errors.append(
+                _schema_error(
+                    "import spec must be a dict",
+                    rule_index=rule_index,
+                    rule_id=rule_id,
+                    field="imports",
+                    import_index=index,
+                    actual_type=type(item).__name__,
+                )
+            )
+            continue
+        for key in ("module", "name", "kind", "module_pattern", "name_pattern"):
+            value = item.get(key)
+            if value is not None and not isinstance(value, str):
+                errors.append(
+                    _schema_error(
+                        "import spec fields must be strings",
+                        rule_index=rule_index,
+                        rule_id=rule_id,
+                        field=f"imports.{key}",
+                        import_index=index,
+                        actual_type=type(value).__name__,
+                    )
+                )
+        level = item.get("level")
+        if level is not None and not isinstance(level, int):
+            errors.append(
+                _schema_error(
+                    "import spec level must be an integer",
+                    rule_index=rule_index,
+                    rule_id=rule_id,
+                    field="imports.level",
+                    import_index=index,
+                    actual_type=type(level).__name__,
+                )
+            )
+    return dict(params), errors
+
+
+def _validate_signature_match_params(
+    params: Mapping[str, object],
+    *,
+    rule_index: int,
+    rule_id: object | None,
+) -> tuple[dict[str, object], list[PatchValidationError]]:
+    errors: list[PatchValidationError] = []
+    functions = _normalize_str_list(
+        params.get("functions") if "functions" in params else params.get("function"),
+        field="functions",
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
+    classes = _normalize_str_list(
+        params.get("classes") if "classes" in params else params.get("class"),
+        field="classes",
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
+    if not functions and not classes:
+        errors.append(
+            _schema_error(
+                "signature_match requires functions or classes",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="functions",
+            )
+        )
+    require_annotations = params.get("require_annotations")
+    if require_annotations is not None and not isinstance(require_annotations, bool):
+        errors.append(
+            _schema_error(
+                "require_annotations must be a boolean",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="require_annotations",
+                actual_type=type(require_annotations).__name__,
+            )
+        )
+    normalized = dict(params)
+    if functions:
+        normalized["functions"] = functions
+    if classes:
+        normalized["classes"] = classes
+    return normalized, errors
+
+
+def _validate_forbidden_patterns_params(
+    params: Mapping[str, object],
+    *,
+    rule_index: int,
+    rule_id: object | None,
+) -> tuple[dict[str, object], list[PatchValidationError]]:
+    errors: list[PatchValidationError] = []
+    normalized: dict[str, object] = dict(params)
+    list_fields = {
+        "node_types": params.get("node_types") if "node_types" in params else params.get("types"),
+        "names": params.get("names"),
+        "strings": params.get("strings"),
+        "call_names": params.get("call_names"),
+        "attributes": params.get("attributes"),
+    }
+    for field, value in list_fields.items():
+        normalized[field] = _normalize_str_list(
+            value,
+            field=field,
+            rule_index=rule_index,
+            rule_id=rule_id,
+            errors=errors,
+        )
+    pattern_fields = {
+        "name_patterns": params.get("name_patterns"),
+        "string_patterns": params.get("string_patterns"),
+        "call_patterns": params.get("call_patterns"),
+        "attribute_patterns": params.get("attribute_patterns"),
+    }
+    for field, value in pattern_fields.items():
+        normalized[field] = _normalize_str_list(
+            value,
+            field=field,
+            rule_index=rule_index,
+            rule_id=rule_id,
+            errors=errors,
+        )
+    return normalized, errors
+
+
+def _validate_static_contracts_params(
+    params: Mapping[str, object],
+    *,
+    rule_index: int,
+    rule_id: object | None,
+) -> tuple[dict[str, object], list[PatchValidationError]]:
+    errors: list[PatchValidationError] = []
+    functions = _normalize_str_list(
+        params.get("functions") if "functions" in params else params.get("function"),
+        field="functions",
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
+    if not functions:
+        errors.append(
+            _schema_error(
+                "static_contracts requires functions",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="functions",
+            )
+        )
+    require_docstring = params.get("require_docstring")
+    if require_docstring is not None and not isinstance(require_docstring, bool):
+        errors.append(
+            _schema_error(
+                "require_docstring must be a boolean",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="require_docstring",
+                actual_type=type(require_docstring).__name__,
+            )
+        )
+    require_annotations = params.get("require_annotations")
+    if require_annotations is not None and not isinstance(require_annotations, bool):
+        errors.append(
+            _schema_error(
+                "require_annotations must be a boolean",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="require_annotations",
+                actual_type=type(require_annotations).__name__,
+            )
+        )
+    must_raise = _normalize_str_list(
+        params.get("must_raise"),
+        field="must_raise",
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
+    normalized = dict(params)
+    if functions:
+        normalized["functions"] = functions
+    if must_raise:
+        normalized["must_raise"] = must_raise
+    return normalized, errors
+
+
+def _validate_mandatory_returns_params(
+    params: Mapping[str, object],
+    *,
+    rule_index: int,
+    rule_id: object | None,
+) -> tuple[dict[str, object], list[PatchValidationError]]:
+    errors: list[PatchValidationError] = []
+    functions = _normalize_str_list(
+        params.get("functions") if "functions" in params else params.get("function"),
+        field="functions",
+        rule_index=rule_index,
+        rule_id=rule_id,
+        errors=errors,
+    )
+    if not functions:
+        errors.append(
+            _schema_error(
+                "mandatory_returns requires functions",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="functions",
+            )
+        )
+    require_terminal = params.get("require_terminal")
+    if require_terminal is not None and not isinstance(require_terminal, bool):
+        errors.append(
+            _schema_error(
+                "require_terminal must be a boolean",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="require_terminal",
+                actual_type=type(require_terminal).__name__,
+            )
+        )
+    require_any = params.get("require_any")
+    if require_any is not None and not isinstance(require_any, bool):
+        errors.append(
+            _schema_error(
+                "require_any must be a boolean",
+                rule_index=rule_index,
+                rule_id=rule_id,
+                field="require_any",
+                actual_type=type(require_any).__name__,
+            )
+        )
+    normalized = dict(params)
+    if functions:
+        normalized["functions"] = functions
+    return normalized, errors
+
+
+def _validate_rule_schema(
+    rules: list[dict[str, object]],
+) -> tuple[list[ValidatedRule], list[ValidationError]]:
+    errors: list[PatchValidationError] = []
     validated: list[ValidatedRule] = []
 
     if not isinstance(rules, list):
         errors.append(
-            PatchRuleError(
+            PatchValidationError(
                 "rules must be provided as a list",
                 details={"field": "rules", "expected": "list", "actual_type": type(rules).__name__},
             )
@@ -644,7 +984,7 @@ def validate_rules(
     for rule_index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             errors.append(
-                PatchRuleError(
+                PatchValidationError(
                     "rule must be a dict",
                     details={
                         "rule_index": rule_index,
@@ -654,101 +994,124 @@ def validate_rules(
             )
             continue
 
-        raw_rule_id = rule.get("rule_id")
-        if raw_rule_id is None and "id" in rule:
-            raw_rule_id = rule.get("id")
-
-        rule_id_context = raw_rule_id if raw_rule_id is not None else None
-        if raw_rule_id is not None and not isinstance(raw_rule_id, str):
+        raw_rule_id = rule.get("id")
+        if "id" not in rule:
             errors.append(
-                PatchRuleError(
-                    "rule_id must be a string",
-                    details=_rule_error_context(rule_index, rule_id_context, field="rule_id"),
+                _schema_error(
+                    "rule missing required field",
+                    rule_index=rule_index,
+                    rule_id=None,
+                    field="id",
                 )
             )
-            rule_id = None
-        else:
-            rule_id = raw_rule_id
+        elif not isinstance(raw_rule_id, str) or not raw_rule_id.strip():
+            errors.append(
+                _schema_error(
+                    "rule id must be a non-empty string",
+                    rule_index=rule_index,
+                    rule_id=raw_rule_id,
+                    field="id",
+                    actual_type=type(raw_rule_id).__name__,
+                )
+            )
 
         rule_type = rule.get("type")
-        if not isinstance(rule_type, str):
+        if "type" not in rule:
             errors.append(
-                PatchRuleError(
+                _schema_error(
+                    "rule missing required field",
+                    rule_index=rule_index,
+                    rule_id=raw_rule_id,
+                    field="type",
+                )
+            )
+        elif not isinstance(rule_type, str):
+            errors.append(
+                _schema_error(
                     "rule type must be a string",
-                    details=_rule_error_context(
-                        rule_index,
-                        rule_id_context,
-                        field="type",
-                        actual_type=type(rule_type).__name__,
-                    ),
+                    rule_index=rule_index,
+                    rule_id=raw_rule_id,
+                    field="type",
+                    actual_type=type(rule_type).__name__,
                 )
             )
         elif rule_type not in _SUPPORTED_RULE_TYPES:
             errors.append(
-                PatchRuleError(
+                _schema_error(
                     "unsupported rule type",
-                    details=_rule_error_context(rule_index, rule_id_context, rule_type=rule_type),
+                    rule_index=rule_index,
+                    rule_id=raw_rule_id,
+                    rule_type=rule_type,
                 )
             )
 
-        target = rule.get("target")
-        if not isinstance(target, str):
+        params = rule.get("params")
+        if "params" not in rule:
             errors.append(
-                PatchRuleError(
-                    "rule target must be a string",
-                    details=_rule_error_context(
-                        rule_index,
-                        rule_id_context,
-                        field="target",
-                        actual_type=type(target).__name__,
-                    ),
+                _schema_error(
+                    "rule missing required field",
+                    rule_index=rule_index,
+                    rule_id=raw_rule_id,
+                    field="params",
                 )
             )
-
-        match = rule.get("match")
-        if not isinstance(match, str):
+        elif not isinstance(params, Mapping):
             errors.append(
-                PatchRuleError(
-                    "rule match must be a string",
-                    details=_rule_error_context(
-                        rule_index,
-                        rule_id_context,
-                        field="match",
-                        actual_type=type(match).__name__,
-                    ),
+                _schema_error(
+                    "rule params must be a mapping",
+                    rule_index=rule_index,
+                    rule_id=raw_rule_id,
+                    field="params",
+                    actual_type=type(params).__name__,
                 )
             )
 
-        severity = rule.get("severity")
-        if severity is not None and not isinstance(severity, str):
-            errors.append(
-                PatchRuleError(
-                    "severity must be a string",
-                    details=_rule_error_context(
-                        rule_index,
-                        rule_id_context,
-                        field="severity",
-                        actual_type=type(severity).__name__,
-                    ),
-                )
-            )
-
-        if any(
-            isinstance(item, PatchRuleError)
-            and item.details.get("rule_index") == rule_index
-            for item in errors
-        ):
+        if any(error.details.get("rule_index") == rule_index for error in errors):
             continue
+
+        params_mapping = params if isinstance(params, Mapping) else {}
+        normalized_params: dict[str, object] = dict(params_mapping)
+        param_errors: list[PatchValidationError] = []
+        if rule_type == "syntax_compile":
+            normalized_params, param_errors = _validate_syntax_compile_params(
+                params_mapping, rule_index=rule_index, rule_id=raw_rule_id
+            )
+        elif rule_type == "required_imports":
+            normalized_params, param_errors = _validate_required_imports_params(
+                params_mapping, rule_index=rule_index, rule_id=raw_rule_id
+            )
+        elif rule_type == "signature_match":
+            normalized_params, param_errors = _validate_signature_match_params(
+                params_mapping, rule_index=rule_index, rule_id=raw_rule_id
+            )
+        elif rule_type == "forbidden_patterns":
+            normalized_params, param_errors = _validate_forbidden_patterns_params(
+                params_mapping, rule_index=rule_index, rule_id=raw_rule_id
+            )
+        elif rule_type == "static_contracts":
+            normalized_params, param_errors = _validate_static_contracts_params(
+                params_mapping, rule_index=rule_index, rule_id=raw_rule_id
+            )
+        elif rule_type == "mandatory_returns":
+            normalized_params, param_errors = _validate_mandatory_returns_params(
+                params_mapping, rule_index=rule_index, rule_id=raw_rule_id
+            )
+
+        if param_errors:
+            errors.extend(param_errors)
+            continue
+
+        payload = dict(normalized_params)
+        payload.setdefault("id", raw_rule_id)
+        payload.setdefault("rule_id", raw_rule_id)
+        payload["type"] = rule_type
 
         validated.append(
             ValidatedRule(
                 rule_type=rule_type,
-                target=target,
-                match=match,
-                severity=severity,
-                rule_id=rule_id,
+                rule_id=raw_rule_id,
                 rule_index=rule_index,
-                payload=rule,
+                payload=payload,
             )
         )
 
