@@ -150,6 +150,7 @@ def generate_patch(
     meta = _build_meta(
         source=source,
         rule_summaries=rule_summaries,
+        error_report=error_report,
         error_report_summary=error_report_summary,
         applied_rules=_serialize_applied_rules(result.resolved_rules),
         anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
@@ -1190,6 +1191,7 @@ def _build_meta(
     *,
     source: str,
     rule_summaries: Sequence[Mapping[str, Any]],
+    error_report: Mapping[str, Any],
     error_report_summary: Mapping[str, Any],
     applied_rules: Sequence[Mapping[str, Any]],
     anchor_resolutions: Sequence[Mapping[str, Any]],
@@ -1204,6 +1206,7 @@ def _build_meta(
         "rule_count": len(rule_summaries),
         "applied_count": applied_count,
         "total_changes": applied_count,
+        "error_report": _normalize_error_report(error_report),
         "error_report_summary": dict(error_report_summary),
         "applied_rule_ids": [rule["id"] for rule in applied_rules_list if "id" in rule],
         "rule_application_order": [
@@ -1214,7 +1217,7 @@ def _build_meta(
         "changed_line_count": changed_line_count,
         "syntax_valid": syntax_valid,
         "validation_results": {"syntax_valid": syntax_valid},
-        "input_hash": _hash_input(source, rule_summaries),
+        "input_hash": _hash_input(source, rule_summaries, error_report),
         "notes": list(notes),
     }
 
@@ -1234,6 +1237,7 @@ def _error_payload(
         "meta": _build_meta(
             source=source,
             rule_summaries=rule_summaries,
+            error_report=error_report,
             error_report_summary=_summarize_error_report(error_report),
             applied_rules=[],
             anchor_resolutions=[],
@@ -1300,6 +1304,57 @@ _ERROR_REPORT_MAX_STRING = 200
 _ERROR_REPORT_MAX_KEYS = 24
 _ERROR_REPORT_MAX_ITEMS = 12
 _ERROR_REPORT_MAX_DEPTH = 1
+
+
+def _normalize_error_report(error_report: Mapping[str, Any]) -> dict[str, Any]:
+    ordered_keys = sorted(error_report.keys(), key=lambda key: str(key))
+    limited_keys = ordered_keys[:_ERROR_REPORT_MAX_KEYS]
+    normalized = {
+        str(key): _normalize_error_value(error_report[key]) for key in limited_keys
+    }
+    truncated = len(ordered_keys) - len(limited_keys)
+    if truncated > 0:
+        normalized["truncated_keys"] = truncated
+    return normalized
+
+
+def _normalize_error_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _truncate_error_string(value)
+    if isinstance(value, bytes):
+        return _truncate_error_string(value.decode("utf-8", "replace"))
+    if isinstance(value, Mapping):
+        return _summarize_mapping_value(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return _summarize_sequence_value_shallow(value)
+    return _truncate_error_string(str(value))
+
+
+def _summarize_sequence_value_shallow(value: Sequence[Any]) -> dict[str, Any]:
+    items = [
+        _normalize_sequence_item(item)
+        for item in list(value)[:_ERROR_REPORT_MAX_ITEMS]
+    ]
+    remaining = len(value) - len(items)
+    if remaining > 0:
+        items.append(f"...({remaining} more)")
+    return {"length": len(value), "items": items}
+
+
+def _normalize_sequence_item(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _truncate_error_string(value)
+    if isinstance(value, bytes):
+        return _truncate_error_string(value.decode("utf-8", "replace"))
+    if isinstance(value, Mapping):
+        return _summarize_mapping_value(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return {"length": len(value)}
+    return _truncate_error_string(str(value))
 
 
 def _summarize_error_report(error_report: Mapping[str, Any]) -> dict[str, Any]:
@@ -1409,8 +1464,17 @@ def _rule_kind(rule: Rule) -> str:
     )
 
 
-def _hash_input(source: str, rule_summaries: Sequence[Mapping[str, Any]]) -> str:
-    payload = {"source": source, "rules": list(rule_summaries)}
+def _hash_input(
+    source: str,
+    rule_summaries: Sequence[Mapping[str, Any]],
+    error_report: Mapping[str, Any],
+) -> str:
+    """Return a deterministic hash of inputs including the normalized error report."""
+    payload = {
+        "source": source,
+        "rules": list(rule_summaries),
+        "error_report": _normalize_error_report(error_report),
+    }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
