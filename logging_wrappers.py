@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import functools
+import inspect
 import logging
 import time
 import traceback
@@ -317,6 +318,7 @@ def wrap_with_logging(
         logger.info(event_name, extra={"payload": record})
         return result
 
+    wrapper.__signature__ = inspect.signature(func)
     setattr(wrapper, _WRAPPED_MARKER, True)
     return wrapper
 
