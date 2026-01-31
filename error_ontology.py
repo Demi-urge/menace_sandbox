@@ -149,148 +149,44 @@ _EXCEPTION_RULES: Tuple[ClassificationRule, ...] = (
     },
 )
 
+_CANONICAL_TOKEN_PHRASES: Tuple[Tuple[ErrorCategory, Tuple[str, ...]], ...] = (
+    (ErrorCategory.SyntaxError, ("syntax error",)),
+    (ErrorCategory.ImportError, ("import error",)),
+    (ErrorCategory.TypeErrorMismatch, ("type mismatch",)),
+    (ErrorCategory.ContractViolation, ("contract violation",)),
+    (ErrorCategory.EdgeCaseFailure, ("edge case",)),
+    (ErrorCategory.UnhandledException, ("unhandled exception",)),
+    (ErrorCategory.InvalidInput, ("invalid input",)),
+    (ErrorCategory.MissingReturn, ("missing return",)),
+    (ErrorCategory.ConfigError, ("config error",)),
+    (ErrorCategory.Other, ("other",)),
+)
+
+
+def _dedupe_tokens(tokens: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    deduped: List[str] = []
+    for token in tokens:
+        normalized = token.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
 # Fixed literal token priority. If multiple matches appear, the first match
 # in this list is selected (deterministic ordering). Tokens are lowercase
 # literals matched against a lowercased input string.
-_TOKEN_RULES: Tuple[ClassificationRule, ...] = (
+_TOKEN_RULES: Tuple[ClassificationRule, ...] = tuple(
     {
         "kind": "token",
-        "match": "syntax error",
-        "category": ErrorCategory.SyntaxError,
-        "matched_rule": "token:syntax error",
-    },
-    {
-        "kind": "token",
-        "match": "invalid syntax",
-        "category": ErrorCategory.SyntaxError,
-        "matched_rule": "token:invalid syntax",
-    },
-    {
-        "kind": "token",
-        "match": "import error",
-        "category": ErrorCategory.ImportError,
-        "matched_rule": "token:import error",
-    },
-    {
-        "kind": "token",
-        "match": "no module named",
-        "category": ErrorCategory.ImportError,
-        "matched_rule": "token:no module named",
-    },
-    {
-        "kind": "token",
-        "match": "module not found",
-        "category": ErrorCategory.ImportError,
-        "matched_rule": "token:module not found",
-    },
-    {
-        "kind": "token",
-        "match": "type error",
-        "category": ErrorCategory.TypeErrorMismatch,
-        "matched_rule": "token:type error",
-    },
-    {
-        "kind": "token",
-        "match": "type mismatch",
-        "category": ErrorCategory.TypeErrorMismatch,
-        "matched_rule": "token:type mismatch",
-    },
-    {
-        "kind": "token",
-        "match": "unsupported operand",
-        "category": ErrorCategory.TypeErrorMismatch,
-        "matched_rule": "token:unsupported operand",
-    },
-    {
-        "kind": "token",
-        "match": "contract violation",
-        "category": ErrorCategory.ContractViolation,
-        "matched_rule": "token:contract violation",
-    },
-    {
-        "kind": "token",
-        "match": "assertion failed",
-        "category": ErrorCategory.ContractViolation,
-        "matched_rule": "token:assertion failed",
-    },
-    {
-        "kind": "token",
-        "match": "assertion error",
-        "category": ErrorCategory.ContractViolation,
-        "matched_rule": "token:assertion error",
-    },
-    {
-        "kind": "token",
-        "match": "index out of range",
-        "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "token:index out of range",
-    },
-    {
-        "kind": "token",
-        "match": "key error",
-        "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "token:key error",
-    },
-    {
-        "kind": "token",
-        "match": "edge case",
-        "category": ErrorCategory.EdgeCaseFailure,
-        "matched_rule": "token:edge case",
-    },
-    {
-        "kind": "token",
-        "match": "unhandled exception",
-        "category": ErrorCategory.UnhandledException,
-        "matched_rule": "token:unhandled exception",
-    },
-    {
-        "kind": "token",
-        "match": "unexpected exception",
-        "category": ErrorCategory.UnhandledException,
-        "matched_rule": "token:unexpected exception",
-    },
-    {
-        "kind": "token",
-        "match": "invalid input",
-        "category": ErrorCategory.InvalidInput,
-        "matched_rule": "token:invalid input",
-    },
-    {
-        "kind": "token",
-        "match": "bad input",
-        "category": ErrorCategory.InvalidInput,
-        "matched_rule": "token:bad input",
-    },
-    {
-        "kind": "token",
-        "match": "missing return",
-        "category": ErrorCategory.MissingReturn,
-        "matched_rule": "token:missing return",
-    },
-    {
-        "kind": "token",
-        "match": "no return statement",
-        "category": ErrorCategory.MissingReturn,
-        "matched_rule": "token:no return statement",
-    },
-    {
-        "kind": "token",
-        "match": "config error",
-        "category": ErrorCategory.ConfigError,
-        "matched_rule": "token:config error",
-    },
-    {
-        "kind": "token",
-        "match": "configuration error",
-        "category": ErrorCategory.ConfigError,
-        "matched_rule": "token:configuration error",
-    },
-    {
-        "kind": "token",
-        "match": "missing config",
-        "category": ErrorCategory.ConfigError,
-        "matched_rule": "token:missing config",
-    },
+        "match": token,
+        "category": category,
+        "matched_rule": f"token:{token}",
+    }
+    for category, phrases in _CANONICAL_TOKEN_PHRASES
+    for token in _dedupe_tokens((*phrases, category.value))
 )
 
 
@@ -412,8 +308,9 @@ def _classify_text(text: str) -> Tuple[ErrorCategory, str, str | None]:
     normalized = text.lower()
     for rule in _TOKEN_RULES:
         token = rule["match"]
-        if isinstance(token, str) and token in normalized:
-            return rule["category"], rule["matched_rule"], token
+        normalized_token = token.lower() if isinstance(token, str) else token
+        if isinstance(normalized_token, str) and normalized_token in normalized:
+            return rule["category"], rule["matched_rule"], normalized_token
     return ErrorCategory.Other, "text:unmatched", None
 
 
