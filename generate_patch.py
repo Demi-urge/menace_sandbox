@@ -124,21 +124,9 @@ def generate_patch(
     rule_summaries = _summarize_rules(parsed_rules)
 
     if not parsed_rules:
-        return _error_payload(
-            PatchRuleError("rules must not be empty", details={"field": "rules"}),
-            source=source,
-            rule_summaries=rule_summaries,
-            notes=["empty_rules"],
-        )
+        raise PatchRuleError("rules must not be empty", details={"field": "rules"})
 
-    try:
-        result = apply_rules(source, parsed_rules)
-    except (PatchAnchorError, PatchConflictError) as exc:
-        return _error_payload(
-            exc,
-            source=source,
-            rule_summaries=rule_summaries,
-        )
+    result = apply_rules(source, parsed_rules)
 
     patch_text = render_patch(result)
     errors: list[dict[str, Any]] = []
@@ -175,6 +163,40 @@ def generate_patch(
         "errors": errors,
         "meta": meta,
     }
+
+
+def generate_patch_payload(
+    source: str,
+    error_report: Mapping[str, Any],
+    rules: Sequence[Mapping[str, Any]],
+    *,
+    validate_syntax: bool | None = None,
+) -> dict[str, object]:
+    """Generate a patch payload while capturing rule/anchor/conflict errors."""
+    try:
+        return generate_patch(
+            source,
+            error_report,
+            rules,
+            validate_syntax=validate_syntax,
+        )
+    except (PatchRuleError, PatchAnchorError, PatchConflictError) as exc:
+        parsed_rules: list[Rule] = []
+        notes: list[str] = []
+        try:
+            if isinstance(rules, Sequence) and not isinstance(rules, (str, bytes)):
+                parsed_rules = _parse_rules(rules)
+        except PatchRuleError:
+            notes.append("rule_parse_failed")
+        if not parsed_rules:
+            notes.append("empty_rules")
+        rule_summaries = _summarize_rules(parsed_rules)
+        return _error_payload(
+            exc,
+            source=source,
+            rule_summaries=rule_summaries,
+            notes=notes,
+        )
 
 
 def apply_rules(source: str, rules: Sequence[Rule]) -> PatchResult:
@@ -1304,6 +1326,7 @@ def _serialize_rule_payload(rule: Any) -> Any:
 
 __all__ = [
     "generate_patch",
+    "generate_patch_payload",
     "apply_rules",
     "PatchAnchorError",
     "PatchConflictError",
