@@ -7,6 +7,11 @@ classifier. Classification is purely literal: explicit ``isinstance`` checks
 for known exception types and literal substring matching for known tokens. The
 taxonomy is immutable (no dynamic extension) and the matching order is fixed
 and documented to keep outcomes stable across runs.
+
+Script usage intentionally relies on explicit imports instead of path mutation.
+For example:
+
+``python -c "from error_ontology import classify_error; print(classify_error('syntax error'))"``
 """
 
 from enum import Enum
