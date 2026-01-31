@@ -1,0 +1,123 @@
+import math
+
+import pytest
+
+from menace_sandbox.stabilization.roi import compute_roi_delta
+
+
+def _error_codes(response: dict) -> list[str]:
+    return [error["code"] for error in response["errors"]]
+
+
+def test_identical_metrics_return_zero_delta() -> None:
+    metrics = {"alpha": 1.5, "beta": -2.0}
+
+    response = compute_roi_delta(metrics, metrics)
+
+    assert response["status"] == "ok"
+    assert response["data"]["deltas"] == {"alpha": 0.0, "beta": 0.0}
+    assert response["data"]["delta_total"] == 0.0
+
+
+def test_mixed_values_compute_arithmetic_deltas() -> None:
+    before = {"alpha": 1.0, "beta": -2.5, "gamma": 10.0}
+    after = {"alpha": 3.0, "beta": -3.5, "gamma": 7.5}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "ok"
+    assert response["data"]["deltas"] == {"alpha": 2.0, "beta": -1.0, "gamma": -2.5}
+    assert response["data"]["delta_total"] == -1.5
+
+
+def test_empty_metrics_succeed_with_zero_totals() -> None:
+    response = compute_roi_delta({}, {})
+
+    assert response["status"] == "ok"
+    assert response["data"]["deltas"] == {}
+    assert response["data"]["delta_total"] == 0.0
+    assert response["meta"]["key_count"] == 0
+
+
+def test_schema_mismatch_missing_keys_returns_error() -> None:
+    before = {"alpha": 1.0, "beta": 2.0}
+    after = {"alpha": 1.0}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "error"
+    assert "schema_mismatch" in _error_codes(response)
+
+
+def test_schema_mismatch_extra_keys_returns_error() -> None:
+    before = {"alpha": 1.0}
+    after = {"alpha": 1.0, "beta": 2.0}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "error"
+    assert "schema_mismatch" in _error_codes(response)
+
+
+@pytest.mark.parametrize(
+    ("before_metrics", "after_metrics"),
+    [
+        ([], {"alpha": 1.0}),
+        ({"alpha": 1.0}, None),
+    ],
+)
+def test_non_mapping_inputs_return_input_type_error(
+    before_metrics: object, after_metrics: object
+) -> None:
+    response = compute_roi_delta(before_metrics, after_metrics)
+
+    assert response["status"] == "error"
+    assert "input_type_error" in _error_codes(response)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["oops", object(), True],
+)
+def test_non_numeric_values_return_non_numeric_value_error(value: object) -> None:
+    before = {"alpha": 1.0}
+    after = {"alpha": value}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "error"
+    assert "non_numeric_value" in _error_codes(response)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [float("nan"), float("inf"), 10**1000],
+)
+def test_non_finite_values_return_non_finite_value_error(value: object) -> None:
+    before = {"alpha": 1.0}
+    after = {"alpha": value}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "error"
+    assert "non_finite_value" in _error_codes(response)
+
+
+def test_compute_roi_delta_is_deterministic() -> None:
+    before = {"alpha": 2.0, "beta": 5.0}
+    after = {"alpha": 1.0, "beta": 7.0}
+
+    results = [compute_roi_delta(before, after) for _ in range(3)]
+
+    assert results[0] == results[1] == results[2]
+
+
+def test_delta_total_equals_sum_of_per_key_deltas() -> None:
+    before = {"alpha": 1.0, "beta": 4.0, "gamma": -2.0}
+    after = {"alpha": 1.5, "beta": 1.0, "gamma": -1.0}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "ok"
+    deltas = response["data"]["deltas"]
+    assert math.isclose(response["data"]["delta_total"], sum(deltas.values()))
