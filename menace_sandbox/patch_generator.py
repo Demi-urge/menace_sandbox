@@ -569,6 +569,19 @@ def generate_patch(
                     syntax_valid=None,
                 ),
             )
+        except PatchAnchorError as exc:
+            errors.append(exc.to_dict())
+            return _failure_result(
+                errors,
+                meta=_build_meta(
+                    source=source,
+                    rule_summaries=rule_summaries,
+                    applied_count=0,
+                    applied_rules=[],
+                    anchor_resolutions=[],
+                    syntax_valid=None,
+                ),
+            )
 
         try:
             patch_text = render_patch(result)

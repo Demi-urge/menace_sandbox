@@ -4,20 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from menace_sandbox.patch_generator import (
-    DeleteRegexRule,
-    InsertAfterRule,
-    ReplaceRule,
-    generate_patch as _generate_patch,
-)
-
-Rule = ReplaceRule | InsertAfterRule | DeleteRegexRule
+from menace_sandbox.patch_generator import generate_patch as _generate_patch
 
 
 def generate_patch(
     source: str,
     error_report: Mapping[str, Any],
-    rules: Sequence[Mapping[str, Any]] | Sequence[Rule],
+    rules: Sequence[Mapping[str, Any]],
     *,
     validate_syntax: bool | None = None,
 ) -> dict[str, object]:
@@ -26,7 +19,7 @@ def generate_patch(
     Args:
         source: The original source content to modify.
         error_report: Structured metadata about the error context.
-        rules: Patch rules to apply as mappings or rule dataclasses.
+        rules: Patch rules to apply as mappings.
         validate_syntax: Explicit override for syntax validation.
 
     Returns:
