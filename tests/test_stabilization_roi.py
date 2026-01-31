@@ -28,6 +28,17 @@ def test_mixed_values_compute_arithmetic_deltas() -> None:
     assert response["data"]["delta"] == {"alpha": 2.0, "beta": -1.0, "gamma": -2.5}
 
 
+def test_negative_and_large_values_compute_raw_deltas() -> None:
+    before = {"alpha": -1_000_000.0, "beta": 10**12}
+    after = {"alpha": -2_500_000.5, "beta": 10**12 + 3_333.0}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "ok"
+    assert response["data"]["delta"] == {"alpha": -1_500_000.5, "beta": 3333.0}
+    assert response["meta"]["input_keys"] == ["alpha", "beta"]
+
+
 def test_empty_metrics_succeed_with_zero_totals() -> None:
     response = compute_roi_delta({}, {})
 
@@ -44,6 +55,7 @@ def test_schema_mismatch_missing_keys_returns_error() -> None:
 
     assert response["status"] == "error"
     assert "invalid_schema" in _error_codes(response)
+    assert response["data"] == {}
 
 
 def test_schema_mismatch_extra_keys_returns_error() -> None:
@@ -54,6 +66,7 @@ def test_schema_mismatch_extra_keys_returns_error() -> None:
 
     assert response["status"] == "error"
     assert "invalid_schema" in _error_codes(response)
+    assert response["data"] == {}
 
 
 @pytest.mark.parametrize(
@@ -70,11 +83,12 @@ def test_non_mapping_inputs_return_input_type_error(
 
     assert response["status"] == "error"
     assert "invalid_schema" in _error_codes(response)
+    assert response["data"] == {}
 
 
 @pytest.mark.parametrize(
     "value",
-    ["oops", object(), True],
+    ["oops", object(), True, None],
 )
 def test_non_numeric_values_return_non_numeric_value_error(value: object) -> None:
     before = {"alpha": 1.0}
@@ -84,6 +98,7 @@ def test_non_numeric_values_return_non_numeric_value_error(value: object) -> Non
 
     assert response["status"] == "error"
     assert "metric_type_error" in _error_codes(response)
+    assert response["data"] == {}
 
 
 @pytest.mark.parametrize(
@@ -98,6 +113,19 @@ def test_non_finite_values_return_non_finite_value_error(value: object) -> None:
 
     assert response["status"] == "error"
     assert "metric_value_error" in _error_codes(response)
+    assert response["data"] == {}
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("-inf")])
+def test_non_finite_values_in_before_metrics_error(value: float) -> None:
+    before = {"alpha": value}
+    after = {"alpha": 1.0}
+
+    response = compute_roi_delta(before, after)
+
+    assert response["status"] == "error"
+    assert "metric_value_error" in _error_codes(response)
+    assert response["data"] == {}
 
 
 def test_compute_roi_delta_is_deterministic() -> None:
