@@ -51,9 +51,9 @@ def test_validate_patch_empty_patched_content_fails_with_clear_error() -> None:
 
     assert result["status"] == "fail"
     assert result["errors"], "Expected errors for empty patched content"
-    assert any(error["message"] == "function signature mismatch" for error in result["errors"])
+    assert any(error["message"] == "function signature missing" for error in result["errors"])
     for error in result["errors"]:
-        if error["message"] == "function signature mismatch":
+        if error["message"] == "function signature missing":
             _assert_rule_context(error, rule_index=0)
             break
 
@@ -96,17 +96,18 @@ def test_validate_patch_missing_required_function() -> None:
             break
 
 
-def test_validate_patch_detects_unchanged_code() -> None:
+def test_validate_patch_detects_static_contract_violation() -> None:
     result = validate_patch(
         ORIGINAL_CODE,
         ORIGINAL_CODE,
         [
             {
-                "type": "unchanged_code",
-                "target": "module",
-                "match": "hash",
-                "scope": "module",
-                "rule_id": "no-change",
+                "type": "static_contracts",
+                "target": "function",
+                "match": "docstring",
+                "functions": ["compute"],
+                "require_docstring": True,
+                "rule_id": "missing-docstring",
             }
         ],
     )
@@ -114,9 +115,9 @@ def test_validate_patch_detects_unchanged_code() -> None:
     _assert_payload_shape(result)
 
     assert result["status"] == "fail"
-    assert any(error["message"] == "patched code is unchanged" for error in result["errors"])
+    assert any(error["message"] == "static contract violation" for error in result["errors"])
     for error in result["errors"]:
-        if error["message"] == "patched code is unchanged":
+        if error["message"] == "static contract violation":
             _assert_rule_context(error, rule_index=0)
             break
 
@@ -192,10 +193,11 @@ def test_validate_patch_reports_multiple_failures() -> None:
                 "imports": [{"kind": "import", "module": "json"}],
             },
             {
-                "type": "unchanged_code",
-                "target": "module",
-                "match": "hash",
-                "scope": "module",
+                "type": "static_contracts",
+                "target": "function",
+                "match": "docstring",
+                "functions": ["compute"],
+                "require_docstring": True,
             },
         ],
     )
@@ -204,11 +206,11 @@ def test_validate_patch_reports_multiple_failures() -> None:
 
     assert result["status"] == "fail"
     messages = {error["message"] for error in result["errors"]}
-    assert "required imports missing" in messages
-    assert "patched code is unchanged" in messages
+    assert "required import missing" in messages
+    assert "static contract violation" in messages
     assert len(result["errors"]) >= 2
     for error in result["errors"]:
-        if error["message"] == "required imports missing":
+        if error["message"] == "required import missing":
             _assert_rule_context(error, rule_index=0)
-        if error["message"] == "patched code is unchanged":
+        if error["message"] == "static contract violation":
             _assert_rule_context(error, rule_index=1)
