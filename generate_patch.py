@@ -122,6 +122,7 @@ def generate_patch(
     _validate_inputs(source, error_report, rules, validate_syntax)
     parsed_rules = _parse_rules(rules)
     rule_summaries = _summarize_rules(parsed_rules)
+    error_report_summary = _summarize_error_report(error_report)
 
     if not parsed_rules:
         raise PatchRuleError("rules must not be empty", details={"field": "rules"})
@@ -149,6 +150,7 @@ def generate_patch(
     meta = _build_meta(
         source=source,
         rule_summaries=rule_summaries,
+        error_report_summary=error_report_summary,
         applied_rules=_serialize_applied_rules(result.resolved_rules),
         anchor_resolutions=_serialize_anchor_resolutions(result.resolved_rules),
         applied_count=len(result.changes),
@@ -195,6 +197,7 @@ def generate_patch_payload(
             exc,
             source=source,
             rule_summaries=rule_summaries,
+            error_report=error_report,
             notes=notes,
         )
 
@@ -1187,6 +1190,7 @@ def _build_meta(
     *,
     source: str,
     rule_summaries: Sequence[Mapping[str, Any]],
+    error_report_summary: Mapping[str, Any],
     applied_rules: Sequence[Mapping[str, Any]],
     anchor_resolutions: Sequence[Mapping[str, Any]],
     applied_count: int,
@@ -1200,6 +1204,7 @@ def _build_meta(
         "rule_count": len(rule_summaries),
         "applied_count": applied_count,
         "total_changes": applied_count,
+        "error_report_summary": dict(error_report_summary),
         "applied_rule_ids": [rule["id"] for rule in applied_rules_list if "id" in rule],
         "rule_application_order": [
             rule["id"] for rule in applied_rules_list if "id" in rule
@@ -1219,6 +1224,7 @@ def _error_payload(
     *,
     source: str,
     rule_summaries: Sequence[Mapping[str, Any]],
+    error_report: Mapping[str, Any],
     notes: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -1228,6 +1234,7 @@ def _error_payload(
         "meta": _build_meta(
             source=source,
             rule_summaries=rule_summaries,
+            error_report_summary=_summarize_error_report(error_report),
             applied_rules=[],
             anchor_resolutions=[],
             applied_count=0,
@@ -1254,6 +1261,139 @@ def _summarize_rules(rules: Sequence[Rule]) -> list[dict[str, Any]]:
         {"id": rule.rule_id, "type": _rule_kind(rule), "description": rule.description}
         for rule in rules
     ]
+
+
+_ERROR_REPORT_KEYS = (
+    "type",
+    "error_type",
+    "error_code",
+    "code",
+    "message",
+    "summary",
+    "detail",
+    "file_path",
+    "path",
+    "line",
+    "lineno",
+    "column",
+    "col_offset",
+    "offset",
+    "rule_id",
+    "rule",
+    "rule_type",
+    "language",
+    "lang",
+    "severity",
+    "category",
+    "module",
+    "function",
+)
+_ERROR_REPORT_META_KEYS = (
+    "language",
+    "rule_set",
+    "rule_id",
+    "category",
+    "severity",
+    "source",
+)
+_ERROR_REPORT_MAX_STRING = 200
+_ERROR_REPORT_MAX_KEYS = 24
+_ERROR_REPORT_MAX_ITEMS = 12
+_ERROR_REPORT_MAX_DEPTH = 1
+
+
+def _summarize_error_report(error_report: Mapping[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key in _ERROR_REPORT_KEYS:
+        if key in error_report:
+            summary[key] = _sanitize_error_value(error_report[key])
+    meta = error_report.get("meta")
+    if isinstance(meta, Mapping):
+        meta_summary: dict[str, Any] = {}
+        for key in _ERROR_REPORT_META_KEYS:
+            if key in meta:
+                meta_summary[key] = _sanitize_error_value(meta[key])
+        if meta_summary:
+            summary["meta"] = meta_summary
+    keys, truncated = _summarize_mapping_keys(error_report, _ERROR_REPORT_MAX_KEYS)
+    summary["reported_keys"] = keys
+    if truncated:
+        summary["reported_keys_truncated"] = truncated
+    return summary
+
+
+def _sanitize_error_value(value: Any, *, depth: int = 0) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _truncate_error_string(value)
+    if isinstance(value, bytes):
+        return _truncate_error_string(value.decode("utf-8", "replace"))
+    if isinstance(value, Mapping):
+        if depth >= _ERROR_REPORT_MAX_DEPTH:
+            return _summarize_mapping_value(value)
+        return _sanitize_mapping(value, depth=depth + 1)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        if depth >= _ERROR_REPORT_MAX_DEPTH:
+            return _summarize_sequence_value(value)
+        return _sanitize_sequence(value, depth=depth + 1)
+    return _truncate_error_string(str(value))
+
+
+def _truncate_error_string(value: str) -> str:
+    if len(value) <= _ERROR_REPORT_MAX_STRING:
+        return value
+    if _ERROR_REPORT_MAX_STRING <= 3:
+        return value[:_ERROR_REPORT_MAX_STRING]
+    return value[: _ERROR_REPORT_MAX_STRING - 3] + "..."
+
+
+def _summarize_mapping_keys(
+    value: Mapping[Any, Any],
+    max_keys: int,
+) -> tuple[list[str], int]:
+    keys = sorted((str(key) for key in value.keys()))
+    if len(keys) <= max_keys:
+        return keys, 0
+    return keys[:max_keys], len(keys) - max_keys
+
+
+def _summarize_mapping_value(value: Mapping[Any, Any]) -> dict[str, Any]:
+    keys, truncated = _summarize_mapping_keys(value, _ERROR_REPORT_MAX_KEYS)
+    summary: dict[str, Any] = {"keys": keys}
+    if truncated:
+        summary["truncated_keys"] = truncated
+    return summary
+
+
+def _summarize_sequence_value(value: Sequence[Any]) -> dict[str, Any]:
+    return {
+        "length": len(value),
+        "items": _sanitize_sequence(value, depth=_ERROR_REPORT_MAX_DEPTH + 1),
+    }
+
+
+def _sanitize_mapping(value: Mapping[Any, Any], *, depth: int) -> dict[str, Any]:
+    ordered_keys = sorted(value.keys(), key=lambda key: str(key))
+    limited_keys = ordered_keys[:_ERROR_REPORT_MAX_KEYS]
+    sanitized: dict[str, Any] = {
+        str(key): _sanitize_error_value(value[key], depth=depth) for key in limited_keys
+    }
+    truncated = len(ordered_keys) - len(limited_keys)
+    if truncated > 0:
+        sanitized["truncated_keys"] = truncated
+    return sanitized
+
+
+def _sanitize_sequence(value: Sequence[Any], *, depth: int) -> list[Any]:
+    items = [
+        _sanitize_error_value(item, depth=depth)
+        for item in list(value)[:_ERROR_REPORT_MAX_ITEMS]
+    ]
+    remaining = len(value) - len(items)
+    if remaining > 0:
+        items.append(f"...({remaining} more)")
+    return items
 
 
 def _rule_kind(rule: Rule) -> str:
