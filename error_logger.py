@@ -61,12 +61,9 @@ else:  # pragma: no cover - runtime stub
 from pydantic import BaseModel, Field
 
 try:
-    from .error_ontology import LegacyErrorCategory as ErrorCategory, classify_exception
+    from .error_ontology import ErrorCategory, classify_error as classify_ontology_error
 except ImportError:  # pragma: no cover - package fallback
-    from error_ontology import (  # type: ignore
-        LegacyErrorCategory as ErrorCategory,
-        classify_exception,
-    )
+    from error_ontology import ErrorCategory, classify_error as classify_ontology_error  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -167,9 +164,9 @@ class TelemetryEvent(BaseModel):
     task_id: str | None = None
     bot_id: str | None = None
     # Normalised ontology identifier for the error category
-    error_type: ErrorCategory = ErrorCategory.Unknown
+    error_type: ErrorCategory = ErrorCategory.Other
     # Legacy alias retained for backward compatibility
-    category: ErrorCategory = ErrorCategory.Unknown
+    category: ErrorCategory = ErrorCategory.Other
     root_cause: str = ""
     stack_trace: str = ""
     root_module: str = ""
@@ -186,23 +183,11 @@ class TelemetryEvent(BaseModel):
 
 
 DEFAULT_CLASSIFICATION_RULES = {
-    "RuntimeFault": {
-        "regex": [
-            r"KeyError",
-            r"IndexError",
-            r"FileNotFoundError",
-            r"ZeroDivisionError",
-            r"AttributeError",
-        ],
-        "semantic": [
-            "missing key",
-            "key not found",
-            "not in index",
-            "division by zero",
-            "attribute not found",
-        ],
+    "SyntaxError": {
+        "regex": [r"SyntaxError"],
+        "semantic": ["syntax error"],
     },
-    "DependencyMismatch": {
+    "ImportError": {
         "regex": [
             r"ModuleNotFoundError|ImportError",
             r"PackageNotFoundError",
@@ -218,25 +203,48 @@ DEFAULT_CLASSIFICATION_RULES = {
             "version conflict",
         ],
     },
-    "LogicMisfire": {
+    "TypeErrorMismatch": {
+        "regex": [r"TypeError"],
+        "semantic": ["unexpected type", "wrong type", "invalid type", "type error"],
+    },
+    "ContractViolation": {
         "regex": [r"AssertionError", r"NotImplementedError"],
-        "semantic": ["assertion failed", "not implemented"],
+        "semantic": ["assertion failed", "not implemented", "contract violation"],
     },
-    "SemanticBug": {
-        "regex": [r"TypeError", r"ValueError"],
-        "semantic": ["unexpected type", "wrong type", "invalid value"],
+    "EdgeCaseFailure": {
+        "regex": [r"KeyError", r"IndexError"],
+        "semantic": [
+            "missing key",
+            "key not found",
+            "not in index",
+            "index out of range",
+            "edge case",
+            "corner case",
+        ],
     },
-    "ResourceLimit": {
-        "regex": [r"MemoryError"],
-        "semantic": ["out of memory", "memory limit"],
+    "InvalidInput": {
+        "regex": [r"ValueError"],
+        "semantic": ["invalid input", "invalid argument", "invalid value"],
     },
-    "Timeout": {
-        "regex": [r"TimeoutError"],
-        "semantic": ["timed out", "timeout"],
+    "MissingReturn": {
+        "regex": [],
+        "semantic": ["missing return", "did not return", "returned none"],
     },
-    "ExternalAPI": {
-        "regex": [r"ConnectionError", r"HTTPError"],
-        "semantic": ["external api", "service unavailable", "connection refused"],
+    "ConfigError": {
+        "regex": [],
+        "semantic": ["missing config", "configuration error", "config error"],
+    },
+    "UnhandledException": {
+        "regex": [
+            r"RuntimeError",
+            r"Exception",
+            r"ZeroDivisionError",
+            r"AttributeError",
+            r"MemoryError",
+            r"TimeoutError",
+            r"ConnectionError",
+        ],
+        "semantic": ["unhandled exception", "uncaught exception", "timed out"],
     },
 }
 
@@ -304,15 +312,38 @@ class ErrorClassifier:
     def _parse_type(name: str) -> ErrorCategory | None:
         import re
 
-        key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
-        key = key.replace("-", "_").replace(" ", "_").upper()
+        if not name:
+            return None
+        key = name.strip()
+        normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key)
+        normalized = normalized.replace("-", "_").replace(" ", "_")
+        legacy_map = {
+            "UNKNOWN": ErrorCategory.Other,
+            "RUNTIME_FAULT": ErrorCategory.UnhandledException,
+            "DEPENDENCY_MISMATCH": ErrorCategory.ImportError,
+            "LOGIC_MISFIRE": ErrorCategory.ContractViolation,
+            "SEMANTIC_BUG": ErrorCategory.TypeErrorMismatch,
+            "RESOURCE_LIMIT": ErrorCategory.UnhandledException,
+            "TIMEOUT": ErrorCategory.UnhandledException,
+            "EXTERNAL_API": ErrorCategory.UnhandledException,
+            "METRIC_BOTTLENECK": ErrorCategory.Other,
+        }
+        legacy_hit = legacy_map.get(normalized.upper())
+        if legacy_hit:
+            return legacy_hit
         try:
-            return ErrorCategory[key]
+            return ErrorCategory[normalized.upper()]
         except KeyError:
-            try:
-                return ErrorCategory(name.lower())
-            except Exception:  # pragma: no cover - unknown type
-                return None
+            pass
+        lowered = normalized.lower()
+        for category in ErrorCategory:
+            if lowered in {
+                category.name.lower(),
+                category.value.lower(),
+                category.value.replace("-", "_").lower(),
+            }:
+                return category
+        return None
 
     def _build_maps(self, config: dict[str, Any]) -> None:
         self.regex_map = {}
@@ -380,7 +411,7 @@ class ErrorClassifier:
             try:
                 query = (
                     "SELECT id, stack_trace FROM telemetry "
-                    "WHERE (category IS NULL OR TRIM(category) = '' OR category = 'Unknown') "
+                    "WHERE (category IS NULL OR TRIM(category) = '' OR category = 'Other') "
                     "AND stack_trace IS NOT NULL AND TRIM(stack_trace) != ''"
                 )
                 query = apply_scope(query, clause)
@@ -486,8 +517,12 @@ class ErrorClassifier:
         """Classify a stack trace, prioritising ontology categories."""
         self._maybe_reload()
         if exc is not None:
-            ont = classify_exception(exc, stack)
-            if ont is not ErrorCategory.Unknown:
+            result = classify_ontology_error([exc, stack])
+            try:
+                ont = ErrorCategory(result["data"]["category"])
+            except Exception:
+                ont = ErrorCategory.Other
+            if ont is not ErrorCategory.Other:
                 return ont
         for pattern, label in self.regex_map.items():
             if re.search(pattern, stack, re.IGNORECASE):
@@ -517,12 +552,12 @@ class ErrorClassifier:
                         return best_label
             except Exception as e:  # pragma: no cover - runtime issues
                 self.logger.warning("semantic classification failed: %s", e)
-        return ErrorCategory.Unknown
+        return ErrorCategory.Other
 
     def classify_details(self, exc: Exception, stack: str) -> tuple[ErrorCategory, str]:
         """Return ontology category and root cause."""
         category = self.classify(stack, exc)
-        root_cause = exc.__class__.__name__ if category is not ErrorCategory.Unknown else ""
+        root_cause = exc.__class__.__name__ if category is not ErrorCategory.Other else ""
         return category, root_cause
 
 
@@ -696,7 +731,7 @@ class ErrorLogger:
                         self.logger.exception(
                             "failed to publish patch_failed event"
                         )
-        if category is ErrorCategory.Unknown:
+        if category is ErrorCategory.Other:
             self._unknown_counter += 1
             if self._unknown_counter >= self._update_threshold:
                 try:
@@ -729,8 +764,8 @@ class ErrorLogger:
             try:
                 event = TelemetryEvent(
                     task_id=workflow_id,
-                    error_type=ErrorCategory.Unknown,
-                    category=ErrorCategory.Unknown,
+                    error_type=ErrorCategory.Other,
+                    category=ErrorCategory.Other,
                     root_cause="ROIBottleneck",
                     stack_trace=message,
                     root_module="roi_calculator",
@@ -808,8 +843,8 @@ class ErrorLogger:
             event = TelemetryEvent(
                 task_id=task_id,
                 bot_id=bot_id,
-                error_type=ErrorCategory.MetricBottleneck,
-                category=ErrorCategory.MetricBottleneck,
+                error_type=ErrorCategory.Other,
+                category=ErrorCategory.Other,
                 root_cause=hint,
                 stack_trace=json.dumps(payload, sort_keys=True),
                 root_module=resolved_module or "fix_suggestions",
@@ -832,7 +867,7 @@ class ErrorLogger:
                 try:
                     self.graph.add_telemetry_event(
                         bot_id,
-                        ErrorCategory.MetricBottleneck.value,
+                        ErrorCategory.Other.value,
                         resolved_module or None,
                         {resolved_module: 1} if resolved_module else None,
                     )

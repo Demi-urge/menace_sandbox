@@ -329,7 +329,7 @@ def test_telemetry_summary_updates_training(tmp_path):
     coord.start()
     edb.add_telemetry(
         elog.TelemetryEvent(
-            error_type=elog.ErrorType.RUNTIME_FAULT,
+            error_type=elog.ErrorType.UnhandledException,
             resolution_status="fatal",
         )
     )

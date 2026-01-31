@@ -1636,7 +1636,7 @@ class ErrorBot(AdminBotBase):
                     TelemetryEvent(
                         task_id=None,
                         bot_id=";".join(bot_ids or []),
-                        error_type=ErrorType.RUNTIME_FAULT,
+                        error_type=ErrorType.UnhandledException,
                         stack_trace=stack_trace,
                         root_module=__name__,
                         timestamp=datetime.utcnow().isoformat(),
