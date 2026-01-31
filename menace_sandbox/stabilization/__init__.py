@@ -6,6 +6,7 @@ from .response_schemas import (
     normalize_error_response,
     normalize_mvp_response,
     normalize_patch_apply,
+    normalize_patch_code_validation,
     normalize_patch_validation,
     normalize_preset_batch,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "normalize_error_response",
     "normalize_mvp_response",
     "normalize_patch_apply",
+    "normalize_patch_code_validation",
     "normalize_patch_validation",
     "normalize_preset_batch",
     "stabilize_completion",
