@@ -260,51 +260,53 @@ def validate_patch(
     rule_summaries: list[dict[str, object]] = []
     current_rule_id: str | None = None
     current_rule_index: int | None = None
-
-    source_hashes = {
-        "original_source_hash": _hash_source(original) if isinstance(original, str) else "",
-        "patched_source_hash": _hash_source(patched) if isinstance(patched, str) else "",
-    }
-
-    if metadata is None and isinstance(rules, Mapping):
-        rules_meta = rules.get("meta")
-        if isinstance(rules_meta, Mapping):
-            metadata = rules_meta
-
-    rules_list, rules_error = _normalize_rules(rules)
-    if rules_error is not None:
-        schema_errors.append(rules_error)
-
+    source_hashes = {"original_source_hash": "", "patched_source_hash": ""}
+    rules_list: list[Mapping[str, object]] = []
     validated_rules: list[ValidatedRule] = []
-    if not schema_errors:
-        validated_rules, schema_errors = validate_rules(rules_list)
-
-    if schema_errors:
-        errors.extend(error.to_dict() for error in schema_errors)
-
-    if not isinstance(original, str):
-        errors.append(
-            PatchValidationError(
-                "original code must be a string",
-                details={"field": "original", "actual_type": type(original).__name__},
-            ).to_dict()
-        )
-    if not isinstance(patched, str):
-        errors.append(
-            PatchValidationError(
-                "patched code must be a string",
-                details={"field": "patched", "actual_type": type(patched).__name__},
-            ).to_dict()
-        )
-    if metadata is not None and not isinstance(metadata, Mapping):
-        errors.append(
-            PatchValidationError(
-                "metadata must be a mapping",
-                details={"field": "metadata", "actual_type": type(metadata).__name__},
-            ).to_dict()
-        )
 
     try:
+        source_hashes = {
+            "original_source_hash": _hash_source(original) if isinstance(original, str) else "",
+            "patched_source_hash": _hash_source(patched) if isinstance(patched, str) else "",
+        }
+
+        if metadata is None and isinstance(rules, Mapping):
+            rules_meta = rules.get("meta")
+            if isinstance(rules_meta, Mapping):
+                metadata = rules_meta
+
+        rules_list, rules_error = _normalize_rules(rules)
+        if rules_error is not None:
+            schema_errors.append(rules_error)
+
+        if not schema_errors:
+            validated_rules, schema_errors = validate_rules(rules_list)
+
+        if schema_errors:
+            errors.extend(error.to_dict() for error in schema_errors)
+
+        if not isinstance(original, str):
+            errors.append(
+                PatchValidationError(
+                    "original code must be a string",
+                    details={"field": "original", "actual_type": type(original).__name__},
+                ).to_dict()
+            )
+        if not isinstance(patched, str):
+            errors.append(
+                PatchValidationError(
+                    "patched code must be a string",
+                    details={"field": "patched", "actual_type": type(patched).__name__},
+                ).to_dict()
+            )
+        if metadata is not None and not isinstance(metadata, Mapping):
+            errors.append(
+                PatchValidationError(
+                    "metadata must be a mapping",
+                    details={"field": "metadata", "actual_type": type(metadata).__name__},
+                ).to_dict()
+            )
+
         if isinstance(original, str) and isinstance(patched, str) and not schema_errors:
             original_tree, original_index, original_nodes = _build_ast_index(
                 original,
