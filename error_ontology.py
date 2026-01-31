@@ -586,13 +586,15 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
             },
         }
 
-    if input_kind == "mapping" and isinstance(normalized, Mapping):
-        normalized = _extract_from_mapping(normalized)
-        if isinstance(normalized, Sequence) and not isinstance(
-            normalized, (str, bytes, bytearray)
+    if input_kind == "mapping":
+        extracted = normalized
+        if isinstance(extracted, Sequence) and not isinstance(
+            extracted, (str, bytes, bytearray)
         ):
+            normalized = extracted
             input_kind = "sequence"
         else:
+            normalized = extracted
             input_kind = "mapping"
 
     if input_kind == "sequence" and isinstance(normalized, Sequence):

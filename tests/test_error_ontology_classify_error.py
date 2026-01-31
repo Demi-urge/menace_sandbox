@@ -70,6 +70,18 @@ def test_multi_error_bundle_and_unknown_exception_return_other():
     ]
 
 
+def test_mapping_with_sequence_normalizes_to_bundle():
+    payload = {"errors": ["TypeError: unsupported operand", "Other: fallback"]}
+    result = classify_error(payload)
+
+    assert result["status"] == ErrorCategory.Other.value
+    assert result["data"]["bundle"] is not None
+    assert [item["status"] for item in result["data"]["bundle"]] == [
+        ErrorCategory.TypeErrorMismatch.value,
+        ErrorCategory.Other.value,
+    ]
+
+
 @pytest.mark.parametrize("raw", [
     None,
     "syntax error near token",

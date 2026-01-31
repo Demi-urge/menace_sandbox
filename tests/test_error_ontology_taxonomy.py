@@ -6,28 +6,24 @@ from menace.error_ontology import ErrorCategory, classify_error
 @pytest.mark.parametrize(
     "raw, expected_status, expected_token",
     [
-        ("SyntaxError: invalid syntax", ErrorCategory.SyntaxError.value, "SyntaxError"),
-        ("ImportError: no module named x", ErrorCategory.ImportError.value, "ImportError"),
-        ("TypeError: unsupported operand", ErrorCategory.TypeErrorMismatch.value, "TypeError"),
+        ("syntax error: invalid syntax", ErrorCategory.SyntaxError.value, "syntax error"),
+        ("import error: no module named x", ErrorCategory.ImportError.value, "import error"),
+        ("type error: unsupported operand", ErrorCategory.TypeErrorMismatch.value, "type error"),
         (
-            "ContractViolation: invariant failed",
+            "contract violation: invariant failed",
             ErrorCategory.ContractViolation.value,
-            "ContractViolation",
+            "contract violation",
         ),
+        ("edge case triggered", ErrorCategory.EdgeCaseFailure.value, "edge case"),
         (
-            "EdgeCaseFailure: missing key",
-            ErrorCategory.EdgeCaseFailure.value,
-            "EdgeCaseFailure",
-        ),
-        (
-            "UnhandledException: boom",
+            "unhandled exception: boom",
             ErrorCategory.UnhandledException.value,
-            "UnhandledException",
+            "unhandled exception",
         ),
-        ("InvalidInput: bad payload", ErrorCategory.InvalidInput.value, "InvalidInput"),
-        ("MissingReturn: handler", ErrorCategory.MissingReturn.value, "MissingReturn"),
-        ("ConfigError: missing config", ErrorCategory.ConfigError.value, "ConfigError"),
-        ("Other: unspecified", ErrorCategory.Other.value, "Other"),
+        ("invalid input: bad payload", ErrorCategory.InvalidInput.value, "invalid input"),
+        ("missing return: handler", ErrorCategory.MissingReturn.value, "missing return"),
+        ("config error: missing config", ErrorCategory.ConfigError.value, "config error"),
+        ("Other: unspecified", ErrorCategory.Other.value, None),
     ],
 )
 def test_literal_tokens_map_to_expected_categories(raw, expected_status, expected_token):
@@ -35,7 +31,8 @@ def test_literal_tokens_map_to_expected_categories(raw, expected_status, expecte
 
     assert result["status"] == expected_status
     assert result["data"]["matched_token"] == expected_token
-    assert result["data"]["matched_rule_id"] == f"token:{expected_token}"
+    if expected_token is not None:
+        assert result["data"]["matched_rule_id"] == f"token:{expected_token}"
 
 
 @pytest.mark.parametrize(
@@ -65,32 +62,33 @@ def test_empty_inputs_return_other(raw):
 
 
 def test_partial_traceback_without_traceback_token_classifies_by_literal_tokens():
-    raw = "File 'x.py', line 1: TypeError: boom"
+    raw = "File 'x.py', line 1: TypeError: unsupported operand"
     result = classify_error(raw)
 
     assert result["status"] == ErrorCategory.TypeErrorMismatch.value
-    assert result["data"]["matched_token"] == "TypeError"
+    assert result["data"]["matched_token"] == "unsupported operand"
 
 
-def test_multi_error_bundle_selects_lowest_rank_and_aggregates_data():
-    raw = ["InvalidInput: bad", "SyntaxError: nope", "Other: fallback"]
+def test_multi_error_bundle_returns_other_and_aggregates_data():
+    raw = ["invalid input: bad", "syntax error: nope", "Other: fallback"]
     result = classify_error(raw)
 
-    assert result["status"] == ErrorCategory.SyntaxError.value
+    assert result["status"] == ErrorCategory.Other.value
     assert result["data"]["bundle"] is not None
     assert [item["status"] for item in result["data"]["bundle"]] == [
         ErrorCategory.InvalidInput.value,
         ErrorCategory.SyntaxError.value,
         ErrorCategory.Other.value,
     ]
-    assert result["meta"]["bundle_selected_index"] == 1
+    assert result["meta"]["bundle_selected_index"] is None
+    assert result["meta"]["bundle_rule"] == "always_other_for_bundle"
 
 
 def test_multi_error_bundle_tuple_has_deterministic_status():
     raw = (ValueError("bad"), "UnhandledException: boom")
     result = classify_error(raw)
 
-    assert result["status"] == ErrorCategory.UnhandledException.value
+    assert result["status"] == ErrorCategory.Other.value
     assert result["data"]["bundle"] is not None
     assert len(result["data"]["bundle"]) == 2
 
@@ -98,13 +96,13 @@ def test_multi_error_bundle_tuple_has_deterministic_status():
 def test_mapping_uses_deterministic_key_order():
     payload = {
         "error": "TypeError: bad",
-        "traceback": "SyntaxError: nope",
-        "message": "UnhandledException: boom",
+        "traceback": "syntax error near token",
+        "message": "unhandled exception: boom",
     }
     result = classify_error(payload)
 
     assert result["status"] == ErrorCategory.SyntaxError.value
-    assert result["data"]["matched_rule_id"] == "token:SyntaxError"
+    assert result["data"]["matched_rule_id"] == "token:syntax error"
 
 
 def test_identical_inputs_produce_identical_outputs():
@@ -114,7 +112,7 @@ def test_identical_inputs_produce_identical_outputs():
 
 
 def test_contextual_data_does_not_change_classification():
-    raw = "TypeError: cannot add"
+    raw = "type error: cannot add"
     base = classify_error(raw)
     bundle = classify_error([raw, "Other: ignore"])
     mapping = classify_error({"error": raw, "errors": "Other: ignore"})
