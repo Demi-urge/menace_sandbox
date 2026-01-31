@@ -1,3 +1,4 @@
+import inspect
 import logging
 import uuid
 from datetime import datetime
@@ -26,6 +27,16 @@ def logger_handler():
     logger.setLevel(logging.INFO)
     yield logger, handler
     logger.removeHandler(handler)
+
+
+@pytest.fixture
+def caplog_logger(caplog):
+    name = f"test.logging_wrapper.caplog.{uuid.uuid4().hex}"
+    logger = get_logger(name)["data"]["logger"]
+    logger.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger=name)
+    yield logger
+    logger.removeHandler(caplog.handler)
 
 
 def _iso_with_timezone(value: str) -> None:
@@ -70,6 +81,19 @@ def test_wrap_propagates_exception(logger_handler) -> None:
         wrapped()
 
 
+def test_wrap_preserves_signature_defaults_and_annotations(logger_handler) -> None:
+    logger, _handler = logger_handler
+
+    def sample(a: int, b: str = "ok", *, flag: bool = True) -> str:
+        return f"{a}-{b}-{flag}"
+
+    wrapped = wrap_with_logging(sample, {"logger_name": logger.name})
+
+    assert inspect.signature(wrapped) == inspect.signature(sample)
+    assert wrapped.__annotations__ == sample.__annotations__
+    assert wrapped(1) == "1-ok-True"
+
+
 def test_double_wrapping_is_noop(logger_handler) -> None:
     logger, _handler = logger_handler
 
@@ -80,6 +104,36 @@ def test_double_wrapping_is_noop(logger_handler) -> None:
     wrapped_again = wrap_with_logging(wrapped, {"logger_name": logger.name})
 
     assert wrapped_again is wrapped
+
+
+def test_single_structured_log_records_and_payloads(caplog_logger, caplog) -> None:
+    logger = caplog_logger
+
+    def greet(name: str, *, punctuation: str = "!") -> str:
+        return f"hi {name}{punctuation}"
+
+    wrapped = wrap_with_logging(greet, {"logger_name": logger.name})
+
+    assert wrapped("Ada", punctuation="?") == "hi Ada?"
+
+    call_records = [record for record in caplog.records if record.event.endswith(".call")]
+    return_records = [record for record in caplog.records if record.event.endswith(".return")]
+
+    assert len(call_records) == 1
+    assert len(return_records) == 1
+
+    call_context = call_records[0].context
+    return_context = return_records[0].context
+
+    assert {"function", "module", "args", "kwargs"} <= set(call_context)
+    assert call_context["args"] == ["Ada"]
+    assert call_context["kwargs"] == {"punctuation": "?"}
+    assert list(call_context["kwargs"].keys()) == ["punctuation"]
+
+    assert {"function", "module", "args", "kwargs", "duration_ms", "result"} <= set(
+        return_context
+    )
+    assert return_context["result"] == "hi Ada?"
 
 
 def test_argument_serialization_is_deterministic_and_truncated(logger_handler) -> None:
@@ -131,6 +185,40 @@ def test_argument_serialization_is_deterministic_and_truncated(logger_handler) -
         "beta": ["xxxxxxx...", "short", "more"],
         "gamma": "Unseria...",
     }
+
+
+def test_truncation_is_deterministic_and_inputs_unchanged(logger_handler) -> None:
+    logger, handler = logger_handler
+
+    long_values = ["x" * 30, "y" * 30, "z" * 30]
+    payload = {"alpha": long_values, "beta": "y" * 50}
+    payload_snapshot = {"alpha": list(long_values), "beta": payload["beta"]}
+
+    def accept(data: dict[str, object]) -> None:
+        return None
+
+    wrapped = wrap_with_logging(
+        accept,
+        {
+            "logger_name": logger.name,
+            "max_collection_items": 2,
+            "max_string_length": 10,
+        },
+    )
+
+    wrapped(payload)
+    wrapped(payload)
+
+    call_records = [record for record in handler.records if record.event.endswith(".call")]
+    assert len(call_records) == 2
+
+    first_context = call_records[0].context
+    second_context = call_records[1].context
+
+    assert first_context["args"] == second_context["args"]
+    assert first_context["kwargs"] == second_context["kwargs"]
+
+    assert payload == payload_snapshot
 
 
 def test_logging_schema_and_timestamps(logger_handler) -> None:
@@ -212,3 +300,21 @@ def test_wrap_does_not_mutate_arguments(logger_handler) -> None:
 
     assert data["items"] == before_items_copy
     assert id(data["items"]) == before_items_id
+
+
+def test_double_wrap_does_not_duplicate_logs(caplog_logger, caplog) -> None:
+    logger = caplog_logger
+
+    def echo(value: str) -> str:
+        return value
+
+    wrapped = wrap_with_logging(echo, {"logger_name": logger.name})
+    wrapped_again = wrap_with_logging(wrapped, {"logger_name": logger.name})
+
+    assert wrapped_again is wrapped
+    assert wrapped_again("ping") == "ping"
+
+    call_records = [record for record in caplog.records if record.event.endswith(".call")]
+    return_records = [record for record in caplog.records if record.event.endswith(".return")]
+    assert len(call_records) == 1
+    assert len(return_records) == 1
