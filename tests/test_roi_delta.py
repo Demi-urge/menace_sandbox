@@ -19,7 +19,7 @@ def test_mismatched_keys() -> None:
 
     assert result["status"] == "error"
     assert result["data"]["deltas"] == {}
-    assert result["errors"][0]["type"] == "RoiDeltaValidationError"
+    assert result["errors"][0]["type"] == "ValidationError"
     assert result["errors"][0]["code"] == "invalid_schema"
     assert result["errors"][0]["details"]["missing"] == ["a"]
     assert result["errors"][0]["details"]["extra"] == ["b"]
