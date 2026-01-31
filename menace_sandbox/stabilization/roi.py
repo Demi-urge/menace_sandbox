@@ -5,9 +5,9 @@ normalization, weighting, or inference. Metric values must be finite ``int``,
 ``float``, or ``Decimal`` values; booleans are explicitly disallowed even though
 they subclass ``int``. Empty inputs are treated as a valid no-op. Validation
 failures return structured error records instead of silently coercing values.
-If any metric is provided as a ``Decimal`` then all values are deterministically
-converted to ``Decimal`` using ``Decimal(str(value))`` to avoid binary float
-artifacts.
+All values are deterministically converted to ``Decimal`` using
+``Decimal(str(value))`` for floats and ``Decimal(value)`` for integers to avoid
+binary float artifacts.
 
 Canonical response contract for :func:`compute_roi_delta`:
 
@@ -16,7 +16,7 @@ Canonical response contract for :func:`compute_roi_delta`:
   "status": "ok" | "error",
   "data": {
     "deltas": {<metric_key>: <delta_number>},
-    "total_delta": <sum_of_deltas>
+    "total": <sum_of_deltas>
   },
   "errors": [
     {
@@ -37,7 +37,7 @@ Canonical response contract for :func:`compute_roi_delta`:
 ```
 
 Empty inputs return ``status: "ok"`` with ``data.deltas`` as ``{}`` and
-``data.total_delta`` set to ``0``.
+``data.total`` set to ``Decimal("0")``.
 """
 from __future__ import annotations
 
@@ -49,16 +49,14 @@ from typing import Mapping
 from menace_sandbox.stabilization.errors import RoiDeltaValidationError
 
 
-def _sorted_keys(keys: set[str]) -> list[str]:
-    return sorted(keys)
-
-
 def _is_valid_metric_value(value: Number | Decimal) -> bool:
     if isinstance(value, bool):
         return False
     if isinstance(value, Decimal):
         return value.is_finite()
-    return isinstance(value, (int, float)) and math.isfinite(value)
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
 def _is_finite_value(value: Number | Decimal) -> bool:
@@ -70,6 +68,8 @@ def _is_finite_value(value: Number | Decimal) -> bool:
 def _to_decimal(value: Number | Decimal) -> Decimal:
     if isinstance(value, Decimal):
         return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return Decimal(value)
     return Decimal(str(value))
 
 
@@ -125,8 +125,8 @@ def _validate_metrics(
 
     before_keys = set(before_metrics.keys())
     after_keys = set(after_metrics.keys())
-    missing_keys = _sorted_keys(before_keys - after_keys)
-    extra_keys = _sorted_keys(after_keys - before_keys)
+    missing_keys = [key for key in before_metrics.keys() if key not in after_keys]
+    extra_keys = [key for key in after_metrics.keys() if key not in before_keys]
     if missing_keys or extra_keys:
         errors.append(
             RoiDeltaValidationError(
@@ -135,9 +135,10 @@ def _validate_metrics(
                 details={"missing": missing_keys, "extra": extra_keys},
             )
         )
-        return _sorted_keys(before_keys | after_keys), errors
+        ordered_keys = list(before_metrics.keys()) + extra_keys
+        return ordered_keys, errors
 
-    ordered_keys = _sorted_keys(before_keys)
+    ordered_keys = list(before_metrics.keys())
     for key in ordered_keys:
         before_value = before_metrics[key]
         if not _is_valid_metric_value(before_value):
@@ -158,22 +159,20 @@ def compute_roi_delta(
 
     Returns a structured payload with status, data, errors, and deterministic
     metadata derived from the metric keys. Empty mappings are treated as a
-    valid no-op. Booleans are explicitly rejected as metric values. If any
-    metric value is a ``Decimal``, all arithmetic is performed with ``Decimal``
-    values derived via ``Decimal(str(value))`` for deterministic precision.
+    valid no-op. Booleans are explicitly rejected as metric values. All
+    arithmetic is performed with ``Decimal`` values derived via
+    ``Decimal(str(value))`` for floats and ``Decimal(value)`` for integers.
     """
 
-    data = {"deltas": {}, "total_delta": 0}
+    data = {"deltas": {}, "total": Decimal("0")}
 
     def _error_payload(
         keys: list[str],
         errors: list[RoiDeltaValidationError],
-        use_decimal: bool = False,
     ) -> dict[str, object]:
-        zero_value = Decimal("0") if use_decimal else 0
         return {
             "status": "error",
-            "data": {"deltas": {}, "total_delta": zero_value},
+            "data": {"deltas": {}, "total": Decimal("0")},
             "errors": [error.to_record() for error in errors],
             "meta": {
                 "keys": keys,
@@ -202,17 +201,10 @@ def compute_roi_delta(
             },
         }
 
-    use_decimal = any(
-        isinstance(before_metrics[key], Decimal) or isinstance(after_metrics[key], Decimal)
-        for key in keys
-    )
-    deltas: dict[str, Number | Decimal] = {}
+    deltas: dict[str, Decimal] = {}
     for key in keys:
-        before_value = before_metrics[key]
-        after_value = after_metrics[key]
-        if use_decimal:
-            before_value = _to_decimal(before_value)
-            after_value = _to_decimal(after_value)
+        before_value = _to_decimal(before_metrics[key])
+        after_value = _to_decimal(after_metrics[key])
         delta_value = after_value - before_value
         if not _is_finite_value(delta_value):
             return _error_payload(
@@ -224,10 +216,9 @@ def compute_roi_delta(
                         details={"key": key, "delta_repr": repr(delta_value)},
                     )
                 ],
-                use_decimal=use_decimal,
             )
         deltas[key] = delta_value
-    total_delta = sum(deltas.values(), Decimal("0") if use_decimal else 0)
+    total_delta = sum(deltas.values(), Decimal("0"))
     if not _is_finite_value(total_delta):
         return _error_payload(
             keys,
@@ -238,14 +229,13 @@ def compute_roi_delta(
                     details={"total_delta_repr": repr(total_delta)},
                 )
             ],
-            use_decimal=use_decimal,
         )
 
     return {
         "status": "ok",
         "data": {
             "deltas": deltas,
-            "total_delta": total_delta,
+            "total": total_delta,
         },
         "errors": [],
         "meta": {
