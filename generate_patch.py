@@ -1,4 +1,9 @@
-"""Generate deterministic patches by applying explicit rules in-module."""
+"""Generate deterministic patches by applying explicit rules in-module.
+
+Rule parsing/validation failures return structured error payloads via
+`generate_patch_payload`, while anchor resolution or conflict detection failures
+raise typed exceptions that are not suppressed.
+"""
 
 from __future__ import annotations
 
@@ -118,7 +123,13 @@ def generate_patch(
     *,
     validate_syntax: bool | None = None,
 ) -> dict[str, object]:
-    """Generate a deterministic patch payload by applying explicit rules."""
+    """Generate a deterministic patch payload by applying explicit rules.
+
+    Raises:
+        PatchRuleError: Invalid input/rule definitions.
+        PatchAnchorError: Anchor resolution fails for one or more rules.
+        PatchConflictError: Rules produce overlapping/conflicting edits.
+    """
     _validate_inputs(source, error_report, rules, validate_syntax)
     parsed_rules = _parse_rules(rules)
     rule_summaries = _summarize_rules(parsed_rules)
@@ -175,7 +186,10 @@ def generate_patch_payload(
     *,
     validate_syntax: bool | None = None,
 ) -> dict[str, object]:
-    """Generate a patch payload while capturing rule/anchor/conflict errors."""
+    """Generate a patch payload while capturing rule errors only.
+
+    Anchor and conflict failures are raised so callers can handle them explicitly.
+    """
     try:
         return generate_patch(
             source,
@@ -183,7 +197,7 @@ def generate_patch_payload(
             rules,
             validate_syntax=validate_syntax,
         )
-    except (PatchRuleError, PatchAnchorError, PatchConflictError) as exc:
+    except PatchRuleError as exc:
         parsed_rules: list[Rule] = []
         notes: list[str] = []
         try:
