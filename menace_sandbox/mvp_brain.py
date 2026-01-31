@@ -9,7 +9,6 @@ from error_ontology import classify_error
 import mvp_evaluator
 from menace_sandbox import patch_generator
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
-from menace_sandbox.stabilization.patch_validator import validate_patch_text
 from menace_sandbox.stabilization.roi import compute_roi_delta
 
 __all__ = ["run_mvp_pipeline"]
@@ -43,6 +42,21 @@ def _error_payload(message: str, code: str) -> dict[str, Any]:
     return {"status": "error", "errors": [{"code": code, "message": message}]}
 
 
+def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
+    try:
+        patch_generator.validate_patch_text(patch_text)
+    except Exception as exc:
+        return {
+            "valid": False,
+            "flags": ["invalid_patch_text"],
+            "context": {
+                "exception_type": exc.__class__.__name__,
+                "exception_message": str(exc),
+            },
+        }
+    return {"valid": True, "flags": [], "context": {}}
+
+
 def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Run MVP classification, patching, validation, and ROI evaluation."""
 
@@ -62,7 +76,7 @@ def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
         patch_generator.generate_patch, {"log_event_prefix": "mvp.brain.patch.generate."}
     )
     logged_validate = wrap_with_logging(
-        validate_patch_text, {"log_event_prefix": "mvp.brain.patch.validate."}
+        _validate_menace_patch_text, {"log_event_prefix": "mvp.brain.patch.validate."}
     )
     logged_evaluate_roi = wrap_with_logging(
         mvp_evaluator.evaluate_roi, {"log_event_prefix": "mvp.brain.roi.evaluate."}
