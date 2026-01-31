@@ -241,13 +241,7 @@ def _legacy_category_from_module(module_name: str) -> LegacyErrorCategory:
 
 
 def _classify_legacy_from_exception(exc: BaseException) -> LegacyErrorCategory:
-    try:
-        from urllib.error import HTTPError
-    except Exception:  # pragma: no cover - stdlib should exist
-        HTTPError = None  # type: ignore
-
     exception_map: Tuple[Tuple[type[BaseException], LegacyErrorCategory], ...] = (
-        *((HTTPError, LegacyErrorCategory.ExternalAPI),) if HTTPError else (),
         (MemoryError, LegacyErrorCategory.ResourceLimit),
         (TimeoutError, LegacyErrorCategory.Timeout),
         (KeyError, LegacyErrorCategory.RuntimeFault),
@@ -269,8 +263,11 @@ def _classify_legacy_from_exception(exc: BaseException) -> LegacyErrorCategory:
         if isinstance(exc, etype):
             return category
 
-    if exc.__class__.__name__ == "SandboxRecoveryError":
+    exc_name = exc.__class__.__name__
+    if exc_name == "SandboxRecoveryError":
         return LegacyErrorCategory.RuntimeFault
+    if exc_name == "HTTPError":
+        return LegacyErrorCategory.ExternalAPI
 
     module_category = _legacy_category_from_module(exc.__class__.__module__)
     if module_category is not LegacyErrorCategory.Unknown:
