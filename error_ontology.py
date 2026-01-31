@@ -33,18 +33,7 @@ if "_bootstrap" in globals() and _bootstrap is not None:  # pragma: no cover - s
     _bootstrap(__name__, __file__)
 
 from enum import Enum
-from typing import (
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Literal,
-    Sequence,
-    Tuple,
-    TypedDict,
-    Union,
-)
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Sequence, Tuple, TypedDict, Union
 
 
 class ErrorCategory(str, Enum):
@@ -69,7 +58,7 @@ FixedErrorCategory = ErrorCategory
 
 
 class LegacyErrorCategory(str, Enum):
-    """Legacy error taxonomy retained for backward compatibility."""
+    """Legacy error taxonomy retained for backward compatibility (not exported)."""
 
     Unknown = "Unknown"
     RuntimeFault = "RuntimeFault"
@@ -87,49 +76,228 @@ class LegacyErrorCategory(str, Enum):
 
 ErrorType = ErrorCategory
 
-ErrorInput = Union[BaseException, str, Mapping[str, Any]]
-ErrorInputBundle = Sequence[ErrorInput]
-ErrorInputs = Union[ErrorInput, ErrorInputBundle]
+ErrorInput = Union[str, BaseException, Mapping[str, object], Sequence[object]]
+ErrorInputs = Union[ErrorInput, None]
 
-_EXCEPTION_TYPE_MAP: Tuple[Tuple[type[BaseException], ErrorCategory], ...] = (
-    (SyntaxError, ErrorCategory.SyntaxError),
-    (ImportError, ErrorCategory.ImportError),
-    (ModuleNotFoundError, ErrorCategory.ImportError),
-    (TypeError, ErrorCategory.TypeErrorMismatch),
-    (AssertionError, ErrorCategory.ContractViolation),
-    (ValueError, ErrorCategory.InvalidInput),
-    (KeyError, ErrorCategory.EdgeCaseFailure),
-    (IndexError, ErrorCategory.EdgeCaseFailure),
-)
 
-_PHRASE_MAP: Tuple[Tuple[str, ErrorCategory], ...] = (
-    ("syntax error", ErrorCategory.SyntaxError),
-    ("no module named", ErrorCategory.ImportError),
-    ("cannot import", ErrorCategory.ImportError),
-    ("import error", ErrorCategory.ImportError),
-    ("typeerror", ErrorCategory.TypeErrorMismatch),
-    ("type error", ErrorCategory.TypeErrorMismatch),
-    ("type mismatch", ErrorCategory.TypeErrorMismatch),
-    ("assertion failed", ErrorCategory.ContractViolation),
-    ("contract violation", ErrorCategory.ContractViolation),
-    ("precondition failed", ErrorCategory.ContractViolation),
-    ("postcondition failed", ErrorCategory.ContractViolation),
-    ("edge case", ErrorCategory.EdgeCaseFailure),
-    ("corner case", ErrorCategory.EdgeCaseFailure),
-    ("keyerror", ErrorCategory.EdgeCaseFailure),
-    ("indexerror", ErrorCategory.EdgeCaseFailure),
-    ("index out of range", ErrorCategory.EdgeCaseFailure),
-    ("unhandled exception", ErrorCategory.UnhandledException),
-    ("uncaught exception", ErrorCategory.UnhandledException),
-    ("invalid input", ErrorCategory.InvalidInput),
-    ("invalid argument", ErrorCategory.InvalidInput),
-    ("bad request", ErrorCategory.InvalidInput),
-    ("missing return", ErrorCategory.MissingReturn),
-    ("did not return", ErrorCategory.MissingReturn),
-    ("returned none", ErrorCategory.MissingReturn),
-    ("missing config", ErrorCategory.ConfigError),
-    ("configuration error", ErrorCategory.ConfigError),
-    ("config error", ErrorCategory.ConfigError),
+class ClassificationRule(TypedDict):
+    kind: Literal["exception", "phrase"]
+    match: Union[type[BaseException], str]
+    category: ErrorCategory
+    matched_rule: str
+
+
+_CLASSIFICATION_RULES: Tuple[ClassificationRule, ...] = (
+    {
+        "kind": "exception",
+        "match": SyntaxError,
+        "category": ErrorCategory.SyntaxError,
+        "matched_rule": "exception:SyntaxError",
+    },
+    {
+        "kind": "exception",
+        "match": ImportError,
+        "category": ErrorCategory.ImportError,
+        "matched_rule": "exception:ImportError",
+    },
+    {
+        "kind": "exception",
+        "match": ModuleNotFoundError,
+        "category": ErrorCategory.ImportError,
+        "matched_rule": "exception:ModuleNotFoundError",
+    },
+    {
+        "kind": "exception",
+        "match": TypeError,
+        "category": ErrorCategory.TypeErrorMismatch,
+        "matched_rule": "exception:TypeError",
+    },
+    {
+        "kind": "exception",
+        "match": AssertionError,
+        "category": ErrorCategory.ContractViolation,
+        "matched_rule": "exception:AssertionError",
+    },
+    {
+        "kind": "exception",
+        "match": ValueError,
+        "category": ErrorCategory.InvalidInput,
+        "matched_rule": "exception:ValueError",
+    },
+    {
+        "kind": "exception",
+        "match": KeyError,
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "exception:KeyError",
+    },
+    {
+        "kind": "exception",
+        "match": IndexError,
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "exception:IndexError",
+    },
+    {
+        "kind": "phrase",
+        "match": "syntax error",
+        "category": ErrorCategory.SyntaxError,
+        "matched_rule": "phrase:syntax error",
+    },
+    {
+        "kind": "phrase",
+        "match": "no module named",
+        "category": ErrorCategory.ImportError,
+        "matched_rule": "phrase:no module named",
+    },
+    {
+        "kind": "phrase",
+        "match": "cannot import",
+        "category": ErrorCategory.ImportError,
+        "matched_rule": "phrase:cannot import",
+    },
+    {
+        "kind": "phrase",
+        "match": "import error",
+        "category": ErrorCategory.ImportError,
+        "matched_rule": "phrase:import error",
+    },
+    {
+        "kind": "phrase",
+        "match": "typeerror",
+        "category": ErrorCategory.TypeErrorMismatch,
+        "matched_rule": "phrase:typeerror",
+    },
+    {
+        "kind": "phrase",
+        "match": "type error",
+        "category": ErrorCategory.TypeErrorMismatch,
+        "matched_rule": "phrase:type error",
+    },
+    {
+        "kind": "phrase",
+        "match": "type mismatch",
+        "category": ErrorCategory.TypeErrorMismatch,
+        "matched_rule": "phrase:type mismatch",
+    },
+    {
+        "kind": "phrase",
+        "match": "assertion failed",
+        "category": ErrorCategory.ContractViolation,
+        "matched_rule": "phrase:assertion failed",
+    },
+    {
+        "kind": "phrase",
+        "match": "contract violation",
+        "category": ErrorCategory.ContractViolation,
+        "matched_rule": "phrase:contract violation",
+    },
+    {
+        "kind": "phrase",
+        "match": "precondition failed",
+        "category": ErrorCategory.ContractViolation,
+        "matched_rule": "phrase:precondition failed",
+    },
+    {
+        "kind": "phrase",
+        "match": "postcondition failed",
+        "category": ErrorCategory.ContractViolation,
+        "matched_rule": "phrase:postcondition failed",
+    },
+    {
+        "kind": "phrase",
+        "match": "edge case",
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "phrase:edge case",
+    },
+    {
+        "kind": "phrase",
+        "match": "corner case",
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "phrase:corner case",
+    },
+    {
+        "kind": "phrase",
+        "match": "keyerror",
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "phrase:keyerror",
+    },
+    {
+        "kind": "phrase",
+        "match": "indexerror",
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "phrase:indexerror",
+    },
+    {
+        "kind": "phrase",
+        "match": "index out of range",
+        "category": ErrorCategory.EdgeCaseFailure,
+        "matched_rule": "phrase:index out of range",
+    },
+    {
+        "kind": "phrase",
+        "match": "unhandled exception",
+        "category": ErrorCategory.UnhandledException,
+        "matched_rule": "phrase:unhandled exception",
+    },
+    {
+        "kind": "phrase",
+        "match": "uncaught exception",
+        "category": ErrorCategory.UnhandledException,
+        "matched_rule": "phrase:uncaught exception",
+    },
+    {
+        "kind": "phrase",
+        "match": "invalid input",
+        "category": ErrorCategory.InvalidInput,
+        "matched_rule": "phrase:invalid input",
+    },
+    {
+        "kind": "phrase",
+        "match": "invalid argument",
+        "category": ErrorCategory.InvalidInput,
+        "matched_rule": "phrase:invalid argument",
+    },
+    {
+        "kind": "phrase",
+        "match": "bad request",
+        "category": ErrorCategory.InvalidInput,
+        "matched_rule": "phrase:bad request",
+    },
+    {
+        "kind": "phrase",
+        "match": "missing return",
+        "category": ErrorCategory.MissingReturn,
+        "matched_rule": "phrase:missing return",
+    },
+    {
+        "kind": "phrase",
+        "match": "did not return",
+        "category": ErrorCategory.MissingReturn,
+        "matched_rule": "phrase:did not return",
+    },
+    {
+        "kind": "phrase",
+        "match": "returned none",
+        "category": ErrorCategory.MissingReturn,
+        "matched_rule": "phrase:returned none",
+    },
+    {
+        "kind": "phrase",
+        "match": "missing config",
+        "category": ErrorCategory.ConfigError,
+        "matched_rule": "phrase:missing config",
+    },
+    {
+        "kind": "phrase",
+        "match": "configuration error",
+        "category": ErrorCategory.ConfigError,
+        "matched_rule": "phrase:configuration error",
+    },
+    {
+        "kind": "phrase",
+        "match": "config error",
+        "category": ErrorCategory.ConfigError,
+        "matched_rule": "phrase:config error",
+    },
 )
 
 
@@ -166,9 +334,7 @@ def _mapping_to_text(payload: Mapping[str, Any]) -> str:
     return f"{{{pairs}}}"
 
 
-def _normalize_inputs(
-    raw: ErrorInputs | None,
-) -> Tuple[List[Union[str, BaseException]], List[str]]:
+def _normalize_inputs(raw: ErrorInputs) -> Tuple[List[Union[str, BaseException]], List[str]]:
     errors: List[str] = []
     segments: List[Union[str, BaseException]] = []
 
@@ -214,98 +380,25 @@ def _is_empty_input(segments: List[Union[str, BaseException]]) -> bool:
 
 
 def _classify_from_exception(exc: BaseException) -> Tuple[ErrorCategory, str]:
-    for etype, category in _EXCEPTION_TYPE_MAP:
-        if isinstance(exc, etype):
-            return category, f"exception:{etype.__name__}"
+    for rule in _CLASSIFICATION_RULES:
+        if rule["kind"] != "exception":
+            continue
+        match = rule["match"]
+        if isinstance(match, type) and isinstance(exc, match):
+            return rule["category"], rule["matched_rule"]
     return ErrorCategory.Other, "exception:unmatched"
 
 
-def _classify_from_text(text: str) -> Tuple[ErrorCategory, str]:
-    if not text.strip():
+def _classify_from_text(normalized_text: str) -> Tuple[ErrorCategory, str]:
+    if not normalized_text.strip():
         return ErrorCategory.Other, "text:empty"
-    lowered = text.lower()
-    for phrase, category in _PHRASE_MAP:
-        if phrase in lowered:
-            return category, f"phrase:{phrase}"
+    for rule in _CLASSIFICATION_RULES:
+        if rule["kind"] != "phrase":
+            continue
+        match = rule["match"]
+        if isinstance(match, str) and match in normalized_text:
+            return rule["category"], rule["matched_rule"]
     return ErrorCategory.Other, "text:unmatched"
-
-
-def _legacy_category_from_module(module_name: str) -> LegacyErrorCategory:
-    if not module_name:
-        return LegacyErrorCategory.Unknown
-    if module_name.startswith(("pkg_resources", "importlib")):
-        return LegacyErrorCategory.DependencyMismatch
-    if module_name.startswith("requests"):
-        return LegacyErrorCategory.ExternalAPI
-    return LegacyErrorCategory.Unknown
-
-
-def _classify_legacy_from_exception(exc: BaseException) -> LegacyErrorCategory:
-    exception_map: Tuple[Tuple[type[BaseException], LegacyErrorCategory], ...] = (
-        (MemoryError, LegacyErrorCategory.ResourceLimit),
-        (TimeoutError, LegacyErrorCategory.Timeout),
-        (KeyError, LegacyErrorCategory.RuntimeFault),
-        (IndexError, LegacyErrorCategory.RuntimeFault),
-        (FileNotFoundError, LegacyErrorCategory.RuntimeFault),
-        (ZeroDivisionError, LegacyErrorCategory.RuntimeFault),
-        (AttributeError, LegacyErrorCategory.RuntimeFault),
-        (PermissionError, LegacyErrorCategory.RuntimeFault),
-        (AssertionError, LegacyErrorCategory.LogicMisfire),
-        (NotImplementedError, LegacyErrorCategory.LogicMisfire),
-        (TypeError, LegacyErrorCategory.SemanticBug),
-        (ValueError, LegacyErrorCategory.SemanticBug),
-        (ModuleNotFoundError, LegacyErrorCategory.DependencyMismatch),
-        (ImportError, LegacyErrorCategory.DependencyMismatch),
-        (OSError, LegacyErrorCategory.DependencyMismatch),
-    )
-
-    for etype, category in exception_map:
-        if isinstance(exc, etype):
-            return category
-
-    exc_name = exc.__class__.__name__
-    if exc_name == "SandboxRecoveryError":
-        return LegacyErrorCategory.RuntimeFault
-    if exc_name == "HTTPError":
-        return LegacyErrorCategory.ExternalAPI
-
-    module_category = _legacy_category_from_module(exc.__class__.__module__)
-    if module_category is not LegacyErrorCategory.Unknown:
-        return module_category
-    return LegacyErrorCategory.Unknown
-
-
-def _classify_legacy_from_text(text: str) -> LegacyErrorCategory:
-    if not text.strip():
-        return LegacyErrorCategory.Unknown
-    lowered = text.lower()
-    legacy_phrases: Tuple[Tuple[str, LegacyErrorCategory], ...] = (
-        ("dependency missing", LegacyErrorCategory.DependencyMismatch),
-        ("missing package", LegacyErrorCategory.DependencyMismatch),
-        ("module not found", LegacyErrorCategory.DependencyMismatch),
-        ("no module named", LegacyErrorCategory.DependencyMismatch),
-        ("cannot import name", LegacyErrorCategory.DependencyMismatch),
-        ("out of memory", LegacyErrorCategory.ResourceLimit),
-        ("cuda error", LegacyErrorCategory.ResourceLimit),
-        ("accelerator error", LegacyErrorCategory.ResourceLimit),
-        ("timed out", LegacyErrorCategory.Timeout),
-        ("timeout", LegacyErrorCategory.Timeout),
-        ("external api", LegacyErrorCategory.ExternalAPI),
-        ("remote server replied", LegacyErrorCategory.ExternalAPI),
-        ("forbidden", LegacyErrorCategory.ExternalAPI),
-        ("permission denied", LegacyErrorCategory.RuntimeFault),
-    )
-    for phrase, category in legacy_phrases:
-        if phrase in lowered:
-            return category
-    return LegacyErrorCategory.Unknown
-
-
-def _classify_legacy(exc: BaseException, stack: str) -> LegacyErrorCategory:
-    exc_category = _classify_legacy_from_exception(exc)
-    if exc_category is not LegacyErrorCategory.Unknown:
-        return exc_category
-    return _classify_legacy_from_text(stack)
 
 
 class ClassificationData(TypedDict):
@@ -321,13 +414,19 @@ class ClassificationResult(TypedDict):
     meta: Dict[str, Any]
 
 
-def classify_error(raw: ErrorInputs | None) -> ClassificationResult:
+def classify_error(raw: ErrorInputs) -> ClassificationResult:
     """Classify structured or unstructured error inputs.
 
     Parameters
     ----------
     raw:
         Exception instance, traceback string, log string, or list/tuple of those.
+
+    Notes
+    -----
+    Rule ordering is deterministic: exception rules are evaluated in the order
+    listed in ``_CLASSIFICATION_RULES``, followed by phrase rules in that same
+    order. Text inputs are normalized once (lowercased) before matching.
     """
 
     segments, errors = _normalize_inputs(raw)
@@ -357,7 +456,8 @@ def classify_error(raw: ErrorInputs | None) -> ClassificationResult:
             category, matched_rule = _classify_from_exception(item)
             source = "exception"
         else:
-            category, matched_rule = _classify_from_text(str(item))
+            normalized = str(item).lower()
+            category, matched_rule = _classify_from_text(normalized)
             source = "text"
         classifications.append((category, matched_rule, source))
 
@@ -412,31 +512,20 @@ def classify_exception(exc: Exception, stack: str) -> LegacyErrorCategory:
     """Legacy exception classification that delegates to the fixed taxonomy."""
 
     result = classify_error([exc, stack])
-    data = result.get("data", {})
-    fixed_category = data.get("category")
-    if isinstance(fixed_category, str):
-        try:
-            legacy_category = FIXED_TO_LEGACY_CATEGORY.get(
-                ErrorCategory(fixed_category), LegacyErrorCategory.Unknown
-            )
-        except ValueError:
-            legacy_category = LegacyErrorCategory.Unknown
-    else:
-        legacy_category = LegacyErrorCategory.Unknown
-
-    legacy_override = _classify_legacy(exc, stack)
-    if legacy_override is not LegacyErrorCategory.Unknown:
-        return legacy_override
-    return legacy_category
+    fixed_category = result["data"]["category"]
+    try:
+        mapped = FIXED_TO_LEGACY_CATEGORY.get(
+            ErrorCategory(fixed_category), LegacyErrorCategory.Unknown
+        )
+    except ValueError:
+        mapped = LegacyErrorCategory.Unknown
+    return mapped
 
 
 __all__ = [
     "ErrorCategory",
     "ErrorType",
     "FixedErrorCategory",
-    "LegacyErrorCategory",
-    "LEGACY_TO_FIXED_CATEGORY",
-    "FIXED_TO_LEGACY_CATEGORY",
     "classify_error",
     "classify_exception",
 ]
