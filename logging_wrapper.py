@@ -267,7 +267,7 @@ def _sanitize(
             _seen=_seen,
         )
 
-    return _truncate_string(repr(value), max_string, truncate_marker)
+    return {"type": type(value).__name__}
 
 
 def wrap_with_logging(callable_obj, config: dict | None = None):
