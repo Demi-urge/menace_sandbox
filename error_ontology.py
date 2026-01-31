@@ -525,8 +525,6 @@ def _classify_bundle(
 ) -> Tuple[str, List[ClassificationItem], Dict[str, Any], List[str]]:
     bundle_items: List[ClassificationItem] = []
     bundle_errors: List[str] = []
-    selected_index: int | None = None
-    selected_rank: int | None = None
     selected_status = ErrorCategory.Other.value
 
     for index, item in enumerate(items):
@@ -534,15 +532,10 @@ def _classify_bundle(
         data["index"] = index
         bundle_items.append(data)
         bundle_errors.extend(item_errors)
-        rank = _TAXONOMY_RANK.get(category.value, len(ERROR_TAXONOMY))
-        if selected_rank is None or rank < selected_rank:
-            selected_rank = rank
-            selected_status = category.value
-            selected_index = index
 
     meta: Dict[str, Any] = {
-        "bundle_rule": "lowest_taxonomy_rank_then_first",
-        "bundle_selected_index": selected_index,
+        "bundle_rule": "always_other_for_bundle",
+        "bundle_selected_index": None,
         "bundle_size": len(bundle_items),
     }
     return selected_status, bundle_items, meta, bundle_errors
@@ -565,9 +558,8 @@ def classify_error(raw: ErrorInputs) -> ClassificationResult:
        lowercasing the input text.
 
     For multi-error bundles (lists/tuples), each element is classified in input
-    order. The resulting status is selected by severity using the fixed
-    taxonomy order (earlier entries are more severe); if multiple entries share
-    the same severity, the first in input order is selected.
+    order and stored in ``bundle``. The top-level status is always ``Other``
+    for bundles, regardless of item matches.
 
     For dictionaries, the classifier inspects keys in the fixed order defined
     by ``_DICT_KEY_ORDER`` (``exception``, ``traceback``, ``message``, ``error``,
