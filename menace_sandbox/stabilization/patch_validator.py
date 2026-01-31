@@ -11,6 +11,7 @@ import re
 from menace.errors import PatchRuleError, PatchSyntaxError, PatchValidationError, ValidationError
 
 from .response_schemas import normalize_patch_validation
+from .errors import MenaceRuleSchemaError, MenaceValidationError
 
 _DIFF_HEADER = re.compile(r"^diff --git a/(?P<left>.+) b/(?P<right>.+)$")
 _FILE_OLD = re.compile(r"^--- (?P<path>.+)$")
@@ -386,18 +387,9 @@ def validate_patch(
 
             if rule_errors:
                 errors.extend(error.to_dict() for error in rule_errors)
-    except ValidationError as exc:
-        if current_rule_id is not None or current_rule_index is not None:
-            details = dict(exc.details or {})
-            if current_rule_id is not None:
-                details.setdefault("rule_id", current_rule_id)
-            if current_rule_index is not None:
-                details.setdefault("rule_index", current_rule_index)
-            exc.details = details
-        errors.append(exc.to_dict())
     except Exception as exc:
         errors.append(
-            PatchValidationError(
+            MenaceValidationError(
                 "unexpected validation error",
                 details={
                     "exception_type": exc.__class__.__name__,
@@ -646,12 +638,12 @@ def _schema_error(
     rule_index: int,
     rule_id: object | None,
     **details: object,
-) -> PatchValidationError:
+) -> MenaceRuleSchemaError:
     payload = {"rule_index": rule_index}
     if rule_id is not None:
         payload["rule_id"] = rule_id
     payload.update(details)
-    return PatchValidationError(message, details=payload)
+    return MenaceRuleSchemaError(message, details=payload)
 
 
 def _normalize_str_list(
@@ -660,7 +652,7 @@ def _normalize_str_list(
     field: str,
     rule_index: int,
     rule_id: object | None,
-    errors: list[PatchValidationError],
+    errors: list[MenaceRuleSchemaError],
 ) -> list[str]:
     if value is None:
         return []
@@ -697,8 +689,8 @@ def _validate_syntax_compile_params(
     *,
     rule_index: int,
     rule_id: object | None,
-) -> tuple[dict[str, object], list[PatchValidationError]]:
-    errors: list[PatchValidationError] = []
+) -> tuple[dict[str, object], list[MenaceRuleSchemaError]]:
+    errors: list[MenaceRuleSchemaError] = []
     sources = params.get("sources") if "sources" in params else params.get("source")
     if sources is not None:
         normalized = _normalize_str_list(
@@ -724,8 +716,8 @@ def _validate_required_imports_params(
     *,
     rule_index: int,
     rule_id: object | None,
-) -> tuple[dict[str, object], list[PatchValidationError]]:
-    errors: list[PatchValidationError] = []
+) -> tuple[dict[str, object], list[MenaceRuleSchemaError]]:
+    errors: list[MenaceRuleSchemaError] = []
     imports = params.get("imports")
     if not isinstance(imports, list):
         errors.append(
@@ -790,8 +782,8 @@ def _validate_signature_match_params(
     *,
     rule_index: int,
     rule_id: object | None,
-) -> tuple[dict[str, object], list[PatchValidationError]]:
-    errors: list[PatchValidationError] = []
+) -> tuple[dict[str, object], list[MenaceRuleSchemaError]]:
+    errors: list[MenaceRuleSchemaError] = []
     functions = _normalize_str_list(
         params.get("functions") if "functions" in params else params.get("function"),
         field="functions",
@@ -845,8 +837,8 @@ def _validate_forbidden_patterns_params(
     *,
     rule_index: int,
     rule_id: object | None,
-) -> tuple[dict[str, object], list[PatchValidationError]]:
-    errors: list[PatchValidationError] = []
+) -> tuple[dict[str, object], list[MenaceRuleSchemaError]]:
+    errors: list[MenaceRuleSchemaError] = []
     normalized: dict[str, object] = dict(params)
     list_fields = {
         "node_types": params.get("node_types") if "node_types" in params else params.get("types"),
@@ -891,8 +883,8 @@ def _validate_static_contracts_params(
     *,
     rule_index: int,
     rule_id: object | None,
-) -> tuple[dict[str, object], list[PatchValidationError]]:
-    errors: list[PatchValidationError] = []
+) -> tuple[dict[str, object], list[MenaceRuleSchemaError]]:
+    errors: list[MenaceRuleSchemaError] = []
     functions = _normalize_str_list(
         params.get("functions") if "functions" in params else params.get("function"),
         field="functions",
@@ -957,8 +949,8 @@ def _validate_mandatory_returns_params(
     *,
     rule_index: int,
     rule_id: object | None,
-) -> tuple[dict[str, object], list[PatchValidationError]]:
-    errors: list[PatchValidationError] = []
+) -> tuple[dict[str, object], list[MenaceRuleSchemaError]]:
+    errors: list[MenaceRuleSchemaError] = []
     functions = _normalize_str_list(
         params.get("functions") if "functions" in params else params.get("function"),
         field="functions",
@@ -1014,7 +1006,7 @@ def _validate_require_changes_param(
     *,
     rule_index: int,
     rule_id: object | None,
-    errors: list[PatchValidationError],
+    errors: list[MenaceRuleSchemaError],
 ) -> None:
     if "require_changes" not in params:
         return
@@ -1034,12 +1026,12 @@ def _validate_require_changes_param(
 def _validate_rule_schema(
     rules: list[dict[str, object]],
 ) -> tuple[list[ValidatedRule], list[ValidationError]]:
-    errors: list[PatchValidationError] = []
+    errors: list[MenaceRuleSchemaError] = []
     validated: list[ValidatedRule] = []
 
     if not isinstance(rules, list):
         errors.append(
-            PatchValidationError(
+            MenaceRuleSchemaError(
                 "rules must be provided as a list",
                 details={"field": "rules", "expected": "list", "actual_type": type(rules).__name__},
             )
@@ -1049,7 +1041,7 @@ def _validate_rule_schema(
     for rule_index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             errors.append(
-                PatchValidationError(
+                MenaceRuleSchemaError(
                     "rule must be a dict",
                     details={
                         "rule_index": rule_index,
@@ -1136,7 +1128,7 @@ def _validate_rule_schema(
 
         params_mapping = params if isinstance(params, Mapping) else {}
         normalized_params: dict[str, object] = dict(params_mapping)
-        param_errors: list[PatchValidationError] = []
+        param_errors: list[MenaceRuleSchemaError] = []
         if rule_type in {"syntax", "syntax_compile"}:
             normalized_params, param_errors = _validate_syntax_compile_params(
                 params_mapping, rule_index=rule_index, rule_id=raw_rule_id

@@ -11,6 +11,7 @@ from .response_schemas import (
     normalize_preset_batch,
 )
 from .roi import compute_roi_delta
+from .errors import MenaceRuleSchemaError, MenaceValidationError
 from .patch_validator import (
     PatchValidationLimits,
     validate_patch,
@@ -27,6 +28,8 @@ __all__ = [
     "normalize_preset_batch",
     "stabilize_completion",
     "compute_roi_delta",
+    "MenaceRuleSchemaError",
+    "MenaceValidationError",
     "PatchValidationLimits",
     "validate_patch",
     "validate_patch_text",
