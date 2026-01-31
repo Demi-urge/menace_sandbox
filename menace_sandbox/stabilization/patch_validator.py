@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-from menace.errors import PatchRuleError, PatchSyntaxError
+from menace.errors import PatchRuleError, PatchSyntaxError, ValidationError
 
 from .response_schemas import normalize_patch_validation
 
@@ -23,6 +23,25 @@ _DISALLOWED_LITERALS = {
     "copy from ": "copy_operation",
     "copy to ": "copy_operation",
 }
+
+_SUPPORTED_RULE_TYPES = {
+    "required_imports",
+    "signature_match",
+    "forbidden_patterns",
+    "mandatory_returns",
+    "unchanged_code",
+}
+
+
+@dataclass(frozen=True)
+class ValidatedRule:
+    rule_type: str
+    target: str
+    match: str
+    severity: str | None
+    rule_id: str | None
+    rule_index: int
+    payload: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -196,6 +215,9 @@ def validate_patch(
     rule_errors: list[PatchRuleError] = []
     syntax_errors: list[PatchSyntaxError] = []
 
+    validated_rules, validation_errors = validate_rules(rules)
+    rule_errors.extend(validation_errors)
+
     original_tree, original_index, original_nodes = _build_ast_index(
         original,
         "original",
@@ -213,16 +235,10 @@ def validate_patch(
         errors.extend(error.to_dict() for error in syntax_errors)
 
     if original_tree and patched_tree:
-        for rule_index, rule in enumerate(rules):
-            if not isinstance(rule, dict):
-                rule_errors.append(
-                    PatchRuleError(
-                        "rule must be a dict",
-                        details={"rule_index": rule_index, "actual_type": type(rule).__name__},
-                    )
-                )
-                continue
-            rule_type = rule.get("type")
+        for validated_rule in validated_rules:
+            rule = validated_rule.payload
+            rule_type = validated_rule.rule_type
+            rule_index = validated_rule.rule_index
             if rule_type == "required_imports":
                 _apply_required_imports(
                     rule,
@@ -426,6 +442,144 @@ def _signature_key(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ob
         "defaults": [_node_dump(value) for value in args.defaults],
         "kw_defaults": [_node_dump(value) if value is not None else None for value in args.kw_defaults],
     }
+
+
+def validate_rules(
+    rules: list[dict[str, object]],
+) -> tuple[list[ValidatedRule], list[ValidationError]]:
+    """Validate patch rules against a minimal schema."""
+    errors: list[PatchRuleError] = []
+    validated: list[ValidatedRule] = []
+
+    if not isinstance(rules, list):
+        errors.append(
+            PatchRuleError(
+                "rules must be provided as a list",
+                details={"field": "rules", "expected": "list", "actual_type": type(rules).__name__},
+            )
+        )
+        return [], errors
+
+    for rule_index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            errors.append(
+                PatchRuleError(
+                    "rule must be a dict",
+                    details={
+                        "rule_index": rule_index,
+                        "actual_type": type(rule).__name__,
+                    },
+                )
+            )
+            continue
+
+        raw_rule_id = rule.get("rule_id")
+        if raw_rule_id is None and "id" in rule:
+            raw_rule_id = rule.get("id")
+
+        rule_id_context = raw_rule_id if raw_rule_id is not None else None
+        if raw_rule_id is not None and not isinstance(raw_rule_id, str):
+            errors.append(
+                PatchRuleError(
+                    "rule_id must be a string",
+                    details=_rule_error_context(rule_index, rule_id_context, field="rule_id"),
+                )
+            )
+            rule_id = None
+        else:
+            rule_id = raw_rule_id
+
+        rule_type = rule.get("type")
+        if not isinstance(rule_type, str):
+            errors.append(
+                PatchRuleError(
+                    "rule type must be a string",
+                    details=_rule_error_context(
+                        rule_index,
+                        rule_id_context,
+                        field="type",
+                        actual_type=type(rule_type).__name__,
+                    ),
+                )
+            )
+        elif rule_type not in _SUPPORTED_RULE_TYPES:
+            errors.append(
+                PatchRuleError(
+                    "unsupported rule type",
+                    details=_rule_error_context(rule_index, rule_id_context, rule_type=rule_type),
+                )
+            )
+
+        target = rule.get("target")
+        if not isinstance(target, str):
+            errors.append(
+                PatchRuleError(
+                    "rule target must be a string",
+                    details=_rule_error_context(
+                        rule_index,
+                        rule_id_context,
+                        field="target",
+                        actual_type=type(target).__name__,
+                    ),
+                )
+            )
+
+        match = rule.get("match")
+        if not isinstance(match, str):
+            errors.append(
+                PatchRuleError(
+                    "rule match must be a string",
+                    details=_rule_error_context(
+                        rule_index,
+                        rule_id_context,
+                        field="match",
+                        actual_type=type(match).__name__,
+                    ),
+                )
+            )
+
+        severity = rule.get("severity")
+        if severity is not None and not isinstance(severity, str):
+            errors.append(
+                PatchRuleError(
+                    "severity must be a string",
+                    details=_rule_error_context(
+                        rule_index,
+                        rule_id_context,
+                        field="severity",
+                        actual_type=type(severity).__name__,
+                    ),
+                )
+            )
+
+        if any(
+            isinstance(item, PatchRuleError)
+            and item.details.get("rule_index") == rule_index
+            for item in errors
+        ):
+            continue
+
+        validated.append(
+            ValidatedRule(
+                rule_type=rule_type,
+                target=target,
+                match=match,
+                severity=severity,
+                rule_id=rule_id,
+                rule_index=rule_index,
+                payload=rule,
+            )
+        )
+
+    return validated, errors
+
+
+def _rule_error_context(rule_index: int, rule_id: object, **extra: object) -> dict[str, object]:
+    details: dict[str, object] = {"rule_index": rule_index}
+    if rule_id is not None:
+        details["rule_id"] = rule_id
+    details.update(extra)
+    return details
 
 
 def _apply_required_imports(
@@ -736,4 +890,10 @@ def _apply_unchanged_code(
     )
 
 
-__all__ = ["PatchValidationLimits", "validate_patch_text", "validate_patch"]
+__all__ = [
+    "PatchValidationLimits",
+    "ValidatedRule",
+    "validate_patch_text",
+    "validate_patch",
+    "validate_rules",
+]
