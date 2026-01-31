@@ -82,6 +82,10 @@ def test_wrap_with_logging_structured_logging_and_json_safe():
     assert payload["function"] == "echo"
     assert payload["args"] == [3]
     assert payload["kwargs"] == {"text": "hello"}
+    assert payload["return_value"] == {
+        "value": {"text": "hello", "value": 3},
+        "is_none": False,
+    }
 
 
 def test_wrap_with_logging_exception_logging_and_reraise():
@@ -140,3 +144,17 @@ def test_wrap_with_logging_double_wrapping_prevented():
     with capture_logger(logger_name) as handler:
         assert wrapped_again(1, 2) == 3
     assert len(handler.records) == 1
+
+
+def test_wrap_with_logging_return_value_logged_for_none():
+    logger_name = "tests.logging_wrapper.return_value.none"
+
+    def returns_none():
+        return None
+
+    wrapped_none = wrap_with_logging(returns_none, config={"logger_name": logger_name})
+    with capture_logger(logger_name) as handler:
+        assert wrapped_none() is None
+
+    record = handler.records[0]
+    assert record.return_value == {"value": None, "is_none": True}

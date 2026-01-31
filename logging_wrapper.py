@@ -358,16 +358,19 @@ def wrap_with_logging(callable_obj, config: dict | None = None):
                 truncate_marker=truncate_marker,
             )
         if include_return:
-            if result is None:
-                record["return_value"] = {"value": None, "is_none": True}
-            else:
-                record["return_value"] = _sanitize(
+            sanitized_return = None
+            if result is not None:
+                sanitized_return = _sanitize(
                     result,
                     max_depth=max_depth,
                     max_items=max_items,
                     max_string=max_string,
                     truncate_marker=truncate_marker,
                 )
+            record["return_value"] = {
+                "value": sanitized_return,
+                "is_none": result is None,
+            }
         logger.log(
             logging.INFO,
             event_name,
