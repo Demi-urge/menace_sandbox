@@ -12,9 +12,15 @@ class Timeout(Exception):
 class FileLock:
     """Minimal in-memory lock compatible with :class:`filelock.FileLock`."""
 
-    def __init__(self, *_: object, **__: object) -> None:
+    def __init__(self, lock_file: str | None = None, timeout: float | None = None, *_: object, **__: object) -> None:
         self._lock = threading.Lock()
         self.locked = False
+        self.lock_file = lock_file
+        self.timeout = -1 if timeout is None else timeout
+
+    @property
+    def is_locked(self) -> bool:
+        return self.locked
 
     def acquire(self, timeout: float | None = None) -> bool:
         locked = self._lock.acquire(timeout=timeout) if timeout else self._lock.acquire()
