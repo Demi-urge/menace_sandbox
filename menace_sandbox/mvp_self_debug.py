@@ -13,9 +13,9 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import yaml
 
+from menace_sandbox import patch_generator
 from menace_sandbox.mvp_brain import run_mvp_pipeline
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
-from menace_sandbox.stabilization.patch_validator import validate_patch_text
 
 
 @dataclasses.dataclass(frozen=True)
@@ -219,6 +219,21 @@ def _apply_patch(target_path: Path, modified_source: str) -> Path:
     return target_path
 
 
+def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
+    try:
+        patch_generator.validate_patch_text(patch_text)
+    except Exception as exc:
+        return {
+            "valid": False,
+            "flags": ["invalid_patch_text"],
+            "context": {
+                "exception_type": exc.__class__.__name__,
+                "exception_message": str(exc),
+            },
+        }
+    return {"valid": True, "flags": [], "context": {}}
+
+
 def _loop(
     target_path: Path,
     *,
@@ -230,7 +245,7 @@ def _loop(
         run_mvp_pipeline, {"log_event_prefix": "mvp.pipeline."}
     )
     logged_validate = wrap_with_logging(
-        validate_patch_text, {"log_event_prefix": "mvp.patch.validate."}
+        _validate_menace_patch_text, {"log_event_prefix": "mvp.patch.validate."}
     )
 
     attempts = 0
