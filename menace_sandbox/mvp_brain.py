@@ -95,7 +95,18 @@ def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
         "classification": dict(classification or {}),
     }
 
-    if source:
+    if not rules:
+        patch_payload = {
+            "status": "error",
+            "errors": [
+                {
+                    "code": "missing_rules",
+                    "message": "Patch rules are required for patch generation.",
+                }
+            ],
+            "meta": {"missing_rules": True},
+        }
+    elif source:
         patch_payload = logged_generate(
             source,
             error_report,
@@ -103,7 +114,9 @@ def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
             validate_syntax=validate_syntax,
         )
     else:
-        patch_payload = _error_payload("source is required for patch generation", "missing_source")
+        patch_payload = _error_payload(
+            "source is required for patch generation", "missing_source"
+        )
 
     patch_data = {}
     patch_meta = {}
