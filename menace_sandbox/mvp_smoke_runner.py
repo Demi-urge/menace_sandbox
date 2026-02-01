@@ -57,6 +57,10 @@ def _parse_step(step: str) -> tuple[str, str | None]:
     raise ValueError(f"Workflow step '{step}' must include a module path")
 
 
+def _is_noop_step(module: str) -> bool:
+    return module.endswith("sandbox_mvp_noop_workflow")
+
+
 def _validate_patch(patch_text: str) -> dict[str, object]:
     try:
         patch_generator.validate_patch_text(patch_text)
@@ -133,6 +137,9 @@ def run_mvp_workflow_smoke(
     patch_applied = 0
     patch_rejected = 0
     validation_blocked = 0
+    validation_blocked_steps: list[str] = []
+    validation_blocked_flags: list[str] = []
+    noop_validation_blocked = False
     stabilized_steps: list[str] = []
     failure_steps: list[str] = []
     roi_samples: list[float] = []
@@ -276,6 +283,11 @@ def run_mvp_workflow_smoke(
                     )
                     patch_rejected += 1
                     validation_blocked += 1
+                    validation_blocked_steps.append(step)
+                    validation_flags = list(validation.get("flags", []))
+                    validation_blocked_flags.extend(validation_flags)
+                    if _is_noop_step(mod) and "no_changes" in validation_flags:
+                        noop_validation_blocked = True
                     attempt_events.append(
                         {
                             "step": step,
@@ -392,6 +404,7 @@ def run_mvp_workflow_smoke(
         "patches_proposed": patch_proposed > 0,
         "patches_applied": patch_applied > 0,
         "validation_blocked": validation_blocked > 0,
+        "noop_validation_blocked": noop_validation_blocked,
         "logs_stabilized": bool(stabilized_steps),
         "deterministic_failures": bool(failure_steps),
         "roi_metrics_updated": roi_count_delta > 0,
@@ -403,6 +416,9 @@ def run_mvp_workflow_smoke(
         "patches_applied": patch_applied,
         "patches_rejected": patch_rejected,
         "validation_blocked": validation_blocked,
+        "validation_blocked_steps": validation_blocked_steps,
+        "validation_blocked_flags": validation_blocked_flags,
+        "noop_validation_blocked": noop_validation_blocked,
         "stabilized_steps": stabilized_steps,
         "failure_steps": failure_steps,
         "run_delta": run_delta,
@@ -451,6 +467,8 @@ def run_mvp_workflow_smoke(
             raise RuntimeError("MVP brain did not apply any patches")
         if not checks_summary["validation_blocked"]:
             raise RuntimeError("Patch validation did not block any invalid patches")
+        if not checks_summary["noop_validation_blocked"]:
+            raise RuntimeError("No-op validation did not block a bad patch")
         if not checks_summary["logs_stabilized"]:
             raise RuntimeError("No workflow steps stabilized after patching")
         if not checks_summary["deterministic_failures"]:
