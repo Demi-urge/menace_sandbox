@@ -18,14 +18,33 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "mvp-workflow-smoke":
     import argparse
+    from dataclasses import dataclass
     import importlib.util
     from pathlib import Path
     import subprocess
+    import time
+    import uuid
 
+    import mvp_evaluator
     from menace_sandbox.mvp_brain import run_mvp_pipeline
     from menace_sandbox.mvp_self_debug import _apply_patch
     from menace_sandbox.sandbox_rule_builder import build_rules
     from menace_sandbox import patch_generator
+    from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+    from logging_utils import get_logger, log_record, set_correlation_id
+    from sandbox_runner.scoring import record_run
+    from workflow_metrics import compute_workflow_entropy
+
+    @dataclass
+    class _SmokeRunResult:
+        success: bool
+        duration: float
+        stderr: str = ""
+        failure: str | None = None
+
+    logger = get_logger("sandbox.mvp.self_heal")
+    correlation_id = f"mvp-workflow-smoke-{uuid.uuid4()}"
+    set_correlation_id(correlation_id)
 
     def _parse_step(step: str) -> tuple[str, str | None]:
         if ":" in step:
@@ -72,6 +91,20 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "mvp-workflow
     _args, _ = parser.parse_known_args(sys.argv[1:])
     steps = [s.strip() for s in str(_args.modules).split(",") if s.strip()]
     max_attempts = max(1, int(_args.max_attempts))
+    module_list = []
+    for step in steps:
+        mod, _func = _parse_step(step)
+        module_list.append(mod)
+    workflow_entropy = compute_workflow_entropy([{"module": mod} for mod in module_list])
+    last_entropy = 0.0
+    logged_pipeline = wrap_with_logging(
+        run_mvp_pipeline,
+        {"log_event_prefix": "sandbox.mvp.self_heal.pipeline."},
+    )
+    logged_validate = wrap_with_logging(
+        _validate_patch,
+        {"log_event_prefix": "sandbox.mvp.self_heal.patch.validate."},
+    )
     for step in steps:
         mod, func = _parse_step(step)
         spec = importlib.util.find_spec(mod)
@@ -82,12 +115,14 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "mvp-workflow
         prior_roi: float | None = None
         try:
             for attempt in range(1, max_attempts + 1):
+                attempt_start = time.monotonic()
                 cmd = [
                     sys.executable,
                     "-c",
                     f"from {mod} import {func or 'main'} as _m; _m()",
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                attempt_runtime = time.monotonic() - attempt_start
                 source_text = source_path.read_text(encoding="utf-8")
                 rules = build_rules(result.stderr or result.stdout, source=source_text)
                 had_prior_roi = prior_roi is not None
@@ -100,18 +135,69 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "mvp-workflow
                 }
                 if prior_roi is not None:
                     payload["prior_roi"] = prior_roi
-                pipeline_result = run_mvp_pipeline(payload)
+                pipeline_result = logged_pipeline(payload)
                 roi_score = pipeline_result.get("roi_score")
                 if prior_roi is None and isinstance(roi_score, (int, float)):
                     prior_roi = float(roi_score)
+                roi_value = float(roi_score) if isinstance(roi_score, (int, float)) else float(
+                    mvp_evaluator.evaluate_roi(result.stdout, result.stderr)
+                )
+                entropy_delta = workflow_entropy - last_entropy
+                last_entropy = workflow_entropy
+                run_result = _SmokeRunResult(
+                    success=result.returncode == 0,
+                    duration=attempt_runtime,
+                    stderr=result.stderr,
+                    failure=(result.stderr or result.stdout) if result.returncode else None,
+                )
+                record_run(
+                    run_result,
+                    metrics={
+                        "runtime": attempt_runtime,
+                        "roi": roi_value,
+                        "entropy_delta": entropy_delta,
+                        "coverage": {"executed_functions": [f"{mod}:{func or 'main'}"]},
+                    },
+                )
                 if result.returncode == 0:
                     print(f"{step}: ok after {attempt} attempt(s)")
+                    logger.info(
+                        "sandbox workflow stabilized",
+                        extra=log_record(
+                            workflow_step=step,
+                            attempt=attempt,
+                            correlation_id=correlation_id,
+                            roi=roi_value,
+                            entropy=workflow_entropy,
+                        ),
+                    )
                     break
                 patch_text = str(pipeline_result.get("patch_text") or "")
                 modified_source = str(pipeline_result.get("modified_source") or "")
-                validation = _validate_patch(patch_text)
+                validation = logged_validate(patch_text)
+                if patch_text:
+                    logger.info(
+                        "mvp brain proposed patch",
+                        extra=log_record(
+                            workflow_step=step,
+                            attempt=attempt,
+                            patch_text_length=len(patch_text),
+                            roi=roi_value,
+                            entropy=workflow_entropy,
+                        ),
+                    )
                 if not validation.get("valid"):
                     print(f"{step}: patch rejected (flags={validation.get('flags')})")
+                    logger.info(
+                        "sandbox patch rejected",
+                        extra=log_record(
+                            workflow_step=step,
+                            attempt=attempt,
+                            flags=list(validation.get("flags", [])),
+                            roi=roi_value,
+                            entropy=workflow_entropy,
+                        ),
+                    )
                     break
                 roi_delta = pipeline_result.get("roi_delta", {})
                 delta_total = 0.0
@@ -124,9 +210,28 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "mvp-workflow
                             delta_total = 0.0
                 if (had_prior_roi and delta_total <= 0) or not modified_source:
                     print(f"{step}: patch rejected (roi_delta={delta_total})")
+                    logger.info(
+                        "sandbox patch rejected",
+                        extra=log_record(
+                            workflow_step=step,
+                            attempt=attempt,
+                            roi_delta=delta_total,
+                            roi=roi_value,
+                            entropy=workflow_entropy,
+                        ),
+                    )
                     break
                 _apply_patch(source_path, modified_source)
                 print(f"{step}: patch applied (attempt {attempt})")
+                logger.info(
+                    "sandbox patch applied",
+                    extra=log_record(
+                        workflow_step=step,
+                        attempt=attempt,
+                        roi=roi_value,
+                        entropy=workflow_entropy,
+                    ),
+                )
         finally:
             source_path.write_text(original_source, encoding="utf-8")
     raise SystemExit(0)
