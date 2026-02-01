@@ -15,10 +15,10 @@ from typing import Any, Mapping, Sequence
 
 import mvp_evaluator
 from logging_utils import get_logger, log_record, set_correlation_id
-from menace_sandbox import patch_generator
 from menace_sandbox.mvp_brain import run_mvp_pipeline
 from menace_sandbox.mvp_self_debug import _apply_patch
 from menace_sandbox.sandbox_rule_builder import build_rules
+from menace_sandbox.stabilization.patch_validator import validate_patch_text
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
 from dynamic_path_router import resolve_path
 
@@ -63,31 +63,24 @@ def _is_noop_step(module: str) -> bool:
 
 def _validate_patch(patch_text: str) -> dict[str, object]:
     try:
-        patch_generator.validate_patch_text(patch_text)
+        validation = validate_patch_text(patch_text)
     except Exception as exc:
         return {
             "valid": False,
             "flags": ["validation_exception"],
             "context": {"error": str(exc)},
         }
-    lines = patch_text.splitlines()
-    change_count = 0
-    if len(lines) > 1 and lines[1].startswith("change-count:"):
-        try:
-            change_count = int(lines[1].split(":", 1)[1].strip())
-        except (TypeError, ValueError):
-            change_count = 0
-    if change_count <= 0:
+    if not isinstance(validation, Mapping):
         return {
             "valid": False,
-            "flags": ["no_changes"],
-            "context": {"change_count": change_count},
+            "flags": ["validation_invalid_payload"],
+            "context": {"payload_type": type(validation).__name__},
         }
-    return {
-        "valid": True,
-        "flags": [],
-        "context": {"format": "menace_patch", "change_count": change_count},
-    }
+    payload = dict(validation)
+    payload.setdefault("valid", False)
+    payload.setdefault("flags", [])
+    payload.setdefault("context", {})
+    return payload
 
 
 def _compute_workflow_entropy(spec: list[dict[str, str]]) -> float:
