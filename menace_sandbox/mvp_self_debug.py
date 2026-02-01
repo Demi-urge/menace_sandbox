@@ -13,7 +13,11 @@ import tempfile
 import uuid
 from typing import Any, Iterable, Mapping, Sequence
 
-import yaml
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from yaml_fallback import get_yaml
 
 from menace_sandbox.mvp_brain import run_mvp_pipeline
 from menace_sandbox.stabilization.logging_wrapper import (
@@ -22,6 +26,8 @@ from menace_sandbox.stabilization.logging_wrapper import (
 )
 from menace_sandbox.stabilization.patch_validator import validate_patch_text
 from sandbox_results_logger import record_self_debug_metrics
+
+yaml = get_yaml("mvp_self_debug", warn=False)
 
 
 @dataclasses.dataclass(frozen=True)
