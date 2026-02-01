@@ -112,6 +112,7 @@ def run_mvp_workflow_smoke(
     max_attempts: int = 2,
     log_event_prefix: str = "sandbox.mvp.self_heal",
     enforce_checks: bool = True,
+    report_path: str | Path | None = None,
 ) -> dict[str, Any]:
     record_run, load_summary = _load_scoring_helpers()
     logger = get_logger("sandbox.mvp.self_heal")
@@ -332,11 +333,16 @@ def run_mvp_workflow_smoke(
         "entropy_total_delta": entropy_delta_total,
         "checks": checks_summary,
     }
-    report_path = Path(resolve_path("sandbox_data")) / "mvp_self_heal_report.json"
+    report_path = (
+        Path(report_path)
+        if report_path is not None
+        else Path(resolve_path("sandbox_data")) / "mvp_self_heal_report.json"
+    )
     report_payload = {
         "summary_before": summary_before,
         "summary_after": summary_after,
         "checks": checks,
+        "checks_summary": checks_summary,
     }
     try:
         report_path.parent.mkdir(parents=True, exist_ok=True)

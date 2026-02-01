@@ -34,10 +34,31 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "mvp-workflow
         default=2,
         help="maximum MVP loop attempts per module",
     )
+    parser.add_argument(
+        "--report-path",
+        default=None,
+        help="optional path to write MVP self-heal report JSON",
+    )
+    parser.add_argument(
+        "--log-prefix",
+        default="sandbox.mvp.self_heal",
+        help="log event prefix for MVP self-heal checks",
+    )
+    parser.add_argument(
+        "--no-enforce-checks",
+        action="store_true",
+        help="disable enforcement of MVP self-heal checks",
+    )
     _args, _ = parser.parse_known_args(sys.argv[1:])
     steps = [s.strip() for s in str(_args.modules).split(",") if s.strip()]
     max_attempts = max(1, int(_args.max_attempts))
-    run_mvp_workflow_smoke(steps, max_attempts=max_attempts)
+    run_mvp_workflow_smoke(
+        steps,
+        max_attempts=max_attempts,
+        log_event_prefix=str(_args.log_prefix),
+        enforce_checks=not _args.no_enforce_checks,
+        report_path=_args.report_path,
+    )
     raise SystemExit(0)
 
 import signal
