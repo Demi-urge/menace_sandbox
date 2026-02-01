@@ -137,6 +137,9 @@ def validate_patch_text(
                 change_count = int(raw_value)
             except ValueError:
                 flags.append("invalid_change_count")
+            else:
+                if change_count <= 0:
+                    flags.append("no_changes")
 
         context.update(
             {
