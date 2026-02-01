@@ -154,7 +154,58 @@ def _build_patch_rules(
                     "error_rule_id": matched_rule_id or "unknown",
                 },
             }
-        ]
+        ],
+        "SyntaxError": [
+            {
+                "type": "replace",
+                "id": "fix-missing-def-colon",
+                "description": "Add missing colon to MVP function definition.",
+                "anchor": "def add(a, b)",
+                "replacement": "def add(a, b):",
+                "anchor_kind": "literal",
+                "count": 1,
+                "allow_zero_matches": False,
+                "meta": {
+                    "source": "mvp_self_debug",
+                    "error_category": status or "unknown",
+                    "error_rule_id": matched_rule_id or "unknown",
+                },
+            }
+        ],
+        "MissingReturn": [
+            {
+                "type": "replace",
+                "id": "fix-missing-return",
+                "description": "Replace placeholder pass with explicit return.",
+                "anchor": "pass",
+                "replacement": "return None",
+                "anchor_kind": "literal",
+                "count": 1,
+                "allow_zero_matches": False,
+                "meta": {
+                    "source": "mvp_self_debug",
+                    "error_category": status or "unknown",
+                    "error_rule_id": matched_rule_id or "unknown",
+                },
+            }
+        ],
+        "TypeError-Mismatch": [
+            {
+                "type": "replace",
+                "id": "fix-type-mismatch-addition",
+                "description": "Coerce addition operands to integers.",
+                "anchor": "return a + b",
+                "replacement": "return int(a) + int(b)",
+                "anchor_kind": "literal",
+                "count": 1,
+                "allow_zero_matches": False,
+                "meta": {
+                    "source": "mvp_self_debug",
+                    "error_category": status or "unknown",
+                    "error_rule_id": matched_rule_id or "unknown",
+                },
+            }
+        ],
     }
 
     if status in rule_catalog:
