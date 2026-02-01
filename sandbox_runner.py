@@ -1868,6 +1868,9 @@ def _sandbox_main(
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
             )
             source_code, source_path = _load_workflow_source()
+            from menace_sandbox.sandbox_rule_builder import build_rules
+
+            rules = build_rules(error_text, source=source_code)
             return {
                 "source_code": source_code,
                 "source_path": source_path,
@@ -1875,6 +1878,7 @@ def _sandbox_main(
                 "stderr": error_text,
                 "stdout": "",
                 "returncode": 1,
+                "rules": rules,
                 "prior_roi": tracker.roi_history[-1]
                 if getattr(tracker, "roi_history", None)
                 else None,
