@@ -134,7 +134,10 @@ _CANONICAL_TOKEN_PHRASES: Tuple[Tuple[ErrorCategory, Tuple[str, ...]], ...] = (
     (ErrorCategory.SyntaxError, ("syntax error",)),
     (ErrorCategory.ImportError, ("import error",)),
     (ErrorCategory.TypeErrorMismatch, ("type mismatch",)),
-    (ErrorCategory.ContractViolation, ("contract violation",)),
+    (
+        ErrorCategory.ContractViolation,
+        ("contract violation", "assertionerror", "assertion error"),
+    ),
     (ErrorCategory.EdgeCaseFailure, ("edge case",)),
     (ErrorCategory.UnhandledException, ("unhandled exception",)),
     (ErrorCategory.InvalidInput, ("invalid input",)),
