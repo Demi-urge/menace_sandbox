@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import json
 import logging
 import math
+import os
 import sys
 import types
 from pathlib import Path
@@ -77,12 +78,17 @@ except ImportError:  # pragma: no cover - fallback when executed directly
 except Exception:  # pragma: no cover - gracefully degrade
     WorkflowGraph = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency
-    from .roi_tracker import ROITracker  # type: ignore
-except ImportError:  # pragma: no cover - fallback when executed directly
-    from roi_tracker import ROITracker  # type: ignore
-except BaseException:  # pragma: no cover - gracefully degrade
+_LIGHT_IMPORTS = os.getenv("MENACE_LIGHT_IMPORTS") not in {"", "0", "false", "False", None}
+
+if _LIGHT_IMPORTS:
     ROITracker = None  # type: ignore
+else:
+    try:  # pragma: no cover - optional dependency
+        from .roi_tracker import ROITracker  # type: ignore
+    except ImportError:  # pragma: no cover - fallback when executed directly
+        from roi_tracker import ROITracker  # type: ignore
+    except BaseException:  # pragma: no cover - gracefully degrade
+        ROITracker = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .roi_results_db import ROIResultsDB  # type: ignore

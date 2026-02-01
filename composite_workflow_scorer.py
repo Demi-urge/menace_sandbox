@@ -20,6 +20,7 @@ import traceback
 from pathlib import Path
 
 import json
+import os
 import yaml
 
 # ``__package__`` is ``None`` when the module is executed as a script (the
@@ -29,7 +30,44 @@ import yaml
 # hook.  Guarding on ``__package__`` ensures we only attempt relative imports
 # when the module is part of the ``menace_sandbox`` package while still
 # supporting flat execution in bespoke environments.
-if __package__:
+_LIGHT_IMPORTS = os.getenv("MENACE_LIGHT_IMPORTS") not in {"", "0", "false", "False", None}
+
+if _LIGHT_IMPORTS:
+    class ROITracker:  # type: ignore[override]
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def get(self, *_args: object, **_kwargs: object) -> float:
+            return 0.0
+
+        def std(self, *_args: object, **_kwargs: object) -> float:
+            return 0.0
+
+    if __package__:
+        from .roi_calculator import ROICalculator
+        from .roi_results_db import ROIResultsDB
+        from . import sandbox_runner
+        from .dynamic_path_router import resolve_path
+        from .workflow_scorer_core import (
+            ROIScorer as BaseROIScorer,
+            EvaluationResult,
+            compute_workflow_synergy,
+            compute_bottleneck_index,
+            compute_patchability,
+        )
+    else:  # pragma: no cover - executed when run as a script
+        from roi_calculator import ROICalculator  # type: ignore
+        from roi_results_db import ROIResultsDB  # type: ignore
+        import sandbox_runner  # type: ignore
+        from dynamic_path_router import resolve_path  # type: ignore
+        from workflow_scorer_core import (  # type: ignore
+            ROIScorer as BaseROIScorer,
+            EvaluationResult,
+            compute_workflow_synergy,
+            compute_bottleneck_index,
+            compute_patchability,
+        )
+elif __package__:
     try:  # pragma: no cover - allow execution without package context
         from .roi_tracker import ROITracker
         from .roi_calculator import ROICalculator
