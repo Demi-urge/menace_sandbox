@@ -9,6 +9,7 @@ from error_ontology import classify_error
 import mvp_evaluator
 from menace_sandbox import patch_generator
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+from menace_sandbox.stabilization.patch_validator import validate_patch_text
 from menace_sandbox.stabilization.roi import compute_roi_delta
 
 __all__ = ["run_mvp_pipeline"]
@@ -45,9 +46,25 @@ def _error_payload(message: str, code: str) -> dict[str, Any]:
 def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
     """Validate Menace patch text with the Menace patch validator."""
 
-    validation = patch_generator.validate_patch_text(patch_text)
+    try:
+        validation: Any = validate_patch_text(patch_text)
+    except Exception as exc:  # pragma: no cover - safety fallback
+        validation = {
+            "valid": False,
+            "flags": ["validation_exception"],
+            "context": {"error": str(exc)},
+        }
+    if not isinstance(validation, Mapping):
+        validation = {
+            "valid": False,
+            "flags": ["validation_invalid_payload"],
+            "context": {"payload_type": type(validation).__name__},
+        }
+    validation.setdefault("valid", False)
+    validation.setdefault("flags", [])
+    validation.setdefault("context", {})
     if validation.get("valid"):
-        validation.setdefault("context", {})["format"] = "menace_patch"
+        validation["context"]["format"] = "menace_patch"
     return validation
 
 
