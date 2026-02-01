@@ -19,6 +19,7 @@ try:  # pragma: no cover - optional during tests
     from .dynamic_path_router import resolve_path  # type: ignore
 except Exception:  # pragma: no cover - fallback for test envs
     from dynamic_path_router import resolve_path  # type: ignore
+from safe_serialization import safe_json_dumps
 
 
 _LOG_DIR = Path(resolve_path("sandbox_data"))
@@ -102,13 +103,13 @@ def record_self_debug_metrics(metrics: Dict[str, Any]) -> None:
             )
             serialised = {
                 **metrics,
-                "classification": json.dumps(metrics.get("classification"))
+                "classification": safe_json_dumps(metrics.get("classification"))
                 if metrics.get("classification") is not None
                 else None,
-                "patch_validity": json.dumps(metrics.get("patch_validity"))
+                "patch_validity": safe_json_dumps(metrics.get("patch_validity"))
                 if metrics.get("patch_validity") is not None
                 else None,
-                "roi_delta": json.dumps(metrics.get("roi_delta"))
+                "roi_delta": safe_json_dumps(metrics.get("roi_delta"))
                 if metrics.get("roi_delta") is not None
                 else None,
             }

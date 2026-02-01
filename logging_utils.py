@@ -16,7 +16,7 @@ from logging.handlers import (
     TimedRotatingFileHandler,
 )
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 from datetime import datetime
 import contextvars
 import importlib
@@ -289,7 +289,7 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
     cfg_mod = _config_mod()
     cfg = _get_config_or_fallback(cfg_mod)
     if level is None:
-        level_name = cfg.logging.verbosity
+        level_name = _get_logging_verbosity(cfg)
         level = getattr(logging, level_name.upper(), logging.INFO)
     if isinstance(level, int):
         logging.getLogger().setLevel(level)
@@ -333,7 +333,7 @@ def _apply_log_level() -> None:
     """Apply current config logging verbosity to root logger."""
     cfg_mod = _config_mod()
     cfg = _get_config_or_fallback(cfg_mod)
-    level_name = cfg.logging.verbosity
+    level_name = _get_logging_verbosity(cfg)
     logging.getLogger().setLevel(getattr(logging, level_name.upper(), logging.INFO))
 
 
@@ -423,3 +423,14 @@ def _get_config_or_fallback(cfg_mod: ModuleType):
             "configuration module unavailable (%s); using defaults", exc
         )
         return _fallback_config()
+
+
+def _get_logging_verbosity(cfg: object) -> str:
+    logging_cfg = getattr(cfg, "logging", None)
+    if isinstance(logging_cfg, Mapping):
+        verbosity = logging_cfg.get("verbosity")
+    else:
+        verbosity = getattr(logging_cfg, "verbosity", None)
+    if isinstance(verbosity, str) and verbosity:
+        return verbosity
+    return "INFO"
