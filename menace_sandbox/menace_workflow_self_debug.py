@@ -5,14 +5,18 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+import tempfile
 import traceback
 from typing import Iterable, Mapping
 
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.mvp_brain import run_mvp_pipeline
-from menace_sandbox import patch_generator
 from menace_sandbox.sandbox_rule_builder import build_rules
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+from menace_sandbox.stabilization.patch_validator import (
+    PatchValidationLimits,
+    validate_patch_text,
+)
 from menace_sandbox.workflow_run_state import (
     classify_error,
     discover_workflow_modules,
@@ -58,20 +62,44 @@ def _roi_delta_total(pipeline_result: Mapping[str, object]) -> float:
     return 0.0
 
 
-def _validate_menace_patch_text(patch_text: str) -> dict[str, object]:
+def _validate_menace_patch_text(
+    patch_text: str,
+    *,
+    allow_new_files: bool = False,
+    allow_deletes: bool = False,
+) -> dict[str, object]:
     try:
-        patch_generator.validate_patch_text(patch_text)
+        limits = PatchValidationLimits(
+            allow_new_files=allow_new_files,
+            allow_deletes=allow_deletes,
+        )
+        validation = validate_patch_text(patch_text, limits=limits)
     except Exception as exc:  # pragma: no cover - safety fallback
-        return {
+        validation = {
             "valid": False,
             "flags": ["validation_exception"],
             "context": {"error": str(exc)},
         }
-    return {"valid": True, "flags": [], "context": {"format": "menace_patch"}}
+    if not isinstance(validation, Mapping):
+        return {
+            "valid": False,
+            "flags": ["validation_invalid_payload"],
+            "context": {"payload_type": type(validation).__name__},
+        }
+    validation.setdefault("valid", False)
+    validation.setdefault("flags", [])
+    validation.setdefault("context", {})
+    if validation.get("valid"):
+        validation["context"]["format"] = "menace_patch"
+    return dict(validation)
 
 
 def _apply_pipeline_patch(
-    pipeline_result: Mapping[str, object], *, source_path: Path
+    pipeline_result: Mapping[str, object],
+    *,
+    source_path: Path,
+    allow_new_files: bool = False,
+    allow_deletes: bool = False,
 ) -> bool:
     validation = pipeline_result.get("validation")
     if not isinstance(validation, Mapping) or not validation.get("valid"):
@@ -79,7 +107,11 @@ def _apply_pipeline_patch(
     patch_text = str(pipeline_result.get("patch_text") or "")
     if not patch_text:
         return False
-    validation_result = _validate_menace_patch_text(patch_text)
+    validation_result = _validate_menace_patch_text(
+        patch_text,
+        allow_new_files=allow_new_files,
+        allow_deletes=allow_deletes,
+    )
     if not validation_result.get("valid"):
         LOGGER.warning(
             "mvp patch failed menace validation",
@@ -97,7 +129,27 @@ def _apply_pipeline_patch(
     )
     if not isinstance(modified_source, str) or not modified_source:
         return False
-    source_path.write_text(modified_source, encoding="utf-8")
+
+    original_source = source_path.read_text(encoding="utf-8")
+    temp_dir = Path(tempfile.mkdtemp(prefix="menace_self_debug_"))
+    temp_path = temp_dir / source_path.name
+    try:
+        temp_path.write_text(original_source, encoding="utf-8")
+        temp_path.write_text(modified_source, encoding="utf-8")
+        source_path.write_text(modified_source, encoding="utf-8")
+    except Exception:
+        LOGGER.exception(
+            "failed to promote validated patch; rolling back",
+            extra={"source_path": str(source_path)},
+        )
+        try:
+            source_path.write_text(original_source, encoding="utf-8")
+        except Exception:
+            LOGGER.exception(
+                "rollback failed after patch promotion error",
+                extra={"source_path": str(source_path)},
+            )
+        return False
     return True
 
 
