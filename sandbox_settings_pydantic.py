@@ -1020,6 +1020,11 @@ class SandboxSettings(BaseSettings):
     menace_offline_install: bool = Field(False, env="MENACE_OFFLINE_INSTALL")
     menace_wheel_dir: str | None = Field(None, env="MENACE_WHEEL_DIR")
     menace_light_imports: bool = Field(False, env="MENACE_LIGHT_IMPORTS")
+    enable_layer4_self_debug: bool = Field(
+        False,
+        env="MENACE_LAYER4_SELF_DEBUG",
+        description="Enable layer-4 workflow self-debug runs during orchestration.",
+    )
     engine_heartbeat_enabled: bool = Field(
         False,
         env=("MENACE_ENGINE_HEARTBEAT", "MENACE_ENGINE_HEARTBEAT_ENABLED"),

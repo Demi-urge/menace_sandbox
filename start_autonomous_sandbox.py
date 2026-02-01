@@ -1066,6 +1066,56 @@ def _record_bootstrap_timeout(
     return backoff
 
 
+def _maybe_run_layer4_self_debug(settings: SandboxSettings, logger: logging.Logger) -> None:
+    enabled = bool(getattr(settings, "enable_layer4_self_debug", False))
+    logger.info(
+        "Layer-4 self-debug decision",
+        extra=log_record(
+            event="layer4-self-debug-decision",
+            enabled=enabled,
+            env_flag=os.getenv("MENACE_LAYER4_SELF_DEBUG"),
+        ),
+    )
+    if not enabled:
+        return
+
+    try:
+        from menace_sandbox import menace_workflow_self_debug
+    except Exception:
+        logger.exception(
+            "Layer-4 self-debug import failed",
+            extra=log_record(event="layer4-self-debug-import-failed"),
+        )
+        return
+
+    args = [
+        "--repo-root",
+        ROOT,
+        "--workflow-db",
+        settings.workflows_db,
+        "--source-menace-id",
+        "menace_layer4_self_debug",
+        "--metrics-source",
+        "menace_layer4_self_debug",
+    ]
+    try:
+        exit_code = menace_workflow_self_debug.main(args)
+    except Exception:
+        logger.exception(
+            "Layer-4 self-debug run failed",
+            extra=log_record(event="layer4-self-debug-failed"),
+        )
+        return
+
+    logger.info(
+        "Layer-4 self-debug completed",
+        extra=log_record(
+            event="layer4-self-debug-complete",
+            exit_code=exit_code,
+        ),
+    )
+
+
 def _stage_timeout_context(
     *,
     stage: str,
@@ -4904,6 +4954,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.stderr.write(f"sandbox launch blocked: {summary}\n")
             sys.stderr.flush()
             sys.exit(3)
+        _maybe_run_layer4_self_debug(settings, logger)
         _emoji_step(
             logger,
             "🧠",
