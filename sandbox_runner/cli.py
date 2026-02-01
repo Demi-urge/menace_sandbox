@@ -12,9 +12,11 @@ import shutil
 import math
 import platform
 import subprocess
+import sys
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from dynamic_path_router import resolve_path, path_for_prompt
 from pydantic import ValidationError
+import importlib.util
 
 try:
     from context_builder_util import create_context_builder
@@ -93,6 +95,111 @@ def _fallback_presets(count: int | None = None) -> list[dict[str, Any]]:
 
 
 logger = get_logger(__name__)
+
+
+def _parse_mvp_step(step: str) -> tuple[str, str | None]:
+    if ":" in step:
+        mod, func = step.split(":", 1)
+        return mod, func
+    if importlib.util.find_spec(step) is not None:
+        return step, None
+    if "." in step:
+        mod, func = step.rsplit(".", 1)
+        return mod, func
+    if "/" in step:
+        return step.replace("/", "."), None
+    raise ValueError(f"Workflow step '{step}' must include a module path")
+
+
+def _validate_mvp_patch(patch_text: str) -> dict[str, Any]:
+    from menace_sandbox import patch_generator
+
+    try:
+        patch_generator.validate_patch_text(patch_text)
+    except Exception as exc:
+        return {"valid": False, "flags": ["validation_exception"], "context": {"error": str(exc)}}
+    lines = patch_text.splitlines()
+    change_count = 0
+    if len(lines) > 1 and lines[1].startswith("change-count:"):
+        try:
+            change_count = int(lines[1].split(":", 1)[1].strip())
+        except (TypeError, ValueError):
+            change_count = 0
+    if change_count <= 0:
+        return {"valid": False, "flags": ["no_changes"], "context": {"change_count": change_count}}
+    return {"valid": True, "flags": [], "context": {"format": "menace_patch", "change_count": change_count}}
+
+
+def _run_mvp_workflow_smoke(args: argparse.Namespace) -> None:
+    from menace_sandbox.mvp_brain import run_mvp_pipeline
+    from menace_sandbox.sandbox_rule_builder import build_rules
+    from menace_sandbox.mvp_self_debug import _apply_patch
+
+    steps_raw = getattr(args, "modules", "") or ""
+    steps = [s.strip() for s in steps_raw.split(",") if s.strip()]
+    max_attempts = max(1, int(getattr(args, "max_attempts", 2)))
+    for step in steps:
+        mod, func = _parse_mvp_step(step)
+        spec = importlib.util.find_spec(mod)
+        if spec is None or not spec.origin:
+            raise RuntimeError(f"Module '{mod}' for workflow step '{step}' not found")
+        source_path = Path(spec.origin)
+        original_source = source_path.read_text(encoding="utf-8")
+        prior_roi: float | None = None
+        try:
+            for attempt in range(1, max_attempts + 1):
+                cmd = [
+                    sys.executable,
+                    "-c",
+                    (
+                        f"from {mod} import {func or 'main'} as _m;"
+                        f"_m()"
+                    ),
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                source_text = source_path.read_text(encoding="utf-8")
+                rules = build_rules(result.stderr or result.stdout, source=source_text)
+                had_prior_roi = prior_roi is not None
+                payload: dict[str, Any] = {
+                    "source": source_text,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                    "rules": rules,
+                }
+                if prior_roi is not None:
+                    payload["prior_roi"] = prior_roi
+                pipeline_result = run_mvp_pipeline(payload)
+                roi_score = pipeline_result.get("roi_score")
+                if prior_roi is None and isinstance(roi_score, (int, float)):
+                    prior_roi = float(roi_score)
+                if result.returncode == 0:
+                    print(f"{step}: ok after {attempt} attempt(s)")
+                    break
+                patch_text = str(pipeline_result.get("patch_text") or "")
+                modified_source = str(pipeline_result.get("modified_source") or "")
+                validation = _validate_mvp_patch(patch_text)
+                if not validation.get("valid"):
+                    print(
+                        f"{step}: patch rejected (flags={validation.get('flags')})"
+                    )
+                    break
+                roi_delta = pipeline_result.get("roi_delta", {})
+                delta_total = 0.0
+                if isinstance(roi_delta, Mapping):
+                    data = roi_delta.get("data")
+                    if isinstance(data, Mapping):
+                        try:
+                            delta_total = float(data.get("total", 0.0))
+                        except (TypeError, ValueError):
+                            delta_total = 0.0
+                if (had_prior_roi and delta_total <= 0) or not modified_source:
+                    print(f"{step}: patch rejected (roi_delta={delta_total})")
+                    break
+                _apply_patch(source_path, modified_source)
+                print(f"{step}: patch applied (attempt {attempt})")
+        finally:
+            source_path.write_text(original_source, encoding="utf-8")
 
 _settings_cache: SandboxSettings | None = None
 _settings_mtime: float | None = None
@@ -1507,6 +1614,22 @@ def main(argv: List[str] | None = None) -> None:
     )
     p_metrics.add_argument("--plot", action="store_true", help="show matplotlib plot")
 
+    p_mvp = sub.add_parser(
+        "mvp-workflow-smoke",
+        help="run MVP brain self-heal loop on workflow modules",
+    )
+    p_mvp.add_argument(
+        "--modules",
+        default="sandbox_mvp_workflow:run,sandbox_mvp_noop_workflow:run",
+        help="comma-separated workflow module steps to run",
+    )
+    p_mvp.add_argument(
+        "--max-attempts",
+        type=int,
+        default=2,
+        help="maximum MVP loop attempts per module",
+    )
+
     p_trend = sub.add_parser(
         "foresight-trend", help="show ROI trend metrics from history"
     )
@@ -1754,6 +1877,10 @@ def main(argv: List[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+
+    if getattr(args, "cmd", None) == "mvp-workflow-smoke":
+        _run_mvp_workflow_smoke(args)
+        return
 
     if getattr(args, "misuse_stubs", False):
         os.environ["SANDBOX_MISUSE_STUBS"] = "1"
