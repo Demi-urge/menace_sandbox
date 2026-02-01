@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import importlib.util
 import math
@@ -105,6 +106,11 @@ def _compute_workflow_entropy(spec: list[dict[str, str]]) -> float:
     return entropy
 
 
+def _failure_fingerprint(returncode: int, stdout: str, stderr: str) -> str:
+    payload = f"{returncode}\n{stdout}\n{stderr}".encode("utf-8", errors="replace")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _workflow_history_path() -> Path:
     history_override = os.environ.get("WORKFLOW_ROI_HISTORY_PATH")
     if history_override:
@@ -173,6 +179,8 @@ def run_mvp_workflow_smoke(
     noop_validation_blocked = False
     stabilized_steps: list[str] = []
     failure_steps: list[str] = []
+    failure_fingerprints: dict[str, str] = {}
+    non_deterministic_failures: list[str] = []
     roi_samples: list[float] = []
     attempt_events: list[dict[str, Any]] = []
     logged_pipeline = wrap_with_logging(
@@ -286,6 +294,16 @@ def run_mvp_workflow_smoke(
                     )
                     break
                 failure_steps.append(step)
+                fingerprint = _failure_fingerprint(
+                    result.returncode,
+                    result.stdout or "",
+                    result.stderr or "",
+                )
+                prior_fingerprint = failure_fingerprints.get(step)
+                if prior_fingerprint is None:
+                    failure_fingerprints[step] = fingerprint
+                elif prior_fingerprint != fingerprint and step not in non_deterministic_failures:
+                    non_deterministic_failures.append(step)
                 patch_text = str(pipeline_result.get("patch_text") or "")
                 modified_source = str(pipeline_result.get("modified_source") or "")
                 pipeline_validation = pipeline_result.get("validation")
@@ -349,6 +367,7 @@ def run_mvp_workflow_smoke(
                                 "flags": list(validation.get("flags", [])),
                                 "source": validation_source,
                             },
+                            "failure_fingerprint": fingerprint,
                             "stabilized": False,
                         }
                     )
@@ -392,6 +411,7 @@ def run_mvp_workflow_smoke(
                                 "flags": list(validation.get("flags", [])),
                                 "source": validation_source,
                             },
+                            "failure_fingerprint": fingerprint,
                             "stabilized": False,
                         }
                     )
@@ -426,6 +446,7 @@ def run_mvp_workflow_smoke(
                             "flags": list(validation.get("flags", [])),
                             "source": validation_source,
                         },
+                        "failure_fingerprint": fingerprint,
                         "stabilized": False,
                     }
                 )
@@ -461,7 +482,7 @@ def run_mvp_workflow_smoke(
         "validation_blocked": validation_blocked > 0,
         "noop_validation_blocked": noop_validation_blocked,
         "logs_stabilized": bool(stabilized_steps),
-        "deterministic_failures": bool(failure_steps),
+        "deterministic_failures": bool(failure_steps) and not non_deterministic_failures,
         "roi_metrics_updated": roi_count_delta > 0,
         "workflow_metrics_updated": workflow_history_delta > 0,
     }
@@ -476,6 +497,8 @@ def run_mvp_workflow_smoke(
         "noop_validation_blocked": noop_validation_blocked,
         "stabilized_steps": stabilized_steps,
         "failure_steps": failure_steps,
+        "failure_fingerprints": failure_fingerprints,
+        "non_deterministic_failures": non_deterministic_failures,
         "run_delta": run_delta,
         "roi_total_delta": roi_total_delta,
         "roi_count_delta": roi_count_delta,
