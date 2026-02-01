@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 import importlib.util
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from menace_sandbox.mvp_self_debug import _apply_patch
 from menace_sandbox.sandbox_rule_builder import build_rules
 from menace_sandbox.stabilization.patch_validator import validate_patch_text
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+import workflow_run_summary
 from dynamic_path_router import resolve_path
 
 
@@ -103,6 +105,37 @@ def _compute_workflow_entropy(spec: list[dict[str, str]]) -> float:
     return entropy
 
 
+def _workflow_history_path() -> Path:
+    history_override = os.environ.get("WORKFLOW_ROI_HISTORY_PATH")
+    if history_override:
+        return Path(history_override)
+    return Path(resolve_path("workflow_roi_history.json"))
+
+
+def _load_workflow_history() -> dict[str, list[float]]:
+    history_path = _workflow_history_path()
+    if not history_path.exists():
+        return {}
+    try:
+        data = json.loads(history_path.read_text())
+    except Exception:
+        return {}
+    if isinstance(data, dict):
+        return {
+            str(k): [float(v) for v in vals]
+            for k, vals in data.items()
+            if isinstance(vals, list)
+        }
+    return {}
+
+
+def _count_workflow_history(history: Mapping[str, list[float]], ids: Sequence[str]) -> int:
+    total = 0
+    for workflow_id in ids:
+        total += len(history.get(workflow_id, []))
+    return total
+
+
 def run_mvp_workflow_smoke(
     steps: Sequence[str],
     *,
@@ -120,11 +153,16 @@ def run_mvp_workflow_smoke(
     if not parsed_steps:
         raise ValueError("At least one workflow step is required")
     module_list = [_parse_step(step)[0] for step in parsed_steps]
+    workflow_ids = [f"{_parse_step(step)[0]}:{_parse_step(step)[1] or 'main'}" for step in parsed_steps]
     workflow_entropy = _compute_workflow_entropy(
         [{"module": mod} for mod in module_list]
     )
     last_entropy = 0.0
     summary_before = load_summary()
+    workflow_history_before = _load_workflow_history()
+    workflow_history_count_before = _count_workflow_history(
+        workflow_history_before, workflow_ids
+    )
     pipeline_invocations = 0
     patch_proposed = 0
     patch_applied = 0
@@ -202,6 +240,19 @@ def run_mvp_workflow_smoke(
                         "entropy_delta": entropy_delta,
                         "coverage": {"executed_functions": [f"{mod}:{func or 'main'}"]},
                     },
+                )
+                classification = pipeline_result.get("classification")
+                error_classification = "none"
+                if isinstance(classification, Mapping):
+                    status = classification.get("status")
+                    if isinstance(status, str) and status.strip():
+                        error_classification = status
+                workflow_run_summary.record_run(
+                    f"{mod}:{func or 'main'}",
+                    roi_value,
+                    error_classification=error_classification,
+                    patch_attempts=0,
+                    retry_count=max(0, attempt - 1),
                 )
                 if result.returncode == 0:
                     print(f"{step}: ok after {attempt} attempt(s)")
@@ -382,6 +433,16 @@ def run_mvp_workflow_smoke(
             source_path.write_text(original_source, encoding="utf-8")
 
     summary_after = load_summary()
+    try:
+        workflow_run_summary.save_all_summaries(
+            Path(resolve_path("sandbox_data")) / "workflows"
+        )
+    except Exception:
+        logger.exception("failed to persist workflow summaries")
+    workflow_history_after = _load_workflow_history()
+    workflow_history_count_after = _count_workflow_history(
+        workflow_history_after, workflow_ids
+    )
     run_delta = (summary_after.get("runs") or 0) - (summary_before.get("runs") or 0)
     roi_total_delta = (summary_after.get("roi_total") or 0.0) - (
         summary_before.get("roi_total") or 0.0
@@ -392,6 +453,7 @@ def run_mvp_workflow_smoke(
     entropy_delta_total = (summary_after.get("entropy_total") or 0.0) - (
         summary_before.get("entropy_total") or 0.0
     )
+    workflow_history_delta = workflow_history_count_after - workflow_history_count_before
     checks_summary = {
         "mvp_brain_used": pipeline_invocations > 0,
         "patches_proposed": patch_proposed > 0,
@@ -401,7 +463,7 @@ def run_mvp_workflow_smoke(
         "logs_stabilized": bool(stabilized_steps),
         "deterministic_failures": bool(failure_steps),
         "roi_metrics_updated": roi_count_delta > 0,
-        "workflow_metrics_updated": run_delta > 0,
+        "workflow_metrics_updated": workflow_history_delta > 0,
     }
     checks = {
         "pipeline_invocations": pipeline_invocations,
@@ -418,6 +480,7 @@ def run_mvp_workflow_smoke(
         "roi_total_delta": roi_total_delta,
         "roi_count_delta": roi_count_delta,
         "entropy_total_delta": entropy_delta_total,
+        "workflow_history_delta": workflow_history_delta,
         "checks": checks_summary,
     }
     report_path = (
