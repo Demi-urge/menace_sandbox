@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 import hashlib
 import json
@@ -118,6 +119,19 @@ def _run_workflow_command(module: str, func: str | None) -> subprocess.Completed
         f"from {module} import {func or 'main'} as _m; _m()",
     ]
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
+def _clear_pycache(source_path: Path) -> None:
+    try:
+        cache_path = Path(importlib.util.cache_from_source(str(source_path)))
+    except Exception:
+        return
+    with suppress(FileNotFoundError):
+        cache_path.unlink()
+    cache_dir = cache_path.parent
+    with suppress(OSError):
+        if cache_dir.is_dir() and not any(cache_dir.iterdir()):
+            cache_dir.rmdir()
 
 
 def _workflow_history_path() -> Path:
@@ -239,6 +253,7 @@ def run_mvp_workflow_smoke(
         try:
             patch_applied_for_step = False
             for attempt in range(1, max_attempts + 1):
+                _clear_pycache(source_path)
                 attempt_start = time.monotonic()
                 result = _run_workflow_command(mod, func)
                 attempt_runtime = time.monotonic() - attempt_start
@@ -523,6 +538,7 @@ def run_mvp_workflow_smoke(
                 )
         finally:
             source_path.write_text(original_source, encoding="utf-8")
+            _clear_pycache(source_path)
 
     summary_after = load_summary()
     try:
