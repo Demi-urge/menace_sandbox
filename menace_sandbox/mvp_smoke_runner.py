@@ -127,6 +127,32 @@ def _workflow_history_path() -> Path:
     return Path(resolve_path("workflow_roi_history.json"))
 
 
+def _run_log_path() -> Path:
+    return Path(resolve_path("sandbox_data")) / "run_metrics.jsonl"
+
+
+def _load_run_log_stats() -> tuple[int, int]:
+    run_log = _run_log_path()
+    if not run_log.exists():
+        return 0, 0
+    count = 0
+    successes = 0
+    try:
+        for line in run_log.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            count += 1
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(payload, dict) and payload.get("success"):
+                successes += 1
+    except Exception:
+        return 0, 0
+    return count, successes
+
+
 def _load_workflow_history() -> dict[str, list[float]]:
     history_path = _workflow_history_path()
     if not history_path.exists():
@@ -174,6 +200,7 @@ def run_mvp_workflow_smoke(
     )
     last_entropy = 0.0
     summary_before = load_summary()
+    run_log_count_before, run_log_success_before = _load_run_log_stats()
     workflow_history_before = _load_workflow_history()
     workflow_history_count_before = _count_workflow_history(
         workflow_history_before, workflow_ids
@@ -508,6 +535,7 @@ def run_mvp_workflow_smoke(
     workflow_history_count_after = _count_workflow_history(
         workflow_history_after, workflow_ids
     )
+    run_log_count_after, run_log_success_after = _load_run_log_stats()
     run_delta = (summary_after.get("runs") or 0) - (summary_before.get("runs") or 0)
     roi_total_delta = (summary_after.get("roi_total") or 0.0) - (
         summary_before.get("roi_total") or 0.0
@@ -519,6 +547,8 @@ def run_mvp_workflow_smoke(
         summary_before.get("entropy_total") or 0.0
     )
     workflow_history_delta = workflow_history_count_after - workflow_history_count_before
+    run_log_delta = run_log_count_after - run_log_count_before
+    run_log_success_delta = run_log_success_after - run_log_success_before
     checks_summary = {
         "mvp_brain_used": pipeline_invocations > 0,
         "patches_proposed": patch_proposed > 0,
@@ -527,6 +557,8 @@ def run_mvp_workflow_smoke(
         "noop_validation_blocked": noop_validation_blocked,
         "logs_stabilized": bool(stabilized_steps),
         "deterministic_failures": bool(failure_steps) and not non_deterministic_failures,
+        "run_logs_updated": run_log_delta > 0,
+        "run_logs_success": run_log_success_delta > 0,
         "roi_metrics_updated": roi_count_delta > 0,
         "workflow_metrics_updated": workflow_history_delta > 0,
     }
@@ -548,6 +580,8 @@ def run_mvp_workflow_smoke(
         "roi_count_delta": roi_count_delta,
         "entropy_total_delta": entropy_delta_total,
         "workflow_history_delta": workflow_history_delta,
+        "run_log_delta": run_log_delta,
+        "run_log_success_delta": run_log_success_delta,
         "checks": checks_summary,
     }
     report_path = (
@@ -596,6 +630,10 @@ def run_mvp_workflow_smoke(
             raise RuntimeError("No workflow steps stabilized after patching")
         if not checks_summary["deterministic_failures"]:
             raise RuntimeError("Workflow steps did not trigger deterministic failures")
+        if not checks_summary["run_logs_updated"]:
+            raise RuntimeError("Sandbox run logs did not update during smoke workflow")
+        if not checks_summary["run_logs_success"]:
+            raise RuntimeError("Sandbox run logs did not record a successful run")
         if not checks_summary["workflow_metrics_updated"]:
             raise RuntimeError("Workflow metrics failed to update in run summary")
         if not checks_summary["roi_metrics_updated"]:
