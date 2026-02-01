@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import difflib
 import json
 from pathlib import Path
 import subprocess
@@ -14,12 +13,9 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import yaml
 
-from error_ontology import classify_error
-import mvp_evaluator
-from menace_sandbox import patch_generator
+from menace_sandbox.mvp_brain import run_mvp_pipeline
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
 from menace_sandbox.stabilization.patch_validator import validate_patch_text
-from menace_sandbox.stabilization.roi import compute_roi_delta
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,26 +53,6 @@ def _run_target(path: Path) -> RunResult:
         stderr=completed.stderr or "",
         returncode=completed.returncode,
     )
-
-
-def _classify_error(stderr: str, returncode: int) -> Mapping[str, Any] | None:
-    if returncode == 0:
-        return None
-    error_text = stderr.strip() or f"process exited with code {returncode}"
-    return classify_error(error_text)
-
-
-def _build_error_report(
-    *,
-    stderr: str,
-    returncode: int,
-    classification: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    return {
-        "stderr": stderr,
-        "returncode": returncode,
-        "classification": dict(classification or {}),
-    }
 
 
 def _normalize_task_rules(candidate: Any) -> list[dict[str, Any]] | None:
@@ -187,22 +163,6 @@ def _build_patch_rules(
     return _fallback_rule(classification=classification, source=source)
 
 
-def _render_unified_diff(original: str, modified: str, filename: str) -> str:
-    diff_lines = list(
-        difflib.unified_diff(
-            original.splitlines(),
-            modified.splitlines(),
-            fromfile=f"a/{filename}",
-            tofile=f"b/{filename}",
-            lineterm="",
-        )
-    )
-    if not diff_lines:
-        return ""
-    header = f"diff --git a/{filename} b/{filename}"
-    return "\n".join([header, *diff_lines]) + "\n"
-
-
 def _apply_patch(target_path: Path, modified_source: str) -> Path:
     target_path.write_text(modified_source, encoding="utf-8")
     return target_path
@@ -215,20 +175,11 @@ def _loop(
     task_rules: Sequence[Mapping[str, Any]] | None = None,
 ) -> LoopResult:
     logged_run = wrap_with_logging(_run_target, {"log_event_prefix": "mvp.run."})
-    logged_classify = wrap_with_logging(
-        _classify_error, {"log_event_prefix": "mvp.classify."}
-    )
-    logged_generate = wrap_with_logging(
-        patch_generator.generate_patch, {"log_event_prefix": "mvp.patch.generate."}
+    logged_pipeline = wrap_with_logging(
+        run_mvp_pipeline, {"log_event_prefix": "mvp.pipeline."}
     )
     logged_validate = wrap_with_logging(
         validate_patch_text, {"log_event_prefix": "mvp.patch.validate."}
-    )
-    logged_evaluate_roi = wrap_with_logging(
-        mvp_evaluator.evaluate_roi, {"log_event_prefix": "mvp.roi.evaluate."}
-    )
-    logged_compute_delta = wrap_with_logging(
-        compute_roi_delta, {"log_event_prefix": "mvp.roi.delta."}
     )
 
     attempts = 0
@@ -240,14 +191,30 @@ def _loop(
     for attempt in range(1, max_attempts + 1):
         attempts = attempt
         run_result = logged_run(current_path)
-        current_roi = logged_evaluate_roi(run_result.stdout, run_result.stderr)
-        if previous_roi is None:
-            previous_roi = current_roi
-
-        classification = logged_classify(run_result.stderr, run_result.returncode)
         if run_result.returncode == 0:
-            roi_delta = logged_compute_delta(
-                {"roi": previous_roi}, {"roi": current_roi}
+            source = current_path.read_text(encoding="utf-8")
+            rules = _build_patch_rules(
+                source,
+                classification=None,
+                task_rules=task_rules,
+            )
+            payload: dict[str, Any] = {
+                "source": source,
+                "stdout": run_result.stdout,
+                "stderr": run_result.stderr,
+                "returncode": run_result.returncode,
+                "rules": rules,
+            }
+            if previous_roi is not None:
+                payload["prior_roi"] = previous_roi
+            pipeline_result = logged_pipeline(payload)
+            current_roi = pipeline_result.get("roi_score")
+            if previous_roi is None and isinstance(current_roi, (int, float)):
+                previous_roi = current_roi
+            roi_delta = (
+                pipeline_result.get("roi_delta")
+                if isinstance(pipeline_result, Mapping)
+                else None
             )
             return LoopResult(
                 attempts=attempts,
@@ -257,26 +224,62 @@ def _loop(
             )
 
         source = current_path.read_text(encoding="utf-8")
-        error_report = _build_error_report(
-            stderr=run_result.stderr,
-            returncode=run_result.returncode,
-            classification=classification,
-        )
+        classification: Mapping[str, Any] | None = None
+        if task_rules is None:
+            preflight_payload: dict[str, Any] = {
+                "source": source,
+                "stdout": run_result.stdout,
+                "stderr": run_result.stderr,
+                "returncode": run_result.returncode,
+                "rules": [],
+            }
+            if previous_roi is not None:
+                preflight_payload["prior_roi"] = previous_roi
+            preflight_result = logged_pipeline(preflight_payload)
+            if isinstance(preflight_result, Mapping):
+                classification = preflight_result.get("classification")
+
         rules = _build_patch_rules(
             source,
             classification=classification,
             task_rules=task_rules,
         )
-        patch_payload = logged_generate(source, error_report, rules, validate_syntax=True)
-        modified_source = ""
-        if isinstance(patch_payload, Mapping):
-            data = patch_payload.get("data")
-            if isinstance(data, Mapping):
-                modified_source = str(data.get("modified_source") or "")
+        payload: dict[str, Any] = {
+            "source": source,
+            "stdout": run_result.stdout,
+            "stderr": run_result.stderr,
+            "returncode": run_result.returncode,
+            "rules": rules,
+        }
+        if previous_roi is not None:
+            payload["prior_roi"] = previous_roi
+        pipeline_result = logged_pipeline(payload)
+        current_roi = (
+            pipeline_result.get("roi_score")
+            if isinstance(pipeline_result, Mapping)
+            else None
+        )
+        if previous_roi is None and isinstance(current_roi, (int, float)):
+            previous_roi = current_roi
+        patch_text = (
+            pipeline_result.get("patch_text")
+            if isinstance(pipeline_result, Mapping)
+            else ""
+        )
+        modified_source = (
+            pipeline_result.get("modified_source")
+            if isinstance(pipeline_result, Mapping)
+            else ""
+        )
+        patch_payload = (
+            pipeline_result if isinstance(pipeline_result, Mapping) else {}
+        )
 
         if not modified_source:
-            roi_delta = logged_compute_delta(
-                {"roi": previous_roi}, {"roi": current_roi}
+            roi_delta = (
+                pipeline_result.get("roi_delta")
+                if isinstance(pipeline_result, Mapping)
+                else None
             )
             return LoopResult(
                 attempts=attempts,
@@ -285,7 +288,7 @@ def _loop(
                 patch_attempts=tuple(patch_attempts),
             )
 
-        diff_text = _render_unified_diff(source, modified_source, current_path.name)
+        diff_text = str(patch_text or "")
         validation = logged_validate(diff_text)
         patch_attempt = PatchAttempt(
             patch_payload=patch_payload,
@@ -296,8 +299,10 @@ def _loop(
         patch_attempts.append(patch_attempt)
 
         if not validation.get("valid", False):
-            roi_delta = logged_compute_delta(
-                {"roi": previous_roi}, {"roi": current_roi}
+            roi_delta = (
+                pipeline_result.get("roi_delta")
+                if isinstance(pipeline_result, Mapping)
+                else None
             )
             return LoopResult(
                 attempts=attempts,
@@ -307,8 +312,10 @@ def _loop(
             )
 
         if attempt == max_attempts:
-            roi_delta = logged_compute_delta(
-                {"roi": previous_roi}, {"roi": current_roi}
+            roi_delta = (
+                pipeline_result.get("roi_delta")
+                if isinstance(pipeline_result, Mapping)
+                else None
             )
             return LoopResult(
                 attempts=attempts,
