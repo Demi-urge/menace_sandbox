@@ -483,6 +483,66 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return False
         return True
 
+    def _attempt_mvp_pipeline_patch(
+        self,
+        failure: ErrorReport,
+        *,
+        tracker: ROITracker | None = None,
+    ) -> bool:
+        if not callable(run_mvp_pipeline):
+            return False
+        target_region = getattr(failure, "target_region", None)
+        target_path = getattr(target_region, "filename", "") if target_region else ""
+        if not target_path:
+            return False
+        source_path = resolve_path(target_path)
+        if not source_path.exists():
+            return False
+        try:
+            source = source_path.read_text(encoding="utf-8")
+        except Exception:
+            self.logger.exception("failed to read source for MVP patch")
+            return False
+        prior_roi = None
+        if tracker is not None:
+            roi_history = getattr(tracker, "roi_history", None)
+            if roi_history:
+                try:
+                    prior_roi = float(roi_history[-1])
+                except (TypeError, ValueError):
+                    prior_roi = None
+        payload = self._mvp_pipeline_payload(
+            source=source,
+            stderr=failure.trace,
+            stdout="",
+            returncode=1,
+            prior_roi=prior_roi,
+        )
+        try:
+            pipeline_result = run_mvp_pipeline(payload)
+        except Exception:
+            self.logger.exception("MVP pipeline execution failed")
+            return False
+        patch_applied = self._apply_pipeline_patch(
+            pipeline_result,
+            source_path=source_path,
+            module_path=str(target_path),
+        )
+        if patch_applied:
+            try:
+                post_round_orphan_scan(
+                    Path.cwd(),
+                    logger=self.logger,
+                    router=router,
+                    context_builder=self.context_builder,
+                )
+            except Exception:
+                self.logger.exception(
+                    "post_round_orphan_scan after MVP patch failed",
+                    extra=log_record(module=target_path),
+                )
+        return patch_applied
+
     # ------------------------------------------------------------------
     def attempt_count(self, region: TargetRegion) -> int:
         """Return number of attempts made for ``region``."""
@@ -2043,6 +2103,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 roi_delta = 0.0
                 runtime_delta = 0.0
                 reason = None
+                failure: ErrorReport | None = None
                 try:
                     res = self._run_tests(root_test)
                     before_cov, before_runtime = res[:2]
@@ -2152,6 +2213,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     except Exception:
                         self.logger.exception("failed to log parsed failure")
                     self.logger.error("sandbox tests failed", exc_info=exc)
+                    if failure and self._attempt_mvp_pipeline_patch(
+                        failure, tracker=tracker
+                    ):
+                        patched = True
+                        result = "success"
+                        reason = "mvp pipeline patch applied"
                 except Exception as exc:
                     reason = f"{type(exc).__name__}: {exc}"
                     failure = parse_failure(str(exc))
@@ -2174,6 +2241,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     except Exception:
                         self.logger.exception("failed to log parsed failure")
                     self.logger.exception("patch failed")
+                    if failure and self._attempt_mvp_pipeline_patch(
+                        failure, tracker=tracker
+                    ):
+                        patched = True
+                        result = "success"
+                        reason = "mvp pipeline patch applied"
                 finally:
                     self._log_patch(
                         "auto_debug",
