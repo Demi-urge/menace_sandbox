@@ -11,6 +11,7 @@ from typing import Iterable, Mapping, Sequence
 from bot_discovery import _iter_bot_modules
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.mvp_brain import run_mvp_pipeline
+from menace_sandbox import patch_generator
 from menace_sandbox.sandbox_rule_builder import build_rules
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
 from sandbox_runner import run_workflow_simulations
@@ -100,6 +101,13 @@ def _apply_pipeline_patch(
 ) -> bool:
     validation = pipeline_result.get("validation")
     if not isinstance(validation, Mapping) or not validation.get("valid"):
+        return False
+    patch_text = str(pipeline_result.get("patch_text") or "")
+    if not patch_text:
+        return False
+    try:
+        patch_generator.validate_patch_text(patch_text)
+    except Exception:
         return False
     if _roi_delta_total(pipeline_result) <= 0:
         return False

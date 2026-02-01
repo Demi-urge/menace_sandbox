@@ -234,6 +234,18 @@ def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
     return {"valid": True, "flags": [], "context": {}}
 
 
+def _roi_delta_total(pipeline_result: Mapping[str, Any]) -> float:
+    roi_delta = pipeline_result.get("roi_delta")
+    if isinstance(roi_delta, Mapping):
+        data = roi_delta.get("data")
+        if isinstance(data, Mapping):
+            try:
+                return float(data.get("total", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
 def _loop(
     target_path: Path,
     *,
@@ -365,6 +377,19 @@ def _loop(
         patch_attempts.append(patch_attempt)
 
         if not validation.get("valid", False):
+            roi_delta = (
+                pipeline_result.get("roi_delta")
+                if isinstance(pipeline_result, Mapping)
+                else None
+            )
+            return LoopResult(
+                attempts=attempts,
+                final_run=run_result,
+                roi_delta=roi_delta,
+                patch_attempts=tuple(patch_attempts),
+            )
+
+        if _roi_delta_total(patch_payload) <= 0:
             roi_delta = (
                 pipeline_result.get("roi_delta")
                 if isinstance(pipeline_result, Mapping)
