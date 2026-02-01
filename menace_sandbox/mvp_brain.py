@@ -7,9 +7,10 @@ from typing import Any, Mapping
 
 from error_ontology import classify_error
 import mvp_evaluator
+from menace.errors import MenaceError
 from menace_sandbox import patch_generator
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
-from menace_sandbox.stabilization import patch_validator
+from menace_sandbox.stabilization.response_schemas import normalize_patch_validation
 from menace_sandbox.stabilization.roi import compute_roi_delta
 
 __all__ = ["run_mvp_pipeline"]
@@ -44,15 +45,30 @@ def _error_payload(message: str, code: str) -> dict[str, Any]:
 
 
 def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
-    limits = patch_validator.PatchValidationLimits(
-        max_lines=4000,
-        max_bytes=400_000,
-        max_files=50,
-        max_hunks=400,
-        allow_new_files=False,
-        allow_deletes=False,
+    if not isinstance(patch_text, str):
+        return normalize_patch_validation(
+            {"valid": False, "flags": ["patch_not_string"], "context": {}}
+        )
+    if not patch_text.strip():
+        return normalize_patch_validation(
+            {"valid": False, "flags": ["patch_empty"], "context": {}}
+        )
+    try:
+        patch_generator.validate_patch_text(patch_text)
+    except MenaceError as exc:
+        return normalize_patch_validation(
+            {
+                "valid": False,
+                "flags": ["invalid_menace_patch"],
+                "context": {
+                    "error_type": exc.__class__.__name__,
+                    "details": dict(exc.details or {}),
+                },
+            }
+        )
+    return normalize_patch_validation(
+        {"valid": True, "flags": [], "context": {"format": "menace_patch"}}
     )
-    return patch_validator.validate_patch_text(patch_text, limits=limits)
 
 
 def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
