@@ -29,6 +29,10 @@ from sandbox_results_logger import record_self_debug_metrics
 from self_improvement.workflow_discovery import discover_workflow_specs
 from task_handoff_bot import WorkflowDB
 from workflow_evolution_manager import _build_callable
+from menace_sandbox.menace_self_debug_snapshot import (
+    _snapshot_environment,
+    freeze_cycle,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -449,6 +453,59 @@ def _run_self_debug(
         candidates,
         key=lambda candidate: (candidate.workflow_id, candidate.sequence, candidate.source),
     )
+    snapshot = freeze_cycle(
+        inputs={
+            "candidates": [
+                {
+                    "workflow_id": candidate.workflow_id,
+                    "sequence": list(candidate.sequence),
+                    "source": candidate.source,
+                }
+                for candidate in candidates
+            ],
+            "workflow_db_path": str(workflow_db_path),
+            "scope": scope,
+            "include_discovered": include_discovered,
+            "max_workflows": max_workflows,
+            "max_failures": max_failures,
+            "stop_on_failure": stop_on_failure,
+        },
+        configs={
+            "environment": _snapshot_environment(
+                (
+                    "WORKFLOW_DB_PATH",
+                    "MENACE_WORKFLOW_DB",
+                    "MENACE_DATA_DIR",
+                    "SANDBOX_DATA_DIR",
+                )
+            ),
+        },
+        metadata={
+            "source": "menace_self_debug",
+            "repo_root": str(repo_root),
+        },
+    )
+    frozen_candidates = snapshot.payload.get("inputs", {}).get("candidates")
+    if isinstance(frozen_candidates, list):
+        candidates = []
+        for entry in frozen_candidates:
+            if not isinstance(entry, Mapping):
+                continue
+            workflow_id = str(entry.get("workflow_id") or "")
+            sequence = entry.get("sequence") or []
+            if isinstance(sequence, list):
+                sequence_tuple = tuple(str(item) for item in sequence if item)
+            else:
+                sequence_tuple = tuple()
+            source = str(entry.get("source") or "")
+            if workflow_id and sequence_tuple:
+                candidates.append(
+                    WorkflowCandidate(
+                        workflow_id=workflow_id,
+                        sequence=sequence_tuple,
+                        source=source or "snapshot",
+                    )
+                )
     if not candidates:
         LOGGER.warning("no workflows available to self-debug")
         if metrics_logger:
