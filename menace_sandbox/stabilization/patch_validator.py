@@ -16,6 +16,7 @@ from .errors import MenaceRuleSchemaError, MenaceValidationError
 _DIFF_HEADER = re.compile(r"^diff --git a/(?P<left>.+) b/(?P<right>.+)$")
 _FILE_OLD = re.compile(r"^--- (?P<path>.+)$")
 _FILE_NEW = re.compile(r"^\+\+\+ (?P<path>.+)$")
+_MENACE_PATCH_MAGIC = "MENACE-PATCH 1"
 
 _DISALLOWED_LITERALS = {
     "GIT binary patch": "binary_patch",
@@ -125,6 +126,33 @@ def validate_patch_text(
     current_file: str | None = None
 
     flags.extend(_iter_disallowed_lines(lines))
+
+    if lines and lines[0].strip() == _MENACE_PATCH_MAGIC:
+        change_count = None
+        if len(lines) < 2 or not lines[1].startswith("change-count:"):
+            flags.append("missing_change_count")
+        else:
+            raw_value = lines[1].split(":", 1)[1].strip()
+            try:
+                change_count = int(raw_value)
+            except ValueError:
+                flags.append("invalid_change_count")
+
+        context.update(
+            {
+                "format": "menace_patch",
+                "change_count": change_count,
+                "total_lines": total_lines,
+                "total_bytes": total_bytes,
+            }
+        )
+        return normalize_patch_validation(
+            {
+                "valid": not bool(flags),
+                "flags": flags,
+                "context": context,
+            }
+        )
 
     for line in lines:
         header_match = _DIFF_HEADER.match(line)
