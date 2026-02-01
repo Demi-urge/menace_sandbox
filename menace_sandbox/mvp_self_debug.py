@@ -322,6 +322,7 @@ def _loop(
             classification=classification,
             task_rules=task_rules,
         )
+        had_prior_roi = previous_roi is not None
         payload: dict[str, Any] = {
             "source": source,
             "stdout": run_result.stdout,
@@ -389,7 +390,7 @@ def _loop(
                 patch_attempts=tuple(patch_attempts),
             )
 
-        if _roi_delta_total(patch_payload) <= 0:
+        if had_prior_roi and _roi_delta_total(patch_payload) <= 0:
             roi_delta = (
                 pipeline_result.get("roi_delta")
                 if isinstance(pipeline_result, Mapping)
