@@ -59,9 +59,32 @@ def ensure_bootstrapped(**kwargs: Any) -> dict[str, object]:
     except ModuleNotFoundError:  # pragma: no cover - fallback for direct execution
         from importlib import import_module
 
-        env_bootstrap = import_module("menace_sandbox.environment_bootstrap")
-        _ensure_bootstrapped = getattr(env_bootstrap, "ensure_bootstrapped")
-    return _ensure_bootstrapped(**kwargs)
+        try:
+            env_bootstrap = import_module("menace_sandbox.environment_bootstrap")
+            _ensure_bootstrapped = getattr(env_bootstrap, "ensure_bootstrapped")
+        except (ModuleNotFoundError, ImportError) as exc:
+            return {
+                "ready": False,
+                "in_progress": False,
+                "bootstrap_fast": True,
+                "error": str(exc),
+            }
+    try:
+        return _ensure_bootstrapped(**kwargs)
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional deps missing
+        return {
+            "ready": False,
+            "in_progress": False,
+            "bootstrap_fast": True,
+            "error": str(exc),
+        }
+    except ImportError as exc:  # pragma: no cover - optional deps missing
+        return {
+            "ready": False,
+            "in_progress": False,
+            "bootstrap_fast": True,
+            "error": str(exc),
+        }
 
 
 def ensure_environment_bootstrapped(**kwargs: Any) -> dict[str, object]:
