@@ -313,6 +313,7 @@ def run_mvp_workflow_smoke(
     checks_summary = {
         "mvp_brain_used": pipeline_invocations > 0,
         "patches_proposed": patch_proposed > 0,
+        "patches_applied": patch_applied > 0,
         "validation_blocked": validation_blocked > 0,
         "logs_stabilized": bool(stabilized_steps),
         "deterministic_failures": bool(failure_steps),
@@ -368,6 +369,8 @@ def run_mvp_workflow_smoke(
             raise RuntimeError("MVP brain was not invoked during smoke workflow")
         if not checks_summary["patches_proposed"]:
             raise RuntimeError("MVP brain did not propose any patches")
+        if not checks_summary["patches_applied"]:
+            raise RuntimeError("MVP brain did not apply any patches")
         if not checks_summary["validation_blocked"]:
             raise RuntimeError("Patch validation did not block any invalid patches")
         if not checks_summary["logs_stabilized"]:
