@@ -228,6 +228,8 @@ def run_mvp_workflow_smoke(
                 roi_score = pipeline_result.get("roi_score")
                 if prior_roi is None and isinstance(roi_score, (int, float)):
                     prior_roi = float(roi_score)
+                patch_text = str(pipeline_result.get("patch_text") or "")
+                patch_attempts = 1 if result.returncode != 0 and patch_text else 0
                 roi_value = float(roi_score) if isinstance(roi_score, (int, float)) else float(
                     mvp_evaluator.evaluate_roi(result.stdout, result.stderr)
                 )
@@ -259,7 +261,7 @@ def run_mvp_workflow_smoke(
                     f"{mod}:{func or 'main'}",
                     roi_value,
                     error_classification=error_classification,
-                    patch_attempts=0,
+                    patch_attempts=patch_attempts,
                     retry_count=max(0, attempt - 1),
                 )
                 if result.returncode == 0:
@@ -304,7 +306,6 @@ def run_mvp_workflow_smoke(
                     failure_fingerprints[step] = fingerprint
                 elif prior_fingerprint != fingerprint and step not in non_deterministic_failures:
                     non_deterministic_failures.append(step)
-                patch_text = str(pipeline_result.get("patch_text") or "")
                 modified_source = str(pipeline_result.get("modified_source") or "")
                 pipeline_validation = pipeline_result.get("validation")
                 validation_source = "pipeline"
