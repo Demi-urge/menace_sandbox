@@ -41,6 +41,7 @@ from sandbox_results_logger import record_self_debug_metrics
 from self_coding_policy import evaluate_patch_promotion, get_patch_promotion_policy
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_METRICS_SOURCE = "menace_workflow_self_debug"
 
 
 def _extract_source_from_traceback(
@@ -199,6 +200,7 @@ def _handle_failure(
     snapshot_meta: Mapping[str, object] | None = None,
     metrics_logger: StabilizationLoggingWrapper | None = None,
     correlation_id: str | None = None,
+    metrics_source: str = DEFAULT_METRICS_SOURCE,
 ) -> bool:
     error_text = "".join(
         traceback.format_exception(type(exc), exc, exc.__traceback__)
@@ -239,7 +241,7 @@ def _handle_failure(
                 {
                     "ts": datetime.utcnow().isoformat(),
                     "correlation_id": correlation_id,
-                    "source": "menace_workflow_self_debug",
+                    "source": metrics_source,
                     "attempts": 0,
                     "classification": {"status": classification},
                     "patch_validity": None,
@@ -291,7 +293,7 @@ def _handle_failure(
                 {
                     "ts": datetime.utcnow().isoformat(),
                     "correlation_id": correlation_id,
-                    "source": "menace_workflow_self_debug",
+                    "source": metrics_source,
                     "attempts": 1,
                     "classification": {"status": classification},
                     "patch_validity": patch_validity,
@@ -332,7 +334,7 @@ def _handle_failure(
                 {
                     "ts": datetime.utcnow().isoformat(),
                     "correlation_id": correlation_id,
-                    "source": "menace_workflow_self_debug",
+                    "source": metrics_source,
                     "attempts": 1,
                     "classification": {"status": classification},
                     "patch_validity": patch_validity,
@@ -368,7 +370,7 @@ def _handle_failure(
             {
                 "ts": datetime.utcnow().isoformat(),
                 "correlation_id": correlation_id,
-                "source": "menace_workflow_self_debug",
+                "source": metrics_source,
                 "attempts": 1,
                 "classification": {"status": classification},
                 "patch_validity": patch_validity,
@@ -399,9 +401,39 @@ def _run_self_debug(
     dynamic_workflows: bool,
     metrics_logger: StabilizationLoggingWrapper | None = None,
     correlation_id: str | None = None,
+    metrics_source: str = DEFAULT_METRICS_SOURCE,
 ) -> int:
     modules = discover_workflow_modules(repo_root)
-    settings_snapshot = _snapshot_sandbox_settings(SandboxSettings())
+    try:
+        settings = SandboxSettings()
+    except Exception as exc:
+        LOGGER.exception("failed to load sandbox settings", extra={"error": str(exc)})
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=0,
+                classification=None,
+                patch_validity=None,
+                roi_delta=None,
+                roi_delta_total=None,
+                exit_reason="settings_load_failed",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": metrics_source,
+                    "attempts": 0,
+                    "classification": None,
+                    "patch_validity": None,
+                    "roi_delta_total": None,
+                    "roi_delta": None,
+                    "exit_reason": "settings_load_failed",
+                }
+            )
+        return 1
+    settings_snapshot = _snapshot_sandbox_settings(settings)
     snapshot = freeze_cycle(
         inputs={
             "workflow_modules": modules,
@@ -422,7 +454,7 @@ def _run_self_debug(
             ),
         },
         metadata={
-            "source": "menace_workflow_self_debug",
+            "source": metrics_source,
             "repo_root": str(repo_root),
         },
     )
@@ -448,13 +480,66 @@ def _run_self_debug(
                 {
                     "ts": datetime.utcnow().isoformat(),
                     "correlation_id": correlation_id,
-                    "source": "menace_workflow_self_debug",
+                    "source": metrics_source,
                     "attempts": 0,
                     "classification": None,
                     "patch_validity": None,
                     "roi_delta_total": None,
                     "roi_delta": None,
                     "exit_reason": "no_workflow_modules",
+                }
+            )
+        return 1
+
+    preflight_source = "def _layer4_preflight() -> int:\n    return 1\n"
+    preflight_rules = build_rules(
+        "Layer-4 preflight error",
+        source=preflight_source,
+        rule_source="layer4_preflight",
+    )
+    preflight_payload = {
+        "source_code": preflight_source,
+        "rules": preflight_rules,
+        "stderr": "Layer-4 preflight error",
+        "error": "Layer-4 preflight error",
+        "returncode": 1,
+        "prior_roi": 1.0,
+    }
+    preflight_result = run_mvp_pipeline(preflight_payload)
+    validation = (
+        preflight_result.get("validation") if isinstance(preflight_result, Mapping) else None
+    )
+    validation_ready = isinstance(validation, Mapping) and "valid" in validation
+    LOGGER.info(
+        "layer-4 preflight MVP validation check",
+        extra={
+            "validation_ready": validation_ready,
+            "validation_flags": validation.get("flags", []) if isinstance(validation, Mapping) else None,
+        },
+    )
+    if not validation_ready:
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=0,
+                classification=None,
+                patch_validity=None,
+                roi_delta=None,
+                roi_delta_total=None,
+                exit_reason="mvp_validation_unavailable",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": metrics_source,
+                    "attempts": 0,
+                    "classification": None,
+                    "patch_validity": None,
+                    "roi_delta_total": None,
+                    "roi_delta": None,
+                    "exit_reason": "mvp_validation_unavailable",
                 }
             )
         return 1
@@ -490,6 +575,7 @@ def _run_self_debug(
             snapshot_meta=snapshot_meta,
             metrics_logger=metrics_logger,
             correlation_id=correlation_id,
+            metrics_source=metrics_source,
         )
         if patched:
             LOGGER.info("applied MVP patch for workflow failure")
@@ -510,7 +596,7 @@ def _run_self_debug(
             {
                 "ts": datetime.utcnow().isoformat(),
                 "correlation_id": correlation_id,
-                "source": "menace_workflow_self_debug",
+                "source": metrics_source,
                 "attempts": 0,
                 "classification": None,
                 "patch_validity": None,
@@ -546,6 +632,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         action="store_true",
         help="Enable dynamic workflow generation for module groups.",
     )
+    parser.add_argument(
+        "--metrics-source",
+        default=DEFAULT_METRICS_SOURCE,
+        help="Metrics source tag for self-debug logging.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     workflow_db = args.workflow_db
@@ -553,8 +644,16 @@ def main(argv: Iterable[str] | None = None) -> int:
         workflow_db = Path(SandboxSettings().workflows_db)
 
     correlation_id = f"workflow-self-debug-{uuid.uuid4()}"
+    LOGGER.info(
+        "workflow self-debug starting",
+        extra={
+            "metrics_source": args.metrics_source,
+            "workflow_db": str(workflow_db),
+            "dynamic_workflows": args.dynamic_workflows,
+        },
+    )
     metrics_logger = StabilizationLoggingWrapper.start(
-        correlation_id=correlation_id, source="menace_workflow_self_debug"
+        correlation_id=correlation_id, source=args.metrics_source
     )
     try:
         return _run_self_debug(
@@ -564,6 +663,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             dynamic_workflows=args.dynamic_workflows,
             metrics_logger=metrics_logger,
             correlation_id=correlation_id,
+            metrics_source=args.metrics_source,
         )
     finally:
         metrics_logger.close()

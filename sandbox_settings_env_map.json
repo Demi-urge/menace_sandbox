@@ -133,6 +133,7 @@
   "mae_deviation": "MAE_DEVIATION",
   "max_recursion_depth": "SANDBOX_MAX_RECURSION_DEPTH",
   "menace_env_file": "MENACE_ENV_FILE",
+  "enable_layer4_self_debug": "MENACE_LAYER4_SELF_DEBUG",
   "menace_light_imports": "MENACE_LIGHT_IMPORTS",
   "menace_local_db_path": "MENACE_LOCAL_DB_PATH",
   "menace_mode": "MENACE_MODE",
