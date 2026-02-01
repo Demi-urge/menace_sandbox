@@ -9,6 +9,7 @@ from error_ontology import classify_error
 import mvp_evaluator
 from menace_sandbox import patch_generator
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+from menace_sandbox.stabilization import patch_validator
 from menace_sandbox.stabilization.roi import compute_roi_delta
 
 __all__ = ["run_mvp_pipeline"]
@@ -43,18 +44,15 @@ def _error_payload(message: str, code: str) -> dict[str, Any]:
 
 
 def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
-    try:
-        patch_generator.validate_patch_text(patch_text)
-    except Exception as exc:
-        return {
-            "valid": False,
-            "flags": ["invalid_patch_text"],
-            "context": {
-                "exception_type": exc.__class__.__name__,
-                "exception_message": str(exc),
-            },
-        }
-    return {"valid": True, "flags": [], "context": {}}
+    limits = patch_validator.PatchValidationLimits(
+        max_lines=4000,
+        max_bytes=400_000,
+        max_files=50,
+        max_hunks=400,
+        allow_new_files=False,
+        allow_deletes=False,
+    )
+    return patch_validator.validate_patch_text(patch_text, limits=limits)
 
 
 def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
