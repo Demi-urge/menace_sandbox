@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import importlib.util
 import math
 from pathlib import Path
@@ -19,6 +20,7 @@ from menace_sandbox.mvp_brain import run_mvp_pipeline
 from menace_sandbox.mvp_self_debug import _apply_patch
 from menace_sandbox.sandbox_rule_builder import build_rules
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+from dynamic_path_router import resolve_path
 
 
 @dataclass
@@ -330,6 +332,20 @@ def run_mvp_workflow_smoke(
         "entropy_total_delta": entropy_delta_total,
         "checks": checks_summary,
     }
+    report_path = Path(resolve_path("sandbox_data")) / "mvp_self_heal_report.json"
+    report_payload = {
+        "summary_before": summary_before,
+        "summary_after": summary_after,
+        "checks": checks,
+    }
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
+    except Exception:
+        logger.exception(
+            "failed to write MVP self-heal report",
+            extra=log_record(report_path=str(report_path)),
+        )
     print("[SANDBOX] MVP self-heal checks:")
     for key, value in checks.items():
         print(f"  - {key}: {value}")
