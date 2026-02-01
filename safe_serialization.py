@@ -30,7 +30,11 @@ def sanitize_for_json(value: Any, *, _memo: set[int] | None = None) -> Any:
     _memo.add(obj_id)
     try:
         if _is_dataclass_instance(value):
-            return sanitize_for_json(dataclasses.asdict(value), _memo=_memo)
+            data = {
+                field.name: sanitize_for_json(getattr(value, field.name), _memo=_memo)
+                for field in dataclasses.fields(value)
+            }
+            return data
 
         if isinstance(value, Mapping):
             return {str(k): sanitize_for_json(v, _memo=_memo) for k, v in value.items()}
@@ -74,4 +78,3 @@ def safe_json_dumps(value: Any, *, sort_keys: bool = False) -> str:
 
 
 __all__ = ["sanitize_for_json", "safe_json_dumps"]
-

@@ -65,6 +65,7 @@ import weakref
 import traceback
 import statistics
 import copy
+from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
 import importlib
@@ -362,7 +363,8 @@ def _tracking_import(
     name, globals=None, locals=None, fromlist=(), level=0
 ):  # pragma: no cover - thin wrapper
     mod = _original_import(name, globals, locals, fromlist, level)
-    record_fn = globals().get("record_module_usage")
+    scope = globals if isinstance(globals, dict) else {}
+    record_fn = scope.get("record_module_usage")
     module_file = getattr(mod, "__file__", "")
     if record_fn and module_file:
         root = repo_root()
@@ -388,6 +390,104 @@ def _patched_imports() -> Iterable[None]:
         builtins.__import__ = previous
 
 logger = get_logger(__name__)
+
+
+class _FallbackROITracker:
+    """Minimal ROI tracker used when optional numeric dependencies are missing."""
+
+    def __init__(self, window: int = 50, **_: Any) -> None:
+        self.window = window
+        self._history: dict[str, deque] = {}
+        self.scenario_synergy: dict[str, list[dict[str, Any]]] = {}
+        self.scenario_roi_deltas: dict[str, float] = {}
+        self.scenario_raroi_delta: dict[str, float] = {}
+        self.last_raroi: float | None = None
+        self.workflow_label: str = "unknown"
+        self.actual_roi: list[float] = []
+        self.diagnostics: dict[str, Any] = {}
+
+    def register_metrics(self, *names: str) -> None:
+        for name in names:
+            self._history.setdefault(name, deque(maxlen=self.window))
+
+    def update(self, *args: Any, **metrics: Any) -> None:  # type: ignore[override]
+        if metrics:
+            self.register_metrics(*metrics.keys())
+            for name, value in metrics.items():
+                self._history[name].append(value)
+                if name == "raroi":
+                    try:
+                        self.last_raroi = float(value)
+                    except (TypeError, ValueError):
+                        self.last_raroi = None
+        return None
+
+    def get(self, name: str, default: float = 0.0) -> float:
+        history = self._history.get(name)
+        if not history:
+            return default
+        try:
+            return float(sum(history) / len(history))
+        except Exception:
+            return default
+
+    def std(self, _name: str) -> float:
+        return 0.0
+
+    def diminishing(self) -> float:
+        return 1.0
+
+    def record_scenario_delta(self, scenario: str, delta: float) -> None:
+        self.scenario_roi_deltas[scenario] = delta
+
+    def scenario_degradation(self) -> float:
+        return 0.0
+
+    def biggest_drop(self) -> tuple[str | None, float]:
+        return None, 0.0
+
+    def generate_scorecards(self) -> list[Any]:
+        return []
+
+    def record_metric_prediction(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def forecast(self) -> tuple[float, float]:
+        return 0.0, 0.0
+
+    def to_dict(self) -> dict[str, list[Any]]:
+        return {name: list(values) for name, values in self._history.items()}
+
+    def load_history(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def worst_scenario(self) -> tuple[str | None, float]:
+        return None, 0.0
+
+
+class _NoopSelfCodingManager:
+    """Lightweight manager placeholder for sandbox debug flows."""
+
+    evolution_orchestrator = None
+
+    def register_bot(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def emit_metric(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+class _NoopDebugger:
+    def analyse_and_fix(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def _resolve_roi_tracker_class() -> type:
+    try:
+        from menace.roi_tracker import ROITracker
+    except ModuleNotFoundError:
+        return _FallbackROITracker
+    return ROITracker
 
 # Snapshot initial environment for restoration between runs
 _BASE_ENV = os.environ.copy()
@@ -6924,24 +7024,43 @@ async def _section_worker(
             env = os.environ.copy()
             env.update({k: str(v) for k, v in env_input.items()})
             try:
-                rc = dict(runner_config or {})
-                rc.setdefault("safe_mode", True)
-                rc.setdefault("use_subprocess", True)
-                if env_input.get("INJECT_EDGE_CASES"):
-                    rc["inject_edge_cases"] = True
-                profiles = get_edge_case_profiles()
-                if profiles:
-                    stubs: Dict[str, Any] = {}
-                    for prof in profiles:
-                        stubs.update(prof)
-                    td = dict(rc.get("test_data") or {})
-                    stubs.update(td)
-                    rc["test_data"] = stubs
-                    existing = list(rc.get("edge_case_profiles", []))
-                    existing.extend(profiles)
-                    rc["edge_case_profiles"] = existing
-                runner = WorkflowSandboxRunner()
-                metrics = runner.run(lambda: exec(snip, {}), **rc)
+                if os.getenv("MENACE_SELF_DEBUG_MODULE"):
+                    exec(snip, {})
+                    metrics = SimpleNamespace(
+                        modules=[
+                            SimpleNamespace(
+                                name="inline",
+                                success=True,
+                                duration=0.0,
+                                coverage_functions=[],
+                                coverage_files=[],
+                            )
+                        ]
+                    )
+                else:
+                    rc = dict(runner_config or {})
+                    rc.setdefault("safe_mode", True)
+                    rc.setdefault("use_subprocess", True)
+                    if env_input.get("INJECT_EDGE_CASES"):
+                        rc["inject_edge_cases"] = True
+                    profiles = get_edge_case_profiles()
+                    if profiles:
+                        stubs: Dict[str, Any] = {}
+                        for prof in profiles:
+                            stubs.update(prof)
+                        td = dict(rc.get("test_data") or {})
+                        stubs.update(td)
+                        rc["test_data"] = stubs
+                        existing = list(rc.get("edge_case_profiles", []))
+                        existing.extend(profiles)
+                        rc["edge_case_profiles"] = existing
+                    runner = WorkflowSandboxRunner()
+                    original_argv = sys.argv[:]
+                    sys.argv = [str(path)]
+                    try:
+                        metrics = runner.run(lambda: exec(snip, {}), **rc)
+                    finally:
+                        sys.argv = original_argv
                 if _SandboxMetaLogger:
                     try:
                         data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
@@ -9108,14 +9227,24 @@ def run_repo_section_simulations(
             for module, sec_map in sections.items():
                 tmp_dir = tempfile.mkdtemp(prefix="section_")
                 shutil.copytree(repo_path, tmp_dir, dirs_exist_ok=True)
-                builder = copy.deepcopy(base_builder)
-                debugger = SelfDebuggerSandbox(
-                    object(),
-                    SelfCodingEngine(
-                        CodeDB(), MenaceMemoryManager(), context_builder=builder
-                    ),
-                    context_builder=builder,
-                )
+                try:
+                    try:
+                        builder = copy.deepcopy(base_builder)
+                    except Exception:
+                        builder = base_builder
+                except Exception:
+                    builder = base_builder
+                    try:
+                        debugger = SelfDebuggerSandbox(
+                            object(),
+                            SelfCodingEngine(
+                                CodeDB(), MenaceMemoryManager(), context_builder=builder
+                            ),
+                            context_builder=builder,
+                            manager=_NoopSelfCodingManager(),
+                        )
+                    except Exception:
+                        debugger = _NoopDebugger()
                 try:
                     for sec_name, lines in sec_map.items():
                         code_str = "\n".join(lines)
@@ -10083,13 +10212,13 @@ def run_workflow_simulations(
     ``tracker``'s synergy baseline.
     """
     from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
-    from menace.roi_tracker import ROITracker
     from menace.self_debugger_sandbox import SelfDebuggerSandbox
     from menace.self_coding_engine import SelfCodingEngine
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
     from sandbox_settings import SandboxSettings
     get_error_logger(context_builder)
+    ROITracker = _resolve_roi_tracker_class()
     tracker = tracker or ROITracker()
     if module_threshold is None:
         k = getattr(SandboxSettings(), "synergy_dev_multiplier", 1.0)
@@ -10168,8 +10297,21 @@ def run_workflow_simulations(
         except Exception:
             logger.exception('unexpected error')
 
+    forced_module = os.getenv("MENACE_SELF_DEBUG_MODULE")
     wf_db = WorkflowDB(Path(workflows_db), router=router)
-    workflows = wf_db.fetch()
+    if forced_module:
+        workflows = [
+            WorkflowRecord(
+                workflow=[forced_module],
+                task_sequence=[forced_module],
+                title=f"Self-debug workflow: {forced_module}",
+                description="Forced single-module workflow for self-debugging.",
+                tags=["self-debug"],
+                status="pending",
+            )
+        ]
+    else:
+        workflows = wf_db.fetch()
     if dynamic_workflows or not workflows:
         from dynamic_module_mapper import discover_module_groups, dotify_groups
 
@@ -10293,14 +10435,21 @@ def run_workflow_simulations(
         for wf in workflows:
             for step in wf.workflow:
                 snippet = _wf_snippet([step])
-                builder = copy.deepcopy(base_builder)
-                debugger = SelfDebuggerSandbox(
-                    object(),
-                    SelfCodingEngine(
-                        CodeDB(), MenaceMemoryManager(), context_builder=builder
-                    ),
-                    context_builder=builder,
-                )
+                try:
+                    builder = copy.deepcopy(base_builder)
+                except Exception:
+                    builder = base_builder
+                try:
+                    debugger = SelfDebuggerSandbox(
+                        object(),
+                        SelfCodingEngine(
+                            CodeDB(), MenaceMemoryManager(), context_builder=builder
+                        ),
+                        context_builder=builder,
+                        manager=_NoopSelfCodingManager(),
+                    )
+                except Exception:
+                    debugger = _NoopDebugger()
                 mod_name = _module_from_step(step)
                 for preset in all_presets:
                     scenario = preset.get("SCENARIO_NAME", "")

@@ -12,7 +12,18 @@ from pathlib import Path
 from typing import Any, Dict, Iterator
 from uuid import uuid4
 
-from filelock import FileLock
+try:
+    from filelock import FileLock
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    class FileLock:  # type: ignore[override]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        def __enter__(self) -> "FileLock":
+            return self
+
+        def __exit__(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
 from dynamic_path_router import get_project_root, resolve_path
 
 from sandbox_settings import SandboxSettings

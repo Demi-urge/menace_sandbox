@@ -119,11 +119,19 @@ def _build_env_alias_map() -> dict[str, tuple[str, ...]]:
     """Return mapping of settings field names to environment aliases."""
 
     aliases: dict[str, tuple[str, ...]] = {}
-    for name, field in SandboxSettings.model_fields.items():
+    fields = getattr(SandboxSettings, "model_fields", None)
+    if fields is None:
+        fields = getattr(SandboxSettings, "__fields__", {})
+    for name, field in fields.items():
+        env_value = None
         extra = getattr(field, "json_schema_extra", None)
-        if not isinstance(extra, dict):
-            continue
-        env_value = extra.get("env")
+        if isinstance(extra, dict):
+            env_value = extra.get("env")
+        if env_value is None:
+            field_info = getattr(field, "field_info", None)
+            field_extra = getattr(field_info, "extra", None) if field_info else None
+            if isinstance(field_extra, dict):
+                env_value = field_extra.get("env")
         if isinstance(env_value, str):
             aliases[name] = (env_value,)
         elif isinstance(env_value, (list, tuple, set)):

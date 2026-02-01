@@ -411,6 +411,16 @@ except Exception as exc:  # pragma: no cover - optional dependency fallback
         def search_by_vector(self, *args: Any, **kwargs: Any) -> list[Any]:
             return []
 
+        def try_add_embedding(
+            self,
+            record_id: Any,
+            record: Any,
+            kind: str,
+            *,
+            source_id: str = "",
+        ) -> None:
+            return None
+
     class _FallbackEmbeddingBackfill:
         """No-op backfill watcher for disabled embeddings."""
 
@@ -1116,7 +1126,7 @@ class WorkflowDB(EmbeddableDBMixin):
                     logger=logger,
                 )
 
-        if wf.wid:
+        if wf.wid and hasattr(self, "try_add_embedding"):
             self.try_add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))
 
         if self.event_bus:

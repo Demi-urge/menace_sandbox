@@ -25,7 +25,21 @@ from types import SimpleNamespace
 from contextlib import contextmanager
 from typing import Callable, Mapping, Any
 from collections import deque
-from coverage import Coverage
+try:
+    from coverage import Coverage
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    class Coverage:  # type: ignore[override]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def combine(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def xml_report(self, *args: Any, **kwargs: Any) -> float:
+            return 0.0
+
+        def report(self, *args: Any, **kwargs: Any) -> float:
+            return 0.0
 from .error_logger import ErrorLogger, TelemetryEvent
 from target_region import TargetRegion, extract_target_region
 from .knowledge_graph import KnowledgeGraph
@@ -54,7 +68,17 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
 from .self_improvement_policy import SelfImprovementPolicy
-from .roi_tracker import ROITracker
+try:
+    from .roi_tracker import ROITracker
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    class ROITracker:  # type: ignore[override]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.roi_history: list[float] = []
+            self.metrics_history: dict[str, list[float]] = {}
+            self.synergy_metrics_history: dict[str, list[float]] = {}
+
+        def update(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
 from .error_cluster_predictor import ErrorClusterPredictor
 from .error_parser import ErrorReport, FailureCache, parse_failure
 try:
@@ -2459,7 +2483,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             self._last_region = None
                         break
             if patched:
-                break
+                return
         finally:
             _ANALYSE_DEPTH.reset(token)
 

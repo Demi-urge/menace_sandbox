@@ -10,7 +10,18 @@ import time
 import math
 from typing import Any, Callable, Dict, Sequence
 
-from filelock import FileLock
+try:
+    from filelock import FileLock
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    class FileLock:  # type: ignore[override]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        def __enter__(self) -> "FileLock":
+            return self
+
+        def __exit__(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
 
 from dynamic_path_router import resolve_path
 

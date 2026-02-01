@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 import tempfile
 import traceback
@@ -404,6 +405,9 @@ def _run_self_debug(
     metrics_source: str = DEFAULT_METRICS_SOURCE,
 ) -> int:
     modules = discover_workflow_modules(repo_root)
+    forced_module = os.getenv("MENACE_SELF_DEBUG_MODULE")
+    if forced_module:
+        modules = [forced_module]
     try:
         settings = SandboxSettings()
     except Exception as exc:
