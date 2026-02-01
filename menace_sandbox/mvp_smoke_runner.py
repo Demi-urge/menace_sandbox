@@ -136,6 +136,7 @@ def run_mvp_workflow_smoke(
     stabilized_steps: list[str] = []
     failure_steps: list[str] = []
     roi_samples: list[float] = []
+    attempt_events: list[dict[str, Any]] = []
     logged_pipeline = wrap_with_logging(
         run_mvp_pipeline,
         {"log_event_prefix": f"{log_event_prefix}.pipeline."},
@@ -216,6 +217,22 @@ def run_mvp_workflow_smoke(
                     )
                     if patch_applied_for_step:
                         stabilized_steps.append(step)
+                    attempt_events.append(
+                        {
+                            "step": step,
+                            "attempt": attempt,
+                            "returncode": result.returncode,
+                            "runtime": round(attempt_runtime, 4),
+                            "roi": roi_value,
+                            "pipeline_invoked": True,
+                            "patch_text_length": 0,
+                            "patch_applied": False,
+                            "patch_rejected": False,
+                            "validation_blocked": False,
+                            "validation": {"valid": True, "flags": []},
+                            "stabilized": bool(patch_applied_for_step),
+                        }
+                    )
                     break
                 failure_steps.append(step)
                 patch_text = str(pipeline_result.get("patch_text") or "")
@@ -259,6 +276,26 @@ def run_mvp_workflow_smoke(
                     )
                     patch_rejected += 1
                     validation_blocked += 1
+                    attempt_events.append(
+                        {
+                            "step": step,
+                            "attempt": attempt,
+                            "returncode": result.returncode,
+                            "runtime": round(attempt_runtime, 4),
+                            "roi": roi_value,
+                            "pipeline_invoked": True,
+                            "patch_text_length": len(patch_text),
+                            "patch_applied": False,
+                            "patch_rejected": True,
+                            "validation_blocked": True,
+                            "validation": {
+                                "valid": bool(validation.get("valid")),
+                                "flags": list(validation.get("flags", [])),
+                                "source": validation_source,
+                            },
+                            "stabilized": False,
+                        }
+                    )
                     break
                 roi_delta = pipeline_result.get("roi_delta", {})
                 delta_total = 0.0
@@ -282,6 +319,26 @@ def run_mvp_workflow_smoke(
                         ),
                     )
                     patch_rejected += 1
+                    attempt_events.append(
+                        {
+                            "step": step,
+                            "attempt": attempt,
+                            "returncode": result.returncode,
+                            "runtime": round(attempt_runtime, 4),
+                            "roi": roi_value,
+                            "pipeline_invoked": True,
+                            "patch_text_length": len(patch_text),
+                            "patch_applied": False,
+                            "patch_rejected": True,
+                            "validation_blocked": False,
+                            "validation": {
+                                "valid": bool(validation.get("valid")),
+                                "flags": list(validation.get("flags", [])),
+                                "source": validation_source,
+                            },
+                            "stabilized": False,
+                        }
+                    )
                     break
                 _apply_patch(source_path, modified_source)
                 print(f"{step}: patch applied (attempt {attempt})")
@@ -296,6 +353,26 @@ def run_mvp_workflow_smoke(
                 )
                 patch_applied += 1
                 patch_applied_for_step = True
+                attempt_events.append(
+                    {
+                        "step": step,
+                        "attempt": attempt,
+                        "returncode": result.returncode,
+                        "runtime": round(attempt_runtime, 4),
+                        "roi": roi_value,
+                        "pipeline_invoked": True,
+                        "patch_text_length": len(patch_text),
+                        "patch_applied": True,
+                        "patch_rejected": False,
+                        "validation_blocked": False,
+                        "validation": {
+                            "valid": bool(validation.get("valid")),
+                            "flags": list(validation.get("flags", [])),
+                            "source": validation_source,
+                        },
+                        "stabilized": False,
+                    }
+                )
         finally:
             source_path.write_text(original_source, encoding="utf-8")
 
@@ -344,6 +421,7 @@ def run_mvp_workflow_smoke(
         "summary_after": summary_after,
         "checks": checks,
         "checks_summary": checks_summary,
+        "attempt_events": attempt_events,
     }
     try:
         report_path.parent.mkdir(parents=True, exist_ok=True)
