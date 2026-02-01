@@ -101,7 +101,13 @@ def _run_mvp_workflow_smoke(args: argparse.Namespace) -> None:
     steps_raw = getattr(args, "modules", "") or ""
     steps = [s.strip() for s in steps_raw.split(",") if s.strip()]
     max_attempts = max(1, int(getattr(args, "max_attempts", 2)))
-    run_mvp_workflow_smoke(steps, max_attempts=max_attempts)
+    run_mvp_workflow_smoke(
+        steps,
+        max_attempts=max_attempts,
+        log_event_prefix=str(getattr(args, "log_prefix", "sandbox.mvp.self_heal")),
+        enforce_checks=not bool(getattr(args, "no_enforce_checks", False)),
+        report_path=getattr(args, "report_path", None),
+    )
 
 _settings_cache: SandboxSettings | None = None
 _settings_mtime: float | None = None
@@ -1530,6 +1536,21 @@ def main(argv: List[str] | None = None) -> None:
         type=int,
         default=2,
         help="maximum MVP loop attempts per module",
+    )
+    p_mvp.add_argument(
+        "--report-path",
+        default=None,
+        help="optional path to write MVP self-heal report JSON",
+    )
+    p_mvp.add_argument(
+        "--log-prefix",
+        default="sandbox.mvp.self_heal",
+        help="log event prefix for MVP self-heal checks",
+    )
+    p_mvp.add_argument(
+        "--no-enforce-checks",
+        action="store_true",
+        help="disable enforcement of MVP self-heal checks",
     )
 
     p_trend = sub.add_parser(

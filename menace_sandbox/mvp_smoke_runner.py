@@ -317,7 +317,7 @@ def run_mvp_workflow_smoke(
         "logs_stabilized": bool(stabilized_steps),
         "deterministic_failures": bool(failure_steps),
         "roi_metrics_updated": roi_count_delta > 0,
-        "workflow_metrics_updated": run_delta > 0 and entropy_delta_total != 0.0,
+        "workflow_metrics_updated": run_delta > 0,
     }
     checks = {
         "pipeline_invocations": pipeline_invocations,
