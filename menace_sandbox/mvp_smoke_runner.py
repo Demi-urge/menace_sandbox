@@ -217,7 +217,17 @@ def run_mvp_workflow_smoke(
                 failure_steps.append(step)
                 patch_text = str(pipeline_result.get("patch_text") or "")
                 modified_source = str(pipeline_result.get("modified_source") or "")
-                validation = logged_validate(patch_text)
+                pipeline_validation = pipeline_result.get("validation")
+                validation_source = "pipeline"
+                if isinstance(pipeline_validation, Mapping):
+                    validation = dict(pipeline_validation)
+                else:
+                    validation = logged_validate(patch_text)
+                    validation_source = "local"
+                local_validation = logged_validate(patch_text)
+                if not local_validation.get("valid", False):
+                    validation = local_validation
+                    validation_source = "local"
                 if patch_text:
                     logger.info(
                         "mvp brain proposed patch",
@@ -225,6 +235,7 @@ def run_mvp_workflow_smoke(
                             workflow_step=step,
                             attempt=attempt,
                             patch_text_length=len(patch_text),
+                            validation_source=validation_source,
                             roi=roi_value,
                             entropy=workflow_entropy,
                         ),
@@ -238,6 +249,7 @@ def run_mvp_workflow_smoke(
                             workflow_step=step,
                             attempt=attempt,
                             flags=list(validation.get("flags", [])),
+                            validation_source=validation_source,
                             roi=roi_value,
                             entropy=workflow_entropy,
                         ),
