@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import difflib
+import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
+
+import yaml
 
 from error_ontology import classify_error
 import mvp_evaluator
@@ -76,10 +79,90 @@ def _build_error_report(
     }
 
 
-def _build_patch_rules(source: str) -> list[dict[str, Any]]:
-    rules: list[dict[str, Any]] = []
-    if "return a - b" in source:
-        rules.append(
+def _normalize_task_rules(candidate: Any) -> list[dict[str, Any]] | None:
+    if isinstance(candidate, Mapping):
+        if "rules" in candidate:
+            candidate = candidate.get("rules")
+        elif "patch_rules" in candidate:
+            candidate = candidate.get("patch_rules")
+        else:
+            return None
+    if isinstance(candidate, Sequence) and not isinstance(
+        candidate, (str, bytes, bytearray)
+    ):
+        rules = [dict(rule) for rule in candidate if isinstance(rule, Mapping)]
+        return rules or None
+    return None
+
+
+def _load_task_rules(task_input: Path | None) -> list[dict[str, Any]] | None:
+    if task_input is None:
+        return None
+    raw = task_input.read_text(encoding="utf-8")
+    parsed: Any | None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = yaml.safe_load(raw)
+    return _normalize_task_rules(parsed)
+
+
+def _classification_context(
+    classification: Mapping[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    status: str | None = None
+    matched_rule_id: str | None = None
+    if isinstance(classification, Mapping):
+        raw_status = classification.get("status")
+        if isinstance(raw_status, str):
+            status = raw_status
+        data = classification.get("data")
+        if isinstance(data, Mapping):
+            raw_rule_id = data.get("matched_rule_id")
+            if isinstance(raw_rule_id, str):
+                matched_rule_id = raw_rule_id
+    return status, matched_rule_id
+
+
+def _fallback_rule(
+    *,
+    classification: Mapping[str, Any] | None,
+    source: str,
+) -> list[dict[str, Any]]:
+    status, matched_rule_id = _classification_context(classification)
+    return [
+        {
+            "type": "replace",
+            "id": f"noop-{(status or 'unknown').lower()}",
+            "description": "No-op rule to keep deterministic patch generation.",
+            "anchor": "__MVP_SELF_DEBUG_NOOP__",
+            "replacement": "__MVP_SELF_DEBUG_NOOP__",
+            "anchor_kind": "literal",
+            "count": 1,
+            "allow_zero_matches": True,
+            "meta": {
+                "source": "mvp_self_debug",
+                "error_category": status or "unknown",
+                "error_rule_id": matched_rule_id or "unknown",
+                "source_length": len(source),
+            },
+        }
+    ]
+
+
+def _build_patch_rules(
+    source: str,
+    *,
+    classification: Mapping[str, Any] | None,
+    task_rules: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if task_rules is not None:
+        return [dict(rule) for rule in task_rules]
+
+    status, matched_rule_id = _classification_context(classification)
+
+    rule_catalog: dict[str, list[dict[str, Any]]] = {
+        "ContractViolation": [
             {
                 "type": "replace",
                 "id": "fix-addition",
@@ -89,10 +172,19 @@ def _build_patch_rules(source: str) -> list[dict[str, Any]]:
                 "anchor_kind": "literal",
                 "count": 1,
                 "allow_zero_matches": False,
-                "meta": {"source": "mvp_self_debug"},
+                "meta": {
+                    "source": "mvp_self_debug",
+                    "error_category": status or "unknown",
+                    "error_rule_id": matched_rule_id or "unknown",
+                },
             }
-        )
-    return rules
+        ]
+    }
+
+    if status in rule_catalog:
+        return rule_catalog[status]
+
+    return _fallback_rule(classification=classification, source=source)
 
 
 def _render_unified_diff(original: str, modified: str, filename: str) -> str:
@@ -120,6 +212,7 @@ def _loop(
     target_path: Path,
     *,
     max_attempts: int,
+    task_rules: Sequence[Mapping[str, Any]] | None = None,
 ) -> LoopResult:
     logged_run = wrap_with_logging(_run_target, {"log_event_prefix": "mvp.run."})
     logged_classify = wrap_with_logging(
@@ -169,7 +262,11 @@ def _loop(
             returncode=run_result.returncode,
             classification=classification,
         )
-        rules = _build_patch_rules(source)
+        rules = _build_patch_rules(
+            source,
+            classification=classification,
+            task_rules=task_rules,
+        )
         patch_payload = logged_generate(source, error_report, rules, validate_syntax=True)
         modified_source = ""
         if isinstance(patch_payload, Mapping):
@@ -262,10 +359,21 @@ def main(argv: Iterable[str] | None = None) -> int:
         default=2,
         help="Maximum debug iterations before stopping",
     )
+    parser.add_argument(
+        "--task-input",
+        type=Path,
+        default=None,
+        help="Optional JSON/YAML task input containing patch rules.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     target_path = Path(args.target)
-    result = _loop(target_path, max_attempts=max(1, args.max_attempts))
+    task_rules = _load_task_rules(args.task_input)
+    result = _loop(
+        target_path,
+        max_attempts=max(1, args.max_attempts),
+        task_rules=task_rules,
+    )
     print(_format_summary(result))
     return 0
 
