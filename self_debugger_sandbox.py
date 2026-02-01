@@ -28,7 +28,6 @@ from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
 from target_region import TargetRegion, extract_target_region
 from .knowledge_graph import KnowledgeGraph
-from .quick_fix_engine import generate_patch
 from .human_alignment_agent import HumanAlignmentAgent
 from .human_alignment_flagger import _collect_diff_data
 from .violation_logger import log_violation
@@ -114,6 +113,14 @@ except Exception:  # pragma: no cover - optional dependency
 
     def record_failed_tags(_tags):  # type: ignore
         return None
+try:  # pragma: no cover - MVP pipeline helpers
+    from menace_sandbox.mvp_brain import run_mvp_pipeline
+    from menace_sandbox.sandbox_rule_builder import build_rules
+    from menace_sandbox import patch_generator
+except Exception:  # pragma: no cover - optional dependency
+    run_mvp_pipeline = None  # type: ignore
+    build_rules = None  # type: ignore
+    patch_generator = None  # type: ignore
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -397,6 +404,86 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.logger.exception("failed to record failed tags")
 
     # ------------------------------------------------------------------
+    def _roi_delta_total(self, pipeline_result: Mapping[str, object]) -> float:
+        roi_delta = pipeline_result.get("roi_delta")
+        if isinstance(roi_delta, Mapping):
+            data = roi_delta.get("data")
+            if isinstance(data, Mapping):
+                try:
+                    return float(data.get("total", 0.0))
+                except (TypeError, ValueError):
+                    return 0.0
+        return 0.0
+
+    def _mvp_pipeline_payload(
+        self,
+        *,
+        source: str,
+        stderr: str,
+        stdout: str,
+        returncode: int,
+        prior_roi: float | None = None,
+        rule_source: str = "self_debugger_sandbox",
+    ) -> dict[str, object]:
+        rules: list[dict[str, object]] = []
+        if callable(build_rules):
+            try:
+                rules = build_rules(stderr, source=source, rule_source=rule_source)
+            except Exception:
+                self.logger.exception("failed to build MVP sandbox rules")
+        payload: dict[str, object] = {
+            "source": source,
+            "stderr": stderr,
+            "stdout": stdout,
+            "returncode": int(returncode),
+            "rules": rules,
+        }
+        if prior_roi is not None:
+            payload["prior_roi"] = prior_roi
+        return payload
+
+    def _apply_pipeline_patch(
+        self,
+        pipeline_result: Mapping[str, object],
+        *,
+        source_path: Path,
+        module_path: str | None = None,
+    ) -> bool:
+        validation = pipeline_result.get("validation")
+        if not isinstance(validation, Mapping) or not validation.get("valid"):
+            return False
+        if self._roi_delta_total(pipeline_result) <= 0:
+            return False
+        patch_text = str(pipeline_result.get("patch_text") or "")
+        modified_source = str(
+            pipeline_result.get("modified_source")
+            or pipeline_result.get("updated_source")
+            or ""
+        )
+        if not modified_source or not patch_text:
+            return False
+        if patch_generator is None:
+            self.logger.warning("patch generator unavailable for MVP patch validation")
+            return False
+        try:
+            patch_generator.validate_patch_text(patch_text)
+        except Exception as exc:
+            self.logger.warning(
+                "mvp patch validation failed",
+                extra=log_record(
+                    module=module_path,
+                    error=str(exc),
+                ),
+            )
+            return False
+        try:
+            source_path.write_text(modified_source, encoding="utf-8")
+        except Exception:
+            self.logger.exception("failed to apply MVP patch")
+            return False
+        return True
+
+    # ------------------------------------------------------------------
     def attempt_count(self, region: TargetRegion) -> int:
         """Return number of attempts made for ``region``."""
         return self._attempt_tracker.attempts_for(region)
@@ -442,13 +529,24 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
-                    patch_id = generate_patch(
-                        mod,
-                        self.manager,
-                        self.engine,
-                        context_builder=self.context_builder,
-                    )
-                    if patch_id is not None:
+                    patch_applied = False
+                    if callable(run_mvp_pipeline):
+                        source = src.read_text(encoding="utf-8")
+                        logs = list(self._recent_logs(limit=1))
+                        error_text = logs[0] if logs else ""
+                        payload = self._mvp_pipeline_payload(
+                            source=source,
+                            stderr=error_text,
+                            stdout="",
+                            returncode=1 if error_text else 0,
+                        )
+                        pipeline_result = run_mvp_pipeline(payload)
+                        patch_applied = self._apply_pipeline_patch(
+                            pipeline_result,
+                            source_path=src,
+                            module_path=str(mod),
+                        )
+                    if patch_applied:
                         try:
                             post_round_orphan_scan(
                                 Path.cwd(),
@@ -475,13 +573,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             warnings = agent.evaluate_changes(workflow_changes, None, [])
                             if any(warnings.values()):
                                 log_violation(
-                                    str(patch_id),
+                                    str(mod),
                                     "alignment_warning",
                                     1,
                                     {"warnings": warnings},
                                     alignment_warning=True,
                                 )
-                self.logger.info("preemptive patch applied", extra=log_record(module=mod))
+                if patch_applied:
+                    self.logger.info(
+                        "preemptive patch applied", extra=log_record(module=mod)
+                    )
             except Exception:
                 self.logger.exception("preemptive fix failed", extra=log_record(module=mod))
 
