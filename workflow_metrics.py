@@ -6,7 +6,7 @@ from collections import Counter
 import math
 from typing import Any, Dict, Iterable
 
-from .workflow_scorer_core import (
+from workflow_scorer_core import (
     compute_workflow_synergy,
     compute_bottleneck_index,
     compute_patchability,

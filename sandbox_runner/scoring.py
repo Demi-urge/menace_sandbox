@@ -124,6 +124,15 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
                 summary["functions_hit_total"] = summary.get(
                     "functions_hit_total", 0
                 ) + int(functions_hit)
+            if roi is not None:
+                summary["roi_total"] = summary.get("roi_total", 0.0) + float(roi)
+                summary["roi_count"] = summary.get("roi_count", 0) + 1
+                roi_count = summary.get("roi_count", 0) or 0
+                summary["roi_avg"] = (
+                    float(summary.get("roi_total", 0.0)) / roi_count
+                    if roi_count
+                    else 0.0
+                )
             _SUMMARY_FILE.write_text(json.dumps(summary))
 
             try:  # propagate to SQLite logger
