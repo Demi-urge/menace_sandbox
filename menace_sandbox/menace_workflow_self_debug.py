@@ -28,6 +28,11 @@ from menace_sandbox.workflow_run_state import (
     get_run_store,
     seed_workflow_db,
 )
+from menace_sandbox.menace_self_debug_snapshot import (
+    _snapshot_environment,
+    _snapshot_sandbox_settings,
+    freeze_cycle,
+)
 from sandbox_runner import run_workflow_simulations
 from sandbox_settings import SandboxSettings
 from task_handoff_bot import WorkflowDB
@@ -164,6 +169,7 @@ def _handle_failure(
     *,
     repo_root: Path,
     prior_roi: float,
+    snapshot_meta: Mapping[str, object] | None = None,
     metrics_logger: StabilizationLoggingWrapper | None = None,
     correlation_id: str | None = None,
 ) -> bool:
@@ -221,7 +227,10 @@ def _handle_failure(
             patch_attempts=0,
             roi_delta=0.0,
             retry_count=0,
-            metadata={"reason": "missing_source_path"},
+            metadata={
+                "reason": "missing_source_path",
+                **(snapshot_meta or {}),
+            },
         )
         return False
     logged_validate = wrap_with_logging(
@@ -267,7 +276,10 @@ def _handle_failure(
             patch_attempts=1,
             roi_delta=0.0,
             retry_count=0,
-            metadata={"reason": "validation_failed"},
+            metadata={
+                "reason": "validation_failed",
+                **(snapshot_meta or {}),
+            },
         )
         return False
     pipeline_result = dict(pipeline_result)
@@ -305,7 +317,10 @@ def _handle_failure(
             patch_attempts=1,
             roi_delta=0.0,
             retry_count=0,
-            metadata={"reason": "patch_not_applied"},
+            metadata={
+                "reason": "patch_not_applied",
+                **(snapshot_meta or {}),
+            },
         )
         return False
     if metrics_logger:
@@ -338,7 +353,10 @@ def _handle_failure(
         patch_attempts=1,
         roi_delta=0.0,
         retry_count=0,
-        metadata={"reason": "patch_applied"},
+        metadata={
+            "reason": "patch_applied",
+            **(snapshot_meta or {}),
+        },
     )
     return applied
 
@@ -353,6 +371,36 @@ def _run_self_debug(
     correlation_id: str | None = None,
 ) -> int:
     modules = discover_workflow_modules(repo_root)
+    settings_snapshot = _snapshot_sandbox_settings(SandboxSettings())
+    snapshot = freeze_cycle(
+        inputs={
+            "workflow_modules": modules,
+            "workflow_db_path": str(workflow_db_path),
+            "source_menace_id": source_menace_id,
+            "dynamic_workflows": dynamic_workflows,
+        },
+        configs={
+            "sandbox_settings": settings_snapshot,
+            "environment": _snapshot_environment(
+                (
+                    "SANDBOX_DATA_DIR",
+                    "MENACE_DATA_DIR",
+                    "WORKFLOW_DB_PATH",
+                    "MENACE_WORKFLOW_DB",
+                    "MENACE_LIGHT_IMPORTS",
+                )
+            ),
+        },
+        metadata={
+            "source": "menace_workflow_self_debug",
+            "repo_root": str(repo_root),
+        },
+    )
+    frozen_inputs = snapshot.payload.get("inputs", {})
+    if isinstance(frozen_inputs, Mapping):
+        frozen_modules = frozen_inputs.get("workflow_modules")
+        if isinstance(frozen_modules, list):
+            modules = [str(module) for module in frozen_modules if module]
     if not modules:
         LOGGER.warning("no workflow modules discovered")
         if metrics_logger:
@@ -381,6 +429,10 @@ def _run_self_debug(
             )
         return 1
 
+    snapshot_meta = {
+        "snapshot_id": snapshot.snapshot_id,
+        "snapshot_path": str(snapshot.path),
+    }
     workflow_db = WorkflowDB(workflow_db_path)
     seeded = seed_workflow_db(
         modules, workflow_db=workflow_db, source_menace_id=source_menace_id
@@ -405,6 +457,7 @@ def _run_self_debug(
             exc,
             repo_root=repo_root,
             prior_roi=0.0,
+            snapshot_meta=snapshot_meta,
             metrics_logger=metrics_logger,
             correlation_id=correlation_id,
         )
