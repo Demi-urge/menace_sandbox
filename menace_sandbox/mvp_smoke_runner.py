@@ -295,6 +295,15 @@ def run_mvp_workflow_smoke(
     entropy_delta_total = (summary_after.get("entropy_total") or 0.0) - (
         summary_before.get("entropy_total") or 0.0
     )
+    checks_summary = {
+        "mvp_brain_used": pipeline_invocations > 0,
+        "patches_proposed": patch_proposed > 0,
+        "validation_blocked": validation_blocked > 0,
+        "logs_stabilized": bool(stabilized_steps),
+        "deterministic_failures": bool(failure_steps),
+        "roi_metrics_updated": roi_count_delta > 0,
+        "workflow_metrics_updated": run_delta > 0 and entropy_delta_total != 0.0,
+    }
     checks = {
         "pipeline_invocations": pipeline_invocations,
         "patches_proposed": patch_proposed,
@@ -307,6 +316,7 @@ def run_mvp_workflow_smoke(
         "roi_total_delta": roi_total_delta,
         "roi_count_delta": roi_count_delta,
         "entropy_total_delta": entropy_delta_total,
+        "checks": checks_summary,
     }
     print("[SANDBOX] MVP self-heal checks:")
     for key, value in checks.items():
@@ -320,20 +330,22 @@ def run_mvp_workflow_smoke(
     )
 
     if enforce_checks:
+        if not checks_summary["mvp_brain_used"]:
+            raise RuntimeError("MVP brain was not invoked during smoke workflow")
+        if not checks_summary["patches_proposed"]:
+            raise RuntimeError("MVP brain did not propose any patches")
+        if not checks_summary["validation_blocked"]:
+            raise RuntimeError("Patch validation did not block any invalid patches")
+        if not checks_summary["logs_stabilized"]:
+            raise RuntimeError("No workflow steps stabilized after patching")
+        if not checks_summary["deterministic_failures"]:
+            raise RuntimeError("Workflow steps did not trigger deterministic failures")
+        if not checks_summary["workflow_metrics_updated"]:
+            raise RuntimeError("Workflow metrics failed to update in run summary")
+        if not checks_summary["roi_metrics_updated"]:
+            raise RuntimeError("ROI metrics failed to update in run summary")
         if not pipeline_invocations:
             raise RuntimeError("MVP brain was not invoked during smoke workflow")
-        if not patch_proposed:
-            raise RuntimeError("MVP brain did not propose any patches")
-        if not validation_blocked:
-            raise RuntimeError("Patch validation did not block any invalid patches")
-        if not stabilized_steps:
-            raise RuntimeError("No workflow steps stabilized after patching")
-        if not failure_steps:
-            raise RuntimeError("Workflow steps did not trigger deterministic failures")
-        if run_delta <= 0 or entropy_delta_total == 0.0:
-            raise RuntimeError("Workflow metrics failed to update in run summary")
-        if roi_count_delta <= 0:
-            raise RuntimeError("ROI metrics failed to update in run summary")
 
     return checks
 
