@@ -111,6 +111,15 @@ def _failure_fingerprint(returncode: int, stdout: str, stderr: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _run_workflow_command(module: str, func: str | None) -> subprocess.CompletedProcess[str]:
+    cmd = [
+        sys.executable,
+        "-c",
+        f"from {module} import {func or 'main'} as _m; _m()",
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
 def _workflow_history_path() -> Path:
     history_override = os.environ.get("WORKFLOW_ROI_HISTORY_PATH")
     if history_override:
@@ -204,12 +213,7 @@ def run_mvp_workflow_smoke(
             patch_applied_for_step = False
             for attempt in range(1, max_attempts + 1):
                 attempt_start = time.monotonic()
-                cmd = [
-                    sys.executable,
-                    "-c",
-                    f"from {mod} import {func or 'main'} as _m; _m()",
-                ]
-                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                result = _run_workflow_command(mod, func)
                 attempt_runtime = time.monotonic() - attempt_start
                 source_text = source_path.read_text(encoding="utf-8")
                 rules = build_rules(result.stderr or result.stdout, source=source_text)
@@ -449,6 +453,45 @@ def run_mvp_workflow_smoke(
                         },
                         "failure_fingerprint": fingerprint,
                         "stabilized": False,
+                    }
+                )
+            if (
+                step in failure_steps
+                and step not in non_deterministic_failures
+                and step not in stabilized_steps
+            ):
+                probe_start = time.monotonic()
+                probe_result = _run_workflow_command(mod, func)
+                probe_runtime = time.monotonic() - probe_start
+                probe_fingerprint = _failure_fingerprint(
+                    probe_result.returncode,
+                    probe_result.stdout or "",
+                    probe_result.stderr or "",
+                )
+                prior_fingerprint = failure_fingerprints.get(step)
+                if prior_fingerprint and probe_fingerprint != prior_fingerprint:
+                    non_deterministic_failures.append(step)
+                roi_value = float(
+                    mvp_evaluator.evaluate_roi(
+                        probe_result.stdout, probe_result.stderr
+                    )
+                )
+                attempt_events.append(
+                    {
+                        "step": step,
+                        "attempt": "probe",
+                        "returncode": probe_result.returncode,
+                        "runtime": round(probe_runtime, 4),
+                        "roi": roi_value,
+                        "pipeline_invoked": False,
+                        "patch_text_length": 0,
+                        "patch_applied": False,
+                        "patch_rejected": False,
+                        "validation_blocked": False,
+                        "validation": {"valid": False, "flags": [], "source": "probe"},
+                        "failure_fingerprint": probe_fingerprint,
+                        "stabilized": False,
+                        "determinism_probe": True,
                     }
                 )
         finally:
