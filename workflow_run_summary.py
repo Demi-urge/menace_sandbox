@@ -7,6 +7,8 @@ import json
 import os
 from typing import Dict, List
 
+from menace_sandbox.workflow_run_state import get_run_store
+
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
@@ -132,11 +134,29 @@ _load_history()
 _load_summaries()
 
 
-def record_run(workflow_id: str, roi: float) -> None:
+def record_run(
+    workflow_id: str,
+    roi: float,
+    *,
+    error_classification: str = "none",
+    patch_attempts: int = 0,
+    retry_count: int = 0,
+) -> None:
     """Record ``roi`` for ``workflow_id``."""
-    hist = _WORKFLOW_ROI_HISTORY.setdefault(str(workflow_id), [])
+    wid = str(workflow_id)
+    hist = _WORKFLOW_ROI_HISTORY.setdefault(wid, [])
+    prior = hist[-1] if hist else None
     hist.append(float(roi))
+    roi_delta = float(roi) - float(prior) if prior is not None else float(roi)
     _persist_history()
+    get_run_store().record_run(
+        workflow_id=wid,
+        error_classification=error_classification,
+        patch_attempts=patch_attempts,
+        roi_delta=roi_delta,
+        retry_count=retry_count,
+        metadata={"roi": float(roi)},
+    )
 
 
 def save_summary(
@@ -244,7 +264,7 @@ def save_all_summaries(directory: str | Path = ".", *, graph: WorkflowGraph | No
     out_dir = Path(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for wid in _WORKFLOW_ROI_HISTORY:
+    for wid in sorted(_WORKFLOW_ROI_HISTORY):
         # Generate and save the summary
         summary_path = save_summary(wid, out_dir, graph=graph)
 

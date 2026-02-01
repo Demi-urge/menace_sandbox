@@ -6,62 +6,24 @@ import argparse
 import logging
 from pathlib import Path
 import traceback
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping
 
-from bot_discovery import _iter_bot_modules
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.mvp_brain import run_mvp_pipeline
 from menace_sandbox import patch_generator
 from menace_sandbox.sandbox_rule_builder import build_rules
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+from menace_sandbox.workflow_run_state import (
+    classify_error,
+    discover_workflow_modules,
+    get_run_store,
+    seed_workflow_db,
+)
 from sandbox_runner import run_workflow_simulations
 from sandbox_settings import SandboxSettings
-from self_improvement.workflow_discovery import DEFAULT_EXCLUDED_DIRS
-from task_handoff_bot import WorkflowDB, WorkflowRecord
+from task_handoff_bot import WorkflowDB
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _module_name_from_path(root: Path, path: Path) -> str:
-    return ".".join(path.relative_to(root).with_suffix("").parts)
-
-
-def _is_excluded(path: Path, excluded_dirs: set[str]) -> bool:
-    return any(part in excluded_dirs for part in path.parts)
-
-
-def _discover_workflow_modules(root: Path) -> list[str]:
-    excluded = set(DEFAULT_EXCLUDED_DIRS)
-    modules: list[str] = []
-    for path in root.rglob("workflow_*.py"):
-        if path.name == "__init__.py" or _is_excluded(path, excluded):
-            continue
-        modules.append(_module_name_from_path(root, path))
-    for path in _iter_bot_modules(root):
-        modules.append(_module_name_from_path(root, path))
-    return sorted(set(modules))
-
-
-def _seed_workflow_db(
-    modules: Sequence[str],
-    *,
-    workflow_db: WorkflowDB,
-    source_menace_id: str,
-) -> list[int]:
-    workflow_ids: list[int] = []
-    for module in modules:
-        record = WorkflowRecord(
-            workflow=[module],
-            task_sequence=[module],
-            title=f"Auto-discovered workflow: {module}",
-            description="Auto-seeded workflow module for sandbox self-debugging.",
-            tags=["auto", "self-debug"],
-            status="pending",
-        )
-        wid = workflow_db.add(record, source_menace_id=source_menace_id)
-        if wid:
-            workflow_ids.append(wid)
-    return workflow_ids
 
 
 def _extract_source_from_traceback(
@@ -148,6 +110,7 @@ def _handle_failure(
     error_text = "".join(
         traceback.format_exception(type(exc), exc, exc.__traceback__)
     )
+    run_store = get_run_store()
     source, source_path = _extract_source_from_traceback(exc, repo_root=repo_root)
     rules = build_rules(error_text, source=source)
     payload = {
@@ -165,6 +128,14 @@ def _handle_failure(
     )
     pipeline_result = logged_pipeline(payload)
     if source_path is None:
+        run_store.record_run(
+            workflow_id="self_debug",
+            error_classification=classify_error(error_text),
+            patch_attempts=0,
+            roi_delta=0.0,
+            retry_count=0,
+            metadata={"reason": "missing_source_path"},
+        )
         return False
     logged_validate = wrap_with_logging(
         _validate_menace_patch_text, {"log_event_prefix": "menace.self_debug.patch.validate."}
@@ -178,12 +149,37 @@ def _handle_failure(
             "mvp patch validation failed; halting self-debug patch",
             extra={"flags": validation.get("flags", [])},
         )
+        run_store.record_run(
+            workflow_id="self_debug",
+            error_classification=classify_error(error_text),
+            patch_attempts=1,
+            roi_delta=0.0,
+            retry_count=0,
+            metadata={"reason": "validation_failed"},
+        )
         return False
     pipeline_result = dict(pipeline_result)
     pipeline_result["validation"] = validation
     applied = logged_apply(pipeline_result, source_path=source_path)
     if not applied:
         LOGGER.info("mvp patch apply halted or failed")
+        run_store.record_run(
+            workflow_id="self_debug",
+            error_classification=classify_error(error_text),
+            patch_attempts=1,
+            roi_delta=0.0,
+            retry_count=0,
+            metadata={"reason": "patch_not_applied"},
+        )
+        return False
+    run_store.record_run(
+        workflow_id="self_debug",
+        error_classification=classify_error(error_text),
+        patch_attempts=1,
+        roi_delta=0.0,
+        retry_count=0,
+        metadata={"reason": "patch_applied"},
+    )
     return applied
 
 
@@ -194,13 +190,13 @@ def _run_self_debug(
     source_menace_id: str,
     dynamic_workflows: bool,
 ) -> int:
-    modules = _discover_workflow_modules(repo_root)
+    modules = discover_workflow_modules(repo_root)
     if not modules:
         LOGGER.warning("no workflow modules discovered")
         return 1
 
     workflow_db = WorkflowDB(workflow_db_path)
-    seeded = _seed_workflow_db(
+    seeded = seed_workflow_db(
         modules, workflow_db=workflow_db, source_menace_id=source_menace_id
     )
     LOGGER.info("seeded workflows", extra={"count": len(seeded)})
