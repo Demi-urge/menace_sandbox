@@ -10,13 +10,61 @@ and the heavier :mod:`roi_scorer` module.
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Mapping
 from itertools import combinations
+import os
 
-import numpy as np
+_LIGHT_IMPORTS = os.getenv("MENACE_LIGHT_IMPORTS") not in {"", "0", "false", "False", None}
 
-try:  # pragma: no cover - prefer package relative import
+if _LIGHT_IMPORTS:
+    class _NumpyStub:
+        @staticmethod
+        def std(values: Iterable[float]) -> float:
+            vals = list(values)
+            if len(vals) < 2:
+                return 0.0
+            mean = sum(vals) / len(vals)
+            return (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+
+        @staticmethod
+        def corrcoef(a: Iterable[float], b: Iterable[float]) -> list[list[float]]:
+            return [[1.0, 0.0], [0.0, 1.0]]
+
+        @staticmethod
+        def arange(n: int) -> list[int]:
+            return list(range(n))
+
+        @staticmethod
+        def polyfit(_x: Iterable[float], _y: Iterable[float], degree: int) -> list[float]:
+            return [0.0 for _ in range(degree + 1)]
+
+        @staticmethod
+        def average(values: Iterable[float], weights: Iterable[float] | None = None) -> float:
+            vals = list(values)
+            if not vals:
+                return 0.0
+            if weights is None:
+                return sum(vals) / len(vals)
+            wts = list(weights)
+            total = sum(wts)
+            if not total:
+                return sum(vals) / len(vals)
+            return sum(v * w for v, w in zip(vals, wts)) / total
+
+    np = _NumpyStub()
+else:
+    import numpy as np
+
+if _LIGHT_IMPORTS:
+    class ROITracker:  # type: ignore[override]
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+    if __package__:
+        from .roi_calculator import ROICalculator
+    else:  # pragma: no cover - allow execution as script
+        from roi_calculator import ROICalculator  # type: ignore
+elif __package__:
     from .roi_tracker import ROITracker
     from .roi_calculator import ROICalculator
-except ImportError:  # pragma: no cover - allow execution as script
+else:  # pragma: no cover - allow execution as script
     from roi_tracker import ROITracker  # type: ignore
     from roi_calculator import ROICalculator  # type: ignore
 

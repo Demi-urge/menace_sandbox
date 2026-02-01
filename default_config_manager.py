@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import config_discovery as cd
+if __package__:
+    from . import config_discovery as cd
+else:
+    import config_discovery as cd
 
 
 class DefaultConfigManager:

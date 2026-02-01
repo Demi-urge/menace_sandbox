@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import StrEnum
+import enum
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Tuple
 from contextlib import closing
@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 
 from db_router import GLOBAL_ROUTER, init_db_router
 from .unified_event_bus import UnifiedEventBus
+
+
+if hasattr(enum, "StrEnum"):
+    StrEnum = enum.StrEnum
+else:
+    class StrEnum(str, enum.Enum):
+        pass
 
 
 class Outcome(StrEnum):

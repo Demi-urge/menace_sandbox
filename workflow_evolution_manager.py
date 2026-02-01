@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 _HAS_PACKAGE = bool(__package__)
+_LIGHT_IMPORTS = os.getenv("MENACE_LIGHT_IMPORTS") not in {"", "0", "false", "False", None}
 
 if _HAS_PACKAGE:
     try:  # pragma: no cover - prefer package relative import
@@ -35,11 +36,18 @@ if _HAS_PACKAGE:
 else:  # pragma: no cover - executed when run as a script
     from roi_results_db import ROIResultsDB  # type: ignore
 
-if _HAS_PACKAGE:
-    try:  # pragma: no cover - prefer package relative import
-        from .roi_tracker import ROITracker
-    except ImportError:  # pragma: no cover - allow execution as script
-        from roi_tracker import ROITracker  # type: ignore
+if _LIGHT_IMPORTS:
+    class ROITracker:  # type: ignore[override]
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def get(self, *_args: object, **_kwargs: object) -> float:
+            return 0.0
+
+        def std(self, *_args: object, **_kwargs: object) -> float:
+            return 0.0
+elif _HAS_PACKAGE:
+    from .roi_tracker import ROITracker
 else:  # pragma: no cover - executed when run as a script
     from roi_tracker import ROITracker  # type: ignore
 
@@ -91,20 +99,21 @@ if _HAS_PACKAGE:
 else:  # pragma: no cover - executed when run as a script
     import sandbox_runner  # type: ignore
 
-if _HAS_PACKAGE:
+if _LIGHT_IMPORTS:
+    WorkflowSynergyComparator = None  # type: ignore
+    MetaWorkflowPlanner = None  # type: ignore
+elif _HAS_PACKAGE:
     try:  # pragma: no cover - prefer package relative import
         from .workflow_synergy_comparator import WorkflowSynergyComparator
     except ImportError:  # pragma: no cover - allow execution as script
         from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
-else:  # pragma: no cover - executed when run as a script
-    from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
 
-if _HAS_PACKAGE:
     try:  # pragma: no cover - prefer package relative import
         from .meta_workflow_planner import MetaWorkflowPlanner
     except ImportError:  # pragma: no cover - allow execution as script
         from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
 else:  # pragma: no cover - executed when run as a script
+    from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
     from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
 
 if _HAS_PACKAGE:
