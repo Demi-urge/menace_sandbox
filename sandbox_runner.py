@@ -1850,12 +1850,27 @@ def _sandbox_main(
         workflow_id = section or "workflow"
         max_retries = max(0, int(os.getenv("SANDBOX_WORKFLOW_RETRY_MAX", "1")))
 
+        def _load_workflow_source() -> tuple[str, str | None]:
+            if not section:
+                return "", None
+            module_path = section.split(":", 1)[0]
+            source_path = str(ctx.repo / module_path)
+            try:
+                return load_modified_code(source_path), source_path
+            except Exception:
+                lines = (ctx.sections.get(module_path) or {}).get("__file__")
+                if lines:
+                    return "\n".join(lines), source_path
+            return "", source_path
+
         def _extract_error_payload(exc: BaseException) -> dict[str, Any]:
             error_text = "".join(
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
             )
+            source_code, source_path = _load_workflow_source()
             return {
-                "source_code": snippet or "",
+                "source_code": source_code,
+                "source_path": source_path,
                 "error": error_text,
                 "stderr": error_text,
                 "stdout": "",
