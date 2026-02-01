@@ -14,7 +14,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import yaml
 
 from menace_sandbox.mvp_brain import run_mvp_pipeline
-from menace_sandbox.stabilization import patch_validator
+from menace_sandbox import patch_generator
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
 
 
@@ -220,14 +220,9 @@ def _apply_patch(target_path: Path, modified_source: str) -> Path:
 
 
 def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
-    """Validate Menace patch text for Layer-2 self-debugging.
+    """Validate Menace patch text for Layer-2 self-debugging."""
 
-    Layer-1 treats patch_generator.validate_patch_text as the canonical Menace patch
-    validator; this Layer-2 wrapper uses stabilization.patch_validator for normalized
-    results.
-    """
-
-    validation = patch_validator.validate_patch_text(patch_text)
+    validation = patch_generator.validate_patch_text(patch_text)
     if validation.get("valid"):
         validation.setdefault("context", {})["format"] = "menace_patch"
     return validation

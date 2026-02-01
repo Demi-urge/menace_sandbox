@@ -8,7 +8,6 @@ from typing import Any, Mapping
 from error_ontology import classify_error
 import mvp_evaluator
 from menace_sandbox import patch_generator
-from menace_sandbox.stabilization import patch_validator
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
 from menace_sandbox.stabilization.roi import compute_roi_delta
 
@@ -44,13 +43,9 @@ def _error_payload(message: str, code: str) -> dict[str, Any]:
 
 
 def _validate_menace_patch_text(patch_text: str) -> dict[str, Any]:
-    """Validate Menace patch text with the stabilization validator.
+    """Validate Menace patch text with the Menace patch validator."""
 
-    Layer-1 uses patch_generator.validate_patch_text as the canonical Menace patch
-    validator. This wrapper normalizes results via stabilization.patch_validator.
-    """
-
-    validation = patch_validator.validate_patch_text(patch_text)
+    validation = patch_generator.validate_patch_text(patch_text)
     if validation.get("valid"):
         validation.setdefault("context", {})["format"] = "menace_patch"
     return validation
