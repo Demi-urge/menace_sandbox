@@ -11,8 +11,8 @@ from typing import Iterable, Mapping, Sequence
 from bot_discovery import _iter_bot_modules
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.mvp_brain import run_mvp_pipeline
+from menace_sandbox import patch_generator
 from menace_sandbox.sandbox_rule_builder import build_rules
-from menace_sandbox.stabilization import patch_validator
 from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
 from sandbox_runner import run_workflow_simulations
 from sandbox_settings import SandboxSettings
@@ -96,6 +96,18 @@ def _roi_delta_total(pipeline_result: Mapping[str, object]) -> float:
     return 0.0
 
 
+def _validate_menace_patch_text(patch_text: str) -> dict[str, object]:
+    try:
+        patch_generator.validate_patch_text(patch_text)
+    except Exception as exc:  # pragma: no cover - safety fallback
+        return {
+            "valid": False,
+            "flags": ["validation_exception"],
+            "context": {"error": str(exc)},
+        }
+    return {"valid": True, "flags": [], "context": {"format": "menace_patch"}}
+
+
 def _apply_pipeline_patch(
     pipeline_result: Mapping[str, object], *, source_path: Path
 ) -> bool:
@@ -105,7 +117,7 @@ def _apply_pipeline_patch(
     patch_text = str(pipeline_result.get("patch_text") or "")
     if not patch_text:
         return False
-    validation_result = patch_validator.validate_patch_text(patch_text)
+    validation_result = _validate_menace_patch_text(patch_text)
     if not validation_result.get("valid"):
         return False
     if _roi_delta_total(pipeline_result) <= 0:
