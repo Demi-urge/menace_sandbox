@@ -270,6 +270,9 @@ class StabilizationLoggingWrapper:
             error_category=error_category,
         )
 
+    def log_metrics(self, event: str, **fields: Any) -> None:
+        self._log(event, ok=None, **fields)
+
     def close(self) -> None:
         set_correlation_id(None)
 
@@ -278,6 +281,7 @@ class StabilizationLoggingWrapper:
             "event": event,
             "timestamp": _utc_timestamp(),
             "ok": ok,
+            "correlation_id": self.correlation_id,
         }
         if self.source:
             payload["source"] = self.source

@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import logging
 from pathlib import Path
 import tempfile
 import traceback
+import uuid
 from typing import Iterable, Mapping
 
 from menace_sandbox.context_builder_util import create_context_builder
 from menace_sandbox.mvp_brain import run_mvp_pipeline
 from menace_sandbox.sandbox_rule_builder import build_rules
-from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+from menace_sandbox.stabilization.logging_wrapper import (
+    StabilizationLoggingWrapper,
+    wrap_with_logging,
+)
 from menace_sandbox.stabilization.patch_validator import (
     PatchValidationLimits,
     validate_patch_text,
@@ -26,6 +31,7 @@ from menace_sandbox.workflow_run_state import (
 from sandbox_runner import run_workflow_simulations
 from sandbox_settings import SandboxSettings
 from task_handoff_bot import WorkflowDB
+from sandbox_results_logger import record_self_debug_metrics
 
 LOGGER = logging.getLogger(__name__)
 
@@ -158,12 +164,15 @@ def _handle_failure(
     *,
     repo_root: Path,
     prior_roi: float,
+    metrics_logger: StabilizationLoggingWrapper | None = None,
+    correlation_id: str | None = None,
 ) -> bool:
     error_text = "".join(
         traceback.format_exception(type(exc), exc, exc.__traceback__)
     )
     run_store = get_run_store()
     source, source_path = _extract_source_from_traceback(exc, repo_root=repo_root)
+    classification = classify_error(error_text)
     rules = build_rules(error_text, source=source)
     payload = {
         "source_code": source,
@@ -179,10 +188,36 @@ def _handle_failure(
         run_mvp_pipeline, {"log_event_prefix": "menace.self_debug.pipeline."}
     )
     pipeline_result = logged_pipeline(payload)
+    roi_delta_total = _roi_delta_total(pipeline_result)
+    roi_delta = pipeline_result.get("roi_delta") if isinstance(pipeline_result, Mapping) else None
     if source_path is None:
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=0,
+                classification={"status": classification},
+                patch_validity=None,
+                roi_delta=roi_delta,
+                roi_delta_total=roi_delta_total,
+                exit_reason="missing_source_path",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": "menace_workflow_self_debug",
+                    "attempts": 0,
+                    "classification": {"status": classification},
+                    "patch_validity": None,
+                    "roi_delta_total": roi_delta_total,
+                    "roi_delta": roi_delta,
+                    "exit_reason": "missing_source_path",
+                }
+            )
         run_store.record_run(
             workflow_id="self_debug",
-            error_classification=classify_error(error_text),
+            error_classification=classification,
             patch_attempts=0,
             roi_delta=0.0,
             retry_count=0,
@@ -196,14 +231,39 @@ def _handle_failure(
         _apply_pipeline_patch, {"log_event_prefix": "menace.self_debug.patch.apply."}
     )
     validation = logged_validate(str(pipeline_result.get("patch_text") or ""))
+    patch_validity = validation if isinstance(validation, Mapping) else None
     if not validation.get("valid"):
         LOGGER.warning(
             "mvp patch validation failed; halting self-debug patch",
             extra={"flags": validation.get("flags", [])},
         )
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=1,
+                classification={"status": classification},
+                patch_validity=patch_validity,
+                roi_delta=roi_delta,
+                roi_delta_total=roi_delta_total,
+                exit_reason="validation_failed",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": "menace_workflow_self_debug",
+                    "attempts": 1,
+                    "classification": {"status": classification},
+                    "patch_validity": patch_validity,
+                    "roi_delta_total": roi_delta_total,
+                    "roi_delta": roi_delta,
+                    "exit_reason": "validation_failed",
+                }
+            )
         run_store.record_run(
             workflow_id="self_debug",
-            error_classification=classify_error(error_text),
+            error_classification=classification,
             patch_attempts=1,
             roi_delta=0.0,
             retry_count=0,
@@ -215,18 +275,66 @@ def _handle_failure(
     applied = logged_apply(pipeline_result, source_path=source_path)
     if not applied:
         LOGGER.info("mvp patch apply halted or failed")
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=1,
+                classification={"status": classification},
+                patch_validity=patch_validity,
+                roi_delta=roi_delta,
+                roi_delta_total=roi_delta_total,
+                exit_reason="patch_not_applied",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": "menace_workflow_self_debug",
+                    "attempts": 1,
+                    "classification": {"status": classification},
+                    "patch_validity": patch_validity,
+                    "roi_delta_total": roi_delta_total,
+                    "roi_delta": roi_delta,
+                    "exit_reason": "patch_not_applied",
+                }
+            )
         run_store.record_run(
             workflow_id="self_debug",
-            error_classification=classify_error(error_text),
+            error_classification=classification,
             patch_attempts=1,
             roi_delta=0.0,
             retry_count=0,
             metadata={"reason": "patch_not_applied"},
         )
         return False
+    if metrics_logger:
+        metrics_logger.log_metrics(
+            "menace.self_debug.exit",
+            attempts=1,
+            classification={"status": classification},
+            patch_validity=patch_validity,
+            roi_delta=roi_delta,
+            roi_delta_total=roi_delta_total,
+            exit_reason="patch_applied",
+        )
+    if correlation_id:
+        record_self_debug_metrics(
+            {
+                "ts": datetime.utcnow().isoformat(),
+                "correlation_id": correlation_id,
+                "source": "menace_workflow_self_debug",
+                "attempts": 1,
+                "classification": {"status": classification},
+                "patch_validity": patch_validity,
+                "roi_delta_total": roi_delta_total,
+                "roi_delta": roi_delta,
+                "exit_reason": "patch_applied",
+            }
+        )
     run_store.record_run(
         workflow_id="self_debug",
-        error_classification=classify_error(error_text),
+        error_classification=classification,
         patch_attempts=1,
         roi_delta=0.0,
         retry_count=0,
@@ -241,10 +349,36 @@ def _run_self_debug(
     workflow_db_path: Path,
     source_menace_id: str,
     dynamic_workflows: bool,
+    metrics_logger: StabilizationLoggingWrapper | None = None,
+    correlation_id: str | None = None,
 ) -> int:
     modules = discover_workflow_modules(repo_root)
     if not modules:
         LOGGER.warning("no workflow modules discovered")
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=0,
+                classification=None,
+                patch_validity=None,
+                roi_delta=None,
+                roi_delta_total=None,
+                exit_reason="no_workflow_modules",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": "menace_workflow_self_debug",
+                    "attempts": 0,
+                    "classification": None,
+                    "patch_validity": None,
+                    "roi_delta_total": None,
+                    "roi_delta": None,
+                    "exit_reason": "no_workflow_modules",
+                }
+            )
         return 1
 
     workflow_db = WorkflowDB(workflow_db_path)
@@ -267,11 +401,41 @@ def _run_self_debug(
         )
     except Exception as exc:
         LOGGER.exception("workflow simulation failed; routing through mvp pipeline")
-        patched = _handle_failure(exc, repo_root=repo_root, prior_roi=0.0)
+        patched = _handle_failure(
+            exc,
+            repo_root=repo_root,
+            prior_roi=0.0,
+            metrics_logger=metrics_logger,
+            correlation_id=correlation_id,
+        )
         if patched:
             LOGGER.info("applied MVP patch for workflow failure")
             return 0
         return 1
+    if metrics_logger:
+        metrics_logger.log_metrics(
+            "menace.self_debug.exit",
+            attempts=0,
+            classification=None,
+            patch_validity=None,
+            roi_delta=None,
+            roi_delta_total=None,
+            exit_reason="workflow_run_success",
+        )
+    if correlation_id:
+        record_self_debug_metrics(
+            {
+                "ts": datetime.utcnow().isoformat(),
+                "correlation_id": correlation_id,
+                "source": "menace_workflow_self_debug",
+                "attempts": 0,
+                "classification": None,
+                "patch_validity": None,
+                "roi_delta_total": None,
+                "roi_delta": None,
+                "exit_reason": "workflow_run_success",
+            }
+        )
     return 0
 
 
@@ -305,12 +469,21 @@ def main(argv: Iterable[str] | None = None) -> int:
     if workflow_db is None:
         workflow_db = Path(SandboxSettings().workflows_db)
 
-    return _run_self_debug(
-        repo_root=args.repo_root.resolve(),
-        workflow_db_path=workflow_db,
-        source_menace_id=args.source_menace_id,
-        dynamic_workflows=args.dynamic_workflows,
+    correlation_id = f"workflow-self-debug-{uuid.uuid4()}"
+    metrics_logger = StabilizationLoggingWrapper.start(
+        correlation_id=correlation_id, source="menace_workflow_self_debug"
     )
+    try:
+        return _run_self_debug(
+            repo_root=args.repo_root.resolve(),
+            workflow_db_path=workflow_db,
+            source_menace_id=args.source_menace_id,
+            dynamic_workflows=args.dynamic_workflows,
+            metrics_logger=metrics_logger,
+            correlation_id=correlation_id,
+        )
+    finally:
+        metrics_logger.close()
 
 
 if __name__ == "__main__":

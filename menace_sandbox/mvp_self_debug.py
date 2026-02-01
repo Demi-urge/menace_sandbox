@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import uuid
 from typing import Any, Iterable, Mapping, Sequence
 
 import yaml
 
 from menace_sandbox.mvp_brain import run_mvp_pipeline
-from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+from menace_sandbox.stabilization.logging_wrapper import (
+    StabilizationLoggingWrapper,
+    wrap_with_logging,
+)
 from menace_sandbox.stabilization.patch_validator import validate_patch_text
+from sandbox_results_logger import record_self_debug_metrics
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,6 +45,9 @@ class LoopResult:
     final_run: RunResult
     roi_delta: Mapping[str, Any] | None
     patch_attempts: tuple[PatchAttempt, ...]
+    exit_reason: str
+    classification: Mapping[str, Any] | None
+    patch_validity: Mapping[str, Any] | None
 
 
 def _run_target(path: Path) -> RunResult:
@@ -98,6 +107,15 @@ def _classification_context(
             if isinstance(raw_rule_id, str):
                 matched_rule_id = raw_rule_id
     return status, matched_rule_id
+
+
+def _classification_metrics(
+    classification: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    status, matched_rule_id = _classification_context(classification)
+    if status is None and matched_rule_id is None:
+        return None
+    return {"status": status, "matched_rule_id": matched_rule_id}
 
 
 def _fallback_rule(
@@ -261,6 +279,7 @@ def _loop(
     *,
     max_attempts: int,
     task_rules: Sequence[Mapping[str, Any]] | None = None,
+    metrics_logger: StabilizationLoggingWrapper | None = None,
 ) -> LoopResult:
     logged_run = wrap_with_logging(_run_target, {"log_event_prefix": "mvp.run."})
     logged_pipeline = wrap_with_logging(
@@ -275,6 +294,9 @@ def _loop(
     current_path = target_path
     previous_roi: float | None = None
     roi_delta: Mapping[str, Any] | None = None
+    last_classification: dict[str, Any] | None = None
+    last_validation: Mapping[str, Any] | None = None
+    exit_reason = "unknown"
 
     for attempt in range(1, max_attempts + 1):
         attempts = attempt
@@ -304,11 +326,27 @@ def _loop(
                 if isinstance(pipeline_result, Mapping)
                 else None
             )
+            exit_reason = "success"
+            if metrics_logger:
+                metrics_logger.log_metrics(
+                    "mvp.self_debug.exit",
+                    attempts=attempts,
+                    classification=last_classification,
+                    patch_validity=last_validation,
+                    roi_delta=roi_delta,
+                    roi_delta_total=_roi_delta_total(pipeline_result)
+                    if isinstance(pipeline_result, Mapping)
+                    else None,
+                    exit_reason=exit_reason,
+                )
             return LoopResult(
                 attempts=attempts,
                 final_run=run_result,
                 roi_delta=roi_delta,
                 patch_attempts=tuple(patch_attempts),
+                exit_reason=exit_reason,
+                classification=last_classification,
+                patch_validity=last_validation,
             )
 
         source = current_path.read_text(encoding="utf-8")
@@ -326,6 +364,7 @@ def _loop(
             preflight_result = logged_pipeline(preflight_payload)
             if isinstance(preflight_result, Mapping):
                 classification = preflight_result.get("classification")
+        last_classification = _classification_metrics(classification)
 
         rules = _build_patch_rules(
             source,
@@ -370,15 +409,30 @@ def _loop(
                 if isinstance(pipeline_result, Mapping)
                 else None
             )
+            exit_reason = "no_patch_generated"
+            if metrics_logger:
+                metrics_logger.log_metrics(
+                    "mvp.self_debug.exit",
+                    attempts=attempts,
+                    classification=last_classification,
+                    patch_validity=last_validation,
+                    roi_delta=roi_delta,
+                    roi_delta_total=_roi_delta_total(patch_payload),
+                    exit_reason=exit_reason,
+                )
             return LoopResult(
                 attempts=attempts,
                 final_run=run_result,
                 roi_delta=roi_delta,
                 patch_attempts=tuple(patch_attempts),
+                exit_reason=exit_reason,
+                classification=last_classification,
+                patch_validity=last_validation,
             )
 
         diff_text = str(patch_text or "")
         validation = logged_validate(diff_text)
+        last_validation = validation if isinstance(validation, Mapping) else None
         patch_attempt = PatchAttempt(
             patch_payload=patch_payload,
             diff_text=diff_text,
@@ -386,6 +440,15 @@ def _loop(
             target_path=current_path,
         )
         patch_attempts.append(patch_attempt)
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "mvp.self_debug.attempt",
+                attempt=attempts,
+                classification=last_classification,
+                patch_validity=last_validation,
+                roi_delta=roi_delta,
+                roi_delta_total=_roi_delta_total(patch_payload),
+            )
 
         if not validation.get("valid", False):
             roi_delta = (
@@ -393,11 +456,25 @@ def _loop(
                 if isinstance(pipeline_result, Mapping)
                 else None
             )
+            exit_reason = "invalid_patch"
+            if metrics_logger:
+                metrics_logger.log_metrics(
+                    "mvp.self_debug.exit",
+                    attempts=attempts,
+                    classification=last_classification,
+                    patch_validity=last_validation,
+                    roi_delta=roi_delta,
+                    roi_delta_total=_roi_delta_total(patch_payload),
+                    exit_reason=exit_reason,
+                )
             return LoopResult(
                 attempts=attempts,
                 final_run=run_result,
                 roi_delta=roi_delta,
                 patch_attempts=tuple(patch_attempts),
+                exit_reason=exit_reason,
+                classification=last_classification,
+                patch_validity=last_validation,
             )
 
         if had_prior_roi and _roi_delta_total(patch_payload) <= 0:
@@ -406,11 +483,25 @@ def _loop(
                 if isinstance(pipeline_result, Mapping)
                 else None
             )
+            exit_reason = "non_positive_roi_delta"
+            if metrics_logger:
+                metrics_logger.log_metrics(
+                    "mvp.self_debug.exit",
+                    attempts=attempts,
+                    classification=last_classification,
+                    patch_validity=last_validation,
+                    roi_delta=roi_delta,
+                    roi_delta_total=_roi_delta_total(patch_payload),
+                    exit_reason=exit_reason,
+                )
             return LoopResult(
                 attempts=attempts,
                 final_run=run_result,
                 roi_delta=roi_delta,
                 patch_attempts=tuple(patch_attempts),
+                exit_reason=exit_reason,
+                classification=last_classification,
+                patch_validity=last_validation,
             )
 
         if attempt == max_attempts:
@@ -419,11 +510,25 @@ def _loop(
                 if isinstance(pipeline_result, Mapping)
                 else None
             )
+            exit_reason = "max_attempts_reached"
+            if metrics_logger:
+                metrics_logger.log_metrics(
+                    "mvp.self_debug.exit",
+                    attempts=attempts,
+                    classification=last_classification,
+                    patch_validity=last_validation,
+                    roi_delta=roi_delta,
+                    roi_delta_total=_roi_delta_total(patch_payload),
+                    exit_reason=exit_reason,
+                )
             return LoopResult(
                 attempts=attempts,
                 final_run=run_result,
                 roi_delta=roi_delta,
                 patch_attempts=tuple(patch_attempts),
+                exit_reason=exit_reason,
+                classification=last_classification,
+                patch_validity=last_validation,
             )
 
         temp_dir = Path(tempfile.mkdtemp(prefix="mvp_self_debug_"))
@@ -436,6 +541,9 @@ def _loop(
         final_run=logged_run(current_path),
         roi_delta=roi_delta,
         patch_attempts=tuple(patch_attempts),
+        exit_reason=exit_reason,
+        classification=last_classification,
+        patch_validity=last_validation,
     )
 
 
@@ -478,10 +586,31 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     target_path = Path(args.target)
     task_rules = _load_task_rules(args.task_input)
-    result = _loop(
-        target_path,
-        max_attempts=max(1, args.max_attempts),
-        task_rules=task_rules,
+    correlation_id = f"mvp-self-debug-{uuid.uuid4()}"
+    metrics_logger = StabilizationLoggingWrapper.start(
+        correlation_id=correlation_id, source="mvp_self_debug"
+    )
+    try:
+        result = _loop(
+            target_path,
+            max_attempts=max(1, args.max_attempts),
+            task_rules=task_rules,
+            metrics_logger=metrics_logger,
+        )
+    finally:
+        metrics_logger.close()
+    record_self_debug_metrics(
+        {
+            "ts": datetime.utcnow().isoformat(),
+            "correlation_id": correlation_id,
+            "source": "mvp_self_debug",
+            "attempts": result.attempts,
+            "classification": result.classification,
+            "patch_validity": result.patch_validity,
+            "roi_delta_total": _roi_delta_total(result.roi_delta or {}),
+            "roi_delta": result.roi_delta,
+            "exit_reason": result.exit_reason,
+        }
     )
     print(_format_summary(result))
     return 0
