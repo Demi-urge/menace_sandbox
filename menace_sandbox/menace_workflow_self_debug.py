@@ -119,8 +119,16 @@ def _apply_pipeline_patch(
         return False
     validation_result = _validate_menace_patch_text(patch_text)
     if not validation_result.get("valid"):
+        LOGGER.warning(
+            "mvp patch failed menace validation",
+            extra={"source_path": str(source_path)},
+        )
         return False
     if _roi_delta_total(pipeline_result) <= 0:
+        LOGGER.info(
+            "mvp patch rejected due to non-positive roi delta",
+            extra={"source_path": str(source_path)},
+        )
         return False
     modified_source = pipeline_result.get("modified_source") or pipeline_result.get(
         "updated_source"
@@ -158,7 +166,25 @@ def _handle_failure(
     pipeline_result = logged_pipeline(payload)
     if source_path is None:
         return False
-    return _apply_pipeline_patch(pipeline_result, source_path=source_path)
+    logged_validate = wrap_with_logging(
+        _validate_menace_patch_text, {"log_event_prefix": "menace.self_debug.patch.validate."}
+    )
+    logged_apply = wrap_with_logging(
+        _apply_pipeline_patch, {"log_event_prefix": "menace.self_debug.patch.apply."}
+    )
+    validation = logged_validate(str(pipeline_result.get("patch_text") or ""))
+    if not validation.get("valid"):
+        LOGGER.warning(
+            "mvp patch validation failed; halting self-debug patch",
+            extra={"flags": validation.get("flags", [])},
+        )
+        return False
+    pipeline_result = dict(pipeline_result)
+    pipeline_result["validation"] = validation
+    applied = logged_apply(pipeline_result, source_path=source_path)
+    if not applied:
+        LOGGER.info("mvp patch apply halted or failed")
+    return applied
 
 
 def _run_self_debug(
@@ -181,7 +207,11 @@ def _run_self_debug(
 
     context_builder = create_context_builder(bootstrap_safe=True)
     try:
-        run_workflow_simulations(
+        logged_run = wrap_with_logging(
+            run_workflow_simulations,
+            {"log_event_prefix": "menace.self_debug.run."},
+        )
+        logged_run(
             workflows_db=str(workflow_db_path),
             env_presets=None,
             dynamic_workflows=dynamic_workflows,

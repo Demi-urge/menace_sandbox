@@ -1871,6 +1871,11 @@ def _sandbox_main(
             from menace_sandbox.sandbox_rule_builder import build_rules
 
             rules = build_rules(error_text, source=source_code)
+            prior_roi = (
+                tracker.roi_history[-1]
+                if getattr(tracker, "roi_history", None)
+                else 0.0
+            )
             return {
                 "source_code": source_code,
                 "source_path": source_path,
@@ -1879,10 +1884,32 @@ def _sandbox_main(
                 "stdout": "",
                 "returncode": 1,
                 "rules": rules,
-                "prior_roi": tracker.roi_history[-1]
-                if getattr(tracker, "roi_history", None)
-                else None,
+                "prior_roi": prior_roi,
             }
+
+        def _roi_delta_total(pipeline_result: Mapping[str, Any]) -> float:
+            roi_delta = pipeline_result.get("roi_delta")
+            if isinstance(roi_delta, Mapping):
+                data = roi_delta.get("data")
+                if isinstance(data, Mapping):
+                    try:
+                        return float(data.get("total", 0.0))
+                    except (TypeError, ValueError):
+                        return 0.0
+            return 0.0
+
+        def _validate_pipeline_patch(patch_text: str) -> dict[str, Any]:
+            from menace_sandbox import patch_generator
+
+            try:
+                patch_generator.validate_patch_text(patch_text)
+            except Exception as exc:
+                return {
+                    "valid": False,
+                    "flags": ["validation_exception"],
+                    "context": {"error": str(exc)},
+                }
+            return {"valid": True, "flags": [], "context": {"format": "menace_patch"}}
 
         def _allow_retry(
             pipeline_result: Mapping[str, Any],
@@ -1909,11 +1936,28 @@ def _sandbox_main(
         def _apply_pipeline_patch(
             pipeline_result: Mapping[str, Any],
             *,
+            validation: Mapping[str, Any],
             source_path: str,
             module_path: str | None,
         ) -> bool:
-            validation = pipeline_result.get("validation")
-            if not isinstance(validation, Mapping) or not validation.get("valid"):
+            if not validation.get("valid"):
+                logger.info(
+                    "workflow patch rejected due to invalid validation",
+                    extra=log_record(
+                        workflow_id=workflow_id,
+                        module=module_path,
+                        flags=list(validation.get("flags", [])),
+                    ),
+                )
+                return False
+            if _roi_delta_total(pipeline_result) <= 0:
+                logger.info(
+                    "workflow patch rejected due to non-positive roi delta",
+                    extra=log_record(
+                        workflow_id=workflow_id,
+                        module=module_path,
+                    ),
+                )
                 return False
             patch_text = str(pipeline_result.get("patch_text") or "")
             modified_source = str(
@@ -1923,24 +1967,7 @@ def _sandbox_main(
             )
             if not modified_source:
                 return False
-            try:
-                from menace_sandbox import patch_generator
-                from menace_sandbox.mvp_self_debug import _apply_patch as apply_patch
-            except Exception:
-                logger.exception("failed to load patch utilities")
-                return False
-            try:
-                patch_generator.validate_patch_text(patch_text)
-            except Exception as exc:
-                logger.warning(
-                    "workflow patch validation failed",
-                    extra=log_record(
-                        workflow_id=workflow_id,
-                        module=module_path,
-                        error=str(exc),
-                    ),
-                )
-                return False
+            from menace_sandbox.mvp_self_debug import _apply_patch as apply_patch
             try:
                 apply_patch(Path(source_path), modified_source)
             except Exception:
@@ -2025,6 +2052,14 @@ def _sandbox_main(
                 run_mvp_pipeline,
                 {"log_event_prefix": "sandbox.workflow.failure.pipeline."},
             )
+            logged_validate = wrap_with_logging(
+                _validate_pipeline_patch,
+                {"log_event_prefix": "sandbox.workflow.patch.validate."},
+            )
+            logged_apply = wrap_with_logging(
+                _apply_pipeline_patch,
+                {"log_event_prefix": "sandbox.workflow.patch.apply."},
+            )
 
             attempts = max_retries + 1
             for attempt_index in range(1, attempts + 1):
@@ -2047,9 +2082,16 @@ def _sandbox_main(
                     module_path = section.split(":")[0] if section else None
                     _source_text, source_path = _load_workflow_source()
                     patch_applied = False
+                    validation_result: Mapping[str, Any] = {"valid": False}
                     if source_path:
-                        patch_applied = _apply_pipeline_patch(
+                        validation_result = logged_validate(
+                            str(pipeline_result.get("patch_text") or "")
+                        )
+                        pipeline_result = dict(pipeline_result)
+                        pipeline_result["validation"] = validation_result
+                        patch_applied = logged_apply(
                             pipeline_result,
+                            validation=validation_result,
                             source_path=source_path,
                             module_path=module_path,
                         )
@@ -2455,7 +2497,13 @@ def _sandbox_main(
 
     if not getattr(args, "no_workflow_run", False):
         try:
-            run_workflow_simulations(
+            from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+
+            logged_run = wrap_with_logging(
+                run_workflow_simulations,
+                {"log_event_prefix": "sandbox.workflow.run."},
+            )
+            logged_run(
                 getattr(args, "workflow_db", "workflows.db"),
                 SANDBOX_ENV_PRESETS,
                 tracker=ctx.tracker,
@@ -2468,6 +2516,31 @@ def _sandbox_main(
             )
         except Exception:
             logger.exception("workflow simulations failed")
+            from menace_sandbox.mvp_brain import run_mvp_pipeline
+            from menace_sandbox.sandbox_rule_builder import build_rules
+            from menace_sandbox.stabilization.logging_wrapper import wrap_with_logging
+
+            error_text = traceback.format_exc()
+            payload = {
+                "source_code": "",
+                "source_path": None,
+                "error": error_text,
+                "stderr": error_text,
+                "stdout": "",
+                "returncode": 1,
+                "rules": build_rules(error_text, source=""),
+                "prior_roi": ctx.tracker.roi_history[-1]
+                if ctx.tracker.roi_history
+                else 0.0,
+            }
+            logged_pipeline = wrap_with_logging(
+                run_mvp_pipeline,
+                {"log_event_prefix": "sandbox.workflow.failure.pipeline."},
+            )
+            try:
+                logged_pipeline(payload)
+            except Exception:
+                logger.exception("workflow failure pipeline crashed")
 
     ranking = ctx.tracker.rankings()
     e_thr = ctx.settings.entropy_plateau_threshold or ctx.tracker.diminishing()
