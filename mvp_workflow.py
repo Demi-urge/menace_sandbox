@@ -4,6 +4,11 @@ This module implements an end-to-end pipeline for MVP tasks:
 generation (build deterministic Python code) → execution (run the code in a
 controlled subprocess) → evaluation (score execution output for ROI).
 
+Note:
+    This module is a standalone/legacy MVP task helper. The Layer-2 self-debug
+    loop uses menace_sandbox.mvp_brain.run_mvp_pipeline as the canonical entry
+    point, so mvp_workflow.execute_task is not part of that loop.
+
 Constraints:
     - Standard-library-only implementation.
     - No recursion.

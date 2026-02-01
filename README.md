@@ -4,6 +4,10 @@ See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required envi
 
 Entry points that import Hugging Face tokenizers or `sentence_transformers` must set `TOKENIZERS_PARALLELISM=false` and select the `spawn` multiprocessing start method before those imports. This prevents tokenizer-initialised parents from being forked, which can deadlock or warn in multiprocessing workflows.
 
+## MVP workflow entrypoints
+
+Layer-2 self-debugging uses `menace_sandbox.mvp_brain.run_mvp_pipeline` as the canonical pipeline. The `mvp_workflow.execute_task` helper remains available for standalone MVP task execution but is not part of the Layer-2 self-debug loop.
+
 ## Windows sandbox launcher GUI
 
 `python -m tools.windows_sandbox_launcher_gui` provides a Tk-based control panel for preparing and launching the Windows sandbox workflow. Ensure you are running Python 3.11+ with Tkinter support and that Git and network access are available so the preflight steps can clone/update dependencies. Running the GUI from an activated virtual environment that already has `menace-sandbox` installed in editable mode keeps the preflight faster, but the tool will install or update dependencies on demand when needed.
