@@ -25,7 +25,9 @@ from menace_sandbox.stabilization.patch_validator import (
     PatchValidationLimits,
     validate_patch_text,
 )
+from menace_sandbox.stabilization.roi import extract_roi_delta_total
 from sandbox_results_logger import record_self_debug_metrics
+from self_coding_policy import evaluate_patch_promotion, get_patch_promotion_policy
 from self_improvement.workflow_discovery import discover_workflow_specs
 from task_handoff_bot import WorkflowDB
 from workflow_evolution_manager import _build_callable
@@ -66,14 +68,18 @@ def _extract_source_from_traceback(
 
 def _roi_delta_total(pipeline_result: Mapping[str, object]) -> float:
     roi_delta = pipeline_result.get("roi_delta")
-    if isinstance(roi_delta, Mapping):
-        data = roi_delta.get("data")
-        if isinstance(data, Mapping):
-            try:
-                return float(data.get("total", 0.0))
-            except (TypeError, ValueError):
-                return 0.0
-    return 0.0
+    total = extract_roi_delta_total(roi_delta if isinstance(roi_delta, Mapping) else None)
+    return float(total) if total is not None else 0.0
+
+
+def _format_promotion_reasons(reasons: Iterable[str]) -> list[str]:
+    mapping = {
+        "roi_delta_invalid": "ROI delta ≤ 0",
+        "roi_delta_not_positive": "ROI delta ≤ 0",
+        "invalid_patch": "invalid patch",
+        "unsafe_target": "unsafe file target",
+    }
+    return [mapping.get(reason, reason) for reason in reasons]
 
 
 def _validate_menace_patch_text(
@@ -112,6 +118,7 @@ def _apply_pipeline_patch(
     pipeline_result: Mapping[str, object],
     *,
     source_path: Path,
+    repo_root: Path,
     allow_new_files: bool = False,
     allow_deletes: bool = False,
 ) -> bool:
@@ -129,13 +136,33 @@ def _apply_pipeline_patch(
     if not validation_result.get("valid"):
         LOGGER.warning(
             "mvp patch failed menace validation",
-            extra={"source_path": str(source_path)},
+            extra={
+                "source_path": str(source_path),
+                "rejection_reasons": ["invalid patch"],
+            },
         )
         return False
-    if _roi_delta_total(pipeline_result) <= 0:
+    policy = get_patch_promotion_policy(repo_root=repo_root)
+    decision = evaluate_patch_promotion(
+        policy=policy,
+        roi_delta=pipeline_result.get("roi_delta")
+        if isinstance(pipeline_result.get("roi_delta"), Mapping)
+        else None,
+        patch_validation=validation_result,
+        source_path=source_path,
+    )
+    if not decision.allowed:
         LOGGER.info(
-            "mvp patch rejected due to non-positive roi delta",
-            extra={"source_path": str(source_path)},
+            "mvp patch promotion rejected",
+            extra={
+                "source_path": str(source_path),
+                "rejection_reasons": _format_promotion_reasons(decision.reasons),
+                "roi_delta_total": (
+                    float(decision.roi_delta_total)
+                    if decision.roi_delta_total is not None
+                    else None
+                ),
+            },
         )
         return False
     modified_source = pipeline_result.get("modified_source") or pipeline_result.get(
@@ -235,7 +262,10 @@ def _handle_failure(
     if not validation.get("valid"):
         LOGGER.warning(
             "mvp patch validation failed; halting self-debug patch",
-            extra={"flags": validation.get("flags", [])},
+            extra={
+                "flags": validation.get("flags", []),
+                "rejection_reasons": ["invalid patch"],
+            },
         )
         if metrics_logger:
             metrics_logger.log_metrics(
@@ -265,7 +295,7 @@ def _handle_failure(
         return False
     pipeline_result = dict(pipeline_result)
     pipeline_result["validation"] = validation
-    applied = logged_apply(pipeline_result, source_path=source_path)
+    applied = logged_apply(pipeline_result, source_path=source_path, repo_root=repo_root)
     if not applied:
         LOGGER.info("mvp patch apply halted or failed")
         if metrics_logger:
