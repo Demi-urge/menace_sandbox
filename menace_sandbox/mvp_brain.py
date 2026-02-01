@@ -116,6 +116,9 @@ def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
         patch_errors = list(patch_payload.get("errors") or [])
 
     patch_text = _coerce_text(patch_data.get("patch_text"))
+    modified_source = _coerce_text(
+        patch_data.get("modified_source") or patch_data.get("updated_source")
+    )
     if patch_text:
         validation_payload = logged_validate(patch_text)
     else:
@@ -159,4 +162,5 @@ def run_mvp_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
         "roi_score": roi_score,
         "roi_delta": roi_delta,
         "patch_text": patch_text,
+        "modified_source": modified_source,
     }

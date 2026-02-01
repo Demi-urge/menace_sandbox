@@ -1884,7 +1884,13 @@ def _sandbox_main(
                 else None,
             }
 
-        def _allow_retry(pipeline_result: Mapping[str, Any]) -> bool:
+        def _allow_retry(
+            pipeline_result: Mapping[str, Any],
+            *,
+            patch_applied: bool,
+        ) -> bool:
+            if not patch_applied:
+                return False
             validation = pipeline_result.get("validation")
             valid_patch = bool(
                 validation.get("valid") if isinstance(validation, Mapping) else False
@@ -1899,6 +1905,78 @@ def _sandbox_main(
                     except (TypeError, ValueError):
                         delta_total = 0.0
             return valid_patch and delta_total > 0
+
+        def _apply_pipeline_patch(
+            pipeline_result: Mapping[str, Any],
+            *,
+            source_path: str,
+            module_path: str | None,
+        ) -> bool:
+            validation = pipeline_result.get("validation")
+            if not isinstance(validation, Mapping) or not validation.get("valid"):
+                return False
+            patch_text = str(pipeline_result.get("patch_text") or "")
+            modified_source = str(
+                pipeline_result.get("modified_source")
+                or pipeline_result.get("updated_source")
+                or ""
+            )
+            if not modified_source:
+                return False
+            try:
+                from menace_sandbox import patch_generator
+                from menace_sandbox.mvp_self_debug import _apply_patch as apply_patch
+            except Exception:
+                logger.exception("failed to load patch utilities")
+                return False
+            try:
+                patch_generator.validate_patch_text(patch_text)
+            except Exception as exc:
+                logger.warning(
+                    "workflow patch validation failed",
+                    extra=log_record(
+                        workflow_id=workflow_id,
+                        module=module_path,
+                        error=str(exc),
+                    ),
+                )
+                return False
+            try:
+                apply_patch(Path(source_path), modified_source)
+            except Exception:
+                logger.exception(
+                    "failed to apply workflow patch",
+                    extra=log_record(
+                        workflow_id=workflow_id,
+                        module=module_path,
+                    ),
+                )
+                return False
+            if module_path:
+                try:
+                    ctx.sections.setdefault(module_path, {})["__file__"] = (
+                        modified_source.splitlines()
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to refresh workflow section cache",
+                        extra=log_record(
+                            workflow_id=workflow_id,
+                            module=module_path,
+                        ),
+                    )
+            patch_metadata = pipeline_result.get("patch_metadata")
+            logger.info(
+                "applied workflow patch",
+                extra=log_record(
+                    workflow_id=workflow_id,
+                    module=module_path,
+                    patch_metadata=patch_metadata if isinstance(patch_metadata, Mapping) else {},
+                    patch_text_length=len(patch_text),
+                    modified_source_length=len(modified_source),
+                ),
+            )
+            return True
 
         def _record_metrics() -> None:
             if sandbox_cpu_percent is None or sandbox_memory_mb is None:
@@ -1966,7 +2044,19 @@ def _sandbox_main(
                         pipeline_result = logged_pipeline(_extract_error_payload(exc))
                     except Exception:
                         logger.exception("workflow failure pipeline crashed")
-                    allow_retry = _allow_retry(pipeline_result)
+                    module_path = section.split(":")[0] if section else None
+                    _source_text, source_path = _load_workflow_source()
+                    patch_applied = False
+                    if source_path:
+                        patch_applied = _apply_pipeline_patch(
+                            pipeline_result,
+                            source_path=source_path,
+                            module_path=module_path,
+                        )
+                    allow_retry = _allow_retry(
+                        pipeline_result,
+                        patch_applied=patch_applied,
+                    )
                     logger.info(
                         "evaluated workflow retry gate",
                         extra=log_record(
@@ -1974,6 +2064,7 @@ def _sandbox_main(
                             attempt=attempt_index,
                             max_attempts=attempts,
                             allow_retry=allow_retry,
+                            patch_applied=patch_applied,
                             validation_flags=list(
                                 (pipeline_result.get("validation") or {}).get(
                                     "flags", []
