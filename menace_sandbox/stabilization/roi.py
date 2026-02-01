@@ -42,11 +42,19 @@ Empty inputs return ``status: "ok"`` with ``data.deltas`` as ``{}`` and
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from decimal import Decimal
 from numbers import Number
 from typing import Mapping
 
 from menace_sandbox.stabilization.errors import RoiDeltaValidationError
+
+
+@dataclass(frozen=True)
+class RoiDeltaPolicyResult:
+    ok: bool
+    total: Decimal | None
+    reason: str | None
 
 
 def _is_valid_metric_value(value: Number | Decimal) -> bool:
@@ -71,6 +79,32 @@ def _to_decimal(value: Number | Decimal) -> Decimal:
     if isinstance(value, int) and not isinstance(value, bool):
         return Decimal(value)
     return Decimal(str(value))
+
+
+def extract_roi_delta_total(roi_delta: Mapping[str, object] | None) -> Decimal | None:
+    if not isinstance(roi_delta, Mapping):
+        return None
+    data = roi_delta.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    total = data.get("total")
+    if not _is_valid_metric_value(total):
+        return None
+    return _to_decimal(total)
+
+
+def evaluate_roi_delta_policy(
+    roi_delta: Mapping[str, object] | None,
+    *,
+    min_delta: Decimal | float = Decimal("0"),
+) -> RoiDeltaPolicyResult:
+    threshold = _to_decimal(min_delta)
+    total = extract_roi_delta_total(roi_delta)
+    if total is None:
+        return RoiDeltaPolicyResult(ok=False, total=None, reason="roi_delta_invalid")
+    if total <= threshold:
+        return RoiDeltaPolicyResult(ok=False, total=total, reason="roi_delta_not_positive")
+    return RoiDeltaPolicyResult(ok=True, total=total, reason=None)
 
 
 def _metric_value_error(
@@ -250,4 +284,7 @@ def compute_roi_delta(
 
 __all__ = [
     "compute_roi_delta",
+    "evaluate_roi_delta_policy",
+    "extract_roi_delta_total",
+    "RoiDeltaPolicyResult",
 ]

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
-from typing import FrozenSet, Iterable, Tuple
+from pathlib import Path
+from typing import FrozenSet, Iterable, Mapping, Tuple
 import logging
 import os
+
+from menace_sandbox.stabilization.roi import evaluate_roi_delta_policy
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,34 @@ def _parse_allowlist(raw: str | None) -> FrozenSet[str] | None:
     if not names or "*" in names:
         return None
     return names
+
+
+def _parse_decimal(raw: str | None, default: Decimal) -> Decimal:
+    if raw is None:
+        return default
+    try:
+        return Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return default
+
+
+def _parse_paths(raw: str | None) -> Tuple[Path, ...]:
+    if raw is None:
+        return tuple()
+    paths = []
+    for item in raw.split(","):
+        value = item.strip()
+        if value:
+            paths.append(Path(value).expanduser())
+    return tuple(paths)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -107,3 +139,66 @@ def log_policy_state(*, bots: Iterable[str] | None = None) -> None:
         if name in summary.enabled:
             continue
         logger.info("self-coding disabled for %s", name)
+
+
+@dataclass(frozen=True)
+class PatchPromotionPolicy:
+    """Policy describing when self-debug patches can be promoted."""
+
+    min_roi_delta: Decimal
+    safe_roots: Tuple[Path, ...]
+    deny_roots: Tuple[Path, ...]
+
+    def is_safe_target(self, path: Path) -> bool:
+        resolved = path.resolve()
+        if not self.safe_roots:
+            return False
+        if not any(_is_relative_to(resolved, root) for root in self.safe_roots):
+            return False
+        if any(_is_relative_to(resolved, root) for root in self.deny_roots):
+            return False
+        return True
+
+
+@dataclass(frozen=True)
+class PatchPromotionDecision:
+    allowed: bool
+    reasons: Tuple[str, ...]
+    roi_delta_total: Decimal | None
+
+
+def get_patch_promotion_policy(repo_root: Path | None = None) -> PatchPromotionPolicy:
+    min_delta = _parse_decimal(
+        os.environ.get("MENACE_SELF_CODING_MIN_ROI_DELTA"), Decimal("0")
+    )
+    safe_roots = _parse_paths(os.environ.get("MENACE_SELF_CODING_SAFE_PATHS"))
+    deny_roots = _parse_paths(os.environ.get("MENACE_SELF_CODING_UNSAFE_PATHS"))
+    if not safe_roots and repo_root is not None:
+        safe_roots = (repo_root.resolve(),)
+    return PatchPromotionPolicy(
+        min_roi_delta=min_delta,
+        safe_roots=safe_roots,
+        deny_roots=deny_roots,
+    )
+
+
+def evaluate_patch_promotion(
+    *,
+    policy: PatchPromotionPolicy,
+    roi_delta: Mapping[str, object] | None,
+    patch_validation: Mapping[str, object] | None,
+    source_path: Path,
+) -> PatchPromotionDecision:
+    reasons: list[str] = []
+    roi_result = evaluate_roi_delta_policy(roi_delta, min_delta=policy.min_roi_delta)
+    if not roi_result.ok:
+        reasons.append(roi_result.reason or "roi_delta_invalid")
+    if not patch_validation or not patch_validation.get("valid"):
+        reasons.append("invalid_patch")
+    if not policy.is_safe_target(source_path):
+        reasons.append("unsafe_target")
+    return PatchPromotionDecision(
+        allowed=not reasons,
+        reasons=tuple(reasons),
+        roi_delta_total=roi_result.total,
+    )
