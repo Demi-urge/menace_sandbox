@@ -11,12 +11,127 @@ variables or a ``SandboxSettings`` instance.
 from __future__ import annotations
 
 import os
+import sys
 
 # Must be set before HF/tokenizers imports and before multiprocessing forks.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "mvp-workflow-smoke":
+    import argparse
+    import importlib.util
+    from pathlib import Path
+    import subprocess
+
+    from menace_sandbox.mvp_brain import run_mvp_pipeline
+    from menace_sandbox.mvp_self_debug import _apply_patch
+    from menace_sandbox.sandbox_rule_builder import build_rules
+    from menace_sandbox import patch_generator
+
+    def _parse_step(step: str) -> tuple[str, str | None]:
+        if ":" in step:
+            mod, func = step.split(":", 1)
+            return mod, func
+        if importlib.util.find_spec(step) is not None:
+            return step, None
+        if "." in step:
+            mod, func = step.rsplit(".", 1)
+            return mod, func
+        if "/" in step:
+            return step.replace("/", "."), None
+        raise SystemExit(f"Workflow step '{step}' must include a module path")
+
+    def _validate_patch(patch_text: str) -> dict[str, object]:
+        try:
+            patch_generator.validate_patch_text(patch_text)
+        except Exception as exc:
+            return {"valid": False, "flags": ["validation_exception"], "context": {"error": str(exc)}}
+        lines = patch_text.splitlines()
+        change_count = 0
+        if len(lines) > 1 and lines[1].startswith("change-count:"):
+            try:
+                change_count = int(lines[1].split(":", 1)[1].strip())
+            except (TypeError, ValueError):
+                change_count = 0
+        if change_count <= 0:
+            return {"valid": False, "flags": ["no_changes"], "context": {"change_count": change_count}}
+        return {"valid": True, "flags": [], "context": {"format": "menace_patch", "change_count": change_count}}
+
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("cmd")
+    parser.add_argument(
+        "--modules",
+        default="sandbox_mvp_workflow:run,sandbox_mvp_noop_workflow:run",
+        help="comma-separated workflow module steps to run",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=2,
+        help="maximum MVP loop attempts per module",
+    )
+    _args, _ = parser.parse_known_args(sys.argv[1:])
+    steps = [s.strip() for s in str(_args.modules).split(",") if s.strip()]
+    max_attempts = max(1, int(_args.max_attempts))
+    for step in steps:
+        mod, func = _parse_step(step)
+        spec = importlib.util.find_spec(mod)
+        if spec is None or not spec.origin:
+            raise SystemExit(f"Module '{mod}' for workflow step '{step}' not found")
+        source_path = Path(spec.origin)
+        original_source = source_path.read_text(encoding="utf-8")
+        prior_roi: float | None = None
+        try:
+            for attempt in range(1, max_attempts + 1):
+                cmd = [
+                    sys.executable,
+                    "-c",
+                    f"from {mod} import {func or 'main'} as _m; _m()",
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                source_text = source_path.read_text(encoding="utf-8")
+                rules = build_rules(result.stderr or result.stdout, source=source_text)
+                had_prior_roi = prior_roi is not None
+                payload = {
+                    "source": source_text,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                    "rules": rules,
+                }
+                if prior_roi is not None:
+                    payload["prior_roi"] = prior_roi
+                pipeline_result = run_mvp_pipeline(payload)
+                roi_score = pipeline_result.get("roi_score")
+                if prior_roi is None and isinstance(roi_score, (int, float)):
+                    prior_roi = float(roi_score)
+                if result.returncode == 0:
+                    print(f"{step}: ok after {attempt} attempt(s)")
+                    break
+                patch_text = str(pipeline_result.get("patch_text") or "")
+                modified_source = str(pipeline_result.get("modified_source") or "")
+                validation = _validate_patch(patch_text)
+                if not validation.get("valid"):
+                    print(f"{step}: patch rejected (flags={validation.get('flags')})")
+                    break
+                roi_delta = pipeline_result.get("roi_delta", {})
+                delta_total = 0.0
+                if isinstance(roi_delta, dict):
+                    data = roi_delta.get("data")
+                    if isinstance(data, dict):
+                        try:
+                            delta_total = float(data.get("total", 0.0))
+                        except (TypeError, ValueError):
+                            delta_total = 0.0
+                if (had_prior_roi and delta_total <= 0) or not modified_source:
+                    print(f"{step}: patch rejected (roi_delta={delta_total})")
+                    break
+                _apply_patch(source_path, modified_source)
+                print(f"{step}: patch applied (attempt {attempt})")
+        finally:
+            source_path.write_text(original_source, encoding="utf-8")
+    raise SystemExit(0)
+
 import signal
-import sys
 import threading
 
 import importlib
@@ -29,13 +144,21 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, Mapping
 
 from coding_bot_interface import (
+    _BootstrapDependencyBroker,
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
     get_active_bootstrap_pipeline,
     get_prepare_pipeline_coordinator,
 )
 
-_DEPENDENCY_BROKER = _bootstrap_dependency_broker()
+try:
+    _DEPENDENCY_BROKER = _bootstrap_dependency_broker()
+except Exception as exc:  # pragma: no cover - fallback for missing optional deps
+    logging.getLogger(__name__).warning(
+        "bootstrap dependency broker init failed; using fallback",
+        extra={"error": str(exc)},
+    )
+    _DEPENDENCY_BROKER = _BootstrapDependencyBroker()
 _ACTIVE_PIPELINE, _ACTIVE_MANAGER = get_active_bootstrap_pipeline()
 (
     _BOOTSTRAP_PLACEHOLDER_PIPELINE,
@@ -1569,7 +1692,15 @@ def _sandbox_init(
     brainstorm_retries = int(env.get("SANDBOX_BRAINSTORM_RETRIES", "3"))
     patch_retries = int(env.get("SANDBOX_PATCH_RETRIES", "3"))
 
-    sections = scan_repo_sections(str(repo))
+    module_filter = os.getenv("SANDBOX_SECTION_MODULES")
+    filtered_modules = None
+    if module_filter:
+        filtered_modules = [
+            entry.strip()
+            for entry in module_filter.split(",")
+            if entry.strip()
+        ]
+    sections = scan_repo_sections(str(repo), modules=filtered_modules)
     all_section_names: set[str] = set()
     for mod, sec_map in sections.items():
         for name in sec_map:
@@ -1909,7 +2040,24 @@ def _sandbox_main(
                     "flags": ["validation_exception"],
                     "context": {"error": str(exc)},
                 }
-            return {"valid": True, "flags": [], "context": {"format": "menace_patch"}}
+            lines = patch_text.splitlines()
+            change_count = 0
+            if len(lines) > 1 and lines[1].startswith("change-count:"):
+                try:
+                    change_count = int(lines[1].split(":", 1)[1].strip())
+                except (TypeError, ValueError):
+                    change_count = 0
+            if change_count <= 0:
+                return {
+                    "valid": False,
+                    "flags": ["no_changes"],
+                    "context": {"change_count": change_count},
+                }
+            return {
+                "valid": True,
+                "flags": [],
+                "context": {"format": "menace_patch", "change_count": change_count},
+            }
 
         def _allow_retry(
             pipeline_result: Mapping[str, Any],

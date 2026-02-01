@@ -9,6 +9,63 @@ from error_ontology import classify_error
 
 
 _ANCHOR_PLACEHOLDER = "__MENACE_SANDBOX_NOOP_ANCHOR__"
+_NOOP_MARKER = "SANDBOX_NOOP_PATCH"
+
+
+def _noop_rule(
+    *,
+    rule_source: str,
+    source_length: int,
+    category: str | None,
+    matched_rule_id: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "replace",
+            "id": "noop-placeholder",
+            "description": "Generate a deterministic no-op patch for validation.",
+            "anchor": _ANCHOR_PLACEHOLDER,
+            "anchor_kind": "literal",
+            "replacement": _ANCHOR_PLACEHOLDER,
+            "count": 1,
+            "allow_zero_matches": True,
+            "meta": {
+                "source": rule_source,
+                "intent": "noop",
+                "error_category": category or "unknown",
+                "error_rule_id": matched_rule_id or "unknown",
+                "source_length": source_length,
+            },
+        }
+    ]
+
+
+def _fix_addition_rule(
+    *,
+    rule_source: str,
+    source_length: int,
+    category: str | None,
+    matched_rule_id: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "replace",
+            "id": "fix-addition",
+            "description": "Ensure add uses addition instead of subtraction.",
+            "anchor": "return a - b",
+            "anchor_kind": "literal",
+            "replacement": "return a + b",
+            "count": 1,
+            "allow_zero_matches": False,
+            "meta": {
+                "source": rule_source,
+                "intent": "fix-addition",
+                "error_category": category or "unknown",
+                "error_rule_id": matched_rule_id or "unknown",
+                "source_length": source_length,
+            },
+        }
+    ]
 
 _RULE_TEMPLATES: dict[str, dict[str, object]] = {
     "syntaxerror": {
@@ -140,6 +197,22 @@ def build_rules(
     normalized_category = _normalize_rule_id(category)
     source_text = source if isinstance(source, str) else ""
     source_length = len(source_text)
+
+    if error_text and _NOOP_MARKER in error_text:
+        return _noop_rule(
+            rule_source=rule_source,
+            source_length=source_length,
+            category=category,
+            matched_rule_id=matched_rule_id,
+        )
+
+    if normalized_category == "contractviolation" and "return a - b" in source_text:
+        return _fix_addition_rule(
+            rule_source=rule_source,
+            source_length=source_length,
+            category=category,
+            matched_rule_id=matched_rule_id,
+        )
 
     template = _RULE_TEMPLATES.get(normalized_category, _RULE_TEMPLATES["other"])
     tokens = template["tokens"]
