@@ -15,7 +15,10 @@ import os
 import threading
 from datetime import datetime
 from governed_retrieval import govern_retrieval
-import joblib
+try:  # pragma: no cover - optional dependency
+    import joblib
+except ModuleNotFoundError:  # pragma: no cover - allow lightweight environments
+    joblib = None  # type: ignore
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import build_scope_clause
 from dynamic_path_router import get_project_roots, resolve_path
@@ -405,6 +408,10 @@ def _win_regret_rates(origin_db: str, record_id: Any) -> Tuple[float, float]:
 def load_ranker(path: str | Path) -> Any:
     """Load a serialized ranking model from ``path`` stored via joblib."""
 
+    if joblib is None:
+        raise ModuleNotFoundError(
+            "joblib is required to load ranker models; install with 'pip install joblib'"
+        )
     return joblib.load(path)
 
 
