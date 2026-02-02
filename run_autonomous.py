@@ -685,6 +685,21 @@ def _ensure_local_package() -> None:
     spec.loader.exec_module(menace_pkg)
     sys.modules.setdefault("menace", menace_pkg)
 
+
+def _load_gpt_knowledge_service():
+    """Return the GPTKnowledgeService class with a reload fallback."""
+
+    try:
+        from gpt_knowledge_service import GPTKnowledgeService as service
+        return service
+    except ImportError:
+        import importlib
+
+        module = importlib.import_module("gpt_knowledge_service")
+        if not hasattr(module, "GPTKnowledgeService"):
+            module = importlib.reload(module)
+        return module.GPTKnowledgeService
+
 logger = logging.getLogger(__name__)
 
 
@@ -1341,12 +1356,11 @@ if not (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
         MemoryMaintenance as _MemoryMaintenance,
         _load_retention_rules,
     )
-    from gpt_knowledge_service import GPTKnowledgeService as _GPTKnowledgeService
     from local_knowledge_module import LocalKnowledgeModule as _LocalKnowledgeModule
 
     GPTMemoryManager = _GPTMemoryManager
     MemoryMaintenance = _MemoryMaintenance
-    GPTKnowledgeService = _GPTKnowledgeService
+    GPTKnowledgeService = _load_gpt_knowledge_service()
 else:  # pragma: no cover - help/metadata path
     if TYPE_CHECKING:  # pragma: no cover - typing aid
         from local_knowledge_module import LocalKnowledgeModule as _LocalKnowledgeModule
@@ -1359,7 +1373,13 @@ else:  # pragma: no cover - help/metadata path
 
 LocalKnowledgeModule = _LocalKnowledgeModule
 
-from filelock import FileLock
+_filelock_spec = importlib.util.find_spec("filelock")
+if _filelock_spec is None:
+    from filelock_stub.filelock_stub import FileLock
+else:
+    import filelock as _filelock
+
+    FileLock = _filelock.FileLock
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -1502,9 +1522,6 @@ def _ensure_runtime_imports() -> None:
             MemoryMaintenance as _MemoryMaintenance,
             _load_retention_rules as _load_retention_rules_impl,
         )
-        from gpt_knowledge_service import (
-            GPTKnowledgeService as _GPTKnowledgeService,
-        )
         from local_knowledge_module import (
             LocalKnowledgeModule as _LocalKnowledgeModule,
         )
@@ -1512,7 +1529,7 @@ def _ensure_runtime_imports() -> None:
         GPTMemoryManager = _GPTMemoryManager  # type: ignore[assignment]
         MemoryMaintenance = _MemoryMaintenance  # type: ignore[assignment]
         _load_retention_rules = _load_retention_rules_impl  # type: ignore[assignment]
-        GPTKnowledgeService = _GPTKnowledgeService  # type: ignore[assignment]
+        GPTKnowledgeService = _load_gpt_knowledge_service()  # type: ignore[assignment]
         LocalKnowledgeModule = _LocalKnowledgeModule  # type: ignore[assignment]
 
     global environment_generator, sandbox_runner, cli

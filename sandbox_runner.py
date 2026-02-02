@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import contextlib
 
 # Must be set before HF/tokenizers imports and before multiprocessing forks.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
