@@ -972,6 +972,17 @@ class SelfCodingManager:
             try:
                 conn = patch_db.router.get_connection("patch_history")
                 conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS patch_contributors(
+                        patch_id INTEGER,
+                        vector_id TEXT,
+                        influence REAL,
+                        session_id TEXT,
+                        FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+                    )
+                    """
+                )
+                conn.execute(
                     (
                         "INSERT INTO patch_contributors("
                         "patch_id, vector_id, influence, session_id"

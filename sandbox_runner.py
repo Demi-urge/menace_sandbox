@@ -1268,7 +1268,17 @@ def _sandbox_init(
 ) -> SandboxContext:
     import sandbox_runner.environment as env
 
-    if not isinstance(context_builder, ContextBuilder):
+    concrete_builder_type: type | None = None
+    try:  # pragma: no cover - optional import to tolerate vector_service bootstrap fallbacks
+        from vector_service.context_builder import ContextBuilder as _ConcreteBuilder
+    except Exception:
+        concrete_builder_type = None
+    else:
+        concrete_builder_type = _ConcreteBuilder
+
+    if not isinstance(context_builder, ContextBuilder) and (
+        concrete_builder_type is None or not isinstance(context_builder, concrete_builder_type)
+    ):
         raise ValueError("context_builder must be a ContextBuilder")
 
     if online_tracker is not None:
@@ -1383,9 +1393,9 @@ def _sandbox_init(
         new_last = max([last_id, *[r[0] for r in rows]]) if rows else last_id
         return modules, new_last
 
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(repo)
-    models = env.get("MODELS", "demo").split(",")
+    run_env = os.environ.copy()
+    run_env["PYTHONPATH"] = str(repo)
+    models = run_env.get("MODELS", "demo").split(",")
     os.chdir(repo)
     orchestrator = MenaceOrchestrator(context_builder=context_builder)
     orchestrator.create_oversight("root", "L1")
