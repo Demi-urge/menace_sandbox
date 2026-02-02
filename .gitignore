@@ -202,3 +202,11 @@ vector_service/minilm/*
 # Ignore code database
 code.db
 
+# Local dependency shims generated in the sandbox
+filelock.py
+jinja2.py
+joblib.py
+networkx.py
+numpy/
+sklearn/
+sqlalchemy/
