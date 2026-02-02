@@ -176,15 +176,16 @@ def _is_excluded(path: Path, excluded_dirs: set[str]) -> bool:
     return any(part in excluded_dirs for part in path.parts)
 
 
-def discover_workflow_modules(root: Path) -> list[str]:
+def discover_workflow_modules(root: Path, *, include_bots: bool = True) -> list[str]:
     excluded = set(DEFAULT_EXCLUDED_DIRS)
     modules: list[str] = []
     for path in root.rglob("workflow_*.py"):
         if path.name == "__init__.py" or _is_excluded(path, excluded):
             continue
         modules.append(_module_name_from_path(root, path))
-    for path in _iter_bot_modules(root):
-        modules.append(_module_name_from_path(root, path))
+    if include_bots:
+        for path in _iter_bot_modules(root):
+            modules.append(_module_name_from_path(root, path))
     return sorted(set(modules))
 
 

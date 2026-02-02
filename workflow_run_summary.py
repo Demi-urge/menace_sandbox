@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import os
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
 from menace_sandbox.workflow_run_state import get_run_store
 
@@ -157,6 +157,31 @@ def record_run(
         retry_count=retry_count,
         metadata={"roi": float(roi)},
     )
+
+
+def average_roi(workflow_id: str) -> float:
+    """Return the average ROI for ``workflow_id`` or 0.0 when unknown."""
+    history = _WORKFLOW_ROI_HISTORY.get(str(workflow_id), [])
+    if not history:
+        return 0.0
+    return float(sum(history)) / len(history)
+
+
+def roi_weighted_order(workflow_ids: Iterable[str]) -> list[str]:
+    """Return workflow IDs ordered by average ROI descending."""
+    seen = set()
+    unique = []
+    for wid in workflow_ids:
+        if wid in seen:
+            continue
+        seen.add(wid)
+        unique.append(wid)
+    scored = [
+        (average_roi(wid), str(wid))
+        for wid in unique
+    ]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [wid for _, wid in scored]
 
 
 def save_summary(
