@@ -217,6 +217,15 @@ def verify_dependencies(*, auto_install: bool = False) -> None:
 
     optional_missing = {"telemetry_feedback", "telemetry_backend"}
     optional_mismatched = {"quick_fix_engine", "sandbox_runner"}
+    optional_packages = set(getattr(settings, "optional_python_packages", []) or [])
+    optional_missing.update(optional_packages)
+    optional_mismatched.update(optional_packages)
+    offline_install = getattr(settings, "menace_offline_install", False) or os.getenv(
+        "MENACE_OFFLINE_INSTALL", ""
+    ).strip().lower() in {"1", "true", "yes", "y", "on"}
+    if offline_install:
+        optional_missing.add("torch")
+        optional_mismatched.add("torch")
 
     def _filter_optional(
         entries: list[tuple[str, str]],

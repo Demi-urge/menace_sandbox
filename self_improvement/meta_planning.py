@@ -2554,8 +2554,9 @@ def start_self_improvement_cycle(
                     elif task is self._task:
                         self._exc.put(result)
 
-            runner = asyncio.Runner()
-            loop = runner.get_loop()
+            runner_factory = getattr(asyncio, "Runner", None)
+            runner = runner_factory() if runner_factory is not None else None
+            loop = runner.get_loop() if runner is not None else asyncio.new_event_loop()
             self._loop = loop
             asyncio.set_event_loop(loop)
             self._async_stop_event = asyncio.Event()
@@ -2779,6 +2780,11 @@ def start_self_improvement_cycle(
                         pass
                     asyncio.set_event_loop(None)
                     self._shutdown_complete.set()
+                if runner is not None:
+                    try:
+                        runner.close()
+                    except Exception:
+                        pass
 
         # --------------------------------------------------
         def start(self) -> None:
