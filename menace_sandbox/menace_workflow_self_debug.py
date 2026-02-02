@@ -65,6 +65,13 @@ def _is_self_improvement_certified() -> bool:
     return bool(state.get("certified"))
 
 
+def _enable_certified_controls() -> None:
+    os.environ.setdefault("SANDBOX_RECURSIVE_ORPHANS", "1")
+    os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
+    os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
+    os.environ.setdefault("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
+
+
 def _mark_self_improvement_certified(
     *,
     roi_delta_total: float,
@@ -505,8 +512,7 @@ def _run_self_debug(
         return 1
     settings_snapshot = _snapshot_sandbox_settings(settings)
     if certified:
-        os.environ.setdefault("SANDBOX_RECURSIVE_ORPHANS", "1")
-        os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
+        _enable_certified_controls()
     ordered_modules = roi_weighted_order(modules) if certified else modules
     modules = ordered_modules
     effective_dynamic = dynamic_workflows or certified
