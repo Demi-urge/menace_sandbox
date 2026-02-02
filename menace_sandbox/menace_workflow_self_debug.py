@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import logging
+import importlib
 import os
 from pathlib import Path
 import tempfile
@@ -190,6 +191,10 @@ def _apply_pipeline_patch(
                 extra={"source_path": str(source_path)},
             )
         return False
+    LOGGER.info(
+        "cell division event: promoted self-debug patch",
+        extra={"source_path": str(source_path)},
+    )
     return True
 
 
@@ -495,6 +500,67 @@ def _run_self_debug(
             )
         return 1
 
+    snapshot_meta = {
+        "snapshot_id": snapshot.snapshot_id,
+        "snapshot_path": str(snapshot.path),
+    }
+    if forced_module:
+        try:
+            mod = importlib.import_module(forced_module)
+            workflow_fn = getattr(mod, "main", None) or getattr(mod, "run", None)
+            if not callable(workflow_fn):
+                raise AttributeError(
+                    f"module {forced_module} lacks main/run callable"
+                )
+            result = workflow_fn()
+            if not result:
+                raise RuntimeError(
+                    f"workflow {forced_module} returned failure"
+                )
+        except Exception as exc:
+            LOGGER.exception(
+                "forced workflow failed; routing through mvp pipeline",
+                extra={"workflow_module": forced_module},
+            )
+            patched = _handle_failure(
+                exc,
+                repo_root=repo_root,
+                prior_roi=-1.0,
+                snapshot_meta=snapshot_meta,
+                metrics_logger=metrics_logger,
+                correlation_id=correlation_id,
+                metrics_source=metrics_source,
+            )
+            if patched:
+                LOGGER.info("applied MVP patch for workflow failure")
+                return 0
+            return 1
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=0,
+                classification=None,
+                patch_validity=None,
+                roi_delta=None,
+                roi_delta_total=None,
+                exit_reason="workflow_run_success",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": metrics_source,
+                    "attempts": 0,
+                    "classification": None,
+                    "patch_validity": None,
+                    "roi_delta_total": None,
+                    "roi_delta": None,
+                    "exit_reason": "workflow_run_success",
+                }
+            )
+        return 0
+
     preflight_source = "def _layer4_preflight() -> int:\n    return 1\n"
     preflight_rules = build_rules(
         "Layer-4 preflight error",
@@ -548,10 +614,6 @@ def _run_self_debug(
             )
         return 1
 
-    snapshot_meta = {
-        "snapshot_id": snapshot.snapshot_id,
-        "snapshot_path": str(snapshot.path),
-    }
     workflow_db = WorkflowDB(workflow_db_path)
     seeded = seed_workflow_db(
         modules, workflow_db=workflow_db, source_menace_id=source_menace_id
@@ -575,7 +637,7 @@ def _run_self_debug(
         patched = _handle_failure(
             exc,
             repo_root=repo_root,
-            prior_roi=0.0,
+            prior_roi=-1.0,
             snapshot_meta=snapshot_meta,
             metrics_logger=metrics_logger,
             correlation_id=correlation_id,
