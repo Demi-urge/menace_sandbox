@@ -40,6 +40,7 @@ from metrics_exporter import sandbox_crashes_total
 from alert_dispatcher import dispatch_alert
 import re
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
+from error_ontology import ErrorCategory, classify_error as classify_ontology_error
 
 from .orphan_integration import integrate_and_graph_orphans
 from .scoring import record_run as _score_record_run, load_summary as _load_run_summary
@@ -1423,7 +1424,17 @@ def record_error(
 
     logger_obj = get_error_logger(context_builder)
     stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    _, category, _ = logger_obj.classifier.classify_details(exc, stack)
+    details = logger_obj.classifier.classify_details(exc, stack)
+    category = None
+    if isinstance(details, tuple):
+        if len(details) == 3:
+            _, category, _ = details
+        elif len(details) == 2:
+            _, category = details
+        elif len(details) == 1:
+            category = details[0]
+    if category is None:
+        category = classify_ontology_error(stack).get("category", ErrorCategory.Other)
     logger_obj.log(exc, None, None)
     ERROR_CATEGORY_COUNTS[category.value] += 1
     severity = "fatal" if fatal else "recoverable"
