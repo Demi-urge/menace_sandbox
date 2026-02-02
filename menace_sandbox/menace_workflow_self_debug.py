@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import json
 import logging
 import importlib
 import os
@@ -36,14 +37,54 @@ from menace_sandbox.menace_self_debug_snapshot import (
     _snapshot_sandbox_settings,
     freeze_cycle,
 )
+from menace_sandbox.workflow_run_summary import roi_weighted_order
 from sandbox_runner import run_workflow_simulations
 from sandbox_settings import SandboxSettings
 from task_handoff_bot import WorkflowDB
 from sandbox_results_logger import record_self_debug_metrics
 from self_coding_policy import evaluate_patch_promotion, get_patch_promotion_policy
+from dynamic_path_router import resolve_path
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_METRICS_SOURCE = "menace_workflow_self_debug"
+_CERTIFICATION_PATH = Path(resolve_path("sandbox_data")) / "self_improvement_certification.json"
+
+
+def _load_certification_state() -> dict[str, object]:
+    try:
+        data = json.loads(_CERTIFICATION_PATH.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _is_self_improvement_certified() -> bool:
+    state = _load_certification_state()
+    return bool(state.get("certified"))
+
+
+def _mark_self_improvement_certified(
+    *,
+    roi_delta_total: float,
+    source_path: Path,
+    correlation_id: str | None,
+) -> None:
+    if _is_self_improvement_certified():
+        return
+    _CERTIFICATION_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "certified": True,
+        "certified_at": datetime.utcnow().isoformat(),
+        "roi_delta_total": roi_delta_total,
+        "source_path": str(source_path),
+        "correlation_id": correlation_id,
+    }
+    try:
+        _CERTIFICATION_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError:
+        LOGGER.exception("failed to persist self-improvement certification state")
 
 
 def _extract_source_from_traceback(
@@ -212,6 +253,7 @@ def _handle_failure(
         traceback.format_exception(type(exc), exc, exc.__traceback__)
     )
     run_store = get_run_store()
+    promoted_authority = _is_self_improvement_certified()
     source, source_path = _extract_source_from_traceback(exc, repo_root=repo_root)
     classification = classify_error(error_text)
     rules = build_rules(error_text, source=source)
@@ -260,7 +302,7 @@ def _handle_failure(
             workflow_id="self_debug",
             error_classification=classification,
             patch_attempts=0,
-            roi_delta=0.0,
+            roi_delta=roi_delta_total,
             retry_count=0,
             metadata={
                 "reason": "missing_source_path",
@@ -274,7 +316,11 @@ def _handle_failure(
     logged_apply = wrap_with_logging(
         _apply_pipeline_patch, {"log_event_prefix": "menace.self_debug.patch.apply."}
     )
-    validation = logged_validate(str(pipeline_result.get("patch_text") or ""))
+    validation = logged_validate(
+        str(pipeline_result.get("patch_text") or ""),
+        allow_new_files=promoted_authority,
+        allow_deletes=promoted_authority,
+    )
     patch_validity = validation if isinstance(validation, Mapping) else None
     if not validation.get("valid"):
         LOGGER.warning(
@@ -312,7 +358,7 @@ def _handle_failure(
             workflow_id="self_debug",
             error_classification=classification,
             patch_attempts=1,
-            roi_delta=0.0,
+            roi_delta=roi_delta_total,
             retry_count=0,
             metadata={
                 "reason": "validation_failed",
@@ -322,7 +368,13 @@ def _handle_failure(
         return False
     pipeline_result = dict(pipeline_result)
     pipeline_result["validation"] = validation
-    applied = logged_apply(pipeline_result, source_path=source_path, repo_root=repo_root)
+    applied = logged_apply(
+        pipeline_result,
+        source_path=source_path,
+        repo_root=repo_root,
+        allow_new_files=promoted_authority,
+        allow_deletes=promoted_authority,
+    )
     if not applied:
         LOGGER.info("mvp patch apply halted or failed")
         if metrics_logger:
@@ -353,7 +405,7 @@ def _handle_failure(
             workflow_id="self_debug",
             error_classification=classification,
             patch_attempts=1,
-            roi_delta=0.0,
+            roi_delta=roi_delta_total,
             retry_count=0,
             metadata={
                 "reason": "patch_not_applied",
@@ -389,13 +441,19 @@ def _handle_failure(
         workflow_id="self_debug",
         error_classification=classification,
         patch_attempts=1,
-        roi_delta=0.0,
+        roi_delta=roi_delta_total,
         retry_count=0,
         metadata={
             "reason": "patch_applied",
             **(snapshot_meta or {}),
         },
     )
+    if roi_delta_total > 0:
+        _mark_self_improvement_certified(
+            roi_delta_total=roi_delta_total,
+            source_path=source_path,
+            correlation_id=correlation_id,
+        )
     return applied
 
 
@@ -409,10 +467,13 @@ def _run_self_debug(
     correlation_id: str | None = None,
     metrics_source: str = DEFAULT_METRICS_SOURCE,
 ) -> int:
-    modules = discover_workflow_modules(repo_root)
+    certified = _is_self_improvement_certified()
+    modules = discover_workflow_modules(repo_root, include_bots=certified)
     forced_module = os.getenv("MENACE_SELF_DEBUG_MODULE")
     if forced_module:
         modules = [forced_module]
+    if not certified and not forced_module and modules:
+        modules = [modules[0]]
     try:
         settings = SandboxSettings()
     except Exception as exc:
@@ -443,12 +504,19 @@ def _run_self_debug(
             )
         return 1
     settings_snapshot = _snapshot_sandbox_settings(settings)
+    if certified:
+        os.environ.setdefault("SANDBOX_RECURSIVE_ORPHANS", "1")
+        os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
+    ordered_modules = roi_weighted_order(modules) if certified else modules
+    modules = ordered_modules
+    effective_dynamic = dynamic_workflows or certified
     snapshot = freeze_cycle(
         inputs={
-            "workflow_modules": modules,
+            "workflow_modules": ordered_modules,
             "workflow_db_path": str(workflow_db_path),
             "source_menace_id": source_menace_id,
-            "dynamic_workflows": dynamic_workflows,
+            "dynamic_workflows": effective_dynamic,
+            "certified": certified,
         },
         configs={
             "sandbox_settings": settings_snapshot,
@@ -504,6 +572,14 @@ def _run_self_debug(
         "snapshot_id": snapshot.snapshot_id,
         "snapshot_path": str(snapshot.path),
     }
+    if certified:
+        LOGGER.info(
+            "self-improvement certification active",
+            extra={
+                "workflow_count": len(modules),
+                "dynamic_workflows": effective_dynamic,
+            },
+        )
     if forced_module:
         try:
             mod = importlib.import_module(forced_module)
@@ -629,7 +705,7 @@ def _run_self_debug(
         logged_run(
             workflows_db=str(workflow_db_path),
             env_presets=None,
-            dynamic_workflows=dynamic_workflows,
+            dynamic_workflows=effective_dynamic,
             context_builder=context_builder,
         )
     except Exception as exc:
