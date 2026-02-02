@@ -158,6 +158,38 @@ def _extract_flag_value(argv: List[str], flag: str) -> str | None:
     return None
 
 
+_AUTONOMOUS_READINESS_CHECKLIST = (
+    "MVP brain works",
+    "sandbox can use it",
+    "workflows are stable",
+    "Menace patching works",
+    "ROI is meaningful",
+)
+
+
+def _autonomous_ready_acknowledged(args: argparse.Namespace) -> bool:
+    if getattr(args, "ack_autonomous_ready", False):
+        return True
+    env_value = os.getenv("MENACE_AUTONOMOUS_READY", "")
+    return env_value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _ensure_autonomous_readiness(args: argparse.Namespace) -> None:
+    if getattr(args, "runs", 0) == 0 or getattr(args, "smoke_test", False):
+        return
+    if _autonomous_ready_acknowledged(args):
+        return
+    checklist = "; ".join(_AUTONOMOUS_READINESS_CHECKLIST)
+    message = (
+        "Full autonomous sandbox runs are gated until readiness is confirmed: "
+        f"{checklist}. Set MENACE_AUTONOMOUS_READY=1 or pass "
+        "--ack-autonomous-ready to proceed."
+    )
+    logger.warning("%s", message)
+    _console(message)
+    raise SystemExit(message)
+
+
 def _sync_sandbox_environment(base_path: Path) -> None:
     """Update ``sandbox_runner.environment`` paths to point under ``base_path``."""
 
@@ -1067,6 +1099,15 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
         type=int,
         default=1,
         help="maximum number of full sandbox runs to execute",
+    )
+    parser.add_argument(
+        "--ack-autonomous-ready",
+        action="store_true",
+        help=(
+            "confirm MVP brain readiness, sandbox integration, workflow stability, "
+            "Menace patching, and ROI readiness before running full workflows "
+            "(or set MENACE_AUTONOMOUS_READY=1)"
+        ),
     )
     parser.add_argument(
         "--smoke-test",
@@ -2653,6 +2694,8 @@ def main(argv: List[str] | None = None) -> None:
         logger.info("smoke test requested; exiting before sandbox launch")
         _console("smoke test requested; bootstrap sequence validated; exiting")
         return
+
+    _ensure_autonomous_readiness(args)
 
     _ensure_runtime_imports()
     set_correlation_id(str(uuid.uuid4()))
