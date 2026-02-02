@@ -498,13 +498,16 @@ def _render_threshold_yaml(data: Dict[str, Any], *, path: Path, bot: str) -> str
 
     try:
         if _NoAliasSafeDumper is not None:
-            return yaml.dump(  # type: ignore[arg-type]
-                mapping,
-                sort_keys=False,
-                Dumper=_NoAliasSafeDumper,
-            )
+            try:
+                return yaml.dump(  # type: ignore[arg-type]
+                    mapping,
+                    sort_keys=False,
+                    Dumper=_NoAliasSafeDumper,
+                )
+            except TypeError:
+                return yaml.safe_dump(mapping, sort_keys=False)  # type: ignore[arg-type]
         return yaml.safe_dump(mapping, sort_keys=False)  # type: ignore[arg-type]
-    except (RecursionError, yaml_error) as exc:
+    except (RecursionError, TypeError, yaml_error) as exc:
         logger.error(
             "detected recursive structure while dumping %s; using fallback serializer",
             bot,

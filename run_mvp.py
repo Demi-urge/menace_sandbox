@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 from menace_sandbox import mvp_brain
@@ -40,8 +41,20 @@ class _ArgumentParser(argparse.ArgumentParser):
         self._emit_error(message or "invalid arguments", status=status)
 
 
+def _json_default(value: object) -> float:
+    if isinstance(value, Decimal):
+        return float(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _emit_json(payload: dict) -> None:
-    message = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    message = json.dumps(
+        payload,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        default=_json_default,
+    )
     sys.stdout.write(message + "\n")
 
 

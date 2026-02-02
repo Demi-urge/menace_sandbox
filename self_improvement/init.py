@@ -603,7 +603,10 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
     global settings
     print("💡 SI-1: loading sandbox settings")
     settings = new_settings or load_sandbox_settings()
-    auto_install = settings.auto_install_dependencies or not sys.stdin.isatty()
+    offline_install = getattr(settings, "menace_offline_install", False) or os.getenv(
+        "MENACE_OFFLINE_INSTALL", ""
+    ).strip().lower() in {"1", "true", "yes", "y", "on"}
+    auto_install = (settings.auto_install_dependencies or not sys.stdin.isatty()) and not offline_install
     print("💡 SI-2: verifying self-improvement dependencies")
     verify_dependencies(auto_install=auto_install)
     print("💡 SI-3: initializing autonomous sandbox components")
