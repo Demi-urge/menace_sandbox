@@ -1418,7 +1418,7 @@ _filelock_spec = importlib.util.find_spec("filelock")
 if _filelock_spec is None:
     from filelock_stub.filelock_stub import FileLock
 else:
-    import filelock as _filelock
+    import menace_filelock as _filelock
 
     FileLock = _filelock.FileLock
 from pydantic import (

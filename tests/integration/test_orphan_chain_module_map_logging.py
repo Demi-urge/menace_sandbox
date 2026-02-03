@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # ---------------------------------------------------------------------------
 # Provide minimal stubs for optional dependencies
 
-import pydantic as _pydantic
+import menace_pydantic as _pydantic
 sub = types.ModuleType("pydantic.dataclasses")
 sub.dataclass = _dc
 _pydantic.dataclasses = sub  # type: ignore[attr-defined]

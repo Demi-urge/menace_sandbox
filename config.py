@@ -68,7 +68,7 @@ except Exception:  # pragma: no cover - PyYAML missing
 
 try:  # noqa: E402 - prefer attribute detection over import side effects
     from pydantic import BaseModel, Field  # type: ignore
-    import pydantic as _pydantic
+    import menace_pydantic as _pydantic
 except Exception:  # pragma: no cover - pydantic unavailable
     class BaseModel:  # type: ignore[misc]
         def __init__(self, **data):
