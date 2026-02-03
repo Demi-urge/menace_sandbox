@@ -272,7 +272,7 @@ def test_run_autonomous_integration(monkeypatch, tmp_path):
     auto_env = types.ModuleType("menace.auto_env_setup")
     auto_env.ensure_env = lambda path=None: None
     monkeypatch.setitem(sys.modules, "menace.auto_env_setup", auto_env)
-    import pydantic.class_validators as cv
+    import menace_pydantic.class_validators as cv
     orig_validator = cv.validator
     def _validator(*fields, **kw):
         kw.setdefault("allow_reuse", True)
@@ -351,7 +351,7 @@ def test_run_autonomous_multiple_runs(monkeypatch):
     auto_env = types.ModuleType("menace.auto_env_setup")
     auto_env.ensure_env = lambda path=None: None
     monkeypatch.setitem(sys.modules, "menace.auto_env_setup", auto_env)
-    import pydantic.class_validators as cv
+    import menace_pydantic.class_validators as cv
     orig_validator = cv.validator
     def _validator(*fields, **kw):
         kw.setdefault("allow_reuse", True)
