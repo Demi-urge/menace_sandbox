@@ -116,6 +116,9 @@ class DiGraph:
         self._nodes.add(node)
         self._node_attrs.setdefault(node, {})
 
+    def has_edge(self, u: Any, v: Any) -> bool:
+        return (u, v) in self._edges
+
     def clear(self) -> None:
         """Remove all nodes, edges, and associated attributes from the graph."""
         self._edges.clear()
