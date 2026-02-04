@@ -10,6 +10,7 @@ class DiGraph(Graph):
         for node in self._nodes:
             undirected.add_node(node)
         for u, v in self._edges:
-            undirected.add_edge(u, v)
-            undirected.add_edge(v, u)
+            attrs = self._adj.get(u, {}).get(v, {}).copy()
+            undirected.add_edge(u, v, **attrs)
+            undirected.add_edge(v, u, **attrs)
         return undirected
