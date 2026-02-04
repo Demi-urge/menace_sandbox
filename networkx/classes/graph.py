@@ -32,10 +32,13 @@ class Graph:
         return v in self._adj.get(u, {})
 
     def __contains__(self, node: object) -> bool:
-        return node in self._nodes
+        return node in self._adj
 
     def __iter__(self):
         return iter(self._nodes)
+
+    def has_node(self, node: object) -> bool:
+        return node in self._adj
 
     def __len__(self) -> int:
         return len(self._nodes)
