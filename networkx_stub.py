@@ -18,7 +18,10 @@ class _EdgeView:
     ) -> Iterator[tuple[Any, Any] | tuple[Any, Any, Any]]:
         for u, v in self._graph._edges:
             if data:
-                yield (u, v, {} if default is None else default)
+                attrs = self._graph._adj.get(u, {}).get(v)
+                if attrs is None:
+                    attrs = {} if default is None else default
+                yield (u, v, attrs)
             else:
                 yield (u, v)
 
@@ -61,6 +64,9 @@ class _NodeView(MutableMapping[str, dict[str, Any]]):
     def __delitem__(self, node: Any) -> None:
         self._graph._nodes.discard(node)
         self._graph._node_attrs.pop(node, None)
+        self._graph._adj.pop(node, None)
+        for neighbors in self._graph._adj.values():
+            neighbors.pop(node, None)
         self._graph._edges = {edge for edge in self._graph._edges if node not in edge}
 
     def __iter__(self) -> Iterator[Any]:
@@ -104,20 +110,29 @@ class DiGraph:
         self._edges: set[tuple[Any, Any]] = set()
         self._nodes: set[Any] = set()
         self._node_attrs: dict[Any, dict[str, Any]] = {}
+        self._adj: dict[Any, dict[Any, dict[str, Any]]] = {}
         self._edge_view = _EdgeView(self)
         self._node_view = _NodeView(self)
 
-    def add_edge(self, u: Any, v: Any) -> None:
+    def add_edge(self, u: Any, v: Any, **_attrs: Any) -> None:
         self.add_node(u)
         self.add_node(v)
+        adjacency = self._adj.setdefault(u, {})
+        edge_attrs = adjacency.setdefault(v, {})
+        if _attrs:
+            edge_attrs.update(_attrs)
         self._edges.add((u, v))
 
     def add_node(self, node: Any) -> None:
         self._nodes.add(node)
         self._node_attrs.setdefault(node, {})
+        self._adj.setdefault(node, {})
 
     def has_edge(self, u: Any, v: Any) -> bool:
-        return (u, v) in self._edges
+        return v in self._adj.get(u, {})
+
+    def __getitem__(self, node: Any) -> dict[Any, dict[str, Any]]:
+        return self._adj[node]
 
     def clear(self) -> None:
         """Remove all nodes, edges, and associated attributes from the graph."""
