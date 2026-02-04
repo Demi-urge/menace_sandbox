@@ -31,6 +31,15 @@ class Graph:
     def has_edge(self, u: object, v: object) -> bool:
         return v in self._adj.get(u, {})
 
+    def __contains__(self, node: object) -> bool:
+        return node in self._nodes
+
+    def __iter__(self):
+        return iter(self._nodes)
+
+    def __len__(self) -> int:
+        return len(self._nodes)
+
     def __getitem__(self, node: object) -> Dict[object, dict]:
         return self._adj[node]
 
