@@ -31,11 +31,28 @@ def single_source_shortest_path_length(
     return {source: 0}
 
 
+def descendants(graph: Graph, source: object) -> List[object]:
+    adjacency = getattr(graph, "_adj", {}) or {}
+    if source not in adjacency:
+        return []
+    visited = {source}
+    stack = list(adjacency.get(source, []))
+    while stack:
+        node = stack.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        stack.extend(adjacency.get(node, []))
+    visited.remove(source)
+    return list(visited)
+
+
 __all__ = [
     "DiGraph",
     "Graph",
     "connected_components",
     "diameter",
+    "descendants",
     "number_weakly_connected_components",
     "single_source_shortest_path_length",
 ]
