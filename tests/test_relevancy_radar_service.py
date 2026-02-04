@@ -339,6 +339,16 @@ def test_dependency_chain_not_flagged(monkeypatch, tmp_path):
     assert "helper" not in service.flags()
 
 
+def test_networkx_node_membership():
+    import networkx as nx
+
+    graph = nx.DiGraph()
+    graph.add_node("core")
+
+    assert "core" in graph
+    assert "missing" not in graph
+
+
 def test_metrics_increment_on_flags(monkeypatch, tmp_path):
     import menace_sandbox.metrics_exporter as metrics_exporter
     import menace_sandbox.module_graph_analyzer as module_graph_analyzer
