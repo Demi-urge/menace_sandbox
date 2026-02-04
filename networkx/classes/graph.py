@@ -9,6 +9,7 @@ class Graph:
         self._nodes: Dict[object, dict] = {}
         self._edges: Set[Tuple[object, object]] = set()
         self._adj: Dict[object, Dict[object, dict]] = {}
+        self.graph: dict = {}
 
     @property
     def nodes(self) -> Dict[object, dict]:
