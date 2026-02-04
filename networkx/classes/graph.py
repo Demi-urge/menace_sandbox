@@ -32,7 +32,7 @@ class Graph:
         return v in self._adj.get(u, {})
 
     def __contains__(self, node: object) -> bool:
-        return node in self._adj
+        return node in self._nodes
 
     def __iter__(self):
         return iter(self._nodes)
