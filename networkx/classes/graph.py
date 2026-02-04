@@ -34,6 +34,13 @@ class Graph:
     def __getitem__(self, node: object) -> Dict[object, dict]:
         return self._adj[node]
 
+    def edges(self, data: bool = False):
+        for u, v in self._edges:
+            if data:
+                yield (u, v, self._adj.get(u, {}).get(v, {}))
+            else:
+                yield (u, v)
+
     def number_of_nodes(self) -> int:
         return len(self._nodes)
 
