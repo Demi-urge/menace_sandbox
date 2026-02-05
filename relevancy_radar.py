@@ -635,7 +635,7 @@ class RelevancyRadar:
         ``replace_threshold`` (inclusive) are tagged ``replace``.
         """
 
-        normalized_core_modules: List[str] | None = None
+        normalized_core_modules: List[Any] | None = None
         dep_graph_nodes: set[type] | None = None
         if dep_graph is not None:
             raw_core_modules = list(core_modules or ["menace_master", "run_autonomous"])
@@ -647,13 +647,22 @@ class RelevancyRadar:
             for core in raw_core_modules:
                 if core is None:
                     continue
-                if dep_graph_nodes and str in dep_graph_nodes and not isinstance(core, str):
+                if dep_graph_nodes and str in dep_graph_nodes:
                     normalized_core_modules.append(str(core))
                     continue
-                if not isinstance(core, str):
-                    normalized_core_modules.append(str(core))
+                if dep_graph_nodes and int in dep_graph_nodes:
+                    if isinstance(core, int):
+                        normalized_core_modules.append(core)
+                        continue
+                    try:
+                        normalized_core_modules.append(int(core))
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Skipping relevancy evaluation for unparsable core module %s",
+                            core,
+                        )
                     continue
-                normalized_core_modules.append(core)
+                normalized_core_modules.append(core if isinstance(core, str) else str(core))
 
         results: Dict[str, str] = {}
         for mod, counts in self._metrics.items():
@@ -672,7 +681,13 @@ class RelevancyRadar:
 
         if dep_graph is not None:
             core_modules = normalized_core_modules or []
-            core_nodes = {module.replace(".", "/") for module in core_modules}
+            if dep_graph_nodes and int in dep_graph_nodes and str not in dep_graph_nodes:
+                core_nodes = set(core_modules)
+            else:
+                core_nodes = {
+                    module.replace(".", "/") if isinstance(module, str) else str(module)
+                    for module in core_modules
+                }
             reachable: set[str] = set()
             for core in core_nodes:
                 try:
