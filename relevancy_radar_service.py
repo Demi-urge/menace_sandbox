@@ -131,19 +131,39 @@ class RelevancyRadarService:
             import inspect
 
             evaluator = getattr(radar, "evaluate_final_contribution")
+            core_modules = ["menace_master", "run_autonomous"]
+            dep_graph_count = None
+            try:
+                dep_graph_count = len(graph.nodes)
+            except Exception:
+                try:
+                    dep_graph_count = len(list(graph.nodes))
+                except Exception:
+                    dep_graph_count = None
+            if dep_graph_count is None:
+                self.logger.info(
+                    "running relevancy evaluation with %d core modules",
+                    len(core_modules),
+                )
+            else:
+                self.logger.info(
+                    "running relevancy evaluation with %d core modules over %d graph nodes",
+                    len(core_modules),
+                    dep_graph_count,
+                )
             if "graph" in inspect.signature(evaluator).parameters:
                 flags = evaluator(
                     compress,
                     replace,
                     graph=graph,
-                    core_modules=["menace_master", "run_autonomous"],
+                    core_modules=core_modules,
                 )
             else:
                 flags = radar.evaluate_relevance(
                     compress,
                     replace,
                     dep_graph=graph,
-                    core_modules=["menace_master", "run_autonomous"],
+                    core_modules=core_modules,
                 )
 
             self.latest_flags = flags

@@ -698,7 +698,11 @@ class RelevancyRadar:
                     else:
                         has_node = core in dep_graph
                 except Exception:
-                    has_node = False
+                    logger.exception(
+                        "Failed to check dependency graph for core module %s",
+                        core,
+                    )
+                    continue
                 if not has_node:
                     logger.warning(
                         "Skipping relevancy evaluation for missing core module %s",
@@ -706,7 +710,14 @@ class RelevancyRadar:
                     )
                     continue
                 reachable.add(core)
-                reachable.update(nx.descendants(dep_graph, core))
+                try:
+                    reachable.update(nx.descendants(dep_graph, core))
+                except Exception:
+                    logger.exception(
+                        "Failed to traverse dependency graph for core module %s",
+                        core,
+                    )
+                    continue
             for mod in list(results):
                 node = mod.replace(".", "/")
                 if node not in reachable:
@@ -749,8 +760,14 @@ class RelevancyRadar:
         core_modules = list(core_modules or ["menace_master", "run_autonomous"])
         reachable: set[str] = set(core_modules)
         for core in core_modules:
-            if core in graph:
-                reachable.update(nx.descendants(graph, core))
+            try:
+                if core in graph:
+                    reachable.update(nx.descendants(graph, core))
+            except Exception:
+                logger.exception(
+                    "Failed to traverse call graph for core module %s",
+                    core,
+                )
 
         for mod in list(results):
             if mod not in reachable:
