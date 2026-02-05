@@ -136,6 +136,9 @@ class DiGraph:
             if node in neighbors:
                 yield u
 
+    def __contains__(self, node: Any) -> bool:
+        return node in self._nodes
+
     def __getitem__(self, node: Any) -> dict[Any, dict[str, Any]]:
         return self._adj[node]
 
