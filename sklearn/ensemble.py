@@ -33,6 +33,7 @@ class GradientBoostingRegressor:
     def __init__(self, random_state: int | None = None, *args, **kwargs) -> None:
         self.random_state = random_state
         self._baseline = 0.0
+        self.baseline_ = 0.0
 
     def fit(self, _X: Iterable, y: Iterable) -> "GradientBoostingRegressor":
         values = list(y)
@@ -40,6 +41,7 @@ class GradientBoostingRegressor:
             self._baseline = float(sum(values) / len(values))
         else:
             self._baseline = 0.0
+        self.baseline_ = self._baseline
         return self
 
     def predict(self, X: Iterable) -> List[float]:
