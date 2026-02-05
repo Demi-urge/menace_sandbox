@@ -6,9 +6,10 @@ from .graph import Graph
 
 class DiGraph(Graph):
     def predecessors(self, node: object):
-        for u, v in self._edges:
-            if v == node:
-                yield u
+        predecessors = [
+            u for u in self._adj if node in self._adj.get(u, {})
+        ]
+        return iter(predecessors)
 
     def to_undirected(self) -> Graph:
         undirected = Graph()
