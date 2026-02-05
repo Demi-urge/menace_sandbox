@@ -114,6 +114,12 @@ class _StubDiGraph:
         for neigh, _ in self._edges.get(node, []):
             yield neigh
 
+    def predecessors(self, node):
+        for source, neighbours in self._edges.items():
+            for neigh, _ in neighbours:
+                if neigh == node:
+                    yield source
+
     def edges(self, data=False):
         for u, neighbours in self._edges.items():
             for v, edge_data in neighbours:

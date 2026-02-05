@@ -5,6 +5,11 @@ from .graph import Graph
 
 
 class DiGraph(Graph):
+    def predecessors(self, node: object):
+        for u, v in self._edges:
+            if v == node:
+                yield u
+
     def to_undirected(self) -> Graph:
         undirected = Graph()
         for node in self._nodes:
