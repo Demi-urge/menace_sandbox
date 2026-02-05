@@ -34,7 +34,10 @@ try:
 except Exception:  # pragma: no cover - optional
     base = creator = tools = None  # type: ignore
 
-from sklearn.model_selection import train_test_split
+try:
+    from sklearn.model_selection import train_test_split
+except Exception:  # pragma: no cover - optional dependency
+    train_test_split = None  # type: ignore
 from sklearn.metrics import accuracy_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -187,6 +190,10 @@ class GAPredictionBot:
         return feats
 
     def _evaluate(self, individual: List[float]):
+        if train_test_split is None:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                "scikit-learn is required for GA prediction; install scikit-learn to use train_test_split."
+            )
         model = self._model_from_params(individual)
         X = self.X
         extra = self._extra_features()
