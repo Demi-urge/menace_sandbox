@@ -648,17 +648,18 @@ class RelevancyRadar:
                 results[mod] = "replace"
 
         if dep_graph is not None:
-            core_modules = list(core_modules or ["menace_master", "run_autonomous"])
-            core_nodes = {m.replace(".", "/") for m in core_modules}
+            raw_core_modules = list(core_modules or ["menace_master", "run_autonomous"])
+            core_modules = [module for module in raw_core_modules if isinstance(module, str)]
+            core_nodes = {module.replace(".", "/") for module in core_modules}
             reachable: set[str] = set()
             for core in core_nodes:
-                has_node = None
                 if hasattr(dep_graph, "has_node"):
                     has_node = dep_graph.has_node(core)
                 else:
-                    has_node = core in getattr(dep_graph, "nodes", {}) or core in getattr(
-                        dep_graph, "_nodes", {}
-                    )
+                    try:
+                        has_node = core in dep_graph
+                    except Exception:
+                        has_node = False
                 if has_node:
                     reachable.add(core)
                     reachable.update(nx.descendants(dep_graph, core))

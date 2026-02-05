@@ -349,6 +349,25 @@ def test_networkx_node_membership():
     assert "missing" not in graph
 
 
+def test_evaluate_relevance_skips_non_string_core_modules():
+    import networkx as nx
+
+    radar = relevancy_radar.RelevancyRadar()
+    radar._metrics = {"demo": {"imports": 0, "executions": 0, "impact": 0.0}}
+
+    graph = nx.DiGraph()
+    graph.add_node("core")
+
+    flags = radar.evaluate_relevance(
+        compress_threshold=1.0,
+        replace_threshold=2.0,
+        dep_graph=graph,
+        core_modules=["core", 0],
+    )
+
+    assert flags == {"demo": "retire"}
+
+
 def test_metrics_increment_on_flags(monkeypatch, tmp_path):
     import menace_sandbox.metrics_exporter as metrics_exporter
     import menace_sandbox.module_graph_analyzer as module_graph_analyzer
