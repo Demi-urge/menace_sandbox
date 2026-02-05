@@ -237,3 +237,26 @@ def test_evaluate_relevance_skips_missing_core(tmp_path, monkeypatch, caplog):
 
     assert flags["alpha"] == "retire"
     assert any("missing core module" in record.message for record in caplog.records)
+
+
+def test_evaluate_relevance_normalizes_int_core_modules(tmp_path, monkeypatch, caplog):
+    """Mixed core module types should not break relevancy evaluation."""
+
+    monkeypatch.setattr(atexit, "register", lambda func: func)
+    rr = importlib.reload(importlib.import_module("relevancy_radar"))
+    radar = rr.RelevancyRadar(metrics_file=tmp_path / "metrics.json")
+    radar._metrics["alpha"] = {"imports": 1.0, "executions": 0.0, "impact": 0.0}
+
+    dep_graph = rr.nx.DiGraph()
+    dep_graph.add_node(1)
+
+    with caplog.at_level(logging.WARNING):
+        flags = radar.evaluate_relevance(
+            compress_threshold=2.0,
+            replace_threshold=3.0,
+            dep_graph=dep_graph,
+            core_modules=["1", "bad"],
+        )
+
+    assert flags["alpha"] == "retire"
+    assert any("unparsable core module" in record.message for record in caplog.records)
