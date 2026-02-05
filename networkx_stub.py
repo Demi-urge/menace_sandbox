@@ -131,6 +131,11 @@ class DiGraph:
     def has_edge(self, u: Any, v: Any) -> bool:
         return v in self._adj.get(u, {})
 
+    def predecessors(self, node: Any) -> Iterator[Any]:
+        for u, neighbors in self._adj.items():
+            if node in neighbors:
+                yield u
+
     def __getitem__(self, node: Any) -> dict[Any, dict[str, Any]]:
         return self._adj[node]
 
