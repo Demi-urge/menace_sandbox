@@ -5,6 +5,7 @@ import atexit
 import types
 import sqlite3
 import time
+import logging
 from unittest import mock
 
 import pytest
@@ -213,3 +214,26 @@ def test_negative_roi_retire_flag(tmp_path, monkeypatch):
     )
 
     assert flags == {"loss_mod": "retire"}
+
+
+def test_evaluate_relevance_skips_missing_core(tmp_path, monkeypatch, caplog):
+    """Missing core modules in the dependency graph should not raise errors."""
+
+    monkeypatch.setattr(atexit, "register", lambda func: func)
+    rr = importlib.reload(importlib.import_module("relevancy_radar"))
+    radar = rr.RelevancyRadar(metrics_file=tmp_path / "metrics.json")
+    radar._metrics["alpha"] = {"imports": 1.0, "executions": 0.0, "impact": 0.0}
+
+    dep_graph = rr.nx.DiGraph()
+    dep_graph.add_node("existing")
+
+    with caplog.at_level(logging.WARNING):
+        flags = radar.evaluate_relevance(
+            compress_threshold=2.0,
+            replace_threshold=3.0,
+            dep_graph=dep_graph,
+            core_modules=["missing"],
+        )
+
+    assert flags["alpha"] == "retire"
+    assert any("missing core module" in record.message for record in caplog.records)
