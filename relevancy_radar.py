@@ -652,7 +652,14 @@ class RelevancyRadar:
             core_nodes = {m.replace(".", "/") for m in core_modules}
             reachable: set[str] = set()
             for core in core_nodes:
-                if core in dep_graph.nodes:
+                has_node = None
+                if hasattr(dep_graph, "has_node"):
+                    has_node = dep_graph.has_node(core)
+                else:
+                    has_node = core in getattr(dep_graph, "nodes", {}) or core in getattr(
+                        dep_graph, "_nodes", {}
+                    )
+                if has_node:
                     reachable.add(core)
                     reachable.update(nx.descendants(dep_graph, core))
             for mod in list(results):
