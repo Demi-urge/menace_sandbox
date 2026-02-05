@@ -33,7 +33,7 @@ else:
 try:  # pragma: no cover - optional dependency
     from sklearn.ensemble import GradientBoostingRegressor  # type: ignore
     from sklearn.metrics import mean_squared_error, r2_score  # type: ignore
-except (ImportError, ModuleNotFoundError) as exc:  # pragma: no cover - executed in minimal envs
+except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover - executed in minimal envs
     GradientBoostingRegressor = None  # type: ignore[assignment]
     mean_squared_error = None  # type: ignore[assignment]
     r2_score = None  # type: ignore[assignment]
