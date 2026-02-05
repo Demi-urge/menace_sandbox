@@ -1,5 +1,9 @@
 See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required environment variables, optional dependencies and directory layout.
 
+## Scikit-learn dependency
+
+This project expects the real `scikit-learn` package to be installed (see `requirements.txt` and `pyproject.toml`). The previous local `sklearn` stub has been renamed to `sklearn_stub/` to avoid shadowing the upstream library on `sys.path`; only use the stub for constrained sandbox runs or tests that explicitly mock `sklearn` imports.
+
 ## Tokenizer-safe startup
 
 Entry points that import Hugging Face tokenizers or `sentence_transformers` must set `TOKENIZERS_PARALLELISM=false` and select the `spawn` multiprocessing start method before those imports. This prevents tokenizer-initialised parents from being forked, which can deadlock or warn in multiprocessing workflows.
