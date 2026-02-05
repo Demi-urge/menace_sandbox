@@ -25,10 +25,13 @@ import os
 from typing import Dict, Iterable, List, Callable, Any
 import builtins
 import contextvars
+import logging
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
 import math
+
+logger = logging.getLogger(__name__)
 
 try:  # shared baseline tracker across modules
     from self_improvement.baseline_tracker import TRACKER as BASELINE_TRACKER
@@ -632,6 +635,26 @@ class RelevancyRadar:
         ``replace_threshold`` (inclusive) are tagged ``replace``.
         """
 
+        normalized_core_modules: List[str] | None = None
+        dep_graph_nodes: set[type] | None = None
+        if dep_graph is not None:
+            raw_core_modules = list(core_modules or ["menace_master", "run_autonomous"])
+            try:
+                dep_graph_nodes = {type(node) for node in dep_graph.nodes}
+            except Exception:
+                dep_graph_nodes = None
+            normalized_core_modules = []
+            for core in raw_core_modules:
+                if core is None:
+                    continue
+                if dep_graph_nodes and str in dep_graph_nodes and not isinstance(core, str):
+                    normalized_core_modules.append(str(core))
+                    continue
+                if not isinstance(core, str):
+                    normalized_core_modules.append(str(core))
+                    continue
+                normalized_core_modules.append(core)
+
         results: Dict[str, str] = {}
         for mod, counts in self._metrics.items():
             impact_val = float(counts.get("impact", 0.0))
@@ -648,21 +671,27 @@ class RelevancyRadar:
                 results[mod] = "replace"
 
         if dep_graph is not None:
-            raw_core_modules = list(core_modules or ["menace_master", "run_autonomous"])
-            core_modules = [module for module in raw_core_modules if isinstance(module, str)]
+            core_modules = normalized_core_modules or []
             core_nodes = {module.replace(".", "/") for module in core_modules}
             reachable: set[str] = set()
             for core in core_nodes:
-                if hasattr(dep_graph, "has_node"):
-                    has_node = dep_graph.has_node(core)
-                else:
-                    try:
+                try:
+                    if hasattr(dep_graph, "has_node"):
+                        has_node = dep_graph.has_node(core)
+                    elif hasattr(dep_graph, "nodes"):
+                        has_node = core in dep_graph.nodes
+                    else:
                         has_node = core in dep_graph
-                    except Exception:
-                        has_node = False
-                if has_node:
-                    reachable.add(core)
-                    reachable.update(nx.descendants(dep_graph, core))
+                except Exception:
+                    has_node = False
+                if not has_node:
+                    logger.warning(
+                        "Skipping relevancy evaluation for missing core module %s",
+                        core,
+                    )
+                    continue
+                reachable.add(core)
+                reachable.update(nx.descendants(dep_graph, core))
             for mod in list(results):
                 node = mod.replace(".", "/")
                 if node not in reachable:
