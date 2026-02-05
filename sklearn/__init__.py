@@ -1,3 +1,5 @@
 """Local sklearn shim for sandbox runs."""
 
-__all__ = ["model_selection"]
+from . import ensemble, linear_model, metrics, model_selection
+
+__all__ = ["ensemble", "linear_model", "metrics", "model_selection"]
