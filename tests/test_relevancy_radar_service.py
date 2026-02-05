@@ -368,6 +368,69 @@ def test_evaluate_relevance_skips_non_string_core_modules():
     assert flags == {"demo": "retire"}
 
 
+def test_scan_continues_with_bad_core(monkeypatch, tmp_path):
+    import networkx as nx
+    import menace_sandbox.metrics_exporter as metrics_exporter
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
+    graph = nx.DiGraph()
+    graph.add_edge("core", "helper")
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: graph)
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {"core": 1})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+    monkeypatch.setattr(metrics_exporter, "update_relevancy_metrics", lambda flags: None)
+
+    original_descendants = nx.descendants
+
+    def fake_descendants(dep_graph, node):
+        if node == "bad":
+            raise RuntimeError("boom")
+        return original_descendants(dep_graph, node)
+
+    monkeypatch.setattr(nx, "descendants", fake_descendants)
+
+    def fake_eval_final(self, compress, replace, *, graph, core_modules=None):
+        return self.evaluate_relevance(
+            compress,
+            replace,
+            dep_graph=graph,
+            core_modules=["core", "bad"],
+        )
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar,
+        "evaluate_final_contribution",
+        fake_eval_final,
+    )
+
+    class DummyRetirementService:
+        def __init__(self, root):
+            pass
+
+        def process_flags(self, flags):
+            return flags
+
+    monkeypatch.setattr(
+        module_retirement_service, "ModuleRetirementService", DummyRetirementService
+    )
+
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path)
+    service._scan_once()
+
+    flags = service.flags()
+    assert flags
+    assert "helper" in flags
+
+
 def test_metrics_increment_on_flags(monkeypatch, tmp_path):
     import menace_sandbox.metrics_exporter as metrics_exporter
     import menace_sandbox.module_graph_analyzer as module_graph_analyzer
