@@ -1,9 +1,8 @@
 """Minimal model_selection utilities for sandbox usage."""
 from __future__ import annotations
 
+import random
 from typing import Iterable, Sequence, Tuple, TypeVar
-
-import numpy as np
 
 __all__ = ["train_test_split"]
 
@@ -26,16 +25,11 @@ def _normalize_test_size(test_size: float | int, n_samples: int) -> int:
         return 0
 
     if isinstance(test_size, float):
-        if test_size <= 0:
-            n_test = 0
-        else:
-            n_test = int(round(n_samples * test_size))
+        n_test = int(n_samples * test_size)
     else:
         n_test = int(test_size)
 
-    if n_samples > 1:
-        return max(1, min(n_test, n_samples - 1))
-    return min(n_test, n_samples)
+    return max(0, min(n_test, n_samples))
 
 
 def train_test_split(
@@ -55,8 +49,8 @@ def train_test_split(
     indices = list(range(n_samples))
 
     if shuffle and n_samples > 1:
-        rng = np.random.RandomState(random_state) if random_state is not None else np.random
-        indices = rng.permutation(indices).tolist()
+        rng = random.Random(random_state)
+        rng.shuffle(indices)
 
     split_index = n_samples - n_test
     train_indices = indices[:split_index]
