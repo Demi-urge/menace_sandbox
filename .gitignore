@@ -210,3 +210,6 @@ networkx.py
 numpy/
 sklearn/
 sqlalchemy/
+!sklearn/
+!sklearn/__init__.py
+!sklearn/model_selection.py
