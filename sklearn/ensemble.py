@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Iterable, List
 
-__all__ = ["RandomForestClassifier"]
+__all__ = ["RandomForestClassifier", "GradientBoostingRegressor"]
 
 
 class RandomForestClassifier:
@@ -25,3 +25,23 @@ class RandomForestClassifier:
     def predict(self, X: Iterable) -> List:
         rows = list(X)
         return [self._majority_class for _ in rows]
+
+
+class GradientBoostingRegressor:
+    """Barebones GradientBoostingRegressor using a mean-target baseline."""
+
+    def __init__(self, random_state: int | None = None, *args, **kwargs) -> None:
+        self.random_state = random_state
+        self._baseline = 0.0
+
+    def fit(self, _X: Iterable, y: Iterable) -> "GradientBoostingRegressor":
+        values = list(y)
+        if values:
+            self._baseline = float(sum(values) / len(values))
+        else:
+            self._baseline = 0.0
+        return self
+
+    def predict(self, X: Iterable) -> List[float]:
+        rows = list(X)
+        return [self._baseline for _ in rows]
