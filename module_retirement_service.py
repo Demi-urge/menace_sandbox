@@ -184,9 +184,23 @@ class ModuleRetirementService:
         if self._graph is None:
             return []
         mod = self._normalise(module)
-        if mod in self._graph:
-            return list(self._graph.predecessors(mod))
-        return []
+        if hasattr(self._graph, "predecessors"):
+            if mod in self._graph:
+                return list(self._graph.predecessors(mod))
+            return []
+        edges = (
+            self._graph.edges()
+            if hasattr(self._graph, "edges")
+            else getattr(self._graph, "_edges", [])
+        )
+        dependents: list[str] = []
+        for edge in edges:
+            if not edge:
+                continue
+            src, dest = edge[0], edge[1]
+            if self._normalise(dest) == mod:
+                dependents.append(self._normalise(src))
+        return dependents
 
     # ------------------------------------------------------------------
     def retire_module(self, module: str) -> bool:
