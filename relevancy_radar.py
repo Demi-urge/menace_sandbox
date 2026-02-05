@@ -697,14 +697,15 @@ class RelevancyRadar:
                         has_node = core in dep_graph.nodes
                     else:
                         has_node = core in dep_graph
-                except Exception:
-                    logger.exception(
+                except Exception as exc:
+                    logger.debug(
                         "Failed to check dependency graph for core module %s",
                         core,
+                        exc_info=exc,
                     )
                     continue
                 if not has_node:
-                    logger.warning(
+                    logger.debug(
                         "Skipping relevancy evaluation for missing core module %s",
                         core,
                     )
@@ -712,10 +713,11 @@ class RelevancyRadar:
                 reachable.add(core)
                 try:
                     reachable.update(nx.descendants(dep_graph, core))
-                except Exception:
-                    logger.exception(
+                except Exception as exc:
+                    logger.debug(
                         "Failed to traverse dependency graph for core module %s",
                         core,
+                        exc_info=exc,
                     )
                     continue
             for mod in list(results):
