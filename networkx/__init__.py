@@ -1,7 +1,7 @@
 """Minimal networkx stub for sandbox environments without the dependency."""
 from __future__ import annotations
 
-from typing import Iterable, List
+from typing import List, Set
 
 from .classes.graph import Graph
 from .classes.digraph import DiGraph
@@ -31,20 +31,17 @@ def single_source_shortest_path_length(
     return {source: 0}
 
 
-def descendants(graph: Graph, source: object) -> List[object]:
+def descendants(graph: Graph, source: object) -> set[object]:
     adjacency = getattr(graph, "_adj", {}) or {}
-    if source not in adjacency:
-        return []
-    visited = {source}
-    stack = list(adjacency.get(source, []))
+    seen: Set[object] = set()
+    stack = list(adjacency.get(source, set()))
     while stack:
         node = stack.pop()
-        if node in visited:
+        if node in seen:
             continue
-        visited.add(node)
-        stack.extend(adjacency.get(node, []))
-    visited.remove(source)
-    return list(visited)
+        seen.add(node)
+        stack.extend(adjacency.get(node, set()))
+    return set(seen)
 
 
 __all__ = [
