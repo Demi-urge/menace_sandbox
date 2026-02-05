@@ -38,7 +38,10 @@ class GradientBoostingRegressor:
     def fit(self, _X: Iterable, y: Iterable) -> "GradientBoostingRegressor":
         values = list(y)
         if values:
-            self._baseline = float(sum(values) / len(values))
+            try:
+                self._baseline = float(sum(values) / len(values))
+            except TypeError:
+                self._baseline = 0.0
         else:
             self._baseline = 0.0
         self.baseline_ = self._baseline
