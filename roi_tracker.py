@@ -36,8 +36,112 @@ from dynamic_path_router import get_project_root, resolve_path
 from collections import Counter, defaultdict
 
 import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import PolynomialFeatures
+
+_SKLEARN_FALLBACK_ENV = "ROI_TRACKER_ALLOW_SKLEARN_FALLBACK"
+
+
+def _sklearn_fallback_enabled() -> bool:
+    flag = os.getenv(_SKLEARN_FALLBACK_ENV, "")
+    return flag.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sklearn_shadow_warning() -> str:
+    repo_root = Path(__file__).resolve().parent
+    local_sklearn = repo_root / "sklearn"
+    if local_sklearn.is_dir():
+        return (
+            f" A local 'sklearn' directory was detected at {local_sklearn}; "
+            "it may be shadowing the installed scikit-learn package."
+        )
+    return ""
+
+
+def _missing_sklearn_import_error(exc: ImportError) -> ImportError:
+    message = (
+        "scikit-learn is required for ROI tracking. Install it with "
+        "`pip install scikit-learn`."
+        f"{_sklearn_shadow_warning()}"
+        f" To run without scikit-learn, set {_SKLEARN_FALLBACK_ENV}=1 to use "
+        "the minimal fallback implementation."
+    )
+    return ImportError(message).with_traceback(exc.__traceback__)
+
+
+try:
+    from sklearn.linear_model import LinearRegression
+    from sklearn.preprocessing import PolynomialFeatures
+    _SKLEARN_AVAILABLE = True
+except ImportError as exc:
+    _SKLEARN_AVAILABLE = False
+    if not _sklearn_fallback_enabled():
+        raise _missing_sklearn_import_error(exc) from exc
+
+    class PolynomialFeatures:
+        """Minimal polynomial feature expansion (degree 2) fallback."""
+
+        def __init__(self, degree: int = 2, include_bias: bool = True) -> None:
+            self.degree = degree
+            self.include_bias = include_bias
+
+        def fit_transform(self, X: np.ndarray) -> np.ndarray:
+            return self._transform(X)
+
+        def transform(self, X: np.ndarray) -> np.ndarray:
+            return self._transform(X)
+
+        def _transform(self, X: np.ndarray) -> np.ndarray:
+            arr = np.asarray(X, dtype=float)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            if self.degree != 2:
+                raise ValueError("Fallback PolynomialFeatures supports degree=2 only.")
+            n_samples, n_features = arr.shape
+            chunks = []
+            if self.include_bias:
+                chunks.append(np.ones((n_samples, 1), dtype=float))
+            chunks.append(arr)
+            quad_terms = []
+            for i in range(n_features):
+                for j in range(i, n_features):
+                    quad_terms.append((arr[:, i] * arr[:, j]).reshape(-1, 1))
+            if quad_terms:
+                chunks.append(np.concatenate(quad_terms, axis=1))
+            return np.concatenate(chunks, axis=1)
+
+    class LinearRegression:
+        """Minimal linear regression fallback based on least squares."""
+
+        def __init__(self) -> None:
+            self.coef_: np.ndarray | None = None
+            self.intercept_: float = 0.0
+
+        def fit(self, X: np.ndarray, y: np.ndarray) -> "LinearRegression":
+            arr = np.asarray(X, dtype=float)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            targets = np.asarray(y, dtype=float)
+            design = np.concatenate([np.ones((arr.shape[0], 1)), arr], axis=1)
+            coeffs, *_ = np.linalg.lstsq(design, targets, rcond=None)
+            self.intercept_ = float(coeffs[0])
+            self.coef_ = coeffs[1:]
+            return self
+
+        def predict(self, X: np.ndarray) -> np.ndarray:
+            if self.coef_ is None:
+                raise ValueError("LinearRegression fallback model is not fitted.")
+            arr = np.asarray(X, dtype=float)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            return arr @ self.coef_ + self.intercept_
+
+        def score(self, X: np.ndarray, y: np.ndarray) -> float:
+            y_true = np.asarray(y, dtype=float)
+            y_pred = np.asarray(self.predict(X), dtype=float)
+            ss_res = float(np.sum((y_true - y_pred) ** 2))
+            ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
+            if ss_tot == 0.0:
+                return 0.0
+            return 1.0 - ss_res / ss_tot
 
 if __package__ in (None, ""):
     package_root = Path(__file__).resolve().parent
