@@ -43,7 +43,7 @@ class LinearRegression:
             self.intercept_ = np.zeros_like(coef[:1])
         return self
 
-    def predict(self, X: Iterable) -> List[float]:
+    def predict(self, X: Iterable) -> "np.ndarray | List[float]":
         rows = list(X)
         if np is None or self.coef_ is None:
             return self._predict_mean_baseline(rows)
@@ -52,7 +52,7 @@ class LinearRegression:
         preds = X_arr @ self.coef_
         if self.intercept_ is not None:
             preds = preds + self.intercept_
-        return np.asarray(preds).tolist()
+        return np.asarray(preds)
 
     def _fit_mean_baseline(self, y: Iterable[float]) -> "LinearRegression":
         data = list(y)
