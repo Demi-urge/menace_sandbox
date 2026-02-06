@@ -4,6 +4,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 def _reload(name, missing):
     for m in missing:
@@ -100,3 +102,46 @@ def test_adaptive_roi_predictor_top_level_import(monkeypatch):
 
     assert hasattr(mod, "AdaptiveROIPredictor")
     assert hasattr(mod, "build_dataset")
+
+
+def test_adaptive_roi_predictor_helper_import_error_message(monkeypatch):
+    project_root = Path(__file__).resolve().parent.parent
+    monkeypatch.setattr(sys, "path", [str(project_root)])
+
+    original_import_module = importlib.import_module
+
+    def _boom(name, package=None):
+        if name in ("menace_sandbox.logging_utils", "logging_utils"):
+            raise RuntimeError("boom")
+        return original_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", _boom)
+
+    stored_modules = {}
+    targets = {
+        "adaptive_roi_predictor",
+        "logging_utils",
+        "adaptive_roi_dataset",
+        "roi_tracker",
+        "evaluation_history_db",
+        "evolution_history_db",
+        "truth_adapter",
+    }
+    for name in list(sys.modules):
+        if name == "menace_sandbox" or name.startswith("menace_sandbox."):
+            stored_modules[name] = sys.modules.pop(name)
+    for name in targets:
+        if name in sys.modules:
+            stored_modules[name] = sys.modules.pop(name)
+
+    try:
+        with pytest.raises(ImportError) as excinfo:
+            importlib.import_module("adaptive_roi_predictor")
+    finally:
+        for name in targets:
+            sys.modules.pop(name, None)
+        sys.modules.update(stored_modules)
+
+    message = str(excinfo.value)
+    assert "logging_utils" in message
+    assert "boom" in message

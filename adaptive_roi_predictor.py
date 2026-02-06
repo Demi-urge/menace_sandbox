@@ -107,7 +107,16 @@ else:  # pragma: no cover - fallback when executed outside package
                 mod = import_module(candidate)
                 break
             except ModuleNotFoundError as exc:  # pragma: no cover - defensive
+                if exc.name not in {candidate, module}:
+                    raise ModuleNotFoundError(
+                        f"Helper module '{candidate}' failed to import due to missing "
+                        f"dependency '{exc.name}'."
+                    ) from exc
                 last_exc = exc
+            except Exception as exc:  # pragma: no cover - defensive
+                raise ImportError(
+                    f"Helper module '{candidate}' failed to import: {exc}."
+                ) from exc
         else:  # pragma: no cover - only hit when helper genuinely missing
             raise ModuleNotFoundError(
                 f"Required helper module '{module}' could not be imported. "
@@ -1197,4 +1206,3 @@ def load_training_data(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
     return df
-
