@@ -430,6 +430,15 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
         except ModuleNotFoundError:
             continue
         pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+        if not isinstance(pipeline_cls, type):
+            proxy_factory = getattr(module, "get_pipeline_class", None)
+            if callable(proxy_factory):
+                pipeline_cls = proxy_factory()
+                if not isinstance(pipeline_cls, type):
+                    raise ImportError(
+                        "get_pipeline_class returned an invalid pipeline handle from "
+                        f"{module.__name__}"
+                    )
         if isinstance(pipeline_cls, type):
             return pipeline_cls  # type: ignore[return-value]
         try:
@@ -437,6 +446,15 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
         except Exception:
             continue
         pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
+        if not isinstance(pipeline_cls, type):
+            proxy_factory = getattr(module, "get_pipeline_class", None)
+            if callable(proxy_factory):
+                pipeline_cls = proxy_factory()
+                if not isinstance(pipeline_cls, type):
+                    raise ImportError(
+                        "get_pipeline_class returned an invalid pipeline handle from "
+                        f"{module.__name__}"
+                    )
         if isinstance(pipeline_cls, type):
             return pipeline_cls  # type: ignore[return-value]
     raise ImportError(
