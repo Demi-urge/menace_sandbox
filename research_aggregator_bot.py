@@ -62,7 +62,7 @@ from typing import Any, Iterable, List, Mapping, Optional, cast
 
 import os
 import logging
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 from .chatgpt_enhancement_bot import (
     EnhancementDB,
@@ -420,6 +420,37 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
         ".model_automation_pipeline",
         "model_automation_pipeline",
     )
+    last_error: Exception | None = None
+    invalid_class_error = "get_pipeline_class returned an invalid pipeline handle from "
+
+    def _resolve_from_module(module: ModuleType) -> type | None:
+        nonlocal last_error
+        proxy_factory = getattr(module, "get_pipeline_class", None)
+        if callable(proxy_factory):
+            try:
+                pipeline_candidate = proxy_factory()
+            except Exception as exc:
+                last_error = exc
+            else:
+                if isinstance(pipeline_candidate, type):
+                    return pipeline_candidate
+                last_error = ImportError(f"{invalid_class_error}{module.__name__}")
+        pipeline_candidate = getattr(module, "ModelAutomationPipeline", None)
+        if isinstance(pipeline_candidate, type):
+            return pipeline_candidate
+        if pipeline_candidate is not None and not isinstance(pipeline_candidate, type):
+            proxy_resolver = getattr(pipeline_candidate, "_resolve", None)
+            if callable(proxy_resolver):
+                try:
+                    pipeline_candidate = proxy_resolver()
+                except Exception as exc:
+                    last_error = exc
+                else:
+                    if isinstance(pipeline_candidate, type):
+                        return pipeline_candidate
+                    last_error = ImportError(f"{invalid_class_error}{module.__name__}")
+        return None
+
     for dotted in module_candidates:
         try:
             module = (
@@ -427,39 +458,22 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
                 if dotted.startswith(".")
                 else importlib.import_module(dotted)
             )
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            last_error = exc
             continue
-        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
-        if not isinstance(pipeline_cls, type):
-            proxy_factory = getattr(module, "get_pipeline_class", None)
-            if callable(proxy_factory):
-                pipeline_cls = proxy_factory()
-                if not isinstance(pipeline_cls, type):
-                    raise ImportError(
-                        "get_pipeline_class returned an invalid pipeline handle from "
-                        f"{module.__name__}"
-                    )
-        if isinstance(pipeline_cls, type):
+        pipeline_cls = _resolve_from_module(module)
+        if pipeline_cls is not None:
             return pipeline_cls  # type: ignore[return-value]
         try:
             module = importlib.reload(module)
         except Exception:
             continue
-        pipeline_cls = getattr(module, "ModelAutomationPipeline", None)
-        if not isinstance(pipeline_cls, type):
-            proxy_factory = getattr(module, "get_pipeline_class", None)
-            if callable(proxy_factory):
-                pipeline_cls = proxy_factory()
-                if not isinstance(pipeline_cls, type):
-                    raise ImportError(
-                        "get_pipeline_class returned an invalid pipeline handle from "
-                        f"{module.__name__}"
-                    )
-        if isinstance(pipeline_cls, type):
+        pipeline_cls = _resolve_from_module(module)
+        if pipeline_cls is not None:
             return pipeline_cls  # type: ignore[return-value]
     raise ImportError(
         "ModelAutomationPipeline is unavailable; ensure menace_sandbox is fully initialised"
-    )
+    ) from last_error
 
 
 def _get_capital_manager_class() -> "Type[CapitalManagementBot]":
