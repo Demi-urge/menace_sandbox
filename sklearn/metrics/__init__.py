@@ -1,7 +1,7 @@
 """Minimal metrics stubs for local usage."""
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Callable, Sequence
 
 import importlib.util
 
@@ -10,7 +10,10 @@ if importlib.util.find_spec("numpy") is not None:  # pragma: no cover - optional
 else:  # pragma: no cover - numpy unavailable
     np = None  # type: ignore
 
-from sklearn_local.metrics import accuracy_score, mean_squared_error, r2_score
+try:  # pragma: no cover - optional dependency
+    import sklearn_local.metrics as _local_metrics  # type: ignore
+except Exception:  # pragma: no cover - missing local metrics
+    _local_metrics = None
 
 __all__ = [
     "accuracy_score",
@@ -21,8 +24,60 @@ __all__ = [
 ]
 
 
+def _local_impl(name: str) -> Callable | None:
+    if _local_metrics is None:
+        return None
+    return getattr(_local_metrics, name, None)
+
+
+def accuracy_score(y_true: Sequence, y_pred: Sequence) -> float:
+    """Return the fraction of correct predictions."""
+    local = _local_impl("accuracy_score")
+    if local is not None:
+        return float(local(y_true, y_pred))
+    if len(y_true) != len(y_pred):
+        raise ValueError("y_true and y_pred must have the same length")
+    if not y_true:
+        return 0.0
+    matches = sum(1 for true, pred in zip(y_true, y_pred) if true == pred)
+    return matches / len(y_true)
+
+
+def mean_squared_error(y_true: Sequence, y_pred: Sequence) -> float:
+    """Return the mean squared error between ``y_true`` and ``y_pred``."""
+    local = _local_impl("mean_squared_error")
+    if local is not None:
+        return float(local(y_true, y_pred))
+    if len(y_true) != len(y_pred):
+        raise ValueError("y_true and y_pred must have the same length")
+    if not y_true:
+        return 0.0
+    errors = [(float(true) - float(pred)) ** 2 for true, pred in zip(y_true, y_pred)]
+    return sum(errors) / len(errors)
+
+
+def r2_score(y_true: Sequence, y_pred: Sequence) -> float:
+    """Return the R^2 (coefficient of determination) score."""
+    local = _local_impl("r2_score")
+    if local is not None:
+        return float(local(y_true, y_pred))
+    if len(y_true) != len(y_pred):
+        raise ValueError("y_true and y_pred must have the same length")
+    if not y_true:
+        return 0.0
+    mean_true = sum(y_true) / len(y_true)
+    ss_res = sum((float(true) - float(pred)) ** 2 for true, pred in zip(y_true, y_pred))
+    ss_tot = sum((float(true) - mean_true) ** 2 for true in y_true)
+    if ss_tot == 0:
+        return 0.0
+    return 1 - (ss_res / ss_tot)
+
+
 def roc_auc_score(y_true: Sequence, y_score: Sequence) -> float:
     """Compute a simple ROC AUC for binary classification."""
+    local = _local_impl("roc_auc_score")
+    if local is not None:
+        return float(local(y_true, y_score))
     if len(y_true) != len(y_score):
         raise ValueError("y_true and y_score must have the same length")
 
@@ -63,6 +118,9 @@ def roc_auc_score(y_true: Sequence, y_score: Sequence) -> float:
 
 def silhouette_score(X: Sequence[Sequence[float]], labels: Sequence[int]) -> float:
     """Compute a basic silhouette score using Euclidean distance."""
+    local = _local_impl("silhouette_score")
+    if local is not None:
+        return float(local(X, labels))
     if len(X) != len(labels):
         raise ValueError("X and labels must have the same length")
 
