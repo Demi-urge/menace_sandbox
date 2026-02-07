@@ -10,6 +10,11 @@ if importlib.util.find_spec("numpy") is not None:  # pragma: no cover - optional
 else:  # pragma: no cover - numpy unavailable
     np = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    import sklearn_local.metrics as _local_metrics  # type: ignore
+except Exception:  # pragma: no cover - missing local metrics
+    _local_metrics = None
+
 __all__ = ["cosine_similarity"]
 
 
@@ -24,6 +29,11 @@ def _as_2d(data: Iterable) -> list[list[float]]:
 
 def cosine_similarity(X: Iterable, Y: Iterable | None = None) -> list[list[float]]:
     """Compute cosine similarity between rows of X and Y."""
+    if _local_metrics is not None:
+        local = getattr(_local_metrics, "cosine_similarity", None)
+        if local is not None:
+            return local(X, Y)
+
     X_rows = _as_2d(X)
     Y_rows = _as_2d(X if Y is None else Y)
 
