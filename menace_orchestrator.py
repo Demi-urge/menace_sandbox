@@ -421,7 +421,7 @@ class MenaceOrchestrator:
         dependency_broker: Any,
         bootstrap_heartbeat: object | None,
         bootstrap_signals_active: bool,
-    ) -> tuple[object | None, object | None, bool, bool]:
+    ) -> tuple[object | None, object | None, bool, bool, object | None]:
         """Resolve broker state, advertising placeholders when needed."""
 
         def _strip_placeholder(pipeline: object | None) -> object | None:
@@ -434,8 +434,14 @@ class MenaceOrchestrator:
             raise RuntimeError(
                 "Bootstrap dependency broker owner not active; refusing to initialize MenaceOrchestrator pipeline"
             )
-        broker_pipeline, broker_sentinel = dependency_broker.resolve()
-        broker_pipeline = _strip_placeholder(broker_pipeline)
+        broker_pipeline_raw, broker_sentinel = dependency_broker.resolve()
+        broker_placeholder_pipeline = (
+            broker_pipeline_raw
+            if broker_pipeline_raw is not None
+            and getattr(broker_pipeline_raw, "bootstrap_placeholder", False)
+            else None
+        )
+        broker_pipeline = _strip_placeholder(broker_pipeline_raw)
         broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
         placeholder_seeded = False
 
@@ -460,6 +466,7 @@ class MenaceOrchestrator:
                 owner=broker_owner_active or False,
             )
             placeholder_seeded = True
+            broker_placeholder_pipeline = placeholder_pipeline
             if broker_sentinel is None:
                 broker_sentinel = placeholder_sentinel
             broker_pipeline = _strip_placeholder(placeholder_pipeline)
@@ -473,9 +480,16 @@ class MenaceOrchestrator:
             broker_pipeline, broker_sentinel = advertise_bootstrap_placeholder(
                 dependency_broker=dependency_broker, owner=False
             )
+            broker_placeholder_pipeline = broker_pipeline
             broker_pipeline = _strip_placeholder(broker_pipeline)
 
-        return broker_pipeline, broker_sentinel, broker_owner_active, placeholder_seeded
+        return (
+            broker_pipeline,
+            broker_sentinel,
+            broker_owner_active,
+            placeholder_seeded,
+            broker_placeholder_pipeline,
+        )
 
     def _ensure_pipeline(
         self,
@@ -495,11 +509,14 @@ class MenaceOrchestrator:
                 return None
             return pipeline
         broker_placeholder_seen = False
+        placeholder_pipeline: object | None = None
 
         def _note_placeholder(pipeline: object | None) -> object | None:
             nonlocal broker_placeholder_seen
+            nonlocal placeholder_pipeline
             if pipeline is not None and getattr(pipeline, "bootstrap_placeholder", False):
                 broker_placeholder_seen = True
+                placeholder_pipeline = pipeline
             return pipeline
 
         try:
@@ -532,11 +549,15 @@ class MenaceOrchestrator:
             broker_sentinel,
             broker_owner_active,
             broker_placeholder_seeded,
+            broker_placeholder_pipeline,
         ) = self._initialize_pipeline(
             dependency_broker=dependency_broker,
             bootstrap_heartbeat=bootstrap_heartbeat,
             bootstrap_signals_active=bootstrap_signals_hint,
         )
+        if broker_placeholder_pipeline is not None:
+            placeholder_pipeline = broker_placeholder_pipeline
+            broker_placeholder_seen = True
         reuse_wait_timeout = _resolve_bootstrap_wait_timeout()
         if reuse_wait_timeout is None:
             reuse_wait_timeout = 5.0
@@ -553,7 +574,8 @@ class MenaceOrchestrator:
                 pipeline=getattr(bootstrap_context, "pipeline", None),
                 sentinel=getattr(bootstrap_context, "manager", None),
             )
-            broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            broker_pipeline_raw, broker_sentinel = dependency_broker.resolve()
+            broker_pipeline = _note_placeholder(broker_pipeline_raw)
             broker_pipeline = _strip_placeholder(broker_pipeline)
 
         pipeline_promoter: Callable[[Any], None] | None = None
@@ -729,6 +751,7 @@ class MenaceOrchestrator:
                             "heartbeat": bool(bootstrap_heartbeat),
                             "bootstrap_context": bool(bootstrap_context),
                             "dependency_broker": bool(broker_sentinel),
+                            "placeholder_reused": False,
                         },
                     )
                 else:
@@ -781,6 +804,7 @@ class MenaceOrchestrator:
                                 "heartbeat": bool(bootstrap_heartbeat),
                                 "bootstrap_context": bool(bootstrap_context),
                                 "dependency_broker": bool(broker_sentinel),
+                                "placeholder_reused": False,
                             },
                         )
                     else:
@@ -796,9 +820,67 @@ class MenaceOrchestrator:
         )
 
         if bootstrap_pipeline is None and _bootstrap_signals_active():
-            raise RuntimeError(
-                "bootstrap signals active but no dependency broker pipeline or manager promise available"
-            )
+            placeholder_pipeline = placeholder_pipeline or broker_placeholder_pipeline
+            if placeholder_pipeline is not None:
+                placeholder_manager = getattr(
+                    placeholder_pipeline, "manager", None
+                ) or broker_sentinel
+                dependency_broker.advertise(
+                    pipeline=placeholder_pipeline,
+                    sentinel=placeholder_manager,
+                    owner=broker_owner_active,
+                )
+                single_flight_promise = getattr(
+                    _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+                )()
+                single_flight_active = (
+                    single_flight_promise is not None
+                    and not getattr(single_flight_promise, "done", True)
+                )
+                self.logger.info(
+                    "menace orchestrator reusing placeholder-only broker state",
+                    extra={
+                        "event": "menace-orchestrator-bootstrap-placeholder-only",
+                        "placeholder_reused": True,
+                        "single_flight": single_flight_active,
+                        "broker_owner": broker_owner_active,
+                        "heartbeat": bool(bootstrap_heartbeat),
+                    },
+                )
+                if single_flight_active:
+                    event = getattr(single_flight_promise, "_event", None)
+                    if event is not None:
+                        event.wait(timeout=reuse_wait_timeout)
+                    if getattr(single_flight_promise, "done", False):
+                        try:
+                            promised_pipeline, promised_promoter = (
+                                single_flight_promise.wait()
+                            )
+                            bootstrap_pipeline = promised_pipeline
+                            bootstrap_promoter = promised_promoter
+                            broker_sentinel = getattr(
+                                promised_pipeline, "manager", broker_sentinel
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed waiting on bootstrap promise before pipeline creation"
+                            )
+                if bootstrap_pipeline is None:
+                    bootstrap_pipeline = placeholder_pipeline
+            else:
+                self.logger.warning(
+                    "bootstrap signals active with no broker placeholder or pipeline",
+                    extra={
+                        "event": "menace-orchestrator-bootstrap-missing",
+                        "placeholder_reused": False,
+                        "heartbeat": bool(bootstrap_heartbeat),
+                        "bootstrap_context": bool(bootstrap_context),
+                        "single_flight": single_flight_active,
+                    },
+                )
+                raise RuntimeError(
+                    "bootstrap signals active but no dependency broker pipeline or manager promise available"
+                )
 
         if bootstrap_pipeline is None and (broker_sentinel is not None or single_flight_active):
             if single_flight_active:
