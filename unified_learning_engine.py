@@ -625,34 +625,48 @@ class UnifiedLearningEngine:
         try:
             from sklearn.model_selection import train_test_split, cross_val_score
             from sklearn.metrics import accuracy_score
-
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_split, random_state=42
+        except ImportError as exc:
+            logger.warning(
+                "scikit-learn unavailable; using lightweight evaluation fallback: %s",
+                exc,
             )
-            if hasattr(self.model, "pretrain"):
-                try:
-                    self.model.pretrain(X_train)  # type: ignore[attr-defined]
-                except Exception as exc:
-                    logger.exception("pretrain failed: %s", exc)
-                    if learning_engine_exceptions:
-                        learning_engine_exceptions.inc()
-            self.model.fit(X_train, y_train)
-            scores = cross_val_score(self.model, X_train, y_train, cv=cv)
-            cv_score = float(scores.mean())
-            preds = self.model.predict(X_test)
-            holdout_score = float(accuracy_score(y_test, preds))
-        except Exception:
+        else:
             try:
-                split = int(len(X) * (1 - test_split))
-                X_train, X_test = X[:split], X[split:]
-                y_train, y_test = y[:split], y[split:]
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=test_split, random_state=42
+                )
+                if hasattr(self.model, "pretrain"):
+                    try:
+                        self.model.pretrain(X_train)  # type: ignore[attr-defined]
+                    except Exception as exc:
+                        logger.exception("pretrain failed: %s", exc)
+                        if learning_engine_exceptions:
+                            learning_engine_exceptions.inc()
                 self.model.fit(X_train, y_train)
-                preds = [int(p[1] > 0.5) for p in self.model.predict_proba(X_test)]
-                holdout_score = sum(int(a == b) for a, b in zip(preds, y_test)) / len(y_test)
-                cv_score = holdout_score
-            except Exception:
-                cv_score = 0.0
-                holdout_score = 0.0
+                scores = cross_val_score(self.model, X_train, y_train, cv=cv)
+                cv_score = float(scores.mean())
+                preds = self.model.predict(X_test)
+                holdout_score = float(accuracy_score(y_test, preds))
+                result = {"cv_score": cv_score, "holdout_score": holdout_score}
+                result["timestamp"] = time.time()
+                self.evaluation_history.append(result)
+                return result
+            except Exception as exc:
+                logger.warning(
+                    "scikit-learn evaluation failed; using lightweight fallback: %s",
+                    exc,
+                )
+        try:
+            split = int(len(X) * (1 - test_split))
+            X_train, X_test = X[:split], X[split:]
+            y_train, y_test = y[:split], y[split:]
+            self.model.fit(X_train, y_train)
+            preds = [int(p[1] > 0.5) for p in self.model.predict_proba(X_test)]
+            holdout_score = sum(int(a == b) for a, b in zip(preds, y_test)) / len(y_test)
+            cv_score = holdout_score
+        except Exception:
+            cv_score = 0.0
+            holdout_score = 0.0
         result = {"cv_score": cv_score, "holdout_score": holdout_score}
         result["timestamp"] = time.time()
         self.evaluation_history.append(result)
