@@ -530,7 +530,7 @@ def test_orchestrator_reuses_active_owner_placeholder(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", _intercept_import)
 
 
-def test_orchestrator_fails_when_signals_without_placeholder(monkeypatch):
+def test_orchestrator_seeds_placeholder_when_signals_without_placeholder(monkeypatch):
     import builtins
     import relevancy_radar
     import menace_sandbox.coding_bot_interface as cbi
@@ -547,18 +547,32 @@ def test_orchestrator_fails_when_signals_without_placeholder(monkeypatch):
         pytest.skip(f"menace_orchestrator unavailable: {exc}")
 
     class DummyBroker:
-        def resolve(self):
-            return None, None
+        def __init__(self) -> None:
+            self.pipeline = None
+            self.sentinel = None
+            self.active_owner = True
+            self.advertised = []
 
-        def advertise(self, *, pipeline=None, sentinel=None):
-            return None
+        def resolve(self):
+            return self.pipeline, self.sentinel
+
+        def advertise(self, *, pipeline=None, sentinel=None, owner=None):
+            if pipeline is not None:
+                self.pipeline = pipeline
+            if sentinel is not None:
+                self.sentinel = sentinel
+            if owner is not None:
+                self.active_owner = owner
+            self.advertised.append((pipeline, sentinel, owner))
 
     class DummyBuilder:
         def refresh_db_weights(self, **_):
             return None
 
+    broker = DummyBroker()
     cbi._GLOBAL_BOOTSTRAP_COORDINATOR._active = None
-    monkeypatch.setattr(mo, "_bootstrap_dependency_broker", lambda: DummyBroker())
+    monkeypatch.setattr(mo, "_BOOTSTRAP_BROKER", broker)
+    monkeypatch.setattr(mo, "_bootstrap_dependency_broker", lambda: broker)
     monkeypatch.setattr(mo, "_current_bootstrap_context", lambda: None)
     monkeypatch.setattr(mo, "_resolve_bootstrap_wait_timeout", lambda: 0.05)
     monkeypatch.setattr(mo, "read_bootstrap_heartbeat", lambda max_age=None: {"active": True})
@@ -568,8 +582,12 @@ def test_orchestrator_fails_when_signals_without_placeholder(monkeypatch):
 
     monkeypatch.setattr(mo, "prepare_pipeline_for_bootstrap", _fail_prepare)
 
-    with pytest.raises(RuntimeError, match="bootstrap signals active"):
-        mo.MenaceOrchestrator(context_builder=DummyBuilder())
+    orchestrator = mo.MenaceOrchestrator(context_builder=DummyBuilder())
+
+    assert orchestrator.pipeline is not None
+    assert any(
+        getattr(entry[0], "bootstrap_placeholder", False) for entry in broker.advertised
+    )
 
     monkeypatch.setattr(builtins, "__import__", _intercept_import)
 
