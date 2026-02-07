@@ -430,7 +430,6 @@ class MenaceOrchestrator:
             if getattr(pipeline, "bootstrap_placeholder", False):
                 return None
             return pipeline
-
         if not getattr(dependency_broker, "active_owner", False):
             raise RuntimeError(
                 "Bootstrap dependency broker owner not active; refusing to initialize MenaceOrchestrator pipeline"
@@ -494,6 +493,13 @@ class MenaceOrchestrator:
                 return None
             if getattr(pipeline, "bootstrap_placeholder", False):
                 return None
+            return pipeline
+        broker_placeholder_seen = False
+
+        def _note_placeholder(pipeline: object | None) -> object | None:
+            nonlocal broker_placeholder_seen
+            if pipeline is not None and getattr(pipeline, "bootstrap_placeholder", False):
+                broker_placeholder_seen = True
             return pipeline
 
         try:
@@ -573,6 +579,7 @@ class MenaceOrchestrator:
             backoff = 0.05
             while broker_pipeline is None and _bootstrap_signals_active():
                 broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                broker_pipeline = _note_placeholder(broker_pipeline)
                 broker_pipeline = _strip_placeholder(broker_pipeline)
                 if broker_pipeline is None and bootstrap_context is not None:
                     broker_pipeline = _strip_placeholder(
@@ -686,6 +693,7 @@ class MenaceOrchestrator:
             guard_logged = False
             while bootstrap_pipeline is None and _bootstrap_signals_active():
                 broker_pipeline, broker_sentinel = dependency_broker.resolve()
+                broker_pipeline = _note_placeholder(broker_pipeline)
                 broker_pipeline = _strip_placeholder(broker_pipeline)
                 if broker_pipeline is not None:
                     bootstrap_pipeline = broker_pipeline
@@ -713,12 +721,24 @@ class MenaceOrchestrator:
                 guard_backoff = min(guard_backoff * 2, 0.5)
 
             if bootstrap_pipeline is None and _bootstrap_signals_active():
-                raise RuntimeError(
-                    "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
-                )
+                if broker_placeholder_seeded or broker_placeholder_seen:
+                    self.logger.warning(
+                        "bootstrap placeholder advertised without pipeline; proceeding to prepare pipeline",
+                        extra={
+                            "event": "menace-orchestrator-bootstrap-placeholder-guard",
+                            "heartbeat": bool(bootstrap_heartbeat),
+                            "bootstrap_context": bool(bootstrap_context),
+                            "dependency_broker": bool(broker_sentinel),
+                        },
+                    )
+                else:
+                    raise RuntimeError(
+                        "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
+                    )
 
         if bootstrap_pipeline is None and _bootstrap_signals_active():
             broker_pipeline, broker_sentinel = dependency_broker.resolve()
+            broker_pipeline = _note_placeholder(broker_pipeline)
             broker_pipeline = _strip_placeholder(broker_pipeline)
             if broker_pipeline is not None:
                 bootstrap_pipeline = broker_pipeline
@@ -753,9 +773,20 @@ class MenaceOrchestrator:
                                 "failed waiting on bootstrap promise before pipeline creation"
                             )
                 if bootstrap_pipeline is None:
-                    raise RuntimeError(
-                        "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
-                    )
+                    if broker_placeholder_seeded or broker_placeholder_seen:
+                        self.logger.warning(
+                            "bootstrap placeholder advertised without pipeline; proceeding to prepare pipeline",
+                            extra={
+                                "event": "menace-orchestrator-bootstrap-placeholder-guard",
+                                "heartbeat": bool(bootstrap_heartbeat),
+                                "bootstrap_context": bool(bootstrap_context),
+                                "dependency_broker": bool(broker_sentinel),
+                            },
+                        )
+                    else:
+                        raise RuntimeError(
+                            "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
+                        )
 
         single_flight_promise = getattr(
             _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
