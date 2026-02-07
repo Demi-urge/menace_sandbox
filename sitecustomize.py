@@ -107,6 +107,35 @@ _register_optional_stub("annoy", "annoy_stub")
 _register_optional_stub("pydantic", "pydantic_stub")
 
 
+def _register_sklearn_metrics_shim() -> None:
+    """Expose the local sklearn.metrics shim when scikit-learn is unavailable."""
+
+    if "sklearn.metrics" in sys.modules:
+        return
+
+    try:  # pragma: no cover - prefer real sklearn when available
+        importlib.import_module("sklearn.metrics")
+        return
+    except Exception:  # pragma: no cover - fall back to local shim
+        pass
+
+    try:
+        shim = importlib.import_module("sklearn_local.metrics")
+    except Exception:  # pragma: no cover - missing local shim
+        return
+
+    sys.modules.setdefault("sklearn.metrics", shim)
+    sklearn_pkg = sys.modules.get("sklearn")
+    if sklearn_pkg is None:
+        sklearn_pkg = types.ModuleType("sklearn")
+        sklearn_pkg.__path__ = []
+        sys.modules["sklearn"] = sklearn_pkg
+    setattr(sklearn_pkg, "metrics", shim)
+
+
+_register_sklearn_metrics_shim()
+
+
 def _patch_dotenv() -> None:
     """Install tolerant wrappers around ``python-dotenv`` helpers.
 
