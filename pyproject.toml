@@ -102,6 +102,9 @@ test = [
 watch = [
     "watchdog"
 ]
+evolution = [
+    "scikit-learn"
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]

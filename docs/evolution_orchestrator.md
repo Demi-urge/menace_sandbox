@@ -61,3 +61,18 @@ After each cycle the orchestrator automatically schedules A/B experiments for
 any variants suggested by `ExperimentManager`. The results are stored in
 `EvolutionHistoryDB` so that `EvolutionPredictor` can retrain and provide better
 ROI forecasts for future cycles.
+
+## Dependency notes
+
+`EvolutionOrchestrator` runs evaluation steps through the `SelfImprovementEngine`,
+which in turn calls `LearningEngine.evaluate()`. That evaluation uses
+`sklearn.metrics` when available for holdout scoring. Install the evolution
+extras to guarantee the dependency is present:
+
+```bash
+pip install .[evolution]
+```
+
+If scikit-learn is missing, the evaluation path logs a warning and falls back to
+a lightweight accuracy calculation so orchestration can continue. This means
+metrics are still produced, but the richer scikit-learn diagnostics are skipped.
