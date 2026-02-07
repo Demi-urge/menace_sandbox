@@ -420,6 +420,7 @@ class MenaceOrchestrator:
         *,
         dependency_broker: Any,
         bootstrap_heartbeat: object | None,
+        bootstrap_signals_active: bool,
     ) -> tuple[object | None, object | None, bool, bool]:
         """Resolve broker state, advertising placeholders when needed."""
 
@@ -439,7 +440,20 @@ class MenaceOrchestrator:
         broker_owner_active = bool(getattr(dependency_broker, "active_owner", False))
         placeholder_seeded = False
 
-        if broker_pipeline is None and (broker_owner_active or bootstrap_heartbeat):
+        if broker_pipeline is None and (
+            broker_owner_active or bootstrap_heartbeat or bootstrap_signals_active
+        ):
+            if bootstrap_signals_active and not (
+                broker_owner_active or bootstrap_heartbeat
+            ):
+                self.logger.info(
+                    "seeding bootstrap placeholder because bootstrap signals are active",
+                    extra={
+                        "event": "menace-orchestrator-bootstrap-placeholder-signal",
+                        "bootstrap_heartbeat": bool(bootstrap_heartbeat),
+                        "bootstrap_signals": True,
+                    },
+                )
             placeholder_pipeline, placeholder_sentinel = advertise_bootstrap_placeholder(
                 dependency_broker=dependency_broker,
                 pipeline=broker_pipeline,
@@ -486,6 +500,26 @@ class MenaceOrchestrator:
             bootstrap_heartbeat = read_bootstrap_heartbeat()
         except Exception:
             bootstrap_heartbeat = None
+        try:
+            bootstrap_context = _current_bootstrap_context()
+        except Exception:
+            bootstrap_context = None
+        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
+        guard_promise = (
+            _peek_owner_promise(owner_guard) if owner_guard is not None else None
+        )
+        single_flight_promise = getattr(
+            _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+        )()
+        single_flight_active = single_flight_promise is not None and not getattr(
+            single_flight_promise, "done", True
+        )
+        bootstrap_signals_hint = (
+            bootstrap_context is not None
+            or bool(bootstrap_heartbeat)
+            or guard_promise is not None
+            or single_flight_active
+        )
 
         (
             broker_pipeline,
@@ -495,18 +529,18 @@ class MenaceOrchestrator:
         ) = self._initialize_pipeline(
             dependency_broker=dependency_broker,
             bootstrap_heartbeat=bootstrap_heartbeat,
-        )
-        owner_guard = getattr(_BOOTSTRAP_STATE, "active_bootstrap_guard", None)
-        guard_promise = (
-            _peek_owner_promise(owner_guard) if owner_guard is not None else None
+            bootstrap_signals_active=bootstrap_signals_hint,
         )
         reuse_wait_timeout = _resolve_bootstrap_wait_timeout()
         if reuse_wait_timeout is None:
             reuse_wait_timeout = 5.0
-        try:
-            bootstrap_context = _current_bootstrap_context()
-        except Exception:
-            bootstrap_context = None
+        if single_flight_promise is None:
+            single_flight_promise = getattr(
+                _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
+            )()
+            single_flight_active = single_flight_promise is not None and not getattr(
+                single_flight_promise, "done", True
+            )
 
         if bootstrap_context is not None:
             dependency_broker.advertise(
