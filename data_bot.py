@@ -1996,6 +1996,27 @@ class DataBot:
 
         self.metric_predictor = predictor
 
+    def schedule_monitoring(self, bot: str) -> None:
+        """Persist *bot* for periodic degradation checks."""
+
+        if self._db is None:
+            self.logger.debug(
+                "monitoring schedule skipped; metrics db not configured"
+            )
+            return
+        schedule = getattr(self._db, "schedule_monitoring", None)
+        if not callable(schedule):
+            self.logger.debug(
+                "monitoring schedule skipped; metrics db does not support it"
+            )
+            return
+        try:
+            schedule(str(bot))
+        except Exception:
+            self.logger.exception(
+                "failed to persist monitoring schedule for %s", bot
+            )
+
     def subscribe_threshold_breaches(
         self, callback: Callable[[dict], None]
     ) -> None:
@@ -2045,13 +2066,7 @@ class DataBot:
             self._ema_baseline.setdefault(
                 str(name), {"roi": 0.0, "errors": 0.0, "tests_failed": 0.0}
             )
-            if hasattr(self.db, "schedule_monitoring"):
-                try:
-                    self.db.schedule_monitoring(str(name))
-                except Exception:
-                    self.logger.exception(
-                        "failed to persist monitoring schedule for %s", name
-                    )
+            self.schedule_monitoring(str(name))
             if not self.monitoring_enabled:
                 return
             if not self._monitor_thread:
