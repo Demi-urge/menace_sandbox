@@ -4166,8 +4166,8 @@ def internalize_coding_bot(
                     try:
                         data_bot_ref.collect(
                             bot_name,
-                            post_patch_cycle_success=0.0,
-                            post_patch_cycle_error=reason,
+                            patch_success=0.0,
+                            patch_failure_reason=reason,
                         )
                     except Exception:
                         manager.logger.exception(
