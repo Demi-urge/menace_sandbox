@@ -2221,7 +2221,7 @@ class DataBot:
         bot: str,
         response_time: float = 0.0,
         errors: int = 0,
-        tests_failed: int = 0,
+        tests_failed: int | None = None,
         tests_run: int = 0,
         revenue: float = 0.0,
         expense: float = 0.0,
@@ -2247,8 +2247,19 @@ class DataBot:
         code_quality: float = 0.0,
         patch_success: float | None = None,
         patch_failure_reason: str | None = None,
+        post_patch_cycle_success: float | None = None,
+        post_patch_cycle_error: str | None = None,
+        post_patch_cycle_failed_tests: int | None = None,
         bottleneck: float | None = None,
     ) -> MetricRecord:
+        if patch_success is None and post_patch_cycle_success is not None:
+            patch_success = post_patch_cycle_success
+        if patch_failure_reason is None and post_patch_cycle_error is not None:
+            patch_failure_reason = post_patch_cycle_error
+        if tests_failed is None and post_patch_cycle_failed_tests is not None:
+            tests_failed = post_patch_cycle_failed_tests
+        if tests_failed is None:
+            tests_failed = 0
         if psutil:
             io = psutil.disk_io_counters()
             net = psutil.net_io_counters()
