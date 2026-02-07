@@ -555,6 +555,51 @@ class MenaceOrchestrator:
             bootstrap_heartbeat=bootstrap_heartbeat,
             bootstrap_signals_active=bootstrap_signals_hint,
         )
+
+        def _seed_fallback_placeholder(reason: str) -> None:
+            nonlocal broker_placeholder_seeded
+            nonlocal broker_placeholder_seen
+            nonlocal broker_placeholder_pipeline
+            nonlocal broker_pipeline
+            nonlocal broker_sentinel
+            nonlocal placeholder_pipeline
+
+            if placeholder_pipeline is not None or broker_placeholder_pipeline is not None:
+                return
+            try:
+                placeholder, sentinel = advertise_bootstrap_placeholder(
+                    dependency_broker=dependency_broker,
+                    owner=bool(broker_owner_active),
+                )
+            except Exception:
+                self.logger.exception(
+                    "failed to advertise fallback bootstrap placeholder",
+                    extra={
+                        "event": "menace-orchestrator-bootstrap-placeholder-fallback-error",
+                        "reason": reason,
+                    },
+                )
+                sentinel = SimpleNamespace(bootstrap_placeholder=True)
+                placeholder = SimpleNamespace(
+                    manager=sentinel,
+                    initial_manager=getattr(sentinel, "initial_manager", sentinel),
+                    bootstrap_placeholder=True,
+                )
+            broker_placeholder_seeded = True
+            broker_placeholder_seen = True
+            placeholder_pipeline = placeholder
+            broker_placeholder_pipeline = placeholder
+            if broker_sentinel is None:
+                broker_sentinel = getattr(placeholder, "manager", sentinel) or sentinel
+            broker_pipeline = _strip_placeholder(placeholder)
+            self.logger.warning(
+                "seeding fallback bootstrap placeholder during bootstrap signals",
+                extra={
+                    "event": "menace-orchestrator-bootstrap-placeholder-fallback",
+                    "reason": reason,
+                    "broker_owner": bool(broker_owner_active),
+                },
+            )
         if broker_placeholder_pipeline is not None:
             placeholder_pipeline = broker_placeholder_pipeline
             broker_placeholder_seen = True
@@ -755,9 +800,7 @@ class MenaceOrchestrator:
                         },
                     )
                 else:
-                    raise RuntimeError(
-                        "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
-                    )
+                    _seed_fallback_placeholder("bootstrap-guard")
 
         if bootstrap_pipeline is None and _bootstrap_signals_active():
             broker_pipeline, broker_sentinel = dependency_broker.resolve()
@@ -808,9 +851,7 @@ class MenaceOrchestrator:
                             },
                         )
                     else:
-                        raise RuntimeError(
-                            "bootstrap signals active but no dependency broker placeholder or single-flight promise advertised"
-                        )
+                        _seed_fallback_placeholder("bootstrap-wait-timeout")
 
         single_flight_promise = getattr(
             _GLOBAL_BOOTSTRAP_COORDINATOR, "peek_active", lambda: None
@@ -878,9 +919,9 @@ class MenaceOrchestrator:
                         "single_flight": single_flight_active,
                     },
                 )
-                raise RuntimeError(
-                    "bootstrap signals active but no dependency broker pipeline or manager promise available"
-                )
+                _seed_fallback_placeholder("bootstrap-missing")
+                if placeholder_pipeline is not None:
+                    bootstrap_pipeline = placeholder_pipeline
 
         if bootstrap_pipeline is None and (broker_sentinel is not None or single_flight_active):
             if single_flight_active:
