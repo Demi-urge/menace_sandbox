@@ -3949,13 +3949,21 @@ def internalize_coding_bot(
             )
             _end_step("bot_registry.register_bot", register_timer)
             schedule_timer = _start_step("data_bot.schedule_monitoring")
-            try:
-                data_bot.schedule_monitoring(bot_name)
-            except Exception:  # pragma: no cover - best effort
-                manager.logger.exception(
-                    "failed to schedule monitoring for %s", bot_name
+            if hasattr(data_bot, "schedule_monitoring"):
+                try:
+                    data_bot.schedule_monitoring(bot_name)
+                except Exception:  # pragma: no cover - best effort
+                    manager.logger.exception(
+                        "failed to schedule monitoring for %s", bot_name
+                    )
+                finally:
+                    _end_step("data_bot.schedule_monitoring", schedule_timer)
+            else:
+                manager.logger.warning(
+                    "data bot lacks schedule_monitoring for %s (data_bot=%s)",
+                    bot_name,
+                    type(data_bot).__name__,
                 )
-            finally:
                 _end_step("data_bot.schedule_monitoring", schedule_timer)
             settings = getattr(data_bot, "settings", None)
             thresholds = getattr(settings, "bot_thresholds", {}) if settings else {}
