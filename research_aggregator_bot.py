@@ -426,7 +426,8 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
     def _resolve_from_module(module: ModuleType) -> type | None:
         nonlocal last_error
         proxy_factory = getattr(module, "get_pipeline_class", None)
-        if callable(proxy_factory):
+        has_proxy_factory = callable(proxy_factory)
+        if has_proxy_factory:
             try:
                 pipeline_candidate = proxy_factory()
             except Exception as exc:
@@ -438,7 +439,11 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
         pipeline_candidate = getattr(module, "ModelAutomationPipeline", None)
         if isinstance(pipeline_candidate, type):
             return pipeline_candidate
-        if pipeline_candidate is not None and not isinstance(pipeline_candidate, type):
+        if (
+            pipeline_candidate is not None
+            and not isinstance(pipeline_candidate, type)
+            and not has_proxy_factory
+        ):
             proxy_resolver = getattr(pipeline_candidate, "_resolve", None)
             if callable(proxy_resolver):
                 try:
