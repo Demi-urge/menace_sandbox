@@ -1999,22 +1999,50 @@ class DataBot:
     def schedule_monitoring(self, bot: str) -> None:
         """Persist *bot* for periodic degradation checks."""
 
+        bot_name = str(bot)
+        try:
+            self._ensure_monitoring_state(bot_name)
+        except Exception:
+            self.logger.exception(
+                "failed to initialise monitoring for %s", bot_name
+            )
         if self._db is None:
             self.logger.debug(
                 "monitoring schedule skipped; metrics db not configured"
             )
             return
-        schedule = getattr(self._db, "schedule_monitoring", None)
-        if not callable(schedule):
+        if not hasattr(self.db, "schedule_monitoring"):
             self.logger.debug(
                 "monitoring schedule skipped; metrics db does not support it"
             )
             return
         try:
-            schedule(str(bot))
+            self.db.schedule_monitoring(bot_name)
         except Exception:
             self.logger.exception(
-                "failed to persist monitoring schedule for %s", bot
+                "failed to persist monitoring schedule for %s", bot_name
+            )
+
+    def _ensure_monitoring_state(self, bot: str) -> None:
+        """Ensure thresholds/baselines exist for *bot* without duplicating work."""
+
+        if (
+            bot not in self._baseline
+            or bot not in self._ema_baseline
+            or bot not in self._thresholds
+        ):
+            self.reload_thresholds(bot)
+            self._baseline.setdefault(
+                bot, _create_baseline_tracker(window=self.baseline_window)
+            )
+            self._ema_baseline.setdefault(
+                bot, {"roi": 0.0, "errors": 0.0, "tests_failed": 0.0}
+            )
+        if not self.monitoring_enabled:
+            return
+        if not self._monitor_thread:
+            self._monitor_thread = self.start_monitoring(
+                self.threshold_update_interval
             )
 
     def subscribe_threshold_breaches(
@@ -2059,20 +2087,7 @@ class DataBot:
         if not name:
             return
         try:
-            self.reload_thresholds(str(name))
-            self._baseline.setdefault(
-                str(name), _create_baseline_tracker(window=self.baseline_window)
-            )
-            self._ema_baseline.setdefault(
-                str(name), {"roi": 0.0, "errors": 0.0, "tests_failed": 0.0}
-            )
             self.schedule_monitoring(str(name))
-            if not self.monitoring_enabled:
-                return
-            if not self._monitor_thread:
-                self._monitor_thread = self.start_monitoring(
-                    self.threshold_update_interval
-                )
         except Exception:
             self.logger.exception("failed to initialise monitoring for %s", name)
 
