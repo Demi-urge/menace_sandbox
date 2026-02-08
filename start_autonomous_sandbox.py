@@ -213,6 +213,7 @@ print("✅ Environment helpers ready.", flush=True)
 
 import argparse
 import faulthandler
+import hashlib
 import json
 import random
 import signal
@@ -517,6 +518,9 @@ start_bootstrap_heartbeat_keepalive(logger=LOGGER)
 
 BOOTSTRAP_ARTIFACT_PATH = Path("sandbox_data/bootstrap_artifacts.json")
 BOOTSTRAP_SENTINEL_PATH = Path("maintenance-logs/bootstrap_status.json")
+WORKFLOW_DISCOVERY_FAILURE_PATH = Path(
+    "maintenance-logs/workflow_discovery_failures.json"
+)
 BOOTSTRAP_LOCK_PATH = Path(
     os.getenv("MENACE_BOOTSTRAP_LOCK_FILE", "/tmp/menace_bootstrap.lock")
 )
@@ -1066,11 +1070,84 @@ def _record_bootstrap_timeout(
     return backoff
 
 
+def _format_exception_payload(exc: BaseException) -> dict[str, Any]:
+    return {
+        "exception_type": type(exc).__name__,
+        "message": str(exc),
+        "traceback": "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ),
+    }
+
+
+def _persist_workflow_discovery_failure(
+    payload: Mapping[str, Any],
+    logger: logging.Logger,
+) -> dict[str, Any]:
+    now = time.time()
+    failure_payload = dict(payload)
+    failure_payload.setdefault("timestamp", now)
+    fingerprint_source = (
+        f"{failure_payload.get('exception_type')}|"
+        f"{failure_payload.get('message')}|"
+        f"{failure_payload.get('traceback')}"
+    )
+    fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
+    store: dict[str, Any] = {"version": 1, "failures": {}}
+    try:
+        if WORKFLOW_DISCOVERY_FAILURE_PATH.exists():
+            store = _read_json_file(WORKFLOW_DISCOVERY_FAILURE_PATH)
+            if not isinstance(store, dict):
+                store = {"version": 1, "failures": {}}
+    except Exception:
+        logger.debug("failed to read workflow discovery failure store", exc_info=True)
+        store = {"version": 1, "failures": {}}
+
+    failures = store.setdefault("failures", {})
+    entry = failures.get(fingerprint, {}) if isinstance(failures, dict) else {}
+    occurrences = int(entry.get("occurrences", 0)) + 1
+    record = {
+        "fingerprint": fingerprint,
+        "first_seen": entry.get("first_seen", now),
+        "last_seen": now,
+        "occurrences": occurrences,
+        "payload": failure_payload,
+    }
+    if isinstance(failures, dict):
+        failures[fingerprint] = record
+    store["last_updated"] = now
+    WORKFLOW_DISCOVERY_FAILURE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        WORKFLOW_DISCOVERY_FAILURE_PATH.write_text(
+            json.dumps(store, indent=2, sort_keys=True)
+        )
+    except Exception:
+        logger.debug("failed to persist workflow discovery failure store", exc_info=True)
+
+    event_payload = {
+        "event": "workflow_discovery_failure",
+        "fingerprint": fingerprint,
+        "occurrences": occurrences,
+        "first_seen": record["first_seen"],
+        "last_seen": record["last_seen"],
+        "payload": failure_payload,
+        "context_path": str(WORKFLOW_DISCOVERY_FAILURE_PATH),
+    }
+    if shared_event_bus is not None:
+        try:
+            shared_event_bus.publish("workflow_discovery.failure", event_payload)
+        except Exception:
+            logger.debug("failed to publish workflow discovery failure event", exc_info=True)
+
+    return event_payload
+
+
 def _maybe_run_layer4_self_debug(
     settings: SandboxSettings,
     logger: logging.Logger,
     *,
     reason: str,
+    failure_context: Mapping[str, Any] | None = None,
 ) -> None:
     enabled = bool(getattr(settings, "enable_layer4_self_debug", False))
     error_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG_ON_ERRORS", "")
@@ -1108,6 +1185,13 @@ def _maybe_run_layer4_self_debug(
         "--metrics-source",
         "menace_layer4_self_debug",
     ]
+    if failure_context:
+        context_path = failure_context.get("context_path")
+        context_id = failure_context.get("fingerprint")
+        if context_path:
+            args.extend(["--failure-context-path", str(context_path)])
+        if context_id:
+            args.extend(["--failure-context-id", str(context_id)])
     try:
         exit_code = menace_workflow_self_debug.main(args)
     except Exception:
@@ -3620,7 +3704,17 @@ def main(argv: list[str] | None = None) -> None:
                             % len(discovered_specs),
                             flush=True,
                         )
-                    except Exception:
+                    except Exception as exc:
+                        failure_payload = _format_exception_payload(exc)
+                        failure_payload.update(
+                            {
+                                "stage": "workflow_discovery",
+                                "reason": "workflow-discovery-error",
+                            }
+                        )
+                        failure_context = _persist_workflow_discovery_failure(
+                            failure_payload, logger
+                        )
                         logger.exception(
                             "failed to auto-discover workflow specs",
                             extra=log_record(event="workflow-discovery-error"),
@@ -3629,6 +3723,7 @@ def main(argv: list[str] | None = None) -> None:
                             settings,
                             logger,
                             reason="workflow-discovery-error",
+                            failure_context=failure_context,
                         )
                     print(
                         "[META-TRACE] workflow discovery post-processing; specs=%s"

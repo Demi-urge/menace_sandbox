@@ -120,6 +120,38 @@ def _roi_delta_total(pipeline_result: Mapping[str, object]) -> float:
     return float(total) if total is not None else 0.0
 
 
+def _load_failure_context(
+    context_path: Path | None,
+    context_id: str | None,
+) -> Mapping[str, object] | None:
+    if context_path is None:
+        return None
+    try:
+        data = json.loads(context_path.read_text(encoding="utf-8"))
+    except OSError:
+        LOGGER.exception("failed to read failure context file")
+        return None
+    except json.JSONDecodeError:
+        LOGGER.exception("failed to parse failure context file")
+        return None
+    if context_id and isinstance(data, Mapping):
+        failures = data.get("failures")
+        if isinstance(failures, Mapping) and context_id in failures:
+            entry = failures.get(context_id)
+            if isinstance(entry, Mapping):
+                return {
+                    "context_path": str(context_path),
+                    "context_id": context_id,
+                    "record": dict(entry),
+                }
+    if isinstance(data, Mapping):
+        return {
+            "context_path": str(context_path),
+            "record": dict(data),
+        }
+    return None
+
+
 def _format_promotion_reasons(reasons: Iterable[str]) -> list[str]:
     mapping = {
         "roi_delta_invalid": "ROI delta ≤ 0",
@@ -473,6 +505,7 @@ def _run_self_debug(
     metrics_logger: StabilizationLoggingWrapper | None = None,
     correlation_id: str | None = None,
     metrics_source: str = DEFAULT_METRICS_SOURCE,
+    failure_context: Mapping[str, object] | None = None,
 ) -> int:
     certified = _is_self_improvement_certified()
     modules = discover_workflow_modules(repo_root, include_bots=certified)
@@ -516,6 +549,14 @@ def _run_self_debug(
     ordered_modules = roi_weighted_order(modules) if certified else modules
     modules = ordered_modules
     effective_dynamic = dynamic_workflows or certified
+    if failure_context:
+        LOGGER.info(
+            "self-debug failure context loaded",
+            extra={
+                "context_path": failure_context.get("context_path"),
+                "context_id": failure_context.get("context_id"),
+            },
+        )
     snapshot = freeze_cycle(
         inputs={
             "workflow_modules": ordered_modules,
@@ -523,6 +564,7 @@ def _run_self_debug(
             "source_menace_id": source_menace_id,
             "dynamic_workflows": effective_dynamic,
             "certified": certified,
+            "failure_context": failure_context,
         },
         configs={
             "sandbox_settings": settings_snapshot,
@@ -785,6 +827,17 @@ def main(argv: Iterable[str] | None = None) -> int:
         default=DEFAULT_METRICS_SOURCE,
         help="Metrics source tag for self-debug logging.",
     )
+    parser.add_argument(
+        "--failure-context-path",
+        type=Path,
+        default=None,
+        help="Path to persisted failure context payload.",
+    )
+    parser.add_argument(
+        "--failure-context-id",
+        default=None,
+        help="Identifier for the failure context entry to load.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     workflow_db = args.workflow_db
@@ -804,6 +857,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         correlation_id=correlation_id, source=args.metrics_source
     )
     try:
+        failure_context = _load_failure_context(
+            args.failure_context_path, args.failure_context_id
+        )
         return _run_self_debug(
             repo_root=args.repo_root.resolve(),
             workflow_db_path=workflow_db,
@@ -812,6 +868,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             metrics_logger=metrics_logger,
             correlation_id=correlation_id,
             metrics_source=args.metrics_source,
+            failure_context=failure_context,
         )
     finally:
         metrics_logger.close()
