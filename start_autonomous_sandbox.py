@@ -1156,7 +1156,8 @@ def _maybe_run_layer4_self_debug(
     enabled = env_enabled or bool(getattr(settings, "enable_layer4_self_debug", False))
     error_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG_ON_ERRORS", "")
     errors_enabled = error_flag.lower() in {"1", "true", "yes"}
-    allow_without_error_flag = reason in {"startup", "pre-launch"}
+    error_reasons = {"bootstrap-error-retry", "workflow-discovery-error"}
+    requires_error_gate = reason in error_reasons
     logger.info(
         "Layer-4 self-debug decision",
         extra=log_record(
@@ -1166,7 +1167,7 @@ def _maybe_run_layer4_self_debug(
             env_enabled=env_enabled,
             error_flag=error_flag,
             errors_enabled=errors_enabled,
-            allow_without_error_flag=allow_without_error_flag,
+            requires_error_gate=requires_error_gate,
             reason=reason,
         ),
     )
@@ -1180,13 +1181,14 @@ def _maybe_run_layer4_self_debug(
             ),
         )
         return
-    if not errors_enabled and not allow_without_error_flag:
+    if requires_error_gate and not errors_enabled:
         logger.info(
-            "Layer-4 self-debug skipped: errors-only gate not enabled",
+            "Layer-4 self-debug skipped: errors-only gate not enabled for error-triggered reason",
             extra=log_record(
                 event="layer4-self-debug-skipped",
                 reason=reason,
                 skip_reason="errors-only-gate",
+                requires_error_gate=requires_error_gate,
             ),
         )
         return
