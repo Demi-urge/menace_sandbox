@@ -1153,6 +1153,7 @@ def _maybe_run_layer4_self_debug(
     enabled = bool(getattr(settings, "enable_layer4_self_debug", False))
     error_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG_ON_ERRORS", "")
     errors_enabled = error_flag.lower() in {"1", "true", "yes"}
+    allow_without_error_flag = reason in {"startup", "pre-launch"}
     logger.info(
         "Layer-4 self-debug decision",
         extra=log_record(
@@ -1161,10 +1162,29 @@ def _maybe_run_layer4_self_debug(
             env_flag=os.getenv("MENACE_LAYER4_SELF_DEBUG"),
             error_flag=error_flag,
             errors_enabled=errors_enabled,
+            allow_without_error_flag=allow_without_error_flag,
             reason=reason,
         ),
     )
-    if not enabled or not errors_enabled:
+    if not enabled:
+        logger.info(
+            "Layer-4 self-debug skipped: disabled",
+            extra=log_record(
+                event="layer4-self-debug-skipped",
+                reason=reason,
+                skip_reason="disabled",
+            ),
+        )
+        return
+    if not errors_enabled and not allow_without_error_flag:
+        logger.info(
+            "Layer-4 self-debug skipped: errors-only gate not enabled",
+            extra=log_record(
+                event="layer4-self-debug-skipped",
+                reason=reason,
+                skip_reason="errors-only-gate",
+            ),
+        )
         return
 
     try:
