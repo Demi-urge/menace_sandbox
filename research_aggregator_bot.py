@@ -434,7 +434,8 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
             except Exception as exc:
                 last_error = ImportError(
                     f"ModelAutomationPipeline loader failed in {module.__name__}"
-                ) from exc
+                )
+                last_error.__cause__ = exc
                 return None
             if isinstance(pipeline_candidate, type):
                 return pipeline_candidate
