@@ -121,6 +121,9 @@ class MetricsStoreProtocol(Protocol):
     def fetch(self, limit: int | None = 100, **kwargs: Any) -> Any:  # pragma: no cover - protocol
         ...
 
+    def schedule_monitoring(self, bot: str) -> None:  # pragma: no cover - protocol
+        ...
+
 
 @runtime_checkable
 class DataBotInterface(Protocol):
@@ -143,6 +146,9 @@ class DataBotInterface(Protocol):
         ...
 
     def roi(self, bot: str) -> float:  # pragma: no cover - protocol definition
+        ...
+
+    def schedule_monitoring(self, bot: str) -> None:  # pragma: no cover - protocol definition
         ...
 
 

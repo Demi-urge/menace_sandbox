@@ -2006,18 +2006,19 @@ class DataBot:
             self.logger.exception(
                 "failed to initialise monitoring for %s", bot_name
             )
-        if self._db is None:
+        db = self._db
+        if db is None:
             self.logger.debug(
                 "monitoring schedule skipped; metrics db not configured"
             )
             return
-        if not hasattr(self.db, "schedule_monitoring"):
+        if not hasattr(db, "schedule_monitoring"):
             self.logger.debug(
                 "monitoring schedule skipped; metrics db does not support it"
             )
             return
         try:
-            self.db.schedule_monitoring(bot_name)
+            db.schedule_monitoring(bot_name)
         except Exception:
             self.logger.exception(
                 "failed to persist monitoring schedule for %s", bot_name
