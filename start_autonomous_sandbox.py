@@ -1152,7 +1152,12 @@ def _maybe_run_layer4_self_debug(
 ) -> None:
     env_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG")
     env_flag_normalized = (env_flag or "").strip().lower()
-    env_enabled = bool(env_flag) and env_flag_normalized in {"1", "true", "yes"}
+    if env_flag is None:
+        env_enabled = bool(env_flag) and env_flag_normalized in {"1", "true", "yes"}
+    else:
+        env_enabled = env_flag_normalized in {"1", "true", "yes", "y", "on"}
+        if env_flag_normalized in {"0", "false", "no", "n", "off"}:
+            env_enabled = False
     enabled = env_enabled or bool(getattr(settings, "enable_layer4_self_debug", False))
     error_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG_ON_ERRORS", "")
     errors_enabled = error_flag.lower() in {"1", "true", "yes"}
