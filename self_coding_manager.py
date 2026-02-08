@@ -55,6 +55,11 @@ _INTERNALIZE_FAILURE_COOLDOWN_SECONDS = float(
 )
 _INTERNALIZE_FAILURE_LOCK = threading.Lock()
 _INTERNALIZE_FAILURE_STATE: dict[str, dict[str, float | int | str | None]] = {}
+_SELF_DEBUG_BACKOFF_SECONDS = float(
+    os.getenv("SELF_CODING_SELF_DEBUG_BACKOFF_SECONDS", "600")
+)
+_SELF_DEBUG_BACKOFF_LOCK = threading.Lock()
+_SELF_DEBUG_LAST_TRIGGER: dict[str, float] = {}
 from contextlib import contextmanager
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
@@ -225,6 +230,107 @@ def _internalize_in_cooldown(bot_name: str) -> bool:
             state["count"] = 0
             _INTERNALIZE_FAILURE_STATE[bot_name] = state
     return False
+
+
+def _should_trigger_self_debug(bot_name: str) -> bool:
+    """Return True when a self-debug run should be triggered for *bot_name*."""
+
+    if _SELF_DEBUG_BACKOFF_SECONDS <= 0:
+        return True
+    now = time.monotonic()
+    with _SELF_DEBUG_BACKOFF_LOCK:
+        last_trigger = _SELF_DEBUG_LAST_TRIGGER.get(bot_name)
+        if last_trigger is not None and now - last_trigger < _SELF_DEBUG_BACKOFF_SECONDS:
+            return False
+        _SELF_DEBUG_LAST_TRIGGER[bot_name] = now
+    return True
+
+
+def _launch_module_path_self_debug(
+    bot_name: str,
+    module_candidates: dict[str, str | None],
+    module_hint: str | None,
+    manager: "SelfCodingManager",
+) -> None:
+    if not _should_trigger_self_debug(bot_name):
+        if hasattr(manager, "logger"):
+            try:
+                manager.logger.info(
+                    "self-debug backoff active for %s; skipping module_path_missing trigger",
+                    bot_name,
+                    extra={"bot": bot_name},
+                )
+            except Exception:
+                pass
+        return
+
+    payload = {
+        "event": "module_path_missing",
+        "bot": bot_name,
+        "module_hint": module_hint,
+        "module_candidates": dict(module_candidates),
+        "timestamp": time.time(),
+    }
+    try:
+        context_dir = Path(tempfile.mkdtemp(prefix="module_path_self_debug_"))
+        context_path = context_dir / "failure_context.json"
+        context_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception:
+        if hasattr(manager, "logger"):
+            manager.logger.exception(
+                "failed to persist module_path_missing failure context for %s",
+                bot_name,
+            )
+        return
+
+    def _run_self_debug() -> None:
+        try:
+            from menace_sandbox import menace_workflow_self_debug
+        except Exception:
+            if hasattr(manager, "logger"):
+                manager.logger.exception(
+                    "self-debug import failed while handling module_path_missing for %s",
+                    bot_name,
+                    extra={"bot": bot_name, "context_path": str(context_path)},
+                )
+            return
+
+        args = [
+            "--repo-root",
+            str(Path(".").resolve()),
+            "--metrics-source",
+            "module_path_missing",
+            "--source-menace-id",
+            "module_path_missing",
+            "--failure-context-path",
+            str(context_path),
+        ]
+        try:
+            exit_code = menace_workflow_self_debug.main(args)
+        except Exception:
+            if hasattr(manager, "logger"):
+                manager.logger.exception(
+                    "self-debug run failed for module_path_missing on %s",
+                    bot_name,
+                    extra={"bot": bot_name},
+                )
+            return
+        if hasattr(manager, "logger"):
+            try:
+                manager.logger.info(
+                    "self-debug run completed for module_path_missing on %s",
+                    bot_name,
+                    extra={"bot": bot_name, "exit_code": exit_code},
+                )
+            except Exception:
+                pass
+
+    thread = threading.Thread(
+        target=_run_self_debug,
+        name=f"module_path_self_debug:{bot_name}",
+        daemon=True,
+    )
+    thread.start()
 
 
 def _record_internalize_failure(
@@ -4225,6 +4331,12 @@ def internalize_coding_bot(
                             f"[debug] failed to log module_path resolution error for {bot_name}",
                             file=sys.stderr,
                         )
+                _launch_module_path_self_debug(
+                    bot_name=bot_name,
+                    module_candidates=module_candidates,
+                    module_hint=module_hint,
+                    manager=manager,
+                )
                 _emit_failure("module_path_missing")
                 if bot_registry is not None and hasattr(
                     bot_registry, "register_module_path_failure"
