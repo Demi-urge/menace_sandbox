@@ -1066,17 +1066,27 @@ def _record_bootstrap_timeout(
     return backoff
 
 
-def _maybe_run_layer4_self_debug(settings: SandboxSettings, logger: logging.Logger) -> None:
+def _maybe_run_layer4_self_debug(
+    settings: SandboxSettings,
+    logger: logging.Logger,
+    *,
+    reason: str,
+) -> None:
     enabled = bool(getattr(settings, "enable_layer4_self_debug", False))
+    error_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG_ON_ERRORS", "")
+    errors_enabled = error_flag.lower() in {"1", "true", "yes"}
     logger.info(
         "Layer-4 self-debug decision",
         extra=log_record(
             event="layer4-self-debug-decision",
             enabled=enabled,
             env_flag=os.getenv("MENACE_LAYER4_SELF_DEBUG"),
+            error_flag=error_flag,
+            errors_enabled=errors_enabled,
+            reason=reason,
         ),
     )
-    if not enabled:
+    if not enabled or not errors_enabled:
         return
 
     try:
@@ -2979,6 +2989,7 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     if not args.health_check:
+        _maybe_run_layer4_self_debug(settings, logger, reason="startup")
         _preflight_bootstrap_conflicts(logger)
 
     calibrated_step_budgets, budget_debug = _calibrate_bootstrap_step_budgets(logger)
@@ -3356,6 +3367,11 @@ def main(argv: list[str] | None = None) -> None:
                                     error=str(bootstrap_error),
                                 ),
                             )
+                            _maybe_run_layer4_self_debug(
+                                settings,
+                                logger,
+                                reason="bootstrap-error-retry",
+                            )
                             time.sleep(delay)
                             continue
 
@@ -3608,6 +3624,11 @@ def main(argv: list[str] | None = None) -> None:
                         logger.exception(
                             "failed to auto-discover workflow specs",
                             extra=log_record(event="workflow-discovery-error"),
+                        )
+                        _maybe_run_layer4_self_debug(
+                            settings,
+                            logger,
+                            reason="workflow-discovery-error",
                         )
                     print(
                         "[META-TRACE] workflow discovery post-processing; specs=%s"
@@ -4954,7 +4975,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.stderr.write(f"sandbox launch blocked: {summary}\n")
             sys.stderr.flush()
             sys.exit(3)
-        _maybe_run_layer4_self_debug(settings, logger)
+        _maybe_run_layer4_self_debug(settings, logger, reason="pre-launch")
         _emoji_step(
             logger,
             "🧠",
