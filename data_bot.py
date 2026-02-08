@@ -2267,7 +2267,23 @@ class DataBot:
         post_patch_cycle_error: str | None = None,
         post_patch_cycle_failed_tests: int | None = None,
         bottleneck: float | None = None,
+        **metrics: object,
     ) -> MetricRecord:
+        extra_metrics = dict(metrics)
+        if post_patch_cycle_success is None:
+            post_patch_cycle_success = cast(
+                float | None, extra_metrics.pop("post_patch_cycle_success", None)
+            )
+        if post_patch_cycle_error is None:
+            post_patch_cycle_error = cast(
+                str | None, extra_metrics.pop("post_patch_cycle_error", None)
+            )
+        if post_patch_cycle_failed_tests is None:
+            post_patch_cycle_failed_tests = cast(
+                int | None, extra_metrics.pop("post_patch_cycle_failed_tests", None)
+            )
+        if tests_failed is None:
+            tests_failed = cast(int | None, extra_metrics.pop("tests_failed", None))
         if patch_success is None and post_patch_cycle_success is not None:
             patch_success = post_patch_cycle_success
         if patch_failure_reason is None and post_patch_cycle_error is not None:
@@ -2430,6 +2446,25 @@ class DataBot:
                 self.db.log_eval("system", "avg_energy_score", float(energy))
             except Exception as exc:
                 self.logger.exception("failed to query capital bot: %s", exc)
+        eval_metrics: dict[str, float] = {}
+        if post_patch_cycle_success is not None:
+            eval_metrics["post_patch_cycle_success"] = float(
+                post_patch_cycle_success
+            )
+        if post_patch_cycle_failed_tests is not None:
+            eval_metrics["post_patch_cycle_failed_tests"] = float(
+                post_patch_cycle_failed_tests
+            )
+        if isinstance(post_patch_cycle_error, (int, float)):
+            eval_metrics["post_patch_cycle_error"] = float(post_patch_cycle_error)
+        for name, value in extra_metrics.items():
+            if isinstance(value, (int, float)):
+                eval_metrics.setdefault(name, float(value))
+        for name, value in eval_metrics.items():
+            try:
+                self.db.log_eval(bot, name, value)
+            except Exception as exc:
+                self.logger.exception("failed to log eval metric %s: %s", name, exc)
         return rec
 
     def forecast_metrics(

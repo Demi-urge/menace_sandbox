@@ -136,7 +136,7 @@ class DataBotInterface(Protocol):
         bot: str,
         response_time: float = 0.0,
         errors: int = 0,
-        **metrics: float,
+        **metrics: Any,
     ) -> RawMetrics:  # pragma: no cover - protocol definition
         ...
 
