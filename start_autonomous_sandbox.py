@@ -1150,7 +1150,10 @@ def _maybe_run_layer4_self_debug(
     reason: str,
     failure_context: Mapping[str, Any] | None = None,
 ) -> None:
-    enabled = bool(getattr(settings, "enable_layer4_self_debug", False))
+    env_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG")
+    env_flag_normalized = (env_flag or "").strip().lower()
+    env_enabled = bool(env_flag) and env_flag_normalized in {"1", "true", "yes"}
+    enabled = env_enabled or bool(getattr(settings, "enable_layer4_self_debug", False))
     error_flag = os.getenv("MENACE_LAYER4_SELF_DEBUG_ON_ERRORS", "")
     errors_enabled = error_flag.lower() in {"1", "true", "yes"}
     allow_without_error_flag = reason in {"startup", "pre-launch"}
@@ -1159,7 +1162,8 @@ def _maybe_run_layer4_self_debug(
         extra=log_record(
             event="layer4-self-debug-decision",
             enabled=enabled,
-            env_flag=os.getenv("MENACE_LAYER4_SELF_DEBUG"),
+            env_flag=env_flag,
+            env_enabled=env_enabled,
             error_flag=error_flag,
             errors_enabled=errors_enabled,
             allow_without_error_flag=allow_without_error_flag,
