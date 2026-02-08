@@ -4072,11 +4072,13 @@ def internalize_coding_bot(
                         module_hint = str(module_entry)
                     dotted_module_path: Path | None = None
                     if isinstance(module_entry, (str, os.PathLike)):
+                        module_entry_str = str(module_entry)
                         dotted_module_path = Path(module_entry)
-                        if "." in str(module_entry) and not dotted_module_path.exists():
+                        is_explicit_path = module_entry_str.endswith(".py")
+                        if not dotted_module_path.exists() and not is_explicit_path:
                             module_file = None
                             try:
-                                spec = importlib.util.find_spec(str(module_entry))
+                                spec = importlib.util.find_spec(module_entry_str)
                             except Exception:
                                 spec = None
                             if spec and getattr(spec, "origin", None):
@@ -4085,7 +4087,7 @@ def internalize_coding_bot(
                             if module_file is None:
                                 try:
                                     imported_module = importlib.import_module(
-                                        str(module_entry)
+                                        module_entry_str
                                     )
                                 except Exception:
                                     imported_module = None
