@@ -383,6 +383,7 @@ from self_improvement.workflow_discovery import discover_workflow_specs
 from self_improvement.component_workflow_synthesis import discover_component_workflows
 from sandbox_orchestrator import SandboxOrchestrator
 from context_builder_util import create_context_builder
+import menace_self_debug
 from self_improvement.orphan_handling import (
     integrate_orphans,
     integrate_orphans_sync,
@@ -1208,6 +1209,161 @@ def _maybe_run_layer4_self_debug(
             exit_code=exit_code,
         ),
     )
+
+
+def _check_module_resolution(logger: logging.Logger) -> tuple[bool, str, Mapping[str, Any]]:
+    candidates = [
+        "sandbox_orchestrator",
+        "workflow_evolution_manager",
+        "self_improvement.workflow_discovery",
+    ]
+    missing = [name for name in candidates if importlib.util.find_spec(name) is None]
+    resolved_meta = _resolve_meta_planning_candidate()
+    repo_root = Path(resolve_path("."))
+    if missing or resolved_meta is None or not repo_root.exists():
+        return (
+            False,
+            "module_resolution_failed",
+            {
+                "missing_modules": missing,
+                "meta_planning_candidate": resolved_meta,
+                "repo_root": str(repo_root),
+                "repo_root_exists": repo_root.exists(),
+            },
+        )
+    return True, "module_resolution_ok", {"repo_root": str(repo_root)}
+
+
+def _check_workflow_discovery(logger: logging.Logger) -> tuple[bool, str, Mapping[str, Any]]:
+    workflows_dir = Path(resolve_path("workflows"))
+    discovered: list[Mapping[str, object]] = []
+    discovery_error: str | None = None
+    try:
+        discovered = discover_workflow_specs(base_path=ROOT, logger=logger)
+    except Exception as exc:
+        discovery_error = str(exc)
+        logger.exception(
+            "workflow discovery check failed",
+            extra=log_record(event="self-debug-guardian-workflow-discovery-error"),
+        )
+    existing = list(workflows_dir.glob("*.workflow.json")) if workflows_dir.exists() else []
+    ok = bool(discovered) or bool(existing)
+    return (
+        ok,
+        "workflow_discovery_ok" if ok else "workflow_discovery_failed",
+        {
+            "discovered_count": len(discovered),
+            "existing_count": len(existing),
+            "workflows_dir": str(workflows_dir),
+            "discovery_error": discovery_error,
+        },
+    )
+
+
+def _check_internalization(logger: logging.Logger) -> tuple[bool, str, Mapping[str, Any]]:
+    last_step = BOOTSTRAP_PROGRESS.get("last_step", "unknown")
+    internalization_steps = {
+        "internalize_coding_bot",
+        "promote_pipeline",
+        "seed_final_context",
+        "push_final_context",
+        "bootstrap_complete",
+    }
+    critical_ready = bool(BOOTSTRAP_ONLINE_STATE.get("critical_ready"))
+    ok = last_step in internalization_steps or critical_ready
+    return (
+        ok,
+        "internalization_ok" if ok else "internalization_failed",
+        {
+            "last_step": last_step,
+            "critical_ready": critical_ready,
+            "expected_steps": sorted(internalization_steps),
+        },
+    )
+
+
+def _run_self_debug_once(
+    settings: SandboxSettings,
+    logger: logging.Logger,
+) -> int:
+    args = [
+        "--repo-root",
+        ROOT,
+        "--workflow-db",
+        settings.workflows_db,
+        "--include-discovered",
+        "--max-workflows",
+        str(int(os.getenv("MENACE_SELF_DEBUG_GUARDIAN_MAX_WORKFLOWS", "10"))),
+        "--max-failures",
+        str(int(os.getenv("MENACE_SELF_DEBUG_GUARDIAN_MAX_FAILURES", "1"))),
+    ]
+    logger.info(
+        "self-debug guardian invoking menace_self_debug",
+        extra=log_record(event="self-debug-guardian-start", args=args),
+    )
+    exit_code = menace_self_debug.main(args)
+    logger.info(
+        "self-debug guardian completed menace_self_debug",
+        extra=log_record(event="self-debug-guardian-complete", exit_code=exit_code),
+    )
+    return exit_code
+
+
+def run_self_debug_until_stable(
+    *,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+    max_attempts: int,
+    backoff: float,
+    success_conditions: Sequence[Callable[[logging.Logger], tuple[bool, str, Mapping[str, Any]]]],
+) -> bool:
+    attempts = max(1, max_attempts)
+    for attempt in range(1, attempts + 1):
+        logger.info(
+            "self-debug guardian attempt starting",
+            extra=log_record(
+                event="self-debug-guardian-attempt",
+                attempt=attempt,
+                max_attempts=attempts,
+            ),
+        )
+        exit_code = _run_self_debug_once(settings, logger)
+        failures: list[Mapping[str, Any]] = []
+        for condition in success_conditions:
+            ok, name, context = condition(logger)
+            if not ok:
+                failures.append({"check": name, "context": context})
+        if exit_code == 0 and not failures:
+            logger.info(
+                "self-debug guardian passed",
+                extra=log_record(event="self-debug-guardian-pass", attempt=attempt),
+            )
+            return True
+        logger.warning(
+            "self-debug guardian detected instability",
+            extra=log_record(
+                event="self-debug-guardian-fail",
+                attempt=attempt,
+                exit_code=exit_code,
+                failures=failures,
+            ),
+        )
+        if attempt < attempts:
+            delay = max(backoff * attempt, 0.0)
+            logger.info(
+                "self-debug guardian backoff before retry",
+                extra=log_record(
+                    event="self-debug-guardian-backoff",
+                    attempt=attempt,
+                    delay=round(delay, 2),
+                ),
+            )
+            time.sleep(delay)
+    logger.error(
+        "self-debug guardian exhausted attempts",
+        extra=log_record(event="self-debug-guardian-exhausted", attempts=attempts),
+    )
+    return False
 
 
 def _stage_timeout_context(
@@ -5070,6 +5226,31 @@ def main(argv: list[str] | None = None) -> None:
             sys.stderr.write(f"sandbox launch blocked: {summary}\n")
             sys.stderr.flush()
             sys.exit(3)
+        self_debug_guardian_flag = os.getenv("MENACE_SELF_DEBUG_GUARDIAN", "")
+        self_debug_guardian_enabled = self_debug_guardian_flag.lower() in {"1", "true", "yes"}
+        if self_debug_guardian_enabled:
+            guardian_attempts = int(os.getenv("MENACE_SELF_DEBUG_GUARDIAN_MAX_ATTEMPTS", "3"))
+            guardian_backoff = float(os.getenv("MENACE_SELF_DEBUG_GUARDIAN_BACKOFF", "15"))
+            guardian_ok = run_self_debug_until_stable(
+                settings=settings,
+                logger=logger,
+                max_attempts=guardian_attempts,
+                backoff=guardian_backoff,
+                success_conditions=(
+                    _check_module_resolution,
+                    _check_workflow_discovery,
+                    _check_internalization,
+                ),
+            )
+            if not guardian_ok:
+                logger.error(
+                    "self-debug guardian failed; aborting launch",
+                    extra=log_record(
+                        event="self-debug-guardian-abort",
+                        attempts=guardian_attempts,
+                    ),
+                )
+                sys.exit(4)
         _maybe_run_layer4_self_debug(settings, logger, reason="pre-launch")
         _emoji_step(
             logger,
