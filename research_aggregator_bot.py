@@ -423,22 +423,33 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
     last_error: Exception | None = None
     invalid_class_error = "get_pipeline_class returned an invalid pipeline handle from "
 
+    def _resolve_via_loader(module: ModuleType) -> type | None:
+        nonlocal last_error
+        loader = getattr(module, "get_pipeline_class", None)
+        if not callable(loader):
+            loader = getattr(module, "_load_pipeline_cls", None)
+        if callable(loader):
+            try:
+                pipeline_candidate = loader()
+            except Exception as exc:
+                last_error = ImportError(
+                    f"ModelAutomationPipeline loader failed in {module.__name__}"
+                ) from exc
+                return None
+            if isinstance(pipeline_candidate, type):
+                return pipeline_candidate
+            last_error = ImportError(f"{invalid_class_error}{module.__name__}")
+        return None
+
     def _resolve_from_module(module: ModuleType) -> type | None:
         nonlocal last_error
-        proxy_factory = getattr(module, "get_pipeline_class", None)
-        if callable(proxy_factory):
-            try:
-                pipeline_candidate = proxy_factory()
-            except Exception as exc:
-                last_error = exc
-            else:
-                if isinstance(pipeline_candidate, type):
-                    return pipeline_candidate
-                last_error = ImportError(f"{invalid_class_error}{module.__name__}")
         pipeline_candidate = getattr(module, "ModelAutomationPipeline", None)
         if isinstance(pipeline_candidate, type):
             return pipeline_candidate
         if pipeline_candidate is not None and not isinstance(pipeline_candidate, type):
+            pipeline_cls = _resolve_via_loader(module)
+            if pipeline_cls is not None:
+                return pipeline_cls
             proxy_resolver = getattr(pipeline_candidate, "_resolve", None)
             if callable(proxy_resolver):
                 try:
@@ -461,6 +472,9 @@ def _resolve_pipeline_cls() -> "Type[ModelAutomationPipeline]":
         except ModuleNotFoundError as exc:
             last_error = exc
             continue
+        pipeline_cls = _resolve_via_loader(module)
+        if pipeline_cls is not None:
+            return pipeline_cls  # type: ignore[return-value]
         pipeline_cls = _resolve_from_module(module)
         if pipeline_cls is not None:
             return pipeline_cls  # type: ignore[return-value]
