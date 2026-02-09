@@ -96,7 +96,7 @@ def test_update_bot_rollback(tmp_path):
 def test_delete_info_rollback(tmp_path):
     mdb = mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
     info = rd.InfoDB(tmp_path / 'i.db')
-    router = dr.DBRouter(info_db=info, menace_db=mdb)
+    router = info.router
     item = rd.ResearchItem(topic="t", content="c", timestamp=0.0)
     info_id = router.insert_info(item)
     router.transaction_manager = FailingTM()
