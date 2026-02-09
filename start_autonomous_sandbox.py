@@ -1378,6 +1378,18 @@ def _run_self_debug_once(
     return exit_code
 
 
+def _evaluate_self_debug_health(
+    logger: logging.Logger,
+    checks: Sequence[Callable[[logging.Logger], tuple[bool, str, Mapping[str, Any]]]],
+) -> tuple[bool, list[Mapping[str, Any]]]:
+    failures: list[Mapping[str, Any]] = []
+    for check in checks:
+        ok, name, context = check(logger)
+        if not ok:
+            failures.append({"check": name, "context": context})
+    return not failures, failures
+
+
 def run_self_debug_until_stable(
     *,
     settings: SandboxSettings,
@@ -1447,6 +1459,127 @@ def run_self_debug_until_stable(
         extra=log_record(event="self-debug-guardian-exhausted", attempts=attempts),
     )
     return False
+
+
+def _self_debug_health_loop(
+    *,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+    stop_event: threading.Event,
+    checks: Sequence[Callable[[logging.Logger], tuple[bool, str, Mapping[str, Any]]]],
+    cadence: float,
+    max_attempts: int,
+    backoff: float,
+) -> None:
+    loop_logger = logger.getChild("self_debug_health_loop")
+    loop_logger.info(
+        "self-debug health loop started",
+        extra=log_record(
+            event="self-debug-health-loop-start",
+            cadence=cadence,
+            max_attempts=max_attempts,
+            backoff=backoff,
+        ),
+    )
+    while not stop_event.is_set():
+        ok, failures = _evaluate_self_debug_health(loop_logger, checks)
+        if not ok:
+            loop_logger.warning(
+                "self-debug health loop detected instability",
+                extra=log_record(
+                    event="self-debug-health-loop-fail",
+                    failures=failures,
+                ),
+            )
+            stabilized = run_self_debug_until_stable(
+                settings=settings,
+                logger=loop_logger,
+                max_attempts=max_attempts,
+                backoff=backoff,
+                cadence=cadence,
+                success_conditions=checks,
+            )
+            if not stabilized:
+                loop_logger.error(
+                    "self-debug health loop failed to stabilize after retries",
+                    extra=log_record(
+                        event="self-debug-health-loop-exhausted",
+                        attempts=max_attempts,
+                    ),
+                )
+        else:
+            loop_logger.info(
+                "self-debug health loop passed",
+                extra=log_record(event="self-debug-health-loop-pass"),
+            )
+        stop_event.wait(max(cadence, 1.0))
+
+
+def _start_self_debug_health_loop(
+    *,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+) -> threading.Thread | None:
+    env_flag = os.getenv("MENACE_SELF_DEBUG_HEALTH_LOOP", "")
+    enabled = env_flag.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if not enabled:
+        logger.info(
+            "self-debug health loop disabled",
+            extra=log_record(
+                event="self-debug-health-loop-disabled",
+                env_flag=env_flag,
+            ),
+        )
+        return None
+
+    cadence = float(os.getenv("MENACE_SELF_DEBUG_HEALTH_CADENCE", "60"))
+    max_attempts = int(os.getenv("MENACE_SELF_DEBUG_HEALTH_MAX_RETRIES", "3"))
+    backoff = float(os.getenv("MENACE_SELF_DEBUG_HEALTH_BACKOFF", "15"))
+    initial_delay = float(os.getenv("MENACE_SELF_DEBUG_HEALTH_LOOP_START_DELAY", "15"))
+    checks = (
+        _check_module_resolution,
+        _check_workflow_discovery,
+        _check_internalization,
+        _check_dependency_broker_ready,
+    )
+
+    def _runner() -> None:
+        if initial_delay > 0:
+            logger.info(
+                "self-debug health loop delaying initial run",
+                extra=log_record(
+                    event="self-debug-health-loop-delay",
+                    delay=initial_delay,
+                ),
+            )
+            stop_event = SHUTDOWN_EVENT
+            if stop_event.wait(initial_delay):
+                return
+        _self_debug_health_loop(
+            settings=settings,
+            logger=logger,
+            stop_event=SHUTDOWN_EVENT,
+            checks=checks,
+            cadence=cadence,
+            max_attempts=max_attempts,
+            backoff=backoff,
+        )
+
+    thread = threading.Thread(
+        target=_runner,
+        name="self-debug-health-loop",
+        daemon=True,
+    )
+    thread.start()
+    logger.info(
+        "self-debug health loop thread started",
+        extra=log_record(
+            event="self-debug-health-loop-thread-started",
+            thread_name=thread.name,
+            cadence=cadence,
+        ),
+    )
+    return thread
 
 
 def _stage_timeout_context(
@@ -5406,6 +5539,7 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                 )
                 sys.exit(4)
+        _start_self_debug_health_loop(settings=settings, logger=logger)
         _maybe_run_layer4_self_debug(settings, logger, reason="pre-launch")
         _emoji_step(
             logger,
