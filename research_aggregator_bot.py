@@ -579,16 +579,8 @@ def _ensure_runtime_dependencies(
     pipeline and instead reuses any advertised placeholder/promise, raising an
     explicit error when nothing has been provided.
     """
-    global registry
-    global data_bot
-    global _context_builder
-    global engine
-    global _PipelineCls
-    global pipeline
-    global evolution_orchestrator
-    global manager
-    global _runtime_state
-    global _runtime_placeholder
+    global registry, data_bot, _context_builder, engine, _PipelineCls, pipeline
+    global evolution_orchestrator, manager, _runtime_state, _runtime_placeholder
     global _runtime_initializing
 
     # Guard: bootstrap orchestration must flow through the shared readiness
