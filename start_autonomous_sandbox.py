@@ -222,6 +222,7 @@ import time
 import traceback
 import uuid
 
+from failure_guard import FailureGuard
 from coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
@@ -1079,6 +1080,24 @@ def _format_exception_payload(exc: BaseException) -> dict[str, Any]:
             traceback.format_exception(type(exc), exc, exc.__traceback__)
         ),
     }
+
+
+def _capture_bootstrap_failure(
+    *,
+    exc: BaseException,
+    settings: SandboxSettings,
+    logger: logging.Logger,
+    metadata: Mapping[str, Any] | None = None,
+) -> None:
+    guard = FailureGuard(
+        stage="bootstrap",
+        metadata=metadata,
+        logger=logger,
+        repo_root=ROOT,
+        workflow_db=settings.workflows_db,
+        suppress=True,
+    )
+    guard.__exit__(type(exc), exc, exc.__traceback__)
 
 
 def _persist_workflow_discovery_failure(
@@ -3603,10 +3622,23 @@ def main(argv: list[str] | None = None) -> None:
                                         f"last_step={last_bootstrap_step} elapsed={elapsed:.1f}s"
                                     ),
                                 )
-                                raise TimeoutError(
+                                timeout_error = TimeoutError(
                                     "initialize_bootstrap_context exceeded timeout; "
                                     f"last_step={last_bootstrap_step} elapsed={elapsed:.1f}s"
                                 )
+                                _capture_bootstrap_failure(
+                                    exc=timeout_error,
+                                    settings=settings,
+                                    logger=logger,
+                                    metadata={
+                                        "attempt": attempt,
+                                        "last_step": last_bootstrap_step,
+                                        "elapsed": elapsed,
+                                        "budget_used": budget_used,
+                                        "stage_timeout": stage_timeout_context,
+                                    },
+                                )
+                                raise timeout_error
                             logger.info(
                                 "retrying bootstrap after backoff",  # expose retry policy
                                 extra=log_record(
@@ -3624,6 +3656,16 @@ def main(argv: list[str] | None = None) -> None:
                             if attempt >= max_attempts:
                                 bootstrap_manager.mark_ready(
                                     ready=False, error=str(bootstrap_error)
+                                )
+                                _capture_bootstrap_failure(
+                                    exc=bootstrap_error,
+                                    settings=settings,
+                                    logger=logger,
+                                    metadata={
+                                        "attempt": attempt,
+                                        "last_step": last_bootstrap_step,
+                                        "elapsed": elapsed,
+                                    },
                                 )
                                 raise bootstrap_error
                             delay = min(
@@ -3659,6 +3701,12 @@ def main(argv: list[str] | None = None) -> None:
                     if bootstrap_context is None and bootstrap_error:
                         bootstrap_manager.mark_ready(
                             ready=False, error=str(bootstrap_error)
+                        )
+                        _capture_bootstrap_failure(
+                            exc=bootstrap_error,
+                            settings=settings,
+                            logger=logger,
+                            metadata={"last_step": BOOTSTRAP_PROGRESS.get("last_step")},
                         )
                         raise bootstrap_error
 
@@ -3870,8 +3918,39 @@ def main(argv: list[str] | None = None) -> None:
                             improvement_threshold=os.getenv("META_IMPROVEMENT_THRESHOLD"),
                         ),
                     )
+                    def _handle_workflow_discovery_failure(
+                        payload: Mapping[str, Any],
+                        _context: Mapping[str, Any],
+                    ) -> None:
+                        failure_payload = dict(payload)
+                        failure_payload.setdefault("stage", "workflow_discovery")
+                        failure_payload.setdefault(
+                            "reason", "workflow-discovery-error"
+                        )
+                        failure_context = _persist_workflow_discovery_failure(
+                            failure_payload, logger
+                        )
+                        _maybe_run_layer4_self_debug(
+                            settings,
+                            logger,
+                            reason="workflow-discovery-error",
+                            failure_context=failure_context,
+                        )
+
                     discovered_specs = []
-                    try:
+                    with FailureGuard(
+                        stage="workflow_discovery",
+                        metadata={
+                            "planner_cls": getattr(
+                                planner_cls, "__name__", str(planner_cls)
+                            ),
+                        },
+                        logger=logger,
+                        repo_root=ROOT,
+                        workflow_db=settings.workflows_db,
+                        suppress=True,
+                        on_failure=_handle_workflow_discovery_failure,
+                    ):
                         discovered_specs = discover_workflow_specs(logger=logger)
                         logger.info(
                             "workflow discovery completed",
@@ -3890,27 +3969,6 @@ def main(argv: list[str] | None = None) -> None:
                             "[META-TRACE] workflow discovery finished; discovered=%d"
                             % len(discovered_specs),
                             flush=True,
-                        )
-                    except Exception as exc:
-                        failure_payload = _format_exception_payload(exc)
-                        failure_payload.update(
-                            {
-                                "stage": "workflow_discovery",
-                                "reason": "workflow-discovery-error",
-                            }
-                        )
-                        failure_context = _persist_workflow_discovery_failure(
-                            failure_payload, logger
-                        )
-                        logger.exception(
-                            "failed to auto-discover workflow specs",
-                            extra=log_record(event="workflow-discovery-error"),
-                        )
-                        _maybe_run_layer4_self_debug(
-                            settings,
-                            logger,
-                            reason="workflow-discovery-error",
-                            failure_context=failure_context,
                         )
                     print(
                         "[META-TRACE] workflow discovery post-processing; specs=%s"
@@ -4167,13 +4225,29 @@ def main(argv: list[str] | None = None) -> None:
                         ),
                     )
                     try:
-                        ready_to_launch, roi_backoff_triggered = _run_prelaunch_improvement_cycles(
-                            workflows,
-                            planner_cls=planner_cls,
-                            settings=settings,
+                        with FailureGuard(
+                            stage="prelaunch_improvement_cycles",
+                            metadata={
+                                "workflow_count": len(workflows),
+                                "planner_cls": getattr(
+                                    planner_cls, "__name__", str(planner_cls)
+                                ),
+                                "bootstrap_mode": bootstrap_mode,
+                            },
                             logger=logger,
-                            bootstrap_mode=bootstrap_mode,
-                        )
+                            repo_root=ROOT,
+                            workflow_db=settings.workflows_db,
+                        ):
+                            (
+                                ready_to_launch,
+                                roi_backoff_triggered,
+                            ) = _run_prelaunch_improvement_cycles(
+                                workflows,
+                                planner_cls=planner_cls,
+                                settings=settings,
+                                logger=logger,
+                                bootstrap_mode=bootstrap_mode,
+                            )
                         print(
                             "[META-TRACE] prelaunch ROI cycles completed; ready=%s backoff=%s"
                             % (ready_to_launch, roi_backoff_triggered),
@@ -5125,52 +5199,63 @@ def main(argv: list[str] | None = None) -> None:
     
                     if ready_to_launch:
                         try:
-                            orchestrator = SandboxOrchestrator(
-                                workflows,
+                            with FailureGuard(
+                                stage="orchestrator_launch",
+                                metadata={
+                                    "workflow_count": len(workflows),
+                                    "planner_cls": getattr(
+                                        planner_cls, "__name__", str(planner_cls)
+                                    ),
+                                },
                                 logger=logger,
-                                loop_interval=float(os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")),
-                                diminishing_threshold=float(
-                                    os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
-                                ),
-                                patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
-                            )
-                            logger.info(
-                                "✅ sandbox orchestrator object created",  # emoji for quick scanning
-                                extra=log_record(
-                                    event="orchestrator-created",
-                                    workflow_count=len(workflows),
-                                    loop_interval=os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30"),
-                                    diminishing_threshold=os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01"),
-                                    patience=os.getenv("GLOBAL_ROI_PATIENCE", "3"),
-                                ),
-                            )
+                                repo_root=ROOT,
+                                workflow_db=settings.workflows_db,
+                            ):
+                                orchestrator = SandboxOrchestrator(
+                                    workflows,
+                                    logger=logger,
+                                    loop_interval=float(
+                                        os.getenv("GLOBAL_ORCHESTRATOR_INTERVAL", "30")
+                                    ),
+                                    diminishing_threshold=float(
+                                        os.getenv("GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01")
+                                    ),
+                                    patience=int(os.getenv("GLOBAL_ROI_PATIENCE", "3")),
+                                )
+                                logger.info(
+                                    "✅ sandbox orchestrator object created",  # emoji for quick scanning
+                                    extra=log_record(
+                                        event="orchestrator-created",
+                                        workflow_count=len(workflows),
+                                        loop_interval=os.getenv(
+                                            "GLOBAL_ORCHESTRATOR_INTERVAL", "30"
+                                        ),
+                                        diminishing_threshold=os.getenv(
+                                            "GLOBAL_ROI_DIMINISHING_THRESHOLD", "0.01"
+                                        ),
+                                        patience=os.getenv("GLOBAL_ROI_PATIENCE", "3"),
+                                    ),
+                                )
+
+                                orchestrator_thread = threading.Thread(
+                                    target=orchestrator.run,
+                                    name="sandbox-orchestrator",
+                                    daemon=True,
+                                )
+                                orchestrator_thread.start()
+                                logger.info(
+                                    "✅ sandbox orchestrator started",  # emoji for quick scanning
+                                    extra=log_record(
+                                        event="orchestrator-start",
+                                        thread_name="sandbox-orchestrator",
+                                        is_alive=orchestrator_thread.is_alive(),
+                                        workflow_count=len(workflows),
+                                    ),
+                                )
                         except Exception:
                             logger.exception(
-                                "❌ failed to build sandbox orchestrator",  # emoji for quick scanning
-                                extra=log_record(event="orchestrator-build-error"),
-                            )
-                            sys.exit(1)
-    
-                        try:
-                            orchestrator_thread = threading.Thread(
-                                target=orchestrator.run,
-                                name="sandbox-orchestrator",
-                                daemon=True,
-                            )
-                            orchestrator_thread.start()
-                            logger.info(
-                                "✅ sandbox orchestrator started",  # emoji for quick scanning
-                                extra=log_record(
-                                    event="orchestrator-start",
-                                    thread_name="sandbox-orchestrator",
-                                    is_alive=orchestrator_thread.is_alive(),
-                                    workflow_count=len(workflows),
-                                ),
-                            )
-                        except Exception:
-                            logger.exception(
-                                "❌ failed to start sandbox orchestrator thread",  # emoji for quick scanning
-                                extra=log_record(event="orchestrator-start-error"),
+                                "❌ failed to launch sandbox orchestrator",  # emoji for quick scanning
+                                extra=log_record(event="orchestrator-launch-error"),
                             )
                             sys.exit(1)
                 except Exception:  # pragma: no cover - defensive bootstrap hint
