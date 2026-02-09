@@ -178,7 +178,7 @@ def _ensure_bootstrap_broker_owner(
     )
     try:
         if __package__ in (None, ""):
-            from bootstrap_placeholder import (  # type: ignore
+            from self_improvement.bootstrap_placeholder import (  # type: ignore
                 advertise_broker_placeholder,
                 bootstrap_broker,
             )
