@@ -106,6 +106,7 @@ LOGGER.info(
         sys_path_total=len(sys.path),
     ),
 )
+
 _META_PLANNING_IMPORT_CANDIDATES = (
     "menace_sandbox.self_improvement.meta_planning",
     "self_improvement.meta_planning",
@@ -227,6 +228,49 @@ from coding_bot_interface import (
     _bootstrap_dependency_broker,
     advertise_bootstrap_placeholder,
 )
+
+_ENTRYPOINT_EXCEPTHOOK_DISABLE_FLAGS = (
+    "MENACE_DISABLE_ENTRYPOINT_EXCEPTHOOK",
+    "MENACE_ENTRYPOINT_EXCEPTHOOK_DISABLE",
+)
+
+
+def _entrypoint_excepthook_enabled() -> bool:
+    for flag in _ENTRYPOINT_EXCEPTHOOK_DISABLE_FLAGS:
+        if os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "y", "on"}:
+            return False
+    value = os.getenv("MENACE_ENTRYPOINT_EXCEPTHOOK", "").strip().lower()
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def _entrypoint_excepthook(exc_type, exc, tb) -> None:
+    if exc_type in (KeyboardInterrupt, SystemExit):
+        sys.__excepthook__(exc_type, exc, tb)
+        return
+    if not _entrypoint_excepthook_enabled():
+        sys.__excepthook__(exc_type, exc, tb)
+        return
+    try:
+        guard = FailureGuard(
+            stage="start_autonomous_sandbox.unhandled_exception",
+            metadata={"entrypoint": "start_autonomous_sandbox"},
+            logger=LOGGER,
+            repo_root=ROOT,
+        )
+        guard.__exit__(exc_type, exc, tb)
+    except Exception:
+        LOGGER.exception(
+            "entrypoint excepthook failed",
+            extra=log_record(event="entrypoint-excepthook-error"),
+        )
+    finally:
+        sys.__excepthook__(exc_type, exc, tb)
+
+
+if _entrypoint_excepthook_enabled():
+    sys.excepthook = _entrypoint_excepthook
 from bootstrap_manager import bootstrap_manager
 from system_binary_check import assert_required_system_binaries
 
