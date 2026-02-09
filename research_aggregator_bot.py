@@ -77,7 +77,7 @@ except Exception:  # pragma: no cover - optional dependency
     VideoResearchBot = None  # type: ignore
 from .chatgpt_research_bot import ChatGPTResearchBot, Exchange
 from .database_manager import get_connection, DB_PATH
-from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from .db_router import DBRouter, init_db_router
 from vector_service import ContextBuilder
 from snippet_compressor import compress_snippets
 from .research_storage import InfoDB, ResearchItem
@@ -1896,14 +1896,13 @@ class ResearchAggregatorBot:
             migration_timeout=0.0 if bootstrap_active else None,
             non_blocking_migrations=bootstrap_active,
         )
-        self.db_router = (
-            db_router
-            or getattr(self.info_db, "router", None)
-            or GLOBAL_ROUTER
-            or init_db_router(
-                "information", str(self.info_db.path), str(self.info_db.path)
+        resolved_router = db_router or getattr(self.info_db, "router", None)
+        if resolved_router is None:
+            menace_id = getattr(self.info_db, "menace_id", None) or "information"
+            resolved_router = init_db_router(
+                menace_id, str(self.info_db.path), str(self.info_db.path)
             )
-        )
+        self.db_router = resolved_router
         self.enh_db = enhancements_db or EnhancementDB()
         self.enhancement_bot = enhancement_bot
         self.prediction_bot = prediction_bot
