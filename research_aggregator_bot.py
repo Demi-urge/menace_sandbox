@@ -577,6 +577,12 @@ def _ensure_runtime_dependencies(
         _bootstrap_placeholders(allow_degraded=allow_fallback)
     )
     placeholder_broker_owner = bool(getattr(placeholder_broker, "active_owner", False))
+    remediation_hint = (
+        "set BROKER_OWNER=<id> or pass bootstrap_owner/enable structural bootstrap owner"
+    )
+    owner_source = "bootstrap_owner argument"
+    owner_config = "arg:bootstrap_owner"
+    expected_owner = bootstrap_owner
     explicit_overrides = pipeline_override is not None or manager_override is not None
     fallback_reductions: set[str] = set()
     fallback_reason: str | None = None
@@ -647,16 +653,27 @@ def _ensure_runtime_dependencies(
     if not placeholder_broker_owner:
         if _looks_like_pipeline_candidate(placeholder_pipeline) or placeholder_manager:
             logger.error(
-                "Bootstrap dependency broker owner inactive; reusing advertised ResearchAggregatorBot placeholder",
+                "Bootstrap dependency broker owner inactive; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; reusing advertised ResearchAggregatorBot placeholder",
+                expected_owner,
+                owner_source,
+                owner_config,
+                remediation_hint,
                 extra={
                     "event": "research-aggregator-placeholder-owner-missing",
                     "broker_owner": placeholder_broker_owner,
+                    "expected_owner": expected_owner,
+                    "owner_source": owner_source,
+                    "owner_config": owner_config,
+                    "remediation": remediation_hint,
                 },
             )
         else:
             if not allow_fallback:
                 raise RuntimeError(
-                    "Bootstrap dependency broker owner not active; aborting ResearchAggregatorBot initialisation"
+                    "Bootstrap dependency broker owner not active; "
+                    f"expected_owner={expected_owner} owner_source={owner_source} "
+                    f"owner_config={owner_config} remediation={remediation_hint}; "
+                    "aborting ResearchAggregatorBot initialisation"
                 )
     global registry
     global data_bot
@@ -737,8 +754,11 @@ def _ensure_runtime_dependencies(
                 from .coding_bot_interface import get_structural_bootstrap_owner
 
                 owner = get_structural_bootstrap_owner()
+                owner_source = "coding_bot_interface.get_structural_bootstrap_owner()"
+                owner_config = "contextvar:structural_bootstrap_owner"
         except Exception:  # pragma: no cover - bootstrap owner best effort
             owner = bootstrap_owner
+    expected_owner = owner
 
     if owner is not None and pipeline_hint is None:
         cached = _bootstrap_pipeline_cache.get(owner)
@@ -813,11 +833,19 @@ def _ensure_runtime_dependencies(
                 manager_override = manager_override or explicit_manager_override
                 placeholder_manager = placeholder_manager or explicit_manager_override
             logger.warning(
-                "Bootstrap dependency broker owner inactive; proceeding with explicit overrides as placeholders",
+                "Bootstrap dependency broker owner inactive; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; proceeding with explicit overrides as placeholders",
+                expected_owner,
+                owner_source,
+                owner_config,
+                remediation_hint,
                 extra={
                     "event": "research-aggregator-broker-owner-override",
                     "has_pipeline_override": explicit_pipeline_override is not None,
                     "has_manager_override": explicit_manager_override is not None,
+                    "expected_owner": expected_owner,
+                    "owner_source": owner_source,
+                    "owner_config": owner_config,
+                    "remediation": remediation_hint,
                 },
             )
         elif _looks_like_pipeline_candidate(placeholder_pipeline):
@@ -826,18 +854,34 @@ def _ensure_runtime_dependencies(
             if manager_override is None:
                 manager_override = placeholder_manager
             logger.error(
-                "Bootstrap dependency broker owner inactive; reusing placeholder pipeline for ResearchAggregatorBot",
+                "Bootstrap dependency broker owner inactive; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; reusing placeholder pipeline for ResearchAggregatorBot",
+                expected_owner,
+                owner_source,
+                owner_config,
+                remediation_hint,
                 extra={
                     "event": "research-aggregator-broker-owner-missing",
                     "has_placeholder": True,
+                    "expected_owner": expected_owner,
+                    "owner_source": owner_source,
+                    "owner_config": owner_config,
+                    "remediation": remediation_hint,
                 },
             )
         else:
             logger.error(
-                "Bootstrap dependency broker owner inactive with no placeholder pipeline; refusing to claim new pipeline",
+                "Bootstrap dependency broker owner inactive with no placeholder pipeline; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; refusing to claim new pipeline",
+                expected_owner,
+                owner_source,
+                owner_config,
+                remediation_hint,
                 extra={
                     "event": "research-aggregator-broker-missing-owner",
                     "has_placeholder": False,
+                    "expected_owner": expected_owner,
+                    "owner_source": owner_source,
+                    "owner_config": owner_config,
+                    "remediation": remediation_hint,
                 },
             )
             if allow_fallback:
@@ -847,7 +891,10 @@ def _ensure_runtime_dependencies(
                 )
             else:
                 raise RuntimeError(
-                    "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot pipeline"
+                    "Bootstrap dependency broker owner not active; "
+                    f"expected_owner={expected_owner} owner_source={owner_source} "
+                    f"owner_config={owner_config} remediation={remediation_hint}; "
+                    "refusing to construct ResearchAggregatorBot pipeline"
                 )
 
     if _runtime_state is not None:
