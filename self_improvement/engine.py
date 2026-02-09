@@ -178,13 +178,10 @@ def _ensure_bootstrap_broker_owner(
     )
     try:
         if __package__ in (None, ""):
-            from self_improvement.bootstrap_placeholder import (  # type: ignore
-                advertise_broker_placeholder,
-                bootstrap_broker,
-            )
+            from bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
         else:
             try:
-                from .bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
+                from ..bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
             except ImportError:
                 from bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
     except Exception as exc:  # pragma: no cover - fallback to runtime warnings
