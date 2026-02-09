@@ -60,6 +60,13 @@ _SELF_DEBUG_BACKOFF_SECONDS = float(
 )
 _SELF_DEBUG_BACKOFF_LOCK = threading.Lock()
 _SELF_DEBUG_LAST_TRIGGER: dict[str, float] = {}
+_RAW_BROKER_OWNER_READY_TIMEOUT = os.getenv(
+    "BROKER_OWNER_READY_TIMEOUT_SECS", "3.0"
+).strip()
+try:
+    _BROKER_OWNER_READY_TIMEOUT_SECS = float(_RAW_BROKER_OWNER_READY_TIMEOUT)
+except ValueError:
+    _BROKER_OWNER_READY_TIMEOUT_SECS = 3.0
 from contextlib import contextmanager
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
@@ -829,6 +836,9 @@ class SelfCodingManager:
                         bootstrap_owner = None
                     else:
                         bootstrap_owner = get_structural_bootstrap_owner()
+                # Startup order: ensure broker owner is active -> SelfImprovementEngine
+                # (which constructs ResearchAggregatorBot) -> EvolutionOrchestrator.
+                self._ensure_broker_owner_ready(bootstrap_owner=bootstrap_owner)
                 improv = SelfImprovementEngine(
                     context_builder=builder,
                     data_bot=self.data_bot,
@@ -1140,6 +1150,49 @@ class SelfCodingManager:
             raise RuntimeError(
                 "failed to initialise QuickFixEngine",
             ) from exc
+
+    def _ensure_broker_owner_ready(self, *, bootstrap_owner: object | None) -> bool:
+        """Ensure the bootstrap dependency broker owner is active before bootstrapping."""
+        module_name = f"{__package__}.bootstrap_placeholder" if __package__ else "bootstrap_placeholder"
+        spec = importlib.util.find_spec(module_name)
+        if spec is None and module_name != "bootstrap_placeholder":
+            module_name = "bootstrap_placeholder"
+            spec = importlib.util.find_spec(module_name)
+        if spec is None:  # pragma: no cover - dependency unavailable
+            self.logger.warning(
+                "Bootstrap dependency broker placeholder utilities unavailable; "
+                "broker owner may remain inactive",
+            )
+            return False
+        module = importlib.import_module(module_name)
+        advertise_broker_placeholder = getattr(module, "advertise_broker_placeholder")
+        bootstrap_broker = getattr(module, "bootstrap_broker")
+
+        broker = bootstrap_broker()
+        if not getattr(broker, "active_owner", False):
+            advertise_broker_placeholder(dependency_broker=broker)
+
+        timeout = max(_BROKER_OWNER_READY_TIMEOUT_SECS, 0.0)
+        deadline = time.monotonic() + timeout
+        while not getattr(broker, "active_owner", False) and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        owner_ready = bool(getattr(broker, "active_owner", False))
+        if not owner_ready:
+            self.logger.warning(
+                "Bootstrap dependency broker owner not active after %.2fs; "
+                "continuing with degraded bootstrap (bootstrap_owner=%s).",
+                timeout,
+                bootstrap_owner,
+                extra={"event": "broker-owner-not-ready", "timeout": timeout},
+            )
+        else:
+            self.logger.debug(
+                "Bootstrap dependency broker owner active (bootstrap_owner=%s).",
+                bootstrap_owner,
+                extra={"event": "broker-owner-ready"},
+            )
+        return owner_ready
 
     def _ensure_quick_fix_engine(self, builder: ContextBuilder) -> QuickFixEngine:
         """Return an initialised :class:`QuickFixEngine`.
