@@ -558,6 +558,7 @@ def _ensure_runtime_dependencies(
     manager_override: SelfCodingManager | None = None,
     promote_pipeline: Callable[[SelfCodingManager | None], None] | None = None,
     bootstrap_state: Mapping[str, object] | None = None,
+    allow_fallback: bool = False,
 ) -> _RuntimeDependencies:
     """Instantiate heavy runtime helpers on demand.
 
@@ -573,9 +574,76 @@ def _ensure_runtime_dependencies(
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
     placeholder_pipeline, placeholder_manager, placeholder_broker = (
-        _bootstrap_placeholders(allow_degraded=False)
+        _bootstrap_placeholders(allow_degraded=allow_fallback)
     )
     placeholder_broker_owner = bool(getattr(placeholder_broker, "active_owner", False))
+    explicit_overrides = pipeline_override is not None or manager_override is not None
+    fallback_reductions: set[str] = set()
+    fallback_reason: str | None = None
+
+    class _FallbackDependencyBroker:
+        active_owner = False
+        active_pipeline = None
+        active_sentinel = None
+
+        def resolve(self) -> tuple[None, None]:
+            return None, None
+
+        def advertise(self, **_kwargs: object) -> None:
+            return None
+
+    def _register_fallback(reason: str, reduction: str) -> None:
+        nonlocal fallback_reason
+        if fallback_reason is None:
+            fallback_reason = reason
+        fallback_reductions.add(reduction)
+        logger.warning(
+            "ResearchAggregatorBot fallback enabled: %s; capability_reduction=%s",
+            reason,
+            sorted(fallback_reductions),
+            extra={
+                "event": "research-aggregator-fallback-enabled",
+                "reason": reason,
+                "capability_reduction": sorted(fallback_reductions),
+            },
+        )
+
+    def _build_fallback_dependencies(
+        dependency_broker: object, manager_override_value: SelfCodingManager | None
+    ) -> _RuntimeDependencies:
+        reg = (
+            registry
+            if registry is not None
+            else BotRegistry(bootstrap=bool(manager_override_value))
+        )
+        dbot = (
+            data_bot
+            if data_bot is not None
+            else DataBot(start_server=False, bootstrap=bool(manager_override_value))
+        )
+        ctx_builder = _context_builder
+        if ctx_builder is None:
+            ctx_builder = create_context_builder(
+                bootstrap_safe=bool(manager_override_value)
+            )
+        eng = engine if engine is not None else SelfCodingEngine(
+            CodeDB(),
+            GPTMemoryManager(),
+            context_builder=ctx_builder,
+            pipeline=None,
+            data_bot=dbot,
+        )
+        return _RuntimeDependencies(
+            registry=reg,
+            data_bot=dbot,
+            context_builder=ctx_builder,
+            engine=eng,
+            pipeline=None,
+            evolution_orchestrator=evolution_orchestrator,
+            manager=manager_override_value if manager_override_value is not None else manager,
+            dependency_broker=dependency_broker,
+            pipeline_promoter=None,
+        )
     if not placeholder_broker_owner:
         if _looks_like_pipeline_candidate(placeholder_pipeline) or placeholder_manager:
             logger.error(
@@ -586,9 +654,10 @@ def _ensure_runtime_dependencies(
                 },
             )
         else:
-            raise RuntimeError(
-                "Bootstrap dependency broker owner not active; aborting ResearchAggregatorBot initialisation"
-            )
+            if not allow_fallback:
+                raise RuntimeError(
+                    "Bootstrap dependency broker owner not active; aborting ResearchAggregatorBot initialisation"
+                )
     global registry
     global data_bot
     global _context_builder
@@ -600,6 +669,29 @@ def _ensure_runtime_dependencies(
     global _runtime_state
     global _runtime_placeholder
     global _runtime_initializing
+
+    if (
+        allow_fallback
+        and not placeholder_broker_owner
+        and not _looks_like_pipeline_candidate(placeholder_pipeline)
+        and placeholder_manager is None
+        and not explicit_overrides
+    ):
+        _register_fallback(
+            "bootstrap dependency broker owner inactive; no placeholders",
+            "broker-owned dependencies skipped",
+        )
+        dependency_broker = placeholder_broker or _bootstrap_dependency_broker()
+        if dependency_broker is None:
+            _register_fallback(
+                "bootstrap dependency broker unavailable",
+                "dependency broker disabled",
+            )
+            dependency_broker = _FallbackDependencyBroker()
+        fallback_state = _build_fallback_dependencies(dependency_broker, manager_override)
+        _runtime_state = fallback_state
+        _runtime_placeholder = fallback_state
+        return fallback_state
 
     explicit_pipeline_override = pipeline_override
     explicit_manager_override = manager_override
@@ -667,9 +759,16 @@ def _ensure_runtime_dependencies(
 
     dependency_broker = placeholder_broker or _bootstrap_dependency_broker()
     if dependency_broker is None:
-        raise RuntimeError(
-            "Bootstrap dependency broker unavailable; cannot initialise ResearchAggregatorBot"
-        )
+        if allow_fallback:
+            _register_fallback(
+                "bootstrap dependency broker unavailable",
+                "dependency broker disabled",
+            )
+            dependency_broker = _FallbackDependencyBroker()
+        else:
+            raise RuntimeError(
+                "Bootstrap dependency broker unavailable; cannot initialise ResearchAggregatorBot"
+            )
 
     broker_active_pipeline = getattr(dependency_broker, "active_pipeline", None)
     broker_active_sentinel = getattr(dependency_broker, "active_sentinel", None)
@@ -741,9 +840,15 @@ def _ensure_runtime_dependencies(
                     "has_placeholder": False,
                 },
             )
-            raise RuntimeError(
-                "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot pipeline"
-            )
+            if allow_fallback:
+                _register_fallback(
+                    "bootstrap dependency broker owner inactive; no placeholder pipeline",
+                    "pipeline/manager resolution skipped",
+                )
+            else:
+                raise RuntimeError(
+                    "Bootstrap dependency broker owner not active; refusing to construct ResearchAggregatorBot pipeline"
+                )
 
     if _runtime_state is not None:
         _ensure_self_coding_decorated(_runtime_state)
@@ -928,6 +1033,12 @@ def _ensure_runtime_dependencies(
                 f"(cap {round(max_resolution_wait, 3)}s) while {reason}. "
                 f"Broker snapshot: {snapshot}"
             )
+            if allow_fallback:
+                _register_fallback(
+                    f"dependency resolution deadline reached while {reason}",
+                    "dependency resolution skipped",
+                )
+                return
             logger.error(
                 message,
                 extra={
@@ -937,10 +1048,27 @@ def _ensure_runtime_dependencies(
                 },
             )
             raise RuntimeError(message)
-        while pipe is None and _is_bootstrap_active():
+        skip_bootstrap_wait = (
+            allow_fallback
+            and not broker_active_owner
+            and pipe is None
+            and pipeline_override is None
+            and pipeline_hint is None
+            and not _looks_like_pipeline_candidate(placeholder_pipeline)
+            and broker_active_pipeline is None
+            and broker_active_sentinel is None
+        )
+        if skip_bootstrap_wait:
+            _register_fallback(
+                "bootstrap broker inactive; skipping dependency resolution wait",
+                "bootstrap dependency wait skipped",
+            )
+        while pipe is None and _is_bootstrap_active() and not skip_bootstrap_wait:
             remaining_resolution = resolution_deadline - time.perf_counter()
             if remaining_resolution <= 0:
                 _raise_resolution_deadline("waiting for broker advertisement")
+                if allow_fallback:
+                    break
             broker_pipeline, broker_manager = dependency_broker.resolve()
             if manager_override is None and manager is None and broker_manager is not None:
                 manager_override = broker_manager
@@ -991,6 +1119,8 @@ def _ensure_runtime_dependencies(
                 event = getattr(active_promise, "_event", None)
                 if event is not None:
                     _enforce_resolution_deadline("waiting for broker advertisement")
+                    if allow_fallback:
+                        break
                     event.wait(
                         timeout=max(
                             _DEPENDENCY_RESOLUTION_WAIT_FLOOR,
@@ -998,14 +1128,18 @@ def _ensure_runtime_dependencies(
                         )
                     )
                     _enforce_resolution_deadline("waiting for broker advertisement")
+                    if allow_fallback:
+                        break
 
             remaining_resolution = resolution_deadline - time.perf_counter()
             if remaining_resolution <= 0:
                 _raise_resolution_deadline("waiting for broker advertisement")
+                if allow_fallback:
+                    break
             time.sleep(min(backoff, max(remaining_resolution, _DEPENDENCY_RESOLUTION_WAIT_FLOOR)))
             backoff = min(backoff * 2, 0.25)
 
-        if pipe is None and time.perf_counter() >= resolution_deadline:
+        if pipe is None and time.perf_counter() >= resolution_deadline and not allow_fallback:
             _raise_resolution_deadline("waiting for broker advertisement")
 
         if pipe is None:
@@ -1111,7 +1245,13 @@ def _ensure_runtime_dependencies(
                                 )
 
                 if pipe is None:
-                    _raise_resolution_deadline("waiting for broker placeholder reuse")
+                    if allow_fallback:
+                        _register_fallback(
+                            "dependency resolution deadline reached while waiting for broker placeholder reuse",
+                            "dependency resolution skipped",
+                        )
+                    else:
+                        _raise_resolution_deadline("waiting for broker placeholder reuse")
             if pipe is None:
                 broker_pipeline, broker_manager = dependency_broker.resolve()
 
@@ -1174,7 +1314,13 @@ def _ensure_runtime_dependencies(
                         f"'bootstrap_heartbeat': {bootstrap_heartbeat}}}"
                     )
                     logger.error(message)
-                    raise RuntimeError(message)
+                    if allow_fallback:
+                        _register_fallback(
+                            "recursive bootstrap detected while waiting for broker state",
+                            "pipeline bootstrap skipped",
+                        )
+                    else:
+                        raise RuntimeError(message)
 
                 if pipe is None:
                     if not broker_placeholder_seeded and not _looks_like_pipeline_candidate(
@@ -1185,7 +1331,13 @@ def _ensure_runtime_dependencies(
                             "construct a new pipeline for ResearchAggregatorBot"
                         )
                         logger.error(message)
-                        raise RuntimeError(message)
+                        if allow_fallback:
+                            _register_fallback(
+                                "bootstrap dependency broker missing placeholder",
+                                "pipeline bootstrap skipped",
+                            )
+                        else:
+                            raise RuntimeError(message)
 
                     pipeline_manager_hint = (
                         manager_override
@@ -1215,9 +1367,15 @@ def _ensure_runtime_dependencies(
                         promote_pipeline = promoted
 
         if pipe is None:
-            raise RuntimeError(
-                "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
-            )
+            if allow_fallback:
+                _register_fallback(
+                    "missing ModelAutomationPipeline during ResearchAggregatorBot initialisation",
+                    "self-coding pipeline unavailable",
+                )
+            else:
+                raise RuntimeError(
+                    "ModelAutomationPipeline must be provided during ResearchAggregatorBot initialisation"
+                )
 
         if promote_pipeline is None:
             promote_pipeline = _active_bootstrap_promoter() or (lambda *_args: None)
@@ -1368,6 +1526,7 @@ def _initialize_runtime(
     pipeline_override: "ModelAutomationPipeline | None" = None,
     manager_override: SelfCodingManager | None = None,
     promote_pipeline: Callable[[SelfCodingManager | None], None] | None = None,
+    allow_fallback: bool = False,
 ) -> _RuntimeDependencies:
     """Public wrapper for lazy runtime initialisation."""
 
@@ -1376,6 +1535,7 @@ def _initialize_runtime(
         pipeline_override=pipeline_override,
         manager_override=manager_override,
         promote_pipeline=promote_pipeline,
+        allow_fallback=allow_fallback,
     )
 
 class ResearchMemory:
@@ -1438,6 +1598,7 @@ class ResearchAggregatorBot:
         context_builder: ContextBuilder | None = None,
         bootstrap: bool = False,
         defer_migrations_until_ready: bool = False,
+        allow_fallback: bool = True,
     ) -> None:
         _ensure_bootstrap_ready("ResearchAggregatorBot")
         init_start = time.perf_counter()
@@ -1446,6 +1607,7 @@ class ResearchAggregatorBot:
             pipeline_override=pipeline,
             manager_override=manager,
             promote_pipeline=pipeline_promoter,
+            allow_fallback=allow_fallback,
         )
         _ensure_self_coding_decorated(deps)
         builder = context_builder or deps.context_builder
