@@ -35,6 +35,7 @@ import dataclasses
 from datetime import datetime
 import re
 
+from failure_registry import is_cooling_down, is_new_failure, record_failure
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1666,12 +1667,26 @@ class ErrorBot(AdminBotBase):
 
     def handle_error(self, message: str) -> str:
         """Resolve error if known, otherwise log discrepancy."""
+        record = record_failure(
+            exception_type="ErrorMessage",
+            message=message,
+            stage="error_bot.handle_error",
+            context={"handler": "error_bot"},
+        )
+        cooling_down = is_cooling_down(record)
+        new_failure = is_new_failure(record)
         sol = self.db.find_solution(message)
         if sol:
-            self.logger.info("Resolved known issue: %s", message)
+            if not cooling_down or new_failure:
+                self.logger.info("Resolved known issue: %s", message)
+            else:
+                self.logger.debug("Resolved known issue (cooldown): %s", message)
             return sol
         self.db.log_discrepancy(message)
-        self.logger.warning("Unknown issue logged: %s", message)
+        if not cooling_down or new_failure:
+            self.logger.warning("Unknown issue logged: %s", message)
+        else:
+            self.logger.debug("Unknown issue logged (cooldown): %s", message)
         return "unresolved"
 
     def monitor(self) -> None:

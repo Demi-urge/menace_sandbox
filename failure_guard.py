@@ -13,9 +13,17 @@ from typing import Any, Callable, Mapping
 
 from shared_event_bus import event_bus as shared_event_bus
 
+from failure_registry import (
+    DEFAULT_REGISTRY_PATH,
+    is_cooling_down,
+    is_new_failure,
+    record_failure,
+)
+
 LOGGER = logging.getLogger(__name__)
 
 FAILURE_REGISTRY_PATH = Path("maintenance-logs/failure_registry.json")
+FAILURE_AGGREGATE_REGISTRY_PATH = DEFAULT_REGISTRY_PATH
 
 
 def _normalize_failure_payload(
@@ -155,6 +163,7 @@ class FailureGuard:
     metadata: Mapping[str, Any] | None = None
     logger: logging.Logger | None = None
     registry_path: Path = FAILURE_REGISTRY_PATH
+    aggregate_registry_path: Path = FAILURE_AGGREGATE_REGISTRY_PATH
     repo_root: str | Path = "."
     workflow_db: str | Path | None = None
     suppress: bool = False
@@ -172,6 +181,15 @@ class FailureGuard:
             stage=self.stage,
             metadata=self.metadata,
         )
+        aggregate_record = record_failure(
+            exception_type=payload.get("exception_type", type(exc).__name__),
+            message=payload.get("message", str(exc)),
+            stage=self.stage,
+            context=payload.get("metadata", {}),
+            registry_path=self.aggregate_registry_path,
+        )
+        cooling_down = is_cooling_down(aggregate_record)
+        new_failure = is_new_failure(aggregate_record)
         context = _persist_failure_payload(
             payload, registry_path=self.registry_path, logger=logger
         )
@@ -182,11 +200,16 @@ class FailureGuard:
                 "stage": self.stage,
                 "context_path": context.get("context_path"),
                 "context_id": context.get("context_id"),
+                "failure_fingerprint": aggregate_record.get("fingerprint"),
+                "failure_occurrences": aggregate_record.get("occurrences"),
+                "failure_cooling_down": cooling_down,
+                "failure_new": new_failure,
             },
         )
-        _publish_failure_event(
-            payload, context=context, stage=self.stage, logger=logger
-        )
+        if not cooling_down or new_failure:
+            _publish_failure_event(
+                payload, context=context, stage=self.stage, logger=logger
+            )
         _invoke_self_debug(
             repo_root=self.repo_root,
             workflow_db=self.workflow_db,
