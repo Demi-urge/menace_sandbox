@@ -818,10 +818,25 @@ class SelfCodingManager:
                 from .evolution_orchestrator import EvolutionOrchestrator
 
                 capital = CapitalManagementBot(data_bot=self.data_bot)
+                pipeline_promoter = getattr(self.pipeline, "_pipeline_promoter", None)
+                bootstrap_owner = getattr(self, "_bootstrap_owner_token", None)
+                if bootstrap_owner is None:
+                    bootstrap_owner = getattr(self, "_bootstrap_provenance_token", None)
+                if bootstrap_owner is None:
+                    try:
+                        from .coding_bot_interface import get_structural_bootstrap_owner
+                    except Exception:  # pragma: no cover - optional bootstrap context
+                        bootstrap_owner = None
+                    else:
+                        bootstrap_owner = get_structural_bootstrap_owner()
                 improv = SelfImprovementEngine(
                     context_builder=builder,
                     data_bot=self.data_bot,
                     bot_name=self.bot_name,
+                    manager=self,
+                    pipeline=self.pipeline,
+                    pipeline_promoter=pipeline_promoter,
+                    bootstrap_owner=bootstrap_owner,
                 )
                 bots = list(getattr(self.bot_registry, "graph", {}).keys())
                 evol_mgr = SystemEvolutionManager(bots)

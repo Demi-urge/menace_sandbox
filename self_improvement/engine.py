@@ -1372,6 +1372,9 @@ class SelfImprovementEngine:
         context_builder: ContextBuilder,
         interval: int = 3600,
         pipeline: ModelAutomationPipeline | None = None,
+        manager: "SelfCodingManager | None" = None,
+        pipeline_promoter: Callable[[Any], None] | None = None,
+        bootstrap_owner: object | None = None,
         bot_name: str = "menace",
         diagnostics: DiagnosticManager | None = None,
         info_db: InfoDB | None = None,
@@ -1475,7 +1478,13 @@ class SelfImprovementEngine:
         except Exception:
             pass
         self.aggregator = ResearchAggregatorBot(
-            [bot_name], info_db=self.info_db, context_builder=context_builder
+            [bot_name],
+            info_db=self.info_db,
+            context_builder=context_builder,
+            manager=manager,
+            pipeline=pipeline,
+            pipeline_promoter=pipeline_promoter,
+            bootstrap_owner=bootstrap_owner,
         )
         try:
             from sandbox.preseed_bootstrap import initialize_bootstrap_wait_env
@@ -1491,7 +1500,7 @@ class SelfImprovementEngine:
                 "bootstrap wait policy applied",
                 extra={"bootstrap_waits": bootstrap_waits},
             )
-        self.pipeline_promoter: Callable[[Any], None] | None = None
+        self.pipeline_promoter: Callable[[Any], None] | None = pipeline_promoter
         if pipeline is None:
             bootstrap_registry = SimpleNamespace(__name__="self_improvement.registry")
             bootstrap_data_bot = data_bot or SimpleNamespace(
@@ -1509,6 +1518,8 @@ class SelfImprovementEngine:
             self.pipeline_promoter = promote_pipeline
         else:
             self.pipeline = pipeline
+            if self.pipeline_promoter is None:
+                self.pipeline_promoter = getattr(pipeline, "_pipeline_promoter", None)
         self.pipeline_manager = getattr(self.pipeline, "manager", None)
         self.action_planner = action_planner
         err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
