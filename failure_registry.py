@@ -60,6 +60,40 @@ def _coerce_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(context or {})
 
 
+def _is_stripe_related(
+    *,
+    exception_type: str,
+    message: str,
+    stage: str,
+    context: Mapping[str, Any],
+) -> bool:
+    needle = "stripe"
+    candidates = [exception_type, message, stage]
+    candidates.extend(str(key) for key in context.keys())
+    candidates.extend(str(value) for value in context.values())
+    return any(needle in str(candidate).lower() for candidate in candidates)
+
+
+def _tag_stripe_context(
+    *,
+    exception_type: str,
+    message: str,
+    stage: str,
+    context: Mapping[str, Any],
+) -> dict[str, Any]:
+    tagged = dict(context)
+    if not _is_stripe_related(
+        exception_type=exception_type,
+        message=message,
+        stage=stage,
+        context=tagged,
+    ):
+        return tagged
+    tagged.setdefault("domain", "stripe")
+    tagged.setdefault("severity", "non_fatal")
+    return tagged
+
+
 def compute_fingerprint(
     *,
     exception_type: str,
@@ -106,11 +140,17 @@ def record_failure(
     """Record a failure in the aggregate registry and update cooldown state."""
 
     now_value = time.time() if now is None else now
+    tagged_context = _tag_stripe_context(
+        exception_type=exception_type,
+        message=message,
+        stage=stage,
+        context=_coerce_context(context),
+    )
     fingerprint = compute_fingerprint(
         exception_type=exception_type,
         message=message,
         stage=stage,
-        context=context,
+        context=tagged_context,
     )
     registry = _load_registry(registry_path)
     failures = registry.get("failures")
@@ -124,7 +164,7 @@ def record_failure(
             "exception_type": exception_type,
             "message": message,
             "stage": stage,
-            "context": _coerce_context(context),
+            "context": tagged_context,
             "occurrences": 0,
             "first_seen": now_value,
             "last_seen": now_value,
