@@ -30,6 +30,7 @@ import sqlite3
 import json
 import hashlib
 import os
+import time
 from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
@@ -57,6 +58,17 @@ import asyncio
 import threading
 from jinja2 import Template
 import yaml
+
+_BROKER_REUSE_LOGGED_AT: float | None = None
+
+
+def _should_log_broker_reuse() -> bool:
+    global _BROKER_REUSE_LOGGED_AT
+    now = time.monotonic()
+    if _BROKER_REUSE_LOGGED_AT is None or (now - _BROKER_REUSE_LOGGED_AT) >= 60:
+        _BROKER_REUSE_LOGGED_AT = now
+        return True
+    return False
 
 try:  # pragma: no cover - prefer real vector service
     from vector_service import EmbeddableDBMixin, EmbeddingBackfill
@@ -216,15 +228,16 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
                     sentinel=bootstrap_manager
                     or getattr(bootstrap_pipeline, "manager", None),
                 )
-                logger.info(
-                    "error bot bootstrap reusing broker pipeline",
-                    extra={
-                        "event": "error-bot-bootstrap-reuse",
-                        "broker_pipeline": broker_pipeline is not None,
-                        "broker_manager": broker_manager is not None,
-                        "bootstrap_inflight": bootstrap_inflight,
-                    },
-                )
+                if _should_log_broker_reuse():
+                    logger.info(
+                        "error bot bootstrap reusing broker pipeline",
+                        extra={
+                            "event": "error-bot-bootstrap-reuse",
+                            "broker_pipeline": broker_pipeline is not None,
+                            "broker_manager": broker_manager is not None,
+                            "bootstrap_inflight": bootstrap_inflight,
+                        },
+                    )
 
             if dependency_broker is not None and bootstrap_pipeline is None:
                 try:
