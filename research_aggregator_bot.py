@@ -572,16 +572,15 @@ def _ensure_runtime_dependencies(
     bootstrap_state: Mapping[str, object] | None = None,
     allow_fallback: bool = False,
 ) -> _RuntimeDependencies:
-    """Instantiate heavy runtime helpers on demand.
-
-    During bootstrap the pipeline and manager must be injected (directly or via
-    the dependency broker).  The bootstrap path will refuse to spin up a fresh
-    pipeline and instead reuses any advertised placeholder/promise, raising an
-    explicit error when nothing has been provided.
-    """
     global registry, data_bot, _context_builder, engine, _PipelineCls, pipeline
     global evolution_orchestrator, manager, _runtime_state, _runtime_placeholder
     global _runtime_initializing
+    # Instantiate heavy runtime helpers on demand.
+    #
+    # During bootstrap the pipeline and manager must be injected (directly or via
+    # the dependency broker).  The bootstrap path will refuse to spin up a fresh
+    # pipeline and instead reuses any advertised placeholder/promise, raising an
+    # explicit error when nothing has been provided.
 
     # Guard: bootstrap orchestration must flow through the shared readiness
     # snapshot so module constructors never recurse into bootstrap again.
