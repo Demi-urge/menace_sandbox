@@ -162,6 +162,63 @@ def stop_engine_heartbeat(timeout: float = 1.0) -> None:
         _ENGINE_HEARTBEAT_THREAD = None
 
 
+def _bootstrap_broker_owner_required() -> bool:
+    strict_setting = getattr(settings, "bootstrap_dependency_broker_strict", None)
+    if strict_setting is not None:
+        return bool(strict_setting)
+    return getattr(settings, "menace_mode", "").lower() == "autonomous"
+
+
+def _ensure_bootstrap_broker_owner(
+    *, bootstrap_owner: object | None, allow_fallback: bool
+) -> None:
+    remediation = (
+        "set BROKER_OWNER=<id> in configuration/env or pass bootstrap_owner to "
+        "SelfImprovementEngine"
+    )
+    try:
+        if __package__ in (None, ""):
+            from bootstrap_placeholder import (  # type: ignore
+                advertise_broker_placeholder,
+                bootstrap_broker,
+            )
+        else:
+            from .bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
+    except Exception as exc:  # pragma: no cover - fallback to runtime warnings
+        message = (
+            "Failed to import bootstrap placeholder utilities; "
+            f"dependency broker owner may remain inactive ({remediation})."
+        )
+        if allow_fallback:
+            logger.warning(message, exc_info=exc, extra=log_record(event="broker-import-failed"))
+            return
+        raise RuntimeError(message) from exc
+
+    broker = bootstrap_broker()
+    owner_active = bool(getattr(broker, "active_owner", False))
+    if not owner_active:
+        advertise_broker_placeholder()
+        broker = bootstrap_broker()
+        owner_active = bool(getattr(broker, "active_owner", False))
+
+    if not owner_active:
+        message = (
+            "Bootstrap dependency broker owner inactive; "
+            f"bootstrap_owner={bootstrap_owner} ({remediation})."
+        )
+        if allow_fallback:
+            logger.warning(
+                message,
+                extra=log_record(
+                    event="broker-owner-missing",
+                    remediation=remediation,
+                    bootstrap_owner=bootstrap_owner,
+                ),
+            )
+            return
+        raise RuntimeError(message)
+
+
 def _ensure_engine_heartbeat(
     stop_event: threading.Event,
     thread: threading.Thread | None,
@@ -1477,6 +1534,10 @@ class SelfImprovementEngine:
             context_builder.refresh_db_weights()
         except Exception:
             pass
+        _ensure_bootstrap_broker_owner(
+            bootstrap_owner=bootstrap_owner,
+            allow_fallback=not _bootstrap_broker_owner_required(),
+        )
         self.aggregator = ResearchAggregatorBot(
             [bot_name],
             info_db=self.info_db,
