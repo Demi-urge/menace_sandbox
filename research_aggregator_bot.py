@@ -1896,7 +1896,11 @@ class ResearchAggregatorBot:
             migration_timeout=0.0 if bootstrap_active else None,
             non_blocking_migrations=bootstrap_active,
         )
-        self.db_router = db_router or DBRouter(info_db=self.info_db)
+        resolved_router = db_router or getattr(self.info_db, "router", None)
+        if resolved_router is None:
+            info_path = getattr(self.info_db, "path", "information.db")
+            resolved_router = DBRouter("information", str(info_path), str(info_path))
+        self.db_router = resolved_router
         self.enh_db = enhancements_db or EnhancementDB()
         self.enhancement_bot = enhancement_bot
         self.prediction_bot = prediction_bot
