@@ -85,6 +85,7 @@ from .research_storage import InfoDB, ResearchItem
 logger = logging.getLogger(__name__)
 _VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
 _VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
+_RESEARCH_AGGREGATOR_STRICT_ENV = "RESEARCH_AGGREGATOR_STRICT_BOOTSTRAP"
 
 
 def _vector_bootstrap_disabled() -> bool:
@@ -94,6 +95,15 @@ def _vector_bootstrap_disabled() -> bool:
     raw_strict = os.getenv(_VECTOR_SEEDING_STRICT_ENV, "").strip().lower()
     if raw_strict in {"0", "false", "no", "off"}:
         return True
+    return False
+
+
+def _resolve_research_aggregator_strict() -> bool:
+    raw_value = os.getenv(_RESEARCH_AGGREGATOR_STRICT_ENV, "").strip().lower()
+    if raw_value in {"1", "true", "yes", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
     return False
 _BOOTSTRAP_READINESS = readiness_signal()
 
@@ -219,11 +229,13 @@ class _RuntimeDependencies:
     data_bot: DataBot
     context_builder: ContextBuilder
     engine: SelfCodingEngine
-    pipeline: "ModelAutomationPipeline"
+    pipeline: "ModelAutomationPipeline | None"
     evolution_orchestrator: "EvolutionOrchestrator | None"
     manager: SelfCodingManager | None
     dependency_broker: object | None
     pipeline_promoter: Callable[[SelfCodingManager | None], None] | None
+    degraded_reason: str | None = None
+    capability_reductions: tuple[str, ...] = ()
 
 
 registry: BotRegistry | None = None
@@ -649,6 +661,8 @@ def _ensure_runtime_dependencies(
             manager=manager_override_value if manager_override_value is not None else manager,
             dependency_broker=dependency_broker,
             pipeline_promoter=None,
+            degraded_reason=fallback_reason,
+            capability_reductions=tuple(sorted(fallback_reductions)),
         )
     if not placeholder_broker_owner:
         if _looks_like_pipeline_candidate(placeholder_pipeline) or placeholder_manager:
@@ -794,6 +808,27 @@ def _ensure_runtime_dependencies(
     broker_active_sentinel = getattr(dependency_broker, "active_sentinel", None)
     broker_active_owner = bool(getattr(dependency_broker, "active_owner", False))
     broker_placeholder_seeded = False
+    if (
+        allow_fallback
+        and not broker_active_owner
+        and not _looks_like_pipeline_candidate(placeholder_pipeline)
+        and placeholder_manager is None
+        and not explicit_overrides
+        and pipeline_hint is None
+        and pipeline_override is None
+        and broker_active_pipeline is None
+        and broker_active_sentinel is None
+    ):
+        _register_fallback(
+            "bootstrap dependency broker owner inactive; deferring pipeline construction",
+            "pipeline construction deferred",
+        )
+        fallback_state = _build_fallback_dependencies(
+            dependency_broker, manager_override
+        )
+        _runtime_state = fallback_state
+        _runtime_placeholder = fallback_state
+        return fallback_state
     if _runtime_state is None:
         try:
             placeholder_pipeline, placeholder_manager = advertise_bootstrap_placeholder(
@@ -951,6 +986,8 @@ def _ensure_runtime_dependencies(
             manager=manager_override if manager_override is not None else manager,
             dependency_broker=dependency_broker,
             pipeline_promoter=None,
+            degraded_reason=fallback_reason,
+            capability_reductions=tuple(sorted(fallback_reductions)),
         )
         return _runtime_placeholder
 
@@ -1001,6 +1038,8 @@ def _ensure_runtime_dependencies(
         manager=manager_override if manager_override is not None else manager,
         dependency_broker=dependency_broker,
         pipeline_promoter=None,
+        degraded_reason=fallback_reason,
+        capability_reductions=tuple(sorted(fallback_reductions)),
     )
 
     orchestrator = evolution_orchestrator
@@ -1534,6 +1573,8 @@ def _ensure_runtime_dependencies(
             manager=mgr,
             dependency_broker=dependency_broker,
             pipeline_promoter=promote_pipeline,
+            degraded_reason=fallback_reason,
+            capability_reductions=tuple(sorted(fallback_reductions)),
         )
 
         registry = reg
@@ -1555,6 +1596,8 @@ def _ensure_runtime_dependencies(
             manager=mgr,
             dependency_broker=dependency_broker,
             pipeline_promoter=promote_pipeline,
+            degraded_reason=fallback_reason,
+            capability_reductions=tuple(sorted(fallback_reductions)),
         )
         _runtime_placeholder = _runtime_state
         _ensure_self_coding_decorated(_runtime_state)
@@ -1645,17 +1688,47 @@ class ResearchAggregatorBot:
         context_builder: ContextBuilder | None = None,
         bootstrap: bool = False,
         defer_migrations_until_ready: bool = False,
-        allow_fallback: bool = True,
+        allow_fallback: bool | None = None,
+        strict_bootstrap: bool | None = None,
     ) -> None:
         _ensure_bootstrap_ready("ResearchAggregatorBot")
         init_start = time.perf_counter()
-        deps = _ensure_runtime_dependencies(
-            bootstrap_owner=bootstrap_owner,
-            pipeline_override=pipeline,
-            manager_override=manager,
-            promote_pipeline=pipeline_promoter,
-            allow_fallback=allow_fallback,
+        resolved_strict = (
+            strict_bootstrap
+            if strict_bootstrap is not None
+            else _resolve_research_aggregator_strict()
         )
+        if resolved_strict:
+            allow_fallback = False
+        elif allow_fallback is None:
+            allow_fallback = True
+        try:
+            deps = _ensure_runtime_dependencies(
+                bootstrap_owner=bootstrap_owner,
+                pipeline_override=pipeline,
+                manager_override=manager,
+                promote_pipeline=pipeline_promoter,
+                allow_fallback=bool(allow_fallback),
+            )
+        except RuntimeError as exc:
+            if resolved_strict:
+                raise
+            logger.warning(
+                "ResearchAggregatorBot runtime dependencies unavailable; proceeding in degraded mode: %s",
+                exc,
+                extra={
+                    "event": "research-aggregator-degraded-init",
+                    "reason": str(exc),
+                    "strict_bootstrap": resolved_strict,
+                },
+            )
+            deps = _ensure_runtime_dependencies(
+                bootstrap_owner=bootstrap_owner,
+                pipeline_override=pipeline,
+                manager_override=manager,
+                promote_pipeline=pipeline_promoter,
+                allow_fallback=True,
+            )
         _ensure_self_coding_decorated(deps)
         builder = context_builder or deps.context_builder
         if builder is None:
@@ -1664,6 +1737,21 @@ class ResearchAggregatorBot:
         self.manager = mgr
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = deps.data_bot
+        self.degraded = bool(deps.degraded_reason or deps.pipeline is None)
+        self.degraded_reason = deps.degraded_reason
+        self.capability_reductions = deps.capability_reductions
+        if self.degraded:
+            logger.warning(
+                "ResearchAggregatorBot initialised in degraded mode; pipeline unavailable or broker inactive. Some features may be disabled. reason=%s reductions=%s",
+                deps.degraded_reason,
+                list(deps.capability_reductions),
+                extra={
+                    "event": "research-aggregator-degraded-mode",
+                    "reason": deps.degraded_reason,
+                    "capability_reductions": list(deps.capability_reductions),
+                    "pipeline_available": deps.pipeline is not None,
+                },
+            )
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
         bootstrap_active = bootstrap or bool(getattr(mgr, "bootstrap_mode", False))

@@ -1535,9 +1535,10 @@ class SelfImprovementEngine:
         except Exception:
             pass
         bootstrap_owner_token = bootstrap_owner or object()
+        strict_bootstrap = _bootstrap_broker_owner_required()
         _ensure_bootstrap_broker_owner(
             bootstrap_owner=bootstrap_owner_token,
-            allow_fallback=not _bootstrap_broker_owner_required(),
+            allow_fallback=not strict_bootstrap,
         )
         try:
             from sandbox.preseed_bootstrap import initialize_bootstrap_wait_env
@@ -1589,6 +1590,8 @@ class SelfImprovementEngine:
             pipeline_promoter=self.pipeline_promoter,
             bootstrap_owner=bootstrap_owner_token,
             bootstrap=bootstrap_active,
+            allow_fallback=not strict_bootstrap,
+            strict_bootstrap=strict_bootstrap,
         )
         if getattr(self.pipeline, "aggregator", None) is not self.aggregator:
             attach_helper = getattr(self.pipeline, "_attach_helper", None)
