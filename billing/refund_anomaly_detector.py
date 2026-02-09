@@ -91,6 +91,9 @@ def detect_anomalies(
     ``'unauthorized'`` or ``'unlogged'``.  Anomalies are also recorded via
     :func:`billing.billing_logger.log_event` with ``error=1``.
     """
+    if not os.getenv("STRIPE_API_KEY"):
+        logger.info("Stripe health checks disabled; STRIPE_API_KEY not set.")
+        return []
 
     approved = load_whitelist(Path(whitelist_path))
     db = BillingLogDB(db_path) if db_path else BillingLogDB()

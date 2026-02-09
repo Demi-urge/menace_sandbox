@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import traceback
 import uuid
@@ -32,15 +33,60 @@ def _normalize_failure_payload(
     stage: str,
     metadata: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    payload_metadata = _tag_stripe_context(
+        stage=stage,
+        exception=exc,
+        metadata=dict(metadata or {}),
+    )
     return {
         "id": str(uuid.uuid4()),
         "timestamp": time.time(),
         "stage": stage,
-        "metadata": dict(metadata or {}),
+        "metadata": payload_metadata,
         "exception_type": type(exc).__name__,
         "message": str(exc),
         "stack": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
     }
+
+
+def _is_stripe_related(
+    *,
+    stage: str,
+    exception: BaseException,
+    metadata: Mapping[str, Any],
+) -> bool:
+    needle = "stripe"
+    candidates = [stage, type(exception).__name__, str(exception)]
+    candidates.extend(str(key) for key in metadata.keys())
+    candidates.extend(str(value) for value in metadata.values())
+    return any(needle in str(candidate).lower() for candidate in candidates)
+
+
+def _tag_stripe_context(
+    *,
+    stage: str,
+    exception: BaseException,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    if not _is_stripe_related(stage=stage, exception=exception, metadata=metadata):
+        return metadata
+    metadata.setdefault("domain", "stripe")
+    metadata.setdefault("severity", "non_fatal")
+    return metadata
+
+
+def _should_invoke_self_debug(
+    *,
+    metadata: Mapping[str, Any],
+) -> bool:
+    severity = str(metadata.get("severity") or "").strip().lower()
+    if severity == "fatal":
+        return True
+    explicit_flag = metadata.get("allow_self_debug")
+    env_flag = (os.getenv("MENACE_FAILURE_GUARD_SELF_DEBUG") or "").strip().lower()
+    if explicit_flag is True:
+        return True
+    return env_flag in {"1", "true", "yes", "y", "on"}
 
 
 def _load_registry(path: Path) -> dict[str, Any]:
@@ -210,13 +256,14 @@ class FailureGuard:
             _publish_failure_event(
                 payload, context=context, stage=self.stage, logger=logger
             )
-        _invoke_self_debug(
-            repo_root=self.repo_root,
-            workflow_db=self.workflow_db,
-            context_path=context.get("context_path"),
-            context_id=context.get("context_id"),
-            logger=logger,
-        )
+        if _should_invoke_self_debug(metadata=payload.get("metadata", {})):
+            _invoke_self_debug(
+                repo_root=self.repo_root,
+                workflow_db=self.workflow_db,
+                context_path=context.get("context_path"),
+                context_id=context.get("context_id"),
+                logger=logger,
+            )
         if self.on_failure:
             try:
                 self.on_failure(payload, context)
