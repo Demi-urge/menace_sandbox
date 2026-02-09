@@ -1332,6 +1332,25 @@ def _check_internalization(logger: logging.Logger) -> tuple[bool, str, Mapping[s
     )
 
 
+def _check_dependency_broker_ready(
+    logger: logging.Logger,
+) -> tuple[bool, str, Mapping[str, Any]]:
+    broker = _bootstrap_dependency_broker()
+    pipeline, sentinel = broker.resolve()
+    owner_active = bool(getattr(broker, "active_owner", False))
+    ok = owner_active and (pipeline is not None or sentinel is not None)
+    return (
+        ok,
+        "dependency_broker_ok" if ok else "dependency_broker_not_ready",
+        {
+            "owner_active": owner_active,
+            "pipeline_ready": pipeline is not None,
+            "sentinel_ready": sentinel is not None,
+            "last_requester": getattr(broker, "last_requester", None),
+        },
+    )
+
+
 def _run_self_debug_once(
     settings: SandboxSettings,
     logger: logging.Logger,
@@ -1365,10 +1384,35 @@ def run_self_debug_until_stable(
     logger: logging.Logger,
     max_attempts: int,
     backoff: float,
+    cadence: float,
     success_conditions: Sequence[Callable[[logging.Logger], tuple[bool, str, Mapping[str, Any]]]],
 ) -> bool:
     attempts = max(1, max_attempts)
     for attempt in range(1, attempts + 1):
+        failures: list[Mapping[str, Any]] = []
+        for condition in success_conditions:
+            ok, name, context = condition(logger)
+            if not ok:
+                failures.append({"check": name, "context": context})
+        if not failures:
+            logger.info(
+                "self-debug guardian passed",
+                extra=log_record(
+                    event="self-debug-guardian-pass",
+                    attempt=attempt,
+                    max_attempts=attempts,
+                ),
+            )
+            return True
+        logger.warning(
+            "self-debug guardian detected instability",
+            extra=log_record(
+                event="self-debug-guardian-fail",
+                attempt=attempt,
+                max_attempts=attempts,
+                failures=failures,
+            ),
+        )
         logger.info(
             "self-debug guardian attempt starting",
             extra=log_record(
@@ -1378,28 +1422,17 @@ def run_self_debug_until_stable(
             ),
         )
         exit_code = _run_self_debug_once(settings, logger)
-        failures: list[Mapping[str, Any]] = []
-        for condition in success_conditions:
-            ok, name, context = condition(logger)
-            if not ok:
-                failures.append({"check": name, "context": context})
-        if exit_code == 0 and not failures:
-            logger.info(
-                "self-debug guardian passed",
-                extra=log_record(event="self-debug-guardian-pass", attempt=attempt),
+        if exit_code != 0:
+            logger.warning(
+                "self-debug guardian run returned non-zero exit",
+                extra=log_record(
+                    event="self-debug-guardian-run-failed",
+                    attempt=attempt,
+                    exit_code=exit_code,
+                ),
             )
-            return True
-        logger.warning(
-            "self-debug guardian detected instability",
-            extra=log_record(
-                event="self-debug-guardian-fail",
-                attempt=attempt,
-                exit_code=exit_code,
-                failures=failures,
-            ),
-        )
         if attempt < attempts:
-            delay = max(backoff * attempt, 0.0)
+            delay = max(backoff * attempt, cadence, 0.0)
             logger.info(
                 "self-debug guardian backoff before retry",
                 extra=log_record(
@@ -5347,15 +5380,21 @@ def main(argv: list[str] | None = None) -> None:
         if self_debug_guardian_enabled:
             guardian_attempts = int(os.getenv("MENACE_SELF_DEBUG_GUARDIAN_MAX_ATTEMPTS", "3"))
             guardian_backoff = float(os.getenv("MENACE_SELF_DEBUG_GUARDIAN_BACKOFF", "15"))
+            guardian_cadence = float(os.getenv("MENACE_SELF_DEBUG_HEALTH_CADENCE", "30"))
+            guardian_retries = int(
+                os.getenv("MENACE_SELF_DEBUG_HEALTH_MAX_RETRIES", str(guardian_attempts))
+            )
             guardian_ok = run_self_debug_until_stable(
                 settings=settings,
                 logger=logger,
-                max_attempts=guardian_attempts,
+                max_attempts=guardian_retries,
                 backoff=guardian_backoff,
+                cadence=guardian_cadence,
                 success_conditions=(
                     _check_module_resolution,
                     _check_workflow_discovery,
                     _check_internalization,
+                    _check_dependency_broker_ready,
                 ),
             )
             if not guardian_ok:
@@ -5363,7 +5402,7 @@ def main(argv: list[str] | None = None) -> None:
                     "self-debug guardian failed; aborting launch",
                     extra=log_record(
                         event="self-debug-guardian-abort",
-                        attempts=guardian_attempts,
+                        attempts=guardian_retries,
                     ),
                 )
                 sys.exit(4)
