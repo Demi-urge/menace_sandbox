@@ -1534,18 +1534,10 @@ class SelfImprovementEngine:
             context_builder.refresh_db_weights()
         except Exception:
             pass
+        bootstrap_owner_token = bootstrap_owner or object()
         _ensure_bootstrap_broker_owner(
-            bootstrap_owner=bootstrap_owner,
+            bootstrap_owner=bootstrap_owner_token,
             allow_fallback=not _bootstrap_broker_owner_required(),
-        )
-        self.aggregator = ResearchAggregatorBot(
-            [bot_name],
-            info_db=self.info_db,
-            context_builder=context_builder,
-            manager=manager,
-            pipeline=pipeline,
-            pipeline_promoter=pipeline_promoter,
-            bootstrap_owner=bootstrap_owner,
         )
         try:
             from sandbox.preseed_bootstrap import initialize_bootstrap_wait_env
@@ -1572,7 +1564,6 @@ class SelfImprovementEngine:
                 context_builder=context_builder,
                 bot_registry=bootstrap_registry,
                 data_bot=bootstrap_data_bot,
-                aggregator=self.aggregator,
                 action_planner=action_planner,
             )
             self.pipeline = pipeline
@@ -1582,6 +1573,32 @@ class SelfImprovementEngine:
             if self.pipeline_promoter is None:
                 self.pipeline_promoter = getattr(pipeline, "_pipeline_promoter", None)
         self.pipeline_manager = getattr(self.pipeline, "manager", None)
+        bootstrap_active = pipeline is None or bool(
+            getattr(self.pipeline, "bootstrap_placeholder", False)
+        )
+        if self.pipeline_manager is not None:
+            bootstrap_active = bootstrap_active or bool(
+                getattr(self.pipeline_manager, "bootstrap_mode", False)
+            )
+        self.aggregator = ResearchAggregatorBot(
+            [bot_name],
+            info_db=self.info_db,
+            context_builder=context_builder,
+            manager=self.pipeline_manager,
+            pipeline=self.pipeline,
+            pipeline_promoter=self.pipeline_promoter,
+            bootstrap_owner=bootstrap_owner_token,
+            bootstrap=bootstrap_active,
+        )
+        if getattr(self.pipeline, "aggregator", None) is not self.aggregator:
+            attach_helper = getattr(self.pipeline, "_attach_helper", None)
+            if callable(attach_helper):
+                try:
+                    attach_helper("aggregator", self.aggregator, register=True)
+                except Exception:
+                    self.pipeline.aggregator = self.aggregator
+            else:
+                self.pipeline.aggregator = self.aggregator
         self.action_planner = action_planner
         err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
         self.error_bot = err_bot
