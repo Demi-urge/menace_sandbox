@@ -142,7 +142,6 @@ path_for_prompt = getattr(
 )
 from sandbox_settings import SandboxSettings
 from dependency_hints import format_system_package_instructions
-from failure_guard import FailureGuard
 
 
 def _extract_flag_value(argv: List[str], flag: str) -> str | None:
@@ -157,51 +156,6 @@ def _extract_flag_value(argv: List[str], flag: str) -> str | None:
         if item.startswith(flag_eq):
             return item[len(flag_eq) :]
     return None
-
-
-_ENTRYPOINT_EXCEPTHOOK_DISABLE_FLAGS = (
-    "MENACE_DISABLE_ENTRYPOINT_EXCEPTHOOK",
-    "MENACE_ENTRYPOINT_EXCEPTHOOK_DISABLE",
-)
-
-
-def _entrypoint_excepthook_enabled() -> bool:
-    for flag in _ENTRYPOINT_EXCEPTHOOK_DISABLE_FLAGS:
-        if os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "y", "on"}:
-            return False
-    value = os.getenv("MENACE_ENTRYPOINT_EXCEPTHOOK", "").strip().lower()
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return True
-
-
-def _entrypoint_excepthook(exc_type, exc, tb) -> None:
-    if exc_type in (KeyboardInterrupt, SystemExit):
-        sys.__excepthook__(exc_type, exc, tb)
-        return
-    if not _entrypoint_excepthook_enabled():
-        sys.__excepthook__(exc_type, exc, tb)
-        return
-    logger = logging.getLogger(__name__)
-    try:
-        guard = FailureGuard(
-            stage="run_autonomous.unhandled_exception",
-            metadata={"entrypoint": "run_autonomous"},
-            logger=logger,
-            repo_root=repo_root(),
-        )
-        guard.__exit__(exc_type, exc, tb)
-    except Exception:
-        logger.exception(
-            "entrypoint excepthook failed",
-            extra={"event": "entrypoint-excepthook-error"},
-        )
-    finally:
-        sys.__excepthook__(exc_type, exc, tb)
-
-
-if _entrypoint_excepthook_enabled():
-    sys.excepthook = _entrypoint_excepthook
 
 
 _AUTONOMOUS_READINESS_CHECKLIST = (
