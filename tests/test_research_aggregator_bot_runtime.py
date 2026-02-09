@@ -969,6 +969,78 @@ def test_dependency_resolution_deadline(monkeypatch):
     module.prepare_pipeline_for_bootstrap.assert_not_called()
 
 
+def test_inactive_broker_owner_allows_explicit_overrides(monkeypatch):
+    """Explicit pipeline/manager overrides should bypass inactive broker owners."""
+
+    with mock.patch("menace_sandbox.bot_registry.BotRegistry") as mock_registry, \
+        mock.patch("menace_sandbox.data_bot.DataBot") as mock_data_bot:
+        mock_registry.return_value = mock.Mock(name="registry")
+        mock_data_bot.return_value = mock.Mock(name="data_bot")
+        module = _import_fresh()
+
+    placeholder_manager = mock.Mock(name="placeholder_manager")
+    broker = SimpleNamespace(
+        resolve=lambda: (None, None),
+        active_pipeline=None,
+        active_sentinel=None,
+        active_owner=False,
+        advertise=lambda **_k: None,
+    )
+
+    module._BOOTSTRAP_STATE = SimpleNamespace(depth=0, helper_promotion_callbacks=[])
+    monkeypatch.setattr(
+        module,
+        "_bootstrap_placeholders",
+        lambda allow_degraded=False: (None, placeholder_manager, broker),
+    )
+    module._current_bootstrap_context = lambda: None
+    module._peek_owner_promise = lambda *_a, **_k: None
+    module._GLOBAL_BOOTSTRAP_COORDINATOR = SimpleNamespace(peek_active=lambda: None)
+    module._using_bootstrap_sentinel = lambda *_a, **_k: False
+    module.read_bootstrap_heartbeat = lambda: None
+
+    pipeline_override = mock.Mock(name="pipeline_override")
+    manager_override = SimpleNamespace(pipeline=pipeline_override)
+
+    monkeypatch.setattr(
+        module,
+        "_looks_like_pipeline_candidate",
+        lambda value: value is pipeline_override,
+    )
+
+    fake_builder = mock.Mock(name="context_builder")
+    fake_engine = mock.Mock(name="engine")
+    fake_thresholds = SimpleNamespace(
+        roi_drop=1.0,
+        error_increase=2.0,
+        test_failure_increase=3.0,
+    )
+
+    module.prepare_pipeline_for_bootstrap = mock.Mock(
+        side_effect=AssertionError("prepare_pipeline_for_bootstrap should not run")
+    )
+    monkeypatch.setattr(module, "create_context_builder", mock.Mock(return_value=fake_builder))
+    monkeypatch.setattr(module, "SelfCodingEngine", mock.Mock(return_value=fake_engine))
+    monkeypatch.setattr(module, "CodeDB", mock.Mock(name="CodeDB"))
+    monkeypatch.setattr(module, "GPTMemoryManager", mock.Mock(name="GPTMemoryManager"))
+    monkeypatch.setattr(module, "_resolve_pipeline_cls", mock.Mock(return_value=object))
+    monkeypatch.setattr(module, "get_thresholds", mock.Mock(return_value=fake_thresholds))
+    monkeypatch.setattr(module, "persist_sc_thresholds", mock.Mock())
+    monkeypatch.setattr(
+        module, "internalize_coding_bot", mock.Mock(return_value=manager_override)
+    )
+    monkeypatch.setattr(module, "ThresholdService", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(module, "self_coding_managed", lambda **_k: (lambda c: c))
+
+    state = module._ensure_runtime_dependencies(
+        pipeline_override=pipeline_override,
+        manager_override=manager_override,
+    )
+
+    assert state.pipeline is pipeline_override
+    assert state.manager is manager_override
+
+
 def test_dependency_resolution_caps_with_snapshot(monkeypatch):
     """Missing broker dependencies should raise quickly with snapshot context."""
 

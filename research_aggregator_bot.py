@@ -601,6 +601,8 @@ def _ensure_runtime_dependencies(
     global _runtime_placeholder
     global _runtime_initializing
 
+    explicit_pipeline_override = pipeline_override
+    explicit_manager_override = manager_override
     pipeline_hint = pipeline_override
     promote_explicit = promote_pipeline is not None
     guard_pipeline, guard_manager = get_active_bootstrap_pipeline()
@@ -699,7 +701,27 @@ def _ensure_runtime_dependencies(
         )
 
     if not broker_active_owner:
-        if _looks_like_pipeline_candidate(placeholder_pipeline):
+        has_explicit_overrides = (
+            explicit_pipeline_override is not None or explicit_manager_override is not None
+        )
+        if has_explicit_overrides:
+            if explicit_pipeline_override is not None:
+                pipeline_hint = pipeline_hint or explicit_pipeline_override
+                pipeline_override = pipeline_hint
+                if not _looks_like_pipeline_candidate(placeholder_pipeline):
+                    placeholder_pipeline = explicit_pipeline_override
+            if explicit_manager_override is not None:
+                manager_override = manager_override or explicit_manager_override
+                placeholder_manager = placeholder_manager or explicit_manager_override
+            logger.warning(
+                "Bootstrap dependency broker owner inactive; proceeding with explicit overrides as placeholders",
+                extra={
+                    "event": "research-aggregator-broker-owner-override",
+                    "has_pipeline_override": explicit_pipeline_override is not None,
+                    "has_manager_override": explicit_manager_override is not None,
+                },
+            )
+        elif _looks_like_pipeline_candidate(placeholder_pipeline):
             pipeline = pipeline or placeholder_pipeline
             pipeline_hint = pipeline_hint or placeholder_pipeline
             if manager_override is None:
