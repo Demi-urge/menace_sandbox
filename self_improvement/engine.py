@@ -183,7 +183,10 @@ def _ensure_bootstrap_broker_owner(
                 bootstrap_broker,
             )
         else:
-            from .bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
+            try:
+                from .bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
+            except ImportError:
+                from bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
     except Exception as exc:  # pragma: no cover - fallback to runtime warnings
         message = (
             "Failed to import bootstrap placeholder utilities; "
