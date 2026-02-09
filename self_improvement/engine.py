@@ -1581,19 +1581,36 @@ class SelfImprovementEngine:
             bootstrap_active = bootstrap_active or bool(
                 getattr(self.pipeline_manager, "bootstrap_mode", False)
             )
-        self.aggregator = ResearchAggregatorBot(
-            [bot_name],
-            info_db=self.info_db,
-            context_builder=context_builder,
-            manager=self.pipeline_manager,
-            pipeline=self.pipeline,
-            pipeline_promoter=self.pipeline_promoter,
-            bootstrap_owner=bootstrap_owner_token,
-            bootstrap=bootstrap_active,
-            allow_fallback=not strict_bootstrap,
-            strict_bootstrap=strict_bootstrap,
-        )
-        if getattr(self.pipeline, "aggregator", None) is not self.aggregator:
+        self.research_aggregation_available = True
+        try:
+            self.aggregator = ResearchAggregatorBot(
+                [bot_name],
+                info_db=self.info_db,
+                context_builder=context_builder,
+                manager=self.pipeline_manager,
+                pipeline=self.pipeline,
+                pipeline_promoter=self.pipeline_promoter,
+                bootstrap_owner=bootstrap_owner_token,
+                bootstrap=bootstrap_active,
+                allow_fallback=not strict_bootstrap,
+                strict_bootstrap=strict_bootstrap,
+            )
+        except Exception as exc:
+            root_cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+            logger.warning(
+                "research aggregator unavailable; continuing without it",
+                exc_info=exc,
+                extra=log_record(
+                    event="research-aggregator-init-failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    root_cause=str(root_cause) if root_cause else None,
+                    root_cause_type=type(root_cause).__name__ if root_cause else None,
+                ),
+            )
+            self.research_aggregation_available = False
+            self.aggregator = None
+        if self.aggregator is not None and getattr(self.pipeline, "aggregator", None) is not self.aggregator:
             attach_helper = getattr(self.pipeline, "_attach_helper", None)
             if callable(attach_helper):
                 try:
@@ -8736,9 +8753,10 @@ class SelfImprovementEngine:
             except Exception as exc:
                 self.logger.exception("roi energy adjustment failed: %s", exc)
             energy = max(1, min(int(energy), 100))
-            model_id = bootstrap(
-                context_builder=self.aggregator.context_builder
-            )
+            bootstrap_context_builder = self.context_builder
+            if self.aggregator is not None:
+                bootstrap_context_builder = self.aggregator.context_builder
+            model_id = bootstrap(context_builder=bootstrap_context_builder)
             self.logger.info("model bootstrapped", extra=log_record(model_id=model_id))
             self.info_db.set_current_model(model_id)
             self._record_state()
