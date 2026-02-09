@@ -572,6 +572,7 @@ def _ensure_runtime_dependencies(
     bootstrap_state: Mapping[str, object] | None = None,
     allow_fallback: bool = False,
 ) -> _RuntimeDependencies:
+    """Ensure runtime dependencies are initialized for the research aggregator."""
     global registry, data_bot, _context_builder, engine, _PipelineCls, pipeline
     global evolution_orchestrator, manager, _runtime_state, _runtime_placeholder
     global _runtime_initializing
