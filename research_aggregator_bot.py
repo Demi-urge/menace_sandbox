@@ -579,6 +579,17 @@ def _ensure_runtime_dependencies(
     pipeline and instead reuses any advertised placeholder/promise, raising an
     explicit error when nothing has been provided.
     """
+    global registry
+    global data_bot
+    global _context_builder
+    global engine
+    global _PipelineCls
+    global pipeline
+    global evolution_orchestrator
+    global manager
+    global _runtime_state
+    global _runtime_placeholder
+    global _runtime_initializing
 
     # Guard: bootstrap orchestration must flow through the shared readiness
     # snapshot so module constructors never recurse into bootstrap again.
@@ -813,18 +824,6 @@ def _ensure_runtime_dependencies(
                     f"owner_config={owner_config} remediation={remediation_hint}; "
                     "aborting ResearchAggregatorBot initialisation"
                 )
-    global registry
-    global data_bot
-    global _context_builder
-    global engine
-    global _PipelineCls
-    global pipeline
-    global evolution_orchestrator
-    global manager
-    global _runtime_state
-    global _runtime_placeholder
-    global _runtime_initializing
-
     if (
         allow_fallback
         and not placeholder_broker_owner
