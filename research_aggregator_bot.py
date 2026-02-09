@@ -590,6 +590,7 @@ def _ensure_runtime_dependencies(
     )
     placeholder_broker_owner = bool(getattr(placeholder_broker, "active_owner", False))
     remediation_hint = (
+        "start BrokerOwner service or set ENABLE_DEP_BROKER=1; "
         "set BROKER_OWNER=<id> or pass bootstrap_owner/enable structural bootstrap owner"
     )
     owner_source = "bootstrap_owner argument"
@@ -609,6 +610,102 @@ def _ensure_runtime_dependencies(
 
         def advertise(self, **_kwargs: object) -> None:
             return None
+
+    def _describe_owner(owner_value: object | None) -> dict[str, object | None]:
+        if owner_value in (None, False):
+            return {
+                "owner_repr": None,
+                "owner_id": None,
+                "owner_name": None,
+            }
+        owner_id = getattr(owner_value, "id", None) or getattr(
+            owner_value, "owner_id", None
+        )
+        owner_name = getattr(owner_value, "name", None) or getattr(
+            owner_value, "owner_name", None
+        )
+        if isinstance(owner_value, str):
+            if owner_id is None:
+                owner_id = owner_value
+            if owner_name is None:
+                owner_name = owner_value
+        return {
+            "owner_repr": repr(owner_value),
+            "owner_id": owner_id,
+            "owner_name": owner_name,
+        }
+
+    def _owner_diagnostics(
+        broker_obj: object | None,
+        registry_obj: object | None,
+        expected: object | None,
+        owner_src: str,
+        owner_cfg: str,
+    ) -> dict[str, object | None]:
+        expected_meta = _describe_owner(expected)
+        active_owner = getattr(broker_obj, "active_owner", None)
+        active_meta = _describe_owner(active_owner if active_owner not in (True, False) else None)
+        registry_status = None
+        if registry_obj is None:
+            registry_status = "registry not initialized"
+        else:
+            reg_ready = getattr(registry_obj, "ready", None)
+            reg_status = getattr(registry_obj, "status", None)
+            if reg_status is not None:
+                registry_status = f"registry status={reg_status}"
+            elif reg_ready is not None:
+                registry_status = f"registry {'ready' if reg_ready else 'not ready'}"
+            else:
+                registry_status = "registry initialized"
+
+        coordinator = None
+        if broker_obj is not None:
+            coordinator = getattr(broker_obj, "coordinator", None) or getattr(
+                broker_obj, "registry", None
+            )
+        coordinator_status = None
+        if coordinator is not None:
+            coord_status = getattr(coordinator, "status", None)
+            coord_ready = getattr(coordinator, "ready", None)
+            if coord_status is not None:
+                coordinator_status = f"coordinator status={coord_status}"
+            elif coord_ready is not None:
+                coordinator_status = f"coordinator {'ready' if coord_ready else 'not ready'}"
+            else:
+                coordinator_status = "coordinator initialized"
+
+        heartbeat_stale = getattr(broker_obj, "owner_heartbeat_stale", None)
+        heartbeat_at = getattr(broker_obj, "owner_heartbeat", None) or getattr(
+            broker_obj, "owner_last_heartbeat", None
+        )
+        if heartbeat_stale is True:
+            heartbeat_status = "owner heartbeat stale"
+        elif heartbeat_at is None:
+            heartbeat_status = "owner heartbeat missing"
+        else:
+            heartbeat_status = "owner heartbeat present"
+
+        if expected is None and owner_cfg.startswith("arg:"):
+            config_status = "config missing"
+        else:
+            config_status = None
+
+        return {
+            "expected_owner": expected,
+            "expected_owner_id": expected_meta["owner_id"],
+            "expected_owner_name": expected_meta["owner_name"],
+            "expected_owner_repr": expected_meta["owner_repr"],
+            "owner_source": owner_src,
+            "owner_config": owner_cfg,
+            "broker_owner_active": bool(active_owner),
+            "broker_owner_repr": active_meta["owner_repr"],
+            "broker_owner_id": active_meta["owner_id"],
+            "broker_owner_name": active_meta["owner_name"],
+            "registry_status": registry_status,
+            "coordinator_status": coordinator_status,
+            "owner_heartbeat_status": heartbeat_status,
+            "config_status": config_status,
+        }
 
     def _register_fallback(reason: str, reduction: str) -> None:
         nonlocal fallback_reason
@@ -665,24 +762,51 @@ def _ensure_runtime_dependencies(
             capability_reductions=tuple(sorted(fallback_reductions)),
         )
     if not placeholder_broker_owner:
+        placeholder_diag = _owner_diagnostics(
+            placeholder_broker,
+            registry,
+            expected_owner,
+            owner_source,
+            owner_config,
+        )
         if _looks_like_pipeline_candidate(placeholder_pipeline) or placeholder_manager:
             logger.error(
-                "Bootstrap dependency broker owner inactive; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; reusing advertised ResearchAggregatorBot placeholder",
-                expected_owner,
-                owner_source,
-                owner_config,
+                "Bootstrap dependency broker owner inactive; expected_owner=%s expected_owner_id=%s expected_owner_name=%s "
+                "broker_owner_active=%s registry_status=%s coordinator_status=%s remediation=%s; "
+                "reusing advertised ResearchAggregatorBot placeholder",
+                placeholder_diag["expected_owner"],
+                placeholder_diag["expected_owner_id"],
+                placeholder_diag["expected_owner_name"],
+                placeholder_diag["broker_owner_active"],
+                placeholder_diag["registry_status"],
+                placeholder_diag["coordinator_status"],
                 remediation_hint,
                 extra={
                     "event": "research-aggregator-placeholder-owner-missing",
                     "broker_owner": placeholder_broker_owner,
-                    "expected_owner": expected_owner,
-                    "owner_source": owner_source,
-                    "owner_config": owner_config,
+                    **placeholder_diag,
                     "remediation": remediation_hint,
                 },
             )
         else:
             if not allow_fallback:
+                logger.error(
+                    "Bootstrap dependency broker owner not active; expected_owner=%s expected_owner_id=%s expected_owner_name=%s "
+                    "broker_owner_active=%s registry_status=%s coordinator_status=%s remediation=%s; "
+                    "aborting ResearchAggregatorBot initialisation",
+                    placeholder_diag["expected_owner"],
+                    placeholder_diag["expected_owner_id"],
+                    placeholder_diag["expected_owner_name"],
+                    placeholder_diag["broker_owner_active"],
+                    placeholder_diag["registry_status"],
+                    placeholder_diag["coordinator_status"],
+                    remediation_hint,
+                    extra={
+                        "event": "research-aggregator-placeholder-owner-missing",
+                        **placeholder_diag,
+                        "remediation": remediation_hint,
+                    },
+                )
                 raise RuntimeError(
                     "Bootstrap dependency broker owner not active; "
                     f"expected_owner={expected_owner} owner_source={owner_source} "
@@ -855,6 +979,13 @@ def _ensure_runtime_dependencies(
         )
 
     if not broker_active_owner:
+        broker_diag = _owner_diagnostics(
+            dependency_broker,
+            registry,
+            expected_owner,
+            owner_source,
+            owner_config,
+        )
         has_explicit_overrides = (
             explicit_pipeline_override is not None or explicit_manager_override is not None
         )
@@ -868,18 +999,21 @@ def _ensure_runtime_dependencies(
                 manager_override = manager_override or explicit_manager_override
                 placeholder_manager = placeholder_manager or explicit_manager_override
             logger.warning(
-                "Bootstrap dependency broker owner inactive; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; proceeding with explicit overrides as placeholders",
-                expected_owner,
-                owner_source,
-                owner_config,
+                "Bootstrap dependency broker owner inactive; expected_owner=%s expected_owner_id=%s expected_owner_name=%s "
+                "broker_owner_active=%s registry_status=%s coordinator_status=%s remediation=%s; "
+                "proceeding with explicit overrides as placeholders",
+                broker_diag["expected_owner"],
+                broker_diag["expected_owner_id"],
+                broker_diag["expected_owner_name"],
+                broker_diag["broker_owner_active"],
+                broker_diag["registry_status"],
+                broker_diag["coordinator_status"],
                 remediation_hint,
                 extra={
                     "event": "research-aggregator-broker-owner-override",
                     "has_pipeline_override": explicit_pipeline_override is not None,
                     "has_manager_override": explicit_manager_override is not None,
-                    "expected_owner": expected_owner,
-                    "owner_source": owner_source,
-                    "owner_config": owner_config,
+                    **broker_diag,
                     "remediation": remediation_hint,
                 },
             )
@@ -889,33 +1023,39 @@ def _ensure_runtime_dependencies(
             if manager_override is None:
                 manager_override = placeholder_manager
             logger.error(
-                "Bootstrap dependency broker owner inactive; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; reusing placeholder pipeline for ResearchAggregatorBot",
-                expected_owner,
-                owner_source,
-                owner_config,
+                "Bootstrap dependency broker owner inactive; expected_owner=%s expected_owner_id=%s expected_owner_name=%s "
+                "broker_owner_active=%s registry_status=%s coordinator_status=%s remediation=%s; "
+                "reusing placeholder pipeline for ResearchAggregatorBot",
+                broker_diag["expected_owner"],
+                broker_diag["expected_owner_id"],
+                broker_diag["expected_owner_name"],
+                broker_diag["broker_owner_active"],
+                broker_diag["registry_status"],
+                broker_diag["coordinator_status"],
                 remediation_hint,
                 extra={
                     "event": "research-aggregator-broker-owner-missing",
                     "has_placeholder": True,
-                    "expected_owner": expected_owner,
-                    "owner_source": owner_source,
-                    "owner_config": owner_config,
+                    **broker_diag,
                     "remediation": remediation_hint,
                 },
             )
         else:
             logger.error(
-                "Bootstrap dependency broker owner inactive with no placeholder pipeline; expected_owner=%s owner_source=%s owner_config=%s remediation=%s; refusing to claim new pipeline",
-                expected_owner,
-                owner_source,
-                owner_config,
+                "Bootstrap dependency broker owner inactive with no placeholder pipeline; expected_owner=%s expected_owner_id=%s expected_owner_name=%s "
+                "broker_owner_active=%s registry_status=%s coordinator_status=%s remediation=%s; "
+                "refusing to claim new pipeline",
+                broker_diag["expected_owner"],
+                broker_diag["expected_owner_id"],
+                broker_diag["expected_owner_name"],
+                broker_diag["broker_owner_active"],
+                broker_diag["registry_status"],
+                broker_diag["coordinator_status"],
                 remediation_hint,
                 extra={
                     "event": "research-aggregator-broker-missing-owner",
                     "has_placeholder": False,
-                    "expected_owner": expected_owner,
-                    "owner_source": owner_source,
-                    "owner_config": owner_config,
+                    **broker_diag,
                     "remediation": remediation_hint,
                 },
             )
