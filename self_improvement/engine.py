@@ -33,6 +33,8 @@ _qfe_log(f"__name__ resolved to {__name__}")
 import logging
 _qfe_log("logging imported")
 
+from importlib import import_module, util
+
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
 _qfe_log("pathlib.Path imported")
@@ -176,23 +178,35 @@ def _ensure_bootstrap_broker_owner(
         "set BROKER_OWNER=<id> in configuration/env or pass bootstrap_owner to "
         "SelfImprovementEngine"
     )
-    try:
-        if __package__ in (None, ""):
-            from bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
-        else:
-            try:
-                from ..bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
-            except ImportError:
-                from bootstrap_placeholder import advertise_broker_placeholder, bootstrap_broker
-    except Exception as exc:  # pragma: no cover - fallback to runtime warnings
+    candidates: list[str] = []
+    if __package__ and "." in __package__:
+        parent_package = __package__.rsplit(".", 1)[0]
+        candidates.append(f"{parent_package}.bootstrap_placeholder")
+    candidates.extend(
+        [
+            "self_improvement.bootstrap_placeholder",
+            "bootstrap_placeholder",
+        ]
+    )
+
+    placeholder_module = None
+    for module_name in candidates:
+        if util.find_spec(module_name) is not None:
+            placeholder_module = import_module(module_name)
+            break
+
+    if placeholder_module is None:  # pragma: no cover - fallback to runtime warnings
         message = (
             "Failed to import bootstrap placeholder utilities; "
             f"dependency broker owner may remain inactive ({remediation})."
         )
         if allow_fallback:
-            logger.warning(message, exc_info=exc, extra=log_record(event="broker-import-failed"))
+            logger.warning(message, extra=log_record(event="broker-import-failed"))
             return
-        raise RuntimeError(message) from exc
+        raise RuntimeError(message)
+
+    advertise_broker_placeholder = placeholder_module.advertise_broker_placeholder
+    bootstrap_broker = placeholder_module.bootstrap_broker
 
     broker = bootstrap_broker()
     owner_active = bool(getattr(broker, "active_owner", False))

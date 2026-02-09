@@ -1,40 +1,28 @@
-"""Shared bootstrap placeholder utilities for self-improvement entrypoints."""
+"""Shim bootstrap placeholder utilities for self-improvement entrypoints."""
 
 from __future__ import annotations
 
-from typing import Any
+from importlib import import_module, util
 
-from ..coding_bot_interface import (
-    _bootstrap_dependency_broker,
-    advertise_bootstrap_placeholder,
-)
-
-
-def advertise_broker_placeholder(
-    *,
-    dependency_broker: Any | None = None,
-    pipeline: Any | None = None,
-    manager: Any | None = None,
-) -> tuple[Any, Any, Any]:
-    """Advertise the bootstrap placeholder with ``owner=True``."""
-
-    broker = dependency_broker or _bootstrap_dependency_broker()
-    pipeline_placeholder, manager_placeholder = advertise_bootstrap_placeholder(
-        dependency_broker=broker,
-        pipeline=pipeline,
-        manager=manager,
-        owner=True,
+_MODULE_CANDIDATES: tuple[str, ...]
+if __package__ and "." in __package__:
+    _parent = __package__.rsplit(".", 1)[0]
+    _MODULE_CANDIDATES = (
+        f"{_parent}.bootstrap_placeholder",
+        "bootstrap_placeholder",
     )
-    return pipeline_placeholder, manager_placeholder, broker
+else:
+    _MODULE_CANDIDATES = ("bootstrap_placeholder",)
 
+_bootstrap_module = None
+for _name in _MODULE_CANDIDATES:
+    if util.find_spec(_name) is not None:
+        _bootstrap_module = import_module(_name)
+        break
+if _bootstrap_module is None:
+    _bootstrap_module = import_module("bootstrap_placeholder")
 
-def bootstrap_broker() -> Any:
-    """Expose the active bootstrap dependency broker for reuse."""
+advertise_broker_placeholder = _bootstrap_module.advertise_broker_placeholder
+bootstrap_broker = _bootstrap_module.bootstrap_broker
 
-    return _bootstrap_dependency_broker()
-
-
-__all__ = [
-    "advertise_broker_placeholder",
-    "bootstrap_broker",
-]
+__all__ = ["advertise_broker_placeholder", "bootstrap_broker"]
