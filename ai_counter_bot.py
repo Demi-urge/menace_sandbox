@@ -225,7 +225,8 @@ elif len(_REVERSE_TRAIN) < 10:
     )
 _TFIDF = None
 if LogisticRegression is not None:
-    _REVERSE_MODEL = LogisticRegression(multi_class="auto", max_iter=100)
+    # multi_class defaults to "auto" in sklearn; keep defaults unless multinomial is required.
+    _REVERSE_MODEL = LogisticRegression(max_iter=100)
     if TfidfVectorizer is not None:
         try:
             _TFIDF = TfidfVectorizer()
