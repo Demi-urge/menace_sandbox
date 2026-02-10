@@ -2,6 +2,7 @@ import pytest
 import importlib.util
 import sys
 import types
+import builtins
 from pathlib import Path
 
 
@@ -166,7 +167,7 @@ def test_environment_self_debugger_import_falls_back_to_flat(monkeypatch):
     assert resolved is FlatSandbox
 
 
-def test_environment_self_debugger_import_error_includes_both_paths(monkeypatch):
+def test_environment_self_debugger_import_error_includes_detailed_diagnostics(monkeypatch):
     env = _load_env()
 
     monkeypatch.setitem(sys.modules, "menace.self_debugger_sandbox", None)
@@ -178,3 +179,31 @@ def test_environment_self_debugger_import_error_includes_both_paths(monkeypatch)
     msg = str(exc_info.value)
     assert "menace.self_debugger_sandbox" in msg
     assert "self_debugger_sandbox" in msg
+    assert "Package module missing" in msg
+    assert "Flat module missing" in msg
+
+
+def test_environment_self_debugger_import_error_distinguishes_nested_dependency_failure(monkeypatch):
+    env = _load_env()
+
+    monkeypatch.delitem(sys.modules, "menace.self_debugger_sandbox", raising=False)
+    monkeypatch.delitem(sys.modules, "self_debugger_sandbox", raising=False)
+
+    original_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "menace.self_debugger_sandbox":
+            raise ModuleNotFoundError("No module named 'menace.self_debugger_sandbox'", name=name)
+        if name == "self_debugger_sandbox":
+            raise ImportError("No module named 'missing_nested_dep'")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        env._resolve_self_debugger_sandbox_class()
+
+    msg = str(exc_info.value)
+    assert "Package module missing" in msg
+    assert "missing_nested_dep" in msg
+    assert "Flat import failure" in msg

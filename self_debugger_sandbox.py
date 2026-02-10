@@ -2,8 +2,14 @@ from __future__ import annotations
 
 """Self-debugging workflow with sandboxed patch testing."""
 
-from .logging_utils import log_record
-from .retry_utils import with_retry
+try:
+    from .logging_utils import log_record
+except ImportError:
+    from logging_utils import log_record
+try:
+    from .retry_utils import with_retry
+except ImportError:
+    from retry_utils import with_retry
 import os
 import shutil
 import subprocess
@@ -40,21 +46,48 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
         def report(self, *args: Any, **kwargs: Any) -> float:
             return 0.0
-from .error_logger import ErrorLogger, TelemetryEvent
+try:
+    from .error_logger import ErrorLogger, TelemetryEvent
+except ImportError:
+    from error_logger import ErrorLogger, TelemetryEvent
 from target_region import TargetRegion, extract_target_region
-from .knowledge_graph import KnowledgeGraph
-from .human_alignment_agent import HumanAlignmentAgent
-from .human_alignment_flagger import _collect_diff_data
-from .violation_logger import log_violation
-from .sandbox_runner.scoring import record_run
+try:
+    from .knowledge_graph import KnowledgeGraph
+except ImportError:
+    from knowledge_graph import KnowledgeGraph
+try:
+    from .human_alignment_agent import HumanAlignmentAgent
+except ImportError:
+    from human_alignment_agent import HumanAlignmentAgent
+try:
+    from .human_alignment_flagger import _collect_diff_data
+except ImportError:
+    from human_alignment_flagger import _collect_diff_data
+try:
+    from .violation_logger import log_violation
+except ImportError:
+    from violation_logger import log_violation
+try:
+    from .sandbox_runner.scoring import record_run
+except ImportError:
+    from sandbox_runner.scoring import record_run
 from db_router import GLOBAL_ROUTER, init_db_router
-from .automated_debugger import AutomatedDebugger
-from .self_coding_engine import SelfCodingEngine
+try:
+    from .automated_debugger import AutomatedDebugger
+except ImportError:
+    from automated_debugger import AutomatedDebugger
+try:
+    from .self_coding_engine import SelfCodingEngine
+except ImportError:
+    from self_coding_engine import SelfCodingEngine
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager
 except ImportError:  # pragma: no cover - self-coding unavailable
     SelfCodingManager = Any  # type: ignore
-from .audit_trail import AuditTrail
+try:
+    from .audit_trail import AuditTrail
+except ImportError:
+    from audit_trail import AuditTrail
 from patch_attempt_tracker import PatchAttemptTracker
 try:
     from .code_database import PatchHistoryDB, _hash_code
@@ -67,7 +100,10 @@ try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
-from .self_improvement_policy import SelfImprovementPolicy
+try:
+    from .self_improvement_policy import SelfImprovementPolicy
+except ImportError:
+    from self_improvement_policy import SelfImprovementPolicy
 try:
     from .roi_tracker import ROITracker
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
@@ -79,8 +115,14 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
         def update(self, *_args: Any, **_kwargs: Any) -> None:
             return None
-from .error_cluster_predictor import ErrorClusterPredictor
-from .error_parser import ErrorReport, FailureCache, parse_failure
+try:
+    from .error_cluster_predictor import ErrorClusterPredictor
+except ImportError:
+    from error_cluster_predictor import ErrorClusterPredictor
+try:
+    from .error_parser import ErrorReport, FailureCache, parse_failure
+except ImportError:
+    from error_parser import ErrorReport, FailureCache, parse_failure
 try:
     from self_improvement.baseline_tracker import BaselineTracker
 except Exception:  # pragma: no cover - test fallback
