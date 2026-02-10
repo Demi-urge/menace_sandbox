@@ -112,9 +112,16 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
     """Resolve manager construction timeout with optional per-bot overrides."""
 
     bot_key = _normalize_env_bot_name(bot_name)
-    candidate_vars = (
-        f"SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_{bot_key}",
-        f"SELF_CODING_MANAGER_TIMEOUT_SECONDS_{bot_key}",
+    candidate_vars: list[str] = []
+    if bot_key == "BOTPLANNINGBOT":
+        candidate_vars.append(
+            "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT"
+        )
+    candidate_vars.extend(
+        [
+            f"SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_{bot_key}",
+            f"SELF_CODING_MANAGER_TIMEOUT_SECONDS_{bot_key}",
+        ]
     )
     for env_var in candidate_vars:
         raw_value = os.getenv(env_var)
@@ -4794,14 +4801,7 @@ def internalize_coding_bot(
                         )
                         raw_history = manager_phase_state.get("history", [])
                         timeout_history = list(raw_history) if isinstance(raw_history, list) else []
-                    logger_ref.error(
-                        "internalize_coding_bot manager construction timed out for %s after %.2fs (phase=%s, phase_elapsed=%.2fs, phase_history=%s)",
-                        bot_name,
-                        manager_timeout,
-                        timeout_phase,
-                        max(0.0, time.monotonic() - phase_started_at),
-                        timeout_history,
-                    )
+                    phase_elapsed = max(0.0, time.monotonic() - phase_started_at)
                     _emit_manager_construction_timeout_failure(
                         timeout_seconds=manager_timeout,
                         elapsed_seconds=elapsed,
@@ -4817,23 +4817,65 @@ def internalize_coding_bot(
                         bot_registry=bot_registry,
                     )
 
-                    if FailureGuard is not None:
-                        with FailureGuard(
-                            stage="internalize_manager_construction",
-                            metadata={
-                                "bot": bot_name,
-                                "reason": "manager_construction_timeout",
-                                "severity": "fatal",
-                                "timeout_seconds": manager_timeout,
-                                "elapsed_seconds": elapsed,
-                            },
-                            logger=logger_ref,
-                            suppress=True,
-                        ):
-                            raise TimeoutError(
-                                f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
-                            )
-                    return _cooldown_disabled_manager(bot_registry, data_bot)
+                    fallback_manager: Any | None = None
+                    fallback_error: Exception | None = None
+                    try:
+                        fallback_manager = _cooldown_disabled_manager(bot_registry, data_bot)
+                    except Exception as exc:
+                        fallback_error = exc
+
+                    timeout_event = {
+                        "event": "internalize_manager_construction_timeout",
+                        "bot": bot_name,
+                        "timeout_seconds": manager_timeout,
+                        "elapsed_seconds": elapsed,
+                        "phase": timeout_phase,
+                        "phase_elapsed_seconds": phase_elapsed,
+                        "phase_history": timeout_history,
+                        "retry_backoff_seconds": max(
+                            0.0, _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS
+                        ),
+                        "fallback_available": fallback_manager is not None,
+                    }
+                    if fallback_manager is not None:
+                        logger_ref.warning(
+                            "internalize_coding_bot transient timeout for %s; returning degraded fallback manager",
+                            bot_name,
+                            extra=timeout_event,
+                        )
+                        if FailureGuard is not None:
+                            with FailureGuard(
+                                stage="internalize_manager_construction",
+                                metadata={
+                                    "bot": bot_name,
+                                    "reason": "manager_construction_timeout",
+                                    "severity": "warning",
+                                    "timeout_seconds": manager_timeout,
+                                    "elapsed_seconds": elapsed,
+                                    "fallback": "cooldown_disabled_manager",
+                                },
+                                logger=logger_ref,
+                                suppress=True,
+                            ):
+                                raise TimeoutError(
+                                    f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
+                                )
+                        return fallback_manager
+
+                    logger_ref.error(
+                        "internalize_coding_bot hard failure for %s after manager construction timeout; degraded fallback unavailable",
+                        bot_name,
+                        extra={
+                            **timeout_event,
+                            "fallback_error": repr(fallback_error),
+                            "failure_kind": "hard_timeout_without_fallback",
+                        },
+                    )
+                    if fallback_error is not None:
+                        raise fallback_error
+                    raise TimeoutError(
+                        f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
+                    )
                 finally:
                     executor.shutdown(wait=False, cancel_futures=True)
             _end_step("manager construction", manager_timer)

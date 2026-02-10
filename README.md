@@ -71,6 +71,19 @@ The bootstrap helpers respect several environment variables that govern how long
 - `BOOTSTRAP_STEP_BUDGET`/`BOOTSTRAP_EMBEDDER_BUDGET` – explicit per-step watchdog overrides. These now inherit the shared timeout policy and will never drop below the **720s** standard floor or the **900s** vector-heavy floor.
 - `SKIP_VECTOR_BOOTSTRAP` (or set `VECTOR_SEEDING_STRICT=false`) – bypasses vector seeding readiness and allows boot to continue with embeddings stubbed/disabled. Use this only for emergency recovery or environments without vector services.
 
+Self-coding manager internalization uses a separate construction timeout envelope:
+
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS` – global timeout (seconds) for `SelfCodingManager(...)` construction inside `internalize_coding_bot`.
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_<BOT_NAME>` – per-bot override using an env-safe bot key (for example `BOTPLANNINGBOT`).
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT` – explicit alias for `BotPlanningBot` startup tuning when that bot is valid-but-slow under load.
+
+Example runbook override for a slow `BotPlanningBot` bootstrap:
+
+```bash
+export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS=45
+export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT=120
+```
+
 Bootstrap wrappers export these enforced defaults during startup so downstream tools inherit the same envelopes without bespoke plumbing. `sandbox/preseed_bootstrap.initialize_bootstrap_wait_env` and the surrounding timeout helpers now seed `MENACE_BOOTSTRAP_WAIT_SECS=720` and `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=900` when missing and clamp user-supplied values to at least those floors, keeping operator dashboards, watchdog clients, and CLI wrappers aligned with the shared policy.
 
 Callers that need component-level control over bootstrap pacing can supply structured budgets (for example via `bootstrap_timeout_policy.load_component_timeout_floors()`) to `prepare_pipeline_for_bootstrap` through the `component_timeouts` argument. The shared timeout coordinator will track vectorizer, retriever, DB index, and orchestrator slices independently and persist the per-stage consumption in the watchdog telemetry so future runs can raise the appropriate floors automatically. Default budgets now mirror the enforced floors from `bootstrap_timeout_policy.py` (vectorizers **900s**, retrievers/DB warmup **720s**, orchestrator/pipeline config **540s**) so operator overrides cannot undercut the policy.
