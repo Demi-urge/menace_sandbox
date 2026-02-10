@@ -76,12 +76,16 @@ Self-coding manager internalization uses a separate construction timeout envelop
 - `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS` – global timeout (seconds) for `SelfCodingManager(...)` construction inside `internalize_coding_bot`.
 - `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_<BOT_NAME>` – per-bot override using an env-safe bot key (for example `BOTPLANNINGBOT`).
 - `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT` – explicit alias for `BotPlanningBot` startup tuning when that bot is valid-but-slow under load.
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_MIN_SECONDS_HEAVY_BOTS` – warning threshold for heavy bot startup budgets (default `90`).
 
-Example runbook override for a slow `BotPlanningBot` bootstrap:
+`BotPlanningBot` now defaults to a safer `105s` fallback (when no override is set), and startup logs emit a warning when heavy-bot timeouts are configured below the minimum sane threshold.
+
+Recommended baseline overrides for heavy startup hosts:
 
 ```bash
 export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS=45
-export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT=120
+export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT=105
+export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_MIN_SECONDS_HEAVY_BOTS=90
 ```
 
 Bootstrap wrappers export these enforced defaults during startup so downstream tools inherit the same envelopes without bespoke plumbing. `sandbox/preseed_bootstrap.initialize_bootstrap_wait_env` and the surrounding timeout helpers now seed `MENACE_BOOTSTRAP_WAIT_SECS=720` and `MENACE_BOOTSTRAP_VECTOR_WAIT_SECS=900` when missing and clamp user-supplied values to at least those floors, keeping operator dashboards, watchdog clients, and CLI wrappers aligned with the shared policy.

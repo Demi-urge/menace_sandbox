@@ -100,14 +100,41 @@ try:
 except ValueError:
     _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS = 45.0
 _RAW_BOTPLANNINGBOT_TIMEOUT_FALLBACK_SECONDS = os.getenv(
-    "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT", "75"
+    "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT", "105"
 ).strip()
 try:
     _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS = float(
         _RAW_BOTPLANNINGBOT_TIMEOUT_FALLBACK_SECONDS
     )
 except ValueError:
-    _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS = 75.0
+    _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS = 105.0
+_HEAVY_MANAGER_TIMEOUT_BOT_KEYS = {"BOTPLANNINGBOT"}
+_RAW_HEAVY_MANAGER_TIMEOUT_MIN_SECONDS = os.getenv(
+    "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_MIN_SECONDS_HEAVY_BOTS", "90"
+).strip()
+try:
+    _HEAVY_MANAGER_TIMEOUT_MIN_SECONDS = float(_RAW_HEAVY_MANAGER_TIMEOUT_MIN_SECONDS)
+except ValueError:
+    _HEAVY_MANAGER_TIMEOUT_MIN_SECONDS = 90.0
+
+
+def _warn_on_low_heavy_bot_timeout(
+    *, bot_name: str, bot_key: str, timeout_seconds: float, source: str
+) -> None:
+    """Warn when heavy bots are configured with fragile timeout budgets."""
+
+    if (
+        bot_key in _HEAVY_MANAGER_TIMEOUT_BOT_KEYS
+        and timeout_seconds < _HEAVY_MANAGER_TIMEOUT_MIN_SECONDS
+    ):
+        logging.getLogger(__name__).warning(
+            "manager timeout %.2fs for %s from %s is below recommended %.2fs "
+            "for heavy bot startup",
+            timeout_seconds,
+            bot_name,
+            source,
+            _HEAVY_MANAGER_TIMEOUT_MIN_SECONDS,
+        )
 
 
 def _normalize_env_bot_name(bot_name: str) -> str:
@@ -137,7 +164,14 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
         if raw_value is None:
             continue
         try:
-            return max(float(raw_value.strip()), 0.0)
+            resolved_timeout = max(float(raw_value.strip()), 0.0)
+            _warn_on_low_heavy_bot_timeout(
+                bot_name=bot_name,
+                bot_key=bot_key,
+                timeout_seconds=resolved_timeout,
+                source=env_var,
+            )
+            return resolved_timeout
         except ValueError:
             logging.getLogger(__name__).warning(
                 "invalid manager timeout override %s=%r for %s; using default %.2fs",
@@ -146,13 +180,20 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
                 bot_name,
                 _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS,
             )
-            break
+            continue
     if bot_key == "BOTPLANNINGBOT":
-        return max(
+        resolved_timeout = max(
             _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS,
             _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS,
             0.0,
         )
+        _warn_on_low_heavy_bot_timeout(
+            bot_name=bot_name,
+            bot_key=bot_key,
+            timeout_seconds=resolved_timeout,
+            source="botplanningbot_default_fallback",
+        )
+        return resolved_timeout
     return max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
 
 def _resolve_manager_retry_timeout_seconds(bot_name: str, *, primary_timeout: float) -> float:

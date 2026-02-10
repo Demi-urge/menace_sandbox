@@ -74,6 +74,27 @@ Workflow suites declared via the ``workflow_tests`` field are discovered using
 ``menace_sandbox.bot_registry.get_bot_workflow_tests`` and automatically passed
 to post-patch validation in :class:`SelfCodingManager`.
 
+## Self-coding manager construction timeouts
+Self-coding manager startup supports global and per-bot timeout controls:
+
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS` – global construction timeout.
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_<BOT_NAME>` – env-safe per-bot override.
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT` – explicit BotPlanningBot alias.
+- `SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_MIN_SECONDS_HEAVY_BOTS` – warning threshold for heavy bot startup timeouts (default `90`).
+
+Recommended runbook defaults:
+
+```bash
+export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS=45
+export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT=105
+export SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_MIN_SECONDS_HEAVY_BOTS=90
+```
+
+`BotPlanningBot` uses a `105s` fallback when no per-bot override is configured.
+If a heavy bot timeout is set below the minimum sane threshold, startup logs now
+emit a warning so operators can correct fragile settings before repeated
+construction timeouts occur.
+
 ## Security considerations
 - Resource and network limits are controlled through environment variables.
   `SECURITY_LEVEL` and `THREAT_INTENSITY` tune the simulated security posture,
