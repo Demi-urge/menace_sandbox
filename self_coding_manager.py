@@ -5207,11 +5207,15 @@ def internalize_coding_bot(
                                     "fallback_used": False,
                                 },
                             )
-                        except concurrent.futures.TimeoutError:
+                        except (concurrent.futures.TimeoutError, Exception) as retry_exc:
                             retry_elapsed = max(0.0, time.monotonic() - manager_timer)
                             retry_phase, retry_phase_started_at, retry_phase_history = _snapshot_phase_state()
                             retry_phase_elapsed = max(
                                 0.0, time.monotonic() - retry_phase_started_at
+                            )
+                            retry_timed_out = isinstance(
+                                retry_exc,
+                                concurrent.futures.TimeoutError,
                             )
                             fallback_manager: Any | None = None
                             fallback_error: Exception | None = None
@@ -5219,7 +5223,7 @@ def internalize_coding_bot(
                                 fallback_manager = _cooldown_disabled_manager(bot_registry, data_bot)
                             except Exception as exc:
                                 fallback_error = exc
-                            fallback_used = fallback_manager is not None
+                            fallback_available = fallback_manager is not None
                             _emit_manager_construction_timeout_failure(
                                 attempt_index=2,
                                 timeout_seconds=retry_timeout,
@@ -5228,7 +5232,7 @@ def internalize_coding_bot(
                                 phase_elapsed_seconds=retry_phase_elapsed,
                                 phase_history=retry_phase_history,
                                 retry_timeout_seconds=retry_timeout,
-                                fallback_used=fallback_used,
+                                fallback_used=fallback_available,
                             )
                             retry_event = {
                                 "event": "internalize_manager_construction_timeout_retry_failed",
@@ -5239,7 +5243,10 @@ def internalize_coding_bot(
                                 "phase_history": retry_phase_history,
                                 "timeout_seconds": manager_timeout,
                                 "retry_timeout_seconds": retry_timeout,
-                                "fallback_used": fallback_used,
+                                "fallback_available": fallback_available,
+                                "retry_failure_kind": (
+                                    "timeout" if retry_timed_out else "exception"
+                                ),
                             }
                             if fallback_manager is not None:
                                 _schedule_internalization_timeout_retry(
@@ -5248,7 +5255,7 @@ def internalize_coding_bot(
                                     bot_registry=bot_registry,
                                 )
                                 logger_ref.warning(
-                                    "internalize_coding_bot retry timeout for %s; returning degraded fallback manager and deferring completion",
+                                    "internalize_coding_bot retry failed for %s; returning degraded fallback manager and deferring completion",
                                     bot_name,
                                     extra={
                                         **retry_event,
@@ -5259,21 +5266,24 @@ def internalize_coding_bot(
                                 return fallback_manager
 
                             logger_ref.error(
-                                "internalize_coding_bot retry timeout for %s with no degraded fallback",
+                                "internalize_coding_bot retry failed for %s with no degraded fallback",
                                 bot_name,
                                 extra={
                                     **retry_event,
+                                    "retry_error": repr(retry_exc),
                                     "fallback_error": repr(fallback_error),
                                     "failure_kind": "hard_timeout_without_fallback",
                                 },
                             )
                             if fallback_error is not None:
                                 raise fallback_error
-                            raise TimeoutError(
-                                "manager construction timed out for "
-                                f"{bot_name} after {manager_timeout:.2f}s "
-                                f"and retry timed out after {retry_timeout:.2f}s"
-                            )
+                            if retry_timed_out:
+                                raise TimeoutError(
+                                    "manager construction timed out for "
+                                    f"{bot_name} after {manager_timeout:.2f}s "
+                                    f"and retry timed out after {retry_timeout:.2f}s"
+                                )
+                            raise retry_exc
                         finally:
                             retry_executor.shutdown(wait=False, cancel_futures=True)
                     else:

@@ -2387,7 +2387,7 @@ def test_internalize_manager_timeout_emits_internalization_failure(monkeypatch):
     assert "phase_history" in failure_events[-1]
 
 
-def test_internalize_manager_timeout_botplanningbot_retries_with_bounded_timeout(monkeypatch):
+def test_internalize_manager_timeout_botplanningbot_retries_with_bounded_timeout(monkeypatch, caplog):
     class DummyEventBus:
         def __init__(self):
             self.published = []
@@ -2470,6 +2470,20 @@ def test_internalize_manager_timeout_botplanningbot_retries_with_bounded_timeout
     assert failure_events[-1]["fallback_used"] is True
     assert TimeoutExecutor.recorded_timeouts[:2] == [0.01, 0.02]
 
+    retry_failure_logs = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None)
+        == "internalize_manager_construction_timeout_retry_failed"
+    ]
+    assert retry_failure_logs
+    retry_failure = retry_failure_logs[-1]
+    assert retry_failure.bot == "BotPlanningBot"
+    assert retry_failure.phase
+    assert retry_failure.timeout_seconds == 0.01
+    assert retry_failure.retry_timeout_seconds == 0.02
+    assert retry_failure.fallback_available is True
+
 
 def test_internalize_manager_timeout_botplanningbot_raises_enriched_error_without_fallback(monkeypatch):
     class DummyEventBus:
@@ -2526,6 +2540,69 @@ def test_internalize_manager_timeout_botplanningbot_raises_enriched_error_withou
     monkeypatch.setattr(scm, "_cooldown_disabled_manager", _raise_fallback_error)
 
     with pytest.raises(RuntimeError, match="fallback unavailable"):
+        scm.internalize_coding_bot(
+            "BotPlanningBot",
+            object(),
+            object(),
+            data_bot=types.SimpleNamespace(),
+            bot_registry=registry,
+            provenance_token="token",
+        )
+
+
+def test_internalize_manager_timeout_botplanningbot_retry_exception_raises_underlying_without_fallback(monkeypatch):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+            self.retry_calls = []
+            self.event_bus = None
+
+        def force_internalization_retry(self, bot_name, delay=0.0):
+            self.retry_calls.append((bot_name, delay))
+
+    class TimeoutFuture:
+        def result(self, timeout=None):
+            raise scm.concurrent.futures.TimeoutError()
+
+    class ErrorFuture:
+        def result(self, timeout=None):
+            raise ValueError("retry blew up")
+
+    class SequencedExecutor:
+        calls = 0
+
+        def __init__(self, max_workers=1):
+            self.max_workers = max_workers
+
+        def submit(self, func):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return TimeoutFuture()
+            return ErrorFuture()
+
+        def shutdown(self, wait=False, cancel_futures=False):
+            return None
+
+    registry = DummyRegistry()
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        scm,
+        "_resolve_manager_timeout_seconds",
+        lambda bot_name: 0.01,
+    )
+    monkeypatch.setattr(
+        scm,
+        "_resolve_manager_retry_timeout_seconds",
+        lambda bot_name, primary_timeout: 0.02,
+    )
+    monkeypatch.setattr(scm.concurrent.futures, "ThreadPoolExecutor", SequencedExecutor)
+    monkeypatch.setattr(scm, "_cooldown_disabled_manager", lambda bot_registry, data_bot: None)
+
+    with pytest.raises(ValueError, match="retry blew up"):
         scm.internalize_coding_bot(
             "BotPlanningBot",
             object(),
