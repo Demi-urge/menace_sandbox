@@ -761,3 +761,63 @@ def test_internalize_manager_construction_timeout_clears_inflight(monkeypatch):
     ]
     assert failure_events
     assert failure_events[-1]["reason"] == "manager_construction_timeout"
+
+
+def test_record_internalize_failure_shutdown_race_skips_cooldown(monkeypatch, caplog):
+    import menace_sandbox.self_coding_manager as scm
+
+    bot_name = "ShutdownRaceBot"
+    scm._INTERNALIZE_FAILURE_STATE.pop(bot_name, None)
+    monkeypatch.setattr(scm, "_INTERNALIZE_FAILURE_THRESHOLD", 2)
+    monkeypatch.setattr(scm, "_INTERNALIZE_FAILURE_COOLDOWN_SECONDS", 30.0)
+
+    with caplog.at_level(logging.WARNING):
+        scm._record_internalize_failure(
+            bot_name,
+            module_path="bot.py",
+            reason="cannot schedule new futures after interpreter shutdown",
+        )
+        scm._record_internalize_failure(
+            bot_name,
+            module_path="bot.py",
+            reason="cannot schedule new futures after interpreter shutdown",
+        )
+
+    state = scm._INTERNALIZE_FAILURE_STATE[bot_name]
+    assert state["reason"] == "shutdown_race"
+    assert state["count"] == 0
+    assert float(state["cooldown_until"]) == 0.0
+
+    shutdown_warnings = [
+        record
+        for record in caplog.records
+        if "observed shutdown race" in record.message
+    ]
+    assert len(shutdown_warnings) == 1
+    assert not any("entering cooldown" in record.message for record in caplog.records)
+
+
+def test_record_internalize_failure_non_shutdown_still_cooldowns(monkeypatch, caplog):
+    import menace_sandbox.self_coding_manager as scm
+
+    bot_name = "CooldownBot"
+    scm._INTERNALIZE_FAILURE_STATE.pop(bot_name, None)
+    monkeypatch.setattr(scm, "_INTERNALIZE_FAILURE_THRESHOLD", 2)
+    monkeypatch.setattr(scm, "_INTERNALIZE_FAILURE_COOLDOWN_SECONDS", 30.0)
+
+    with caplog.at_level(logging.ERROR):
+        scm._record_internalize_failure(
+            bot_name,
+            module_path="bot.py",
+            reason="regular_failure",
+        )
+        scm._record_internalize_failure(
+            bot_name,
+            module_path="bot.py",
+            reason="regular_failure",
+        )
+
+    state = scm._INTERNALIZE_FAILURE_STATE[bot_name]
+    assert state["reason"] == "regular_failure"
+    assert float(state["cooldown_until"]) > 0.0
+    assert any("entering cooldown" in record.message for record in caplog.records)

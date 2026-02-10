@@ -186,6 +186,22 @@ if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular depen
 _MODEL_AUTOMATION_PIPELINE_CLS: type["ModelAutomationPipeline"] | None = None
 _AUTOMATION_RESULT_CLS: type["AutomationResult"] | None = None
 
+_INTERNALIZE_SHUTDOWN_RACE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"cannot\s+schedule\s+new\s+futures\s+after\s+interpreter\s+shutdown", re.IGNORECASE),
+    re.compile(r"cannot\s+schedule\s+new\s+futures\s+after\s+shutdown", re.IGNORECASE),
+    re.compile(r"event\s+loop\s+is\s+closed", re.IGNORECASE),
+    re.compile(r"sys\.is_finalizing", re.IGNORECASE),
+    re.compile(r"interpreter\s+shutdown", re.IGNORECASE),
+    re.compile(r"python\s+finaliz", re.IGNORECASE),
+)
+
+
+def _is_internalize_shutdown_race(reason: str) -> bool:
+    """Return ``True`` when *reason* matches known shutdown race messages."""
+
+    reason_text = str(reason or "")
+    return any(pattern.search(reason_text) for pattern in _INTERNALIZE_SHUTDOWN_RACE_PATTERNS)
+
 
 def _load_pipeline_components() -> tuple[type["ModelAutomationPipeline"], type["AutomationResult"]]:
     """Import ``ModelAutomationPipeline`` and ``AutomationResult`` lazily."""
@@ -647,42 +663,78 @@ def _record_internalize_failure(
 ) -> None:
     """Track a failure and enter cooldown after the configured threshold."""
 
-    if _INTERNALIZE_FAILURE_THRESHOLD <= 0:
-        return
+    reason_text = str(reason or "")
+    reason_category = "shutdown_race" if _is_internalize_shutdown_race(reason_text) else reason_text
     now = time.monotonic()
     should_log = False
+    should_warn_shutdown_race = False
+
     with _INTERNALIZE_FAILURE_LOCK:
         state = _INTERNALIZE_FAILURE_STATE.get(
             bot_name,
-            {"count": 0, "cooldown_until": 0.0, "module_path": None, "reason": None},
+            {
+                "count": 0,
+                "cooldown_until": 0.0,
+                "module_path": None,
+                "reason": None,
+                "shutdown_race_warned": 0,
+            },
         )
-        cooldown_until = float(state.get("cooldown_until", 0.0) or 0.0)
-        if cooldown_until and now < cooldown_until:
-            state["module_path"] = module_path
-            state["reason"] = reason
-            _INTERNALIZE_FAILURE_STATE[bot_name] = state
-            return
-        state["count"] = int(state.get("count", 0) or 0) + 1
+
         state["module_path"] = module_path
-        state["reason"] = reason
-        if state["count"] >= _INTERNALIZE_FAILURE_THRESHOLD:
+        state["reason"] = reason_category
+
+        if reason_category == "shutdown_race":
             state["count"] = 0
-            state["cooldown_until"] = now + _INTERNALIZE_FAILURE_COOLDOWN_SECONDS
-            should_log = True
-        _INTERNALIZE_FAILURE_STATE[bot_name] = state
+            state["cooldown_until"] = 0.0
+            if not bool(state.get("shutdown_race_warned", 0)):
+                state["shutdown_race_warned"] = 1
+                should_warn_shutdown_race = True
+            _INTERNALIZE_FAILURE_STATE[bot_name] = state
+        else:
+            state["shutdown_race_warned"] = 0
+            if _INTERNALIZE_FAILURE_THRESHOLD <= 0:
+                _INTERNALIZE_FAILURE_STATE[bot_name] = state
+                return
+            cooldown_until = float(state.get("cooldown_until", 0.0) or 0.0)
+            if cooldown_until and now < cooldown_until:
+                _INTERNALIZE_FAILURE_STATE[bot_name] = state
+                return
+            state["count"] = int(state.get("count", 0) or 0) + 1
+            if state["count"] >= _INTERNALIZE_FAILURE_THRESHOLD:
+                state["count"] = 0
+                state["cooldown_until"] = now + _INTERNALIZE_FAILURE_COOLDOWN_SECONDS
+                should_log = True
+            _INTERNALIZE_FAILURE_STATE[bot_name] = state
+
+    log = logger or logging.getLogger(__name__)
+    if should_warn_shutdown_race:
+        log.warning(
+            "internalize_coding_bot observed shutdown race for %s; skipping cooldown escalation "
+            "(module_path=%s). This commonly occurs during interpreter/event-loop shutdown; "
+            "allow shutdown to complete before re-internalizing.",
+            bot_name,
+            module_path or "unknown",
+            extra={
+                "bot": bot_name,
+                "module_path": module_path or "unknown",
+                "reason": "shutdown_race",
+                "original_reason": reason_text,
+                "remediation": "wait_for_shutdown_and_retry_internalize",
+            },
+        )
     if should_log:
-        log = logger or logging.getLogger(__name__)
         log.error(
             "internalize_coding_bot entering cooldown for %s after repeated failures "
             "(module_path=%s, reason=%s, cooldown=%.1fs)",
             bot_name,
             module_path or "unknown",
-            reason,
+            reason_category,
             _INTERNALIZE_FAILURE_COOLDOWN_SECONDS,
             extra={
                 "bot": bot_name,
                 "module_path": module_path or "unknown",
-                "reason": reason,
+                "reason": reason_category,
                 "cooldown_seconds": _INTERNALIZE_FAILURE_COOLDOWN_SECONDS,
             },
         )
@@ -4453,6 +4505,12 @@ def internalize_coding_bot(
                 if failure_recorded:
                     return
                 failure_recorded = True
+                reason_text = str(reason or "")
+                reason_category = (
+                    "shutdown_race"
+                    if _is_internalize_shutdown_race(reason_text)
+                    else reason_text
+                )
                 path_value = (
                     str(module_path)
                     if module_path is not None
@@ -4461,7 +4519,7 @@ def internalize_coding_bot(
                 _record_internalize_failure(
                     bot_name,
                     module_path=path_value,
-                    reason=reason,
+                    reason=reason_category,
                     logger=getattr(manager, "logger", None) or logger_ref,
                 )
 
