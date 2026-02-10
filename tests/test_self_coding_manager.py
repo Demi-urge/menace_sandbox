@@ -2382,6 +2382,7 @@ def test_internalize_manager_timeout_emits_internalization_failure(monkeypatch):
     ]
     assert failure_events
     assert failure_events[-1]["reason"] == "manager_construction_timeout"
+    assert failure_events[-1]["attempt_index"] == 1
     assert failure_events[-1]["phase_elapsed_seconds"] is not None
     assert "phase_history" in failure_events[-1]
 
@@ -2408,17 +2409,21 @@ def test_internalize_manager_timeout_botplanningbot_retries_with_bounded_timeout
             self.retry_calls.append((bot_name, delay))
 
     class TimeoutFuture:
+        def __init__(self, record):
+            self.record = record
+
         def result(self, timeout=None):
+            self.record.append(timeout)
             raise scm.concurrent.futures.TimeoutError()
 
     class TimeoutExecutor:
-        result_timeouts = []
+        recorded_timeouts = []
 
         def __init__(self, max_workers=1):
             self.max_workers = max_workers
 
         def submit(self, func):
-            return TimeoutFuture()
+            return TimeoutFuture(self.recorded_timeouts)
 
         def shutdown(self, wait=False, cancel_futures=False):
             return None
@@ -2434,7 +2439,7 @@ def test_internalize_manager_timeout_botplanningbot_retries_with_bounded_timeout
     monkeypatch.setattr(
         scm,
         "_resolve_manager_retry_timeout_seconds",
-        lambda bot_name, primary_timeout: 0.02,
+        lambda bot_name, primary_timeout: 0.01,
     )
     monkeypatch.setattr(scm.concurrent.futures, "ThreadPoolExecutor", TimeoutExecutor)
     monkeypatch.setattr(
@@ -2460,7 +2465,10 @@ def test_internalize_manager_timeout_botplanningbot_retries_with_bounded_timeout
     ]
     assert len(failure_events) >= 2
     assert failure_events[0]["retry_timeout_seconds"] == 0.02
+    assert failure_events[0]["attempt_index"] == 1
+    assert failure_events[-1]["attempt_index"] == 2
     assert failure_events[-1]["fallback_used"] is True
+    assert TimeoutExecutor.recorded_timeouts[:2] == [0.01, 0.02]
 
 
 def test_internalize_manager_timeout_botplanningbot_raises_enriched_error_without_fallback(monkeypatch):
@@ -2584,3 +2592,84 @@ def test_internalize_manager_timeout_botplanningbot_raises_timeout_with_timeout_
     message = str(excinfo.value)
     assert "0.01s" in message
     assert "0.02s" in message
+
+
+def test_internalize_manager_timeout_botplanningbot_retry_success_records_phase_metrics(monkeypatch):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {"BotPlanningBot": {}}
+
+        def __init__(self):
+            self.graph = self.Graph()
+            self.retry_calls = []
+            self.event_bus = None
+
+        def force_internalization_retry(self, bot_name, delay=0.0):
+            self.retry_calls.append((bot_name, delay))
+
+        def register_bot(self, _bot_name, **_kwargs):
+            return None
+
+    class TimeoutFuture:
+        def result(self, timeout=None):
+            raise scm.concurrent.futures.TimeoutError()
+
+    class SuccessFuture:
+        def __init__(self, func):
+            self.func = func
+
+        def result(self, timeout=None):
+            return self.func()
+
+    class SequencedExecutor:
+        calls = 0
+
+        def __init__(self, max_workers=1):
+            self.max_workers = max_workers
+
+        def submit(self, func):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return TimeoutFuture()
+            return SuccessFuture(func)
+
+        def shutdown(self, wait=False, cancel_futures=False):
+            return None
+
+    class DummyManager:
+        def __init__(self, *args, construction_phase_callback=None, **kwargs):
+            self.quick_fix = object()
+            self.event_bus = object()
+            self.logger = logging.getLogger(__name__)
+            if construction_phase_callback is not None:
+                construction_phase_callback("manager_init:deferred_scope")
+
+        def initialize_deferred_components(self, skip_non_critical=False):
+            return None
+
+    registry = DummyRegistry()
+    monkeypatch.setattr(scm, "SelfCodingManager", DummyManager)
+    monkeypatch.setattr(scm, "_resolve_manager_timeout_seconds", lambda _bot_name: 0.01)
+    monkeypatch.setattr(
+        scm,
+        "_resolve_manager_retry_timeout_seconds",
+        lambda _bot_name, primary_timeout: primary_timeout,
+    )
+    monkeypatch.setattr(scm.concurrent.futures, "ThreadPoolExecutor", SequencedExecutor)
+
+    manager = scm.internalize_coding_bot(
+        "BotPlanningBot",
+        object(),
+        object(),
+        data_bot=types.SimpleNamespace(),
+        bot_registry=registry,
+        provenance_token="token",
+    )
+
+    assert isinstance(manager, DummyManager)
+    assert "BOTPLANNINGBOT" in registry._manager_phase_duration_metrics
+    per_bot_metrics = registry._manager_phase_duration_metrics["BOTPLANNINGBOT"]
+    assert "manager_init:enter" in per_bot_metrics
+    node_metrics = registry.graph.nodes["BotPlanningBot"]["manager_phase_duration_metrics"]
+    assert node_metrics is per_bot_metrics
