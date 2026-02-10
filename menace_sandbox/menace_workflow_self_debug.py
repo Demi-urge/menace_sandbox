@@ -39,6 +39,7 @@ from menace_sandbox.menace_self_debug_snapshot import (
 )
 from menace_sandbox.workflow_run_summary import roi_weighted_order
 from sandbox_runner import run_workflow_simulations
+from sandbox_runner.environment import is_self_debugger_sandbox_import_failure, module_name_from_module_not_found
 from sandbox_settings import SandboxSettings
 from task_handoff_bot import WorkflowDB
 from sandbox_results_logger import record_self_debug_metrics
@@ -756,6 +757,53 @@ def _run_self_debug(
             dynamic_workflows=effective_dynamic,
             context_builder=context_builder,
         )
+    except ModuleNotFoundError as exc:
+        if not is_self_debugger_sandbox_import_failure(exc):
+            raise
+        missing_module = module_name_from_module_not_found(exc)
+        primary_failure = (
+            failure_context.get("record") if isinstance(failure_context, Mapping) else None
+        )
+        LOGGER.exception(
+            "workflow fallback self-debug dependency/layout failure",
+            extra={
+                "classification": "dependency_layout_failure",
+                "fallback_failure": "self_debugger_sandbox import failure",
+                "missing_module": missing_module,
+                "primary_failure": primary_failure,
+            },
+        )
+        classification = "dependency_layout_failure"
+        if metrics_logger:
+            metrics_logger.log_metrics(
+                "menace.self_debug.exit",
+                attempts=0,
+                classification={"status": classification},
+                patch_validity=None,
+                roi_delta=None,
+                roi_delta_total=None,
+                exit_reason="fallback_dependency_layout_failure",
+            )
+        if correlation_id:
+            record_self_debug_metrics(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "correlation_id": correlation_id,
+                    "source": metrics_source,
+                    "attempts": 0,
+                    "classification": {"status": classification},
+                    "patch_validity": None,
+                    "roi_delta_total": None,
+                    "roi_delta": None,
+                    "exit_reason": "fallback_dependency_layout_failure",
+                    "primary_failure": primary_failure,
+                    "fallback_failure": {
+                        "type": "self_debugger_sandbox import failure",
+                        "missing_module": missing_module,
+                    },
+                }
+            )
+        return 2
     except Exception as exc:
         LOGGER.exception("workflow simulation failed; routing through mvp pipeline")
         patched = _handle_failure(
