@@ -359,6 +359,59 @@ def test_missing_quick_fix_engine_raises(monkeypatch):
         mgr._ensure_quick_fix_engine(scm.ContextBuilder())
 
 
+def test_manager_timeout_generic_default(monkeypatch):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.delenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_GENERICBOT",
+        raising=False,
+    )
+    monkeypatch.delenv("SELF_CODING_MANAGER_TIMEOUT_SECONDS_GENERICBOT", raising=False)
+
+    assert scm._resolve_manager_timeout_seconds("GenericBot") == 45.0
+
+
+def test_manager_timeout_generic_bot_override(monkeypatch):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_GENERICBOT", "77"
+    )
+
+    assert scm._resolve_manager_timeout_seconds("GenericBot") == 77.0
+
+
+def test_manager_timeout_generic_malformed_env_falls_back(monkeypatch):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_GENERICBOT", "invalid"
+    )
+    monkeypatch.delenv("SELF_CODING_MANAGER_TIMEOUT_SECONDS_GENERICBOT", raising=False)
+
+    assert scm._resolve_manager_timeout_seconds("GenericBot") == 45.0
+
+
+def test_manager_timeout_logs_resolution_source(monkeypatch, caplog):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setattr(
+        scm,
+        "_BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS",
+        105.0,
+    )
+    monkeypatch.delenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "SELF_CODING_MANAGER_TIMEOUT_SECONDS_BOTPLANNINGBOT",
+        raising=False,
+    )
+
+    with caplog.at_level(logging.INFO):
+        assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 105.0
+
+    assert "resolved manager construction timeout" in caplog.text
+    assert "botplanningbot_default_fallback" in caplog.text
+
+
 def test_manager_timeout_per_bot_override_precedence(monkeypatch):
     monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
     monkeypatch.setattr(

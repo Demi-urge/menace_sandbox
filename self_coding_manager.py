@@ -147,6 +147,7 @@ def _normalize_env_bot_name(bot_name: str) -> str:
 def _resolve_manager_timeout_seconds(bot_name: str) -> float:
     """Resolve manager construction timeout with optional per-bot overrides."""
 
+    logger = logging.getLogger(__name__)
     bot_key = _normalize_env_bot_name(bot_name)
     candidate_vars: list[str] = []
     if bot_key == "BOTPLANNINGBOT":
@@ -171,9 +172,23 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
                 timeout_seconds=resolved_timeout,
                 source=env_var,
             )
+            logger.info(
+                "resolved manager construction timeout for %s (%s): %.2fs via %s",
+                bot_name,
+                bot_key,
+                resolved_timeout,
+                env_var,
+                extra={
+                    "event": "manager_construction_timeout_resolved",
+                    "bot_name": bot_name,
+                    "bot_key": bot_key,
+                    "manager_timeout_seconds": resolved_timeout,
+                    "source": env_var,
+                },
+            )
             return resolved_timeout
         except ValueError:
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "invalid manager timeout override %s=%r for %s; using default %.2fs",
                 env_var,
                 raw_value,
@@ -187,14 +202,50 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
             _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS,
             0.0,
         )
+        source = "botplanningbot_default_fallback"
         _warn_on_low_heavy_bot_timeout(
             bot_name=bot_name,
             bot_key=bot_key,
             timeout_seconds=resolved_timeout,
-            source="botplanningbot_default_fallback",
+            source=source,
+        )
+        logger.info(
+            "resolved manager construction timeout for %s (%s): %.2fs via %s",
+            bot_name,
+            bot_key,
+            resolved_timeout,
+            source,
+            extra={
+                "event": "manager_construction_timeout_resolved",
+                "bot_name": bot_name,
+                "bot_key": bot_key,
+                "manager_timeout_seconds": resolved_timeout,
+                "source": source,
+            },
         )
         return resolved_timeout
-    return max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
+    resolved_timeout = max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
+    logger.info(
+        "resolved manager construction timeout for %s (%s): %.2fs via %s",
+        bot_name,
+        bot_key,
+        resolved_timeout,
+        "global_default",
+        extra={
+            "event": "manager_construction_timeout_resolved",
+            "bot_name": bot_name,
+            "bot_key": bot_key,
+            "manager_timeout_seconds": resolved_timeout,
+            "source": "global_default",
+        },
+    )
+    _warn_on_low_heavy_bot_timeout(
+        bot_name=bot_name,
+        bot_key=bot_key,
+        timeout_seconds=resolved_timeout,
+        source="global_default",
+    )
+    return resolved_timeout
 
 def _resolve_manager_retry_timeout_seconds(bot_name: str, *, primary_timeout: float) -> float:
     """Resolve manager construction retry timeout for bounded retries."""
@@ -4968,6 +5019,15 @@ def internalize_coding_bot(
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                 manager_future = executor.submit(_build_manager)
                 try:
+                    logger_ref.info(
+                        "internalize_coding_bot waiting on manager construction future",
+                        extra={
+                            "event": "internalize_manager_wait_start",
+                            "bot_name": bot_name,
+                            "bot_key": _normalize_env_bot_name(bot_name),
+                            "manager_timeout_seconds": manager_timeout,
+                        },
+                    )
                     manager = manager_future.result(timeout=manager_timeout)
                 except concurrent.futures.TimeoutError:
                     elapsed = max(0.0, time.monotonic() - manager_timer)
