@@ -99,6 +99,41 @@ try:
     )
 except ValueError:
     _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS = 45.0
+
+
+def _normalize_env_bot_name(bot_name: str) -> str:
+    """Return an env-var-safe key for a bot name."""
+
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", str(bot_name)).strip("_")
+    return normalized.upper() or "UNKNOWN"
+
+
+def _resolve_manager_timeout_seconds(bot_name: str) -> float:
+    """Resolve manager construction timeout with optional per-bot overrides."""
+
+    bot_key = _normalize_env_bot_name(bot_name)
+    candidate_vars = (
+        f"SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_{bot_key}",
+        f"SELF_CODING_MANAGER_TIMEOUT_SECONDS_{bot_key}",
+    )
+    for env_var in candidate_vars:
+        raw_value = os.getenv(env_var)
+        if raw_value is None:
+            continue
+        try:
+            return max(float(raw_value.strip()), 0.0)
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "invalid manager timeout override %s=%r for %s; using default %.2fs",
+                env_var,
+                raw_value,
+                bot_name,
+                _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS,
+            )
+            break
+    return max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
+
+
 _SELF_DEBUG_BACKOFF_LOCK = threading.Lock()
 _SELF_DEBUG_LAST_TRIGGER: dict[str, float] = {}
 _INTERNALIZE_TIMEOUT_RETRY_LOCK = threading.Lock()
@@ -986,16 +1021,20 @@ class SelfCodingManager:
         bootstrap_mode: bool | None = None,
         bootstrap_register_timeout: float | None = None,
         bootstrap_fast: bool | None = None,
+        defer_orchestrator_init: bool = False,
+        construction_phase_callback: Callable[[str], None] | None = None,
     ) -> None:
         if data_bot is None or bot_registry is None:
             raise ValueError("data_bot and bot_registry are required")
         self.engine = self_coding_engine
         self.pipeline = pipeline
         self.bot_name = bot_name
+        self._construction_phase_callback = construction_phase_callback
         self.data_bot = data_bot
         self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.approval_policy = approval_policy
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._mark_construction_phase("init:start")
         registry_bootstrap = bool(getattr(bot_registry, "bootstrap", False))
         resolved_bootstrap = registry_bootstrap if bootstrap_mode is None else bootstrap_mode
         self.bootstrap = bool(resolved_bootstrap)
@@ -1164,9 +1203,33 @@ class SelfCodingManager:
             raise RuntimeError(
                 "engine.cognition_layer must provide a context_builder"
             )
+        self._context_builder = builder
+        self._mark_construction_phase("context_builder:prepare")
         self._prepare_context_builder(builder)
+        self._mark_construction_phase("quick_fix:init")
         self._init_quick_fix_engine(builder)
 
+        if defer_orchestrator_init:
+            self._mark_construction_phase("orchestrator:init:deferred")
+        else:
+            self.initialize_deferred_components()
+        self._mark_construction_phase("init:complete")
+
+    def _mark_construction_phase(self, phase: str) -> None:
+        """Record manager construction phase transitions for diagnostics."""
+
+        callback = getattr(self, "_construction_phase_callback", None)
+        if callable(callback):
+            try:
+                callback(phase)
+            except Exception:  # pragma: no cover - diagnostics are best effort
+                self.logger.debug("construction phase callback failed", exc_info=True)
+        self.logger.debug("%s: manager construction phase=%s", self.bot_name, phase)
+
+    def initialize_deferred_components(self) -> None:
+        """Initialize expensive orchestration components when deferred."""
+
+        self._mark_construction_phase("orchestrator:init:begin")
         if self.evolution_orchestrator is None:
             try:  # pragma: no cover - optional dependencies
                 from .capital_management_bot import CapitalManagementBot
@@ -1188,9 +1251,11 @@ class SelfCodingManager:
                         bootstrap_owner = get_structural_bootstrap_owner()
                 # Startup order: ensure broker owner is active -> SelfImprovementEngine
                 # (which constructs ResearchAggregatorBot) -> EvolutionOrchestrator.
+                self._mark_construction_phase("orchestrator:init:broker_owner_ready")
                 self._ensure_broker_owner_ready(bootstrap_owner=bootstrap_owner)
+                self._mark_construction_phase("orchestrator:init:self_improvement")
                 improv = SelfImprovementEngine(
-                    context_builder=builder,
+                    context_builder=self._context_builder,
                     data_bot=self.data_bot,
                     bot_name=self.bot_name,
                     manager=self,
@@ -1200,6 +1265,7 @@ class SelfCodingManager:
                 )
                 bots = list(getattr(self.bot_registry, "graph", {}).keys())
                 evol_mgr = SystemEvolutionManager(bots)
+                self._mark_construction_phase("orchestrator:init:evolution_orchestrator")
                 self.evolution_orchestrator = EvolutionOrchestrator(
                     data_bot=self.data_bot,
                     capital_bot=capital,
@@ -1238,6 +1304,7 @@ class SelfCodingManager:
                 self.logger.exception(
                     "failed to register bot with evolution orchestrator",
                 )
+        self._mark_construction_phase("orchestrator:init:complete")
 
     def register_bot(
         self,
@@ -4623,6 +4690,8 @@ def internalize_coding_bot(
                 *,
                 timeout_seconds: float,
                 elapsed_seconds: float,
+                phase: str | None = None,
+                phase_history: list[tuple[str, float]] | None = None,
             ) -> None:
                 _track_failure("manager_construction_timeout")
                 event_bus = getattr(bot_registry, "event_bus", None)
@@ -4636,6 +4705,8 @@ def internalize_coding_bot(
                     "post_validation_error": "manager_construction_timeout",
                     "timeout_seconds": timeout_seconds,
                     "elapsed_seconds": elapsed_seconds,
+                    "phase": phase,
+                    "phase_history": phase_history or [],
                 }
                 if event_bus is not None:
                     try:
@@ -4651,6 +4722,8 @@ def internalize_coding_bot(
                     "reason": "manager_construction_timeout",
                     "timeout_seconds": timeout_seconds,
                     "elapsed_seconds": elapsed_seconds,
+                    "phase": phase,
+                    "phase_history": phase_history or [],
                     "timestamp": time.time(),
                 }
                 if event_bus is not None:
@@ -4666,10 +4739,31 @@ def internalize_coding_bot(
                         )
 
             manager_timer = _start_step("manager construction")
-            manager_timeout = max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
+            manager_timeout = _resolve_manager_timeout_seconds(bot_name)
+            manager_phase_lock = threading.Lock()
+            manager_phase_state: dict[str, Any] = {
+                "phase": "queued",
+                "phase_started_at": time.monotonic(),
+                "history": [("queued", time.monotonic())],
+            }
+
+            def _record_manager_phase(phase: str) -> None:
+                now = time.monotonic()
+                with manager_phase_lock:
+                    manager_phase_state["phase"] = phase
+                    manager_phase_state["phase_started_at"] = now
+                    history = manager_phase_state.setdefault("history", [])
+                    if isinstance(history, list):
+                        history.append((phase, now))
+                logger_ref.info(
+                    "internalize_coding_bot manager construction phase for %s: %s",
+                    bot_name,
+                    phase,
+                )
 
             def _build_manager() -> SelfCodingManager:
-                return SelfCodingManager(
+                _record_manager_phase("manager_init:enter")
+                manager = SelfCodingManager(
                     engine,
                     pipeline,
                     bot_name=bot_name,
@@ -4677,8 +4771,12 @@ def internalize_coding_bot(
                     bot_registry=bot_registry,
                     roi_drop_threshold=roi_threshold,
                     error_rate_threshold=error_threshold,
+                    defer_orchestrator_init=True,
+                    construction_phase_callback=_record_manager_phase,
                     **manager_kwargs,
                 )
+                _record_manager_phase("manager_init:return")
+                return manager
 
             if manager_timeout == 0.0:
                 manager = _build_manager()
@@ -4689,11 +4787,28 @@ def internalize_coding_bot(
                     manager = manager_future.result(timeout=manager_timeout)
                 except concurrent.futures.TimeoutError:
                     elapsed = max(0.0, time.monotonic() - manager_timer)
+                    with manager_phase_lock:
+                        timeout_phase = str(manager_phase_state.get("phase", "unknown"))
+                        phase_started_at = float(
+                            manager_phase_state.get("phase_started_at", manager_timer)
+                        )
+                        raw_history = manager_phase_state.get("history", [])
+                        timeout_history = list(raw_history) if isinstance(raw_history, list) else []
+                    logger_ref.error(
+                        "internalize_coding_bot manager construction timed out for %s after %.2fs (phase=%s, phase_elapsed=%.2fs, phase_history=%s)",
+                        bot_name,
+                        manager_timeout,
+                        timeout_phase,
+                        max(0.0, time.monotonic() - phase_started_at),
+                        timeout_history,
+                    )
                     _emit_manager_construction_timeout_failure(
                         timeout_seconds=manager_timeout,
                         elapsed_seconds=elapsed,
+                        phase=timeout_phase,
+                        phase_history=timeout_history,
                     )
-                    _clear_internalize_state(last_step="manager construction timeout")
+                    _clear_internalize_state(last_step=f"manager construction timeout ({timeout_phase})")
                     if node is not None:
                         node["internalization_deferred_retry_at"] = time.time()
                     _schedule_internalization_timeout_retry(
@@ -4722,6 +4837,11 @@ def internalize_coding_bot(
                 finally:
                     executor.shutdown(wait=False, cancel_futures=True)
             _end_step("manager construction", manager_timer)
+            deferred_orchestrator_timer = _start_step("deferred orchestrator initialization")
+            try:
+                manager.initialize_deferred_components()
+            finally:
+                _end_step("deferred orchestrator initialization", deferred_orchestrator_timer)
             if provenance_token:
                 try:
                     setattr(manager, "_bootstrap_provenance_token", provenance_token)
