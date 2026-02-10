@@ -11240,6 +11240,7 @@ def self_coding_managed(
         bootstrap_in_progress = False
         bootstrap_error: BaseException | None = None
         bootstrap_done = False
+        bootstrap_wait_timeout: float | None = None
 
         def _resolve_candidate(candidate: Any) -> Any:
             if getattr(candidate, "__self_coding_lazy__", False):
@@ -12034,11 +12035,26 @@ def self_coding_managed(
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
+            nonlocal bootstrap_wait_timeout
             registry_obj: BotRegistry | None = None
             data_bot_obj: DataBot | None = None
             pipeline_ref: Any | None = self if is_pipeline_cls else None
             context_guard: _BootstrapContextGuard | None = None
             try:
+                if "bootstrap_wait_timeout" in kwargs:
+                    bootstrap_wait_timeout_candidate = kwargs.get("bootstrap_wait_timeout")
+                    if (
+                        bootstrap_wait_timeout_candidate is None
+                        or isinstance(bootstrap_wait_timeout_candidate, (int, float))
+                    ):
+                        if isinstance(bootstrap_wait_timeout_candidate, int):
+                            bootstrap_wait_timeout = float(bootstrap_wait_timeout_candidate)
+                        else:
+                            bootstrap_wait_timeout = bootstrap_wait_timeout_candidate
+                    else:
+                        vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
+                        bootstrap_wait_timeout = _resolve_bootstrap_wait_timeout(vector_heavy)
+
                 if (not bootstrap_done) or resolved_registry is None or resolved_data_bot is None:
                     registry_obj, data_bot_obj, context_guard = _bootstrap_helpers(
                         pipeline=pipeline_ref,
