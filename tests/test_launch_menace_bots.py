@@ -241,3 +241,63 @@ def test_self_coding_registration_check():
     script = Path(__file__).resolve().parents[1] / "tools" / "check_self_coding_registration.py"
     result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_self_debugger_import_resolves_real_class(monkeypatch):
+    lmb = _load_lmb()
+
+    class ConcreteSandbox:
+        pass
+
+    module = types.SimpleNamespace(SelfDebuggerSandbox=ConcreteSandbox)
+
+    def _import_module(name):
+        if name == "menace.self_debugger_sandbox":
+            return module
+        raise AssertionError(f"unexpected module import: {name}")
+
+    monkeypatch.setattr(lmb.importlib, "import_module", _import_module)
+    resolved = lmb._resolve_self_debugger_sandbox_class()
+    assert resolved is ConcreteSandbox
+
+
+def test_self_debugger_import_error_by_default(monkeypatch, tmp_path):
+    lmb = _load_lmb()
+
+    def _import_module(name):
+        raise ModuleNotFoundError(f"No module named '{name}'")
+
+    monkeypatch.setattr(lmb.importlib, "import_module", _import_module)
+    monkeypatch.setenv("MENACE_ALLOW_DEBUGGER_STUB", "0")
+    monkeypatch.setattr(lmb, "SelfDebuggerSandbox", None)
+    (tmp_path / "mod.py").write_text("def run():\n    pass\n")
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="MENACE_ALLOW_DEBUGGER_STUB=1"):
+        lmb.debug_and_deploy(tmp_path, context_builder=builder)
+
+
+def test_self_debugger_stub_mode_requires_explicit_flag(monkeypatch, tmp_path):
+    lmb = _load_lmb()
+    calls = []
+
+    def _import_module(name):
+        raise ModuleNotFoundError(f"No module named '{name}'")
+
+    monkeypatch.setattr(lmb.importlib, "import_module", _import_module)
+    monkeypatch.setenv("MENACE_ALLOW_DEBUGGER_STUB", "1")
+    monkeypatch.setattr(lmb, "SelfDebuggerSandbox", None)
+    (tmp_path / "mod.py").write_text("def run():\n    pass\n")
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+
+    original_class = lmb._resolve_self_debugger_sandbox_class
+
+    def _wrapped_resolver():
+        calls.append("resolver_called")
+        return original_class()
+
+    monkeypatch.setattr(lmb, "_resolve_self_debugger_sandbox_class", _wrapped_resolver)
+    lmb.debug_and_deploy(tmp_path, context_builder=builder)
+    assert "resolver_called" in calls

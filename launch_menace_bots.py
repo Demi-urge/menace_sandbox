@@ -13,6 +13,7 @@ import argparse
 from pathlib import Path
 
 import ast
+import importlib
 import logging
 import os
 import uuid
@@ -50,6 +51,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 
 _BOT_TESTING_CLS: Type["BotTestingBot"] | None = None
+_SELF_DEBUGGER_SANDBOX_CANDIDATES = (
+    "menace.self_debugger_sandbox",
+    "self_debugger_sandbox",
+)
 
 
 def _get_bot_testing_bot_class() -> Type["BotTestingBot"]:
@@ -69,6 +74,53 @@ def _create_tester() -> "BotTestingBot":
     """Instantiate :class:`BotTestingBot` without a module level import."""
 
     return _get_bot_testing_bot_class()()
+
+
+def _resolve_self_debugger_sandbox_class() -> type[object]:
+    """Import ``SelfDebuggerSandbox`` from supported package and flat layouts."""
+
+    logger = logging.getLogger(__name__)
+    attempt_details: list[tuple[str, str, str]] = []
+    last_exc: Exception | None = None
+
+    for module_name in _SELF_DEBUGGER_SANDBOX_CANDIDATES:
+        try:
+            module = importlib.import_module(module_name)
+        except (ModuleNotFoundError, ImportError) as exc:
+            last_exc = exc
+            attempt_details.append((module_name, type(exc).__name__, str(exc)))
+            logger.error(
+                "Failed to import SelfDebuggerSandbox candidate module '%s': %s",
+                module_name,
+                exc,
+            )
+            continue
+
+        if not hasattr(module, "SelfDebuggerSandbox"):
+            attr_exc = AttributeError(
+                f"module '{module_name}' has no attribute 'SelfDebuggerSandbox'"
+            )
+            last_exc = attr_exc
+            attempt_details.append((module_name, type(attr_exc).__name__, str(attr_exc)))
+            logger.error(
+                "SelfDebuggerSandbox missing from candidate module '%s': %s",
+                module_name,
+                attr_exc,
+            )
+            continue
+
+        return module.SelfDebuggerSandbox
+
+    details = "; ".join(
+        f"{module}: {exc_type}: {message}"
+        for module, exc_type, message in attempt_details
+    )
+    raise ModuleNotFoundError(
+        "Unable to import SelfDebuggerSandbox. "
+        "Tried package and flat layouts: "
+        f"{', '.join(_SELF_DEBUGGER_SANDBOX_CANDIDATES)}. "
+        f"Failure chain: {details}"
+    ) from last_exc
 
 
 def _extract_functions(code: str) -> list[str]:
@@ -205,19 +257,31 @@ def debug_and_deploy(
     global SelfDebuggerSandbox
     if SelfDebuggerSandbox is None:
         try:
-            from menace.self_debugger_sandbox import (
-                SelfDebuggerSandbox as _SelfDebuggerSandbox,
-            )
-        except Exception:
+            SelfDebuggerSandbox = _resolve_self_debugger_sandbox_class()
+        except (ModuleNotFoundError, ImportError) as exc:
+            if os.getenv("MENACE_ALLOW_DEBUGGER_STUB") != "1":
+                raise RuntimeError(
+                    "SelfDebuggerSandbox could not be loaded. "
+                    "Set MENACE_ALLOW_DEBUGGER_STUB=1 only for temporary degraded mode "
+                    "while restoring a valid self_debugger_sandbox module."
+                ) from exc
 
-            class _SelfDebuggerSandbox:  # pragma: no cover - test fallback
+            logging.getLogger(__name__).critical(
+                "MENACE_ALLOW_DEBUGGER_STUB=1 enabled. Running in DEGRADED mode with "
+                "a no-op SelfDebuggerSandbox stub. Operator action required: restore "
+                "menace.self_debugger_sandbox (or self_debugger_sandbox) and remove "
+                "this override. Import error chain: %s",
+                exc,
+            )
+
+            class _SelfDebuggerSandbox:  # pragma: no cover - explicit degraded mode
                 def __init__(self, *a, **k) -> None:  # noqa: D401
-                    """Fallback stub when SelfDebuggerSandbox is unavailable."""
+                    """No-op debugger stub used only in explicit degraded mode."""
 
                 def analyse_and_fix(self) -> None:
                     pass
 
-        SelfDebuggerSandbox = _SelfDebuggerSandbox
+            SelfDebuggerSandbox = _SelfDebuggerSandbox
     sandbox = SelfDebuggerSandbox(
         _TelemProxy(error_db), engine, context_builder=context_builder
     )
