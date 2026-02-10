@@ -2126,3 +2126,93 @@ def test_load_self_coding_components_handles_flat_import_error(monkeypatch):
     assert calls == ["self_coding_manager"]
     assert "self_coding_manager" in excinfo.value.missing_dependencies
 
+
+
+def test_internalize_hard_timeout_recovers_and_schedules_retry(monkeypatch):
+    import menace_sandbox.self_coding_manager as scm
+
+    bot_name = "StaleBot"
+    now = time.monotonic()
+    published: list[tuple[str, dict[str, object]]] = []
+    retry_calls: list[str] = []
+    debug_calls: list[str] = []
+
+    class _Bus:
+        def publish(self, topic: str, payload: dict[str, object]) -> None:
+            published.append((topic, payload))
+
+    healthy_manager = SimpleNamespace(quick_fix=object(), event_bus=_Bus())
+    node: dict[str, object] = {
+        "selfcoding_manager": healthy_manager,
+        "internalization_in_progress": time.time() - 999,
+        "internalization_last_step": "stuck-step",
+    }
+
+    registry = SimpleNamespace(
+        graph=SimpleNamespace(nodes={bot_name: node}),
+        force_internalization_retry=lambda name, delay=None: retry_calls.append(name),
+    )
+
+    stale_lock = threading.Lock()
+    assert stale_lock.acquire(blocking=False)
+
+    monkeypatch.setattr(scm, "_start_internalize_monitor", lambda *_a, **_k: None)
+    monkeypatch.setattr(scm, "_consume_stale_internalize_in_flight", lambda **_k: [])
+    monkeypatch.setattr(scm, "_INTERNALIZE_HARD_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(scm, "_INTERNALIZE_IN_FLIGHT", {bot_name: now - 10.0})
+    monkeypatch.setattr(scm, "_INTERNALIZE_MONITOR_LAST_LOGGED_AT", {bot_name: now - 10.0})
+    monkeypatch.setattr(scm, "_INTERNALIZE_BOT_LOCKS", {bot_name: stale_lock})
+    monkeypatch.setattr(scm, "_INTERNALIZE_TIMEOUT_RETRY_STATE", {})
+    monkeypatch.setattr(
+        scm,
+        "_launch_internalize_timeout_self_debug",
+        lambda **kwargs: debug_calls.append(str(kwargs.get("bot_name"))),
+    )
+
+    manager = scm.internalize_coding_bot(
+        bot_name,
+        engine=object(),
+        pipeline=object(),
+        data_bot=object(),
+        bot_registry=registry,
+    )
+
+    assert manager is healthy_manager
+    assert bot_name not in scm._INTERNALIZE_IN_FLIGHT
+    assert bot_name not in scm._INTERNALIZE_MONITOR_LAST_LOGGED_AT
+    assert node.get("internalization_in_progress") is None
+    assert node.get("internalization_last_step") == "stale hard-timeout recovery"
+    assert scm._INTERNALIZE_BOT_LOCKS[bot_name] is not stale_lock
+    assert published
+    topic, payload = published[0]
+    assert topic == "self_coding:internalization_failure"
+    assert payload.get("reason") == "stale_internalization_timeout"
+    assert retry_calls == [bot_name]
+    assert debug_calls == [bot_name]
+
+
+def test_stale_internalization_retry_backoff(monkeypatch):
+    import menace_sandbox.self_coding_manager as scm
+
+    calls: list[tuple[str, float | None]] = []
+
+    registry = SimpleNamespace(
+        force_internalization_retry=lambda name, delay=None: calls.append((name, delay))
+    )
+
+    monkeypatch.setattr(scm, "_INTERNALIZE_TIMEOUT_RETRY_STATE", {})
+    monkeypatch.setattr(scm, "_INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS", 3.0)
+
+    logger = logging.getLogger("stale-retry-test")
+    scm._schedule_internalization_timeout_retry(
+        bot_name="RetryBot",
+        logger=logger,
+        bot_registry=registry,
+    )
+    scm._schedule_internalization_timeout_retry(
+        bot_name="RetryBot",
+        logger=logger,
+        bot_registry=registry,
+    )
+
+    assert calls == [("RetryBot", 3.0)]
