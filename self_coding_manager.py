@@ -155,6 +155,36 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
         )
     return max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
 
+def _resolve_manager_retry_timeout_seconds(bot_name: str, *, primary_timeout: float) -> float:
+    """Resolve manager construction retry timeout for bounded retries."""
+
+    bot_key = _normalize_env_bot_name(bot_name)
+    candidate_vars: list[str] = []
+    if bot_key == "BOTPLANNINGBOT":
+        candidate_vars.append(
+            "SELF_CODING_MANAGER_CONSTRUCTION_RETRY_TIMEOUT_SECONDS_BOTPLANNINGBOT"
+        )
+    candidate_vars.append(
+        f"SELF_CODING_MANAGER_CONSTRUCTION_RETRY_TIMEOUT_SECONDS_{bot_key}"
+    )
+    for env_var in candidate_vars:
+        raw_value = os.getenv(env_var)
+        if raw_value is None:
+            continue
+        try:
+            return max(float(raw_value.strip()), primary_timeout, 0.0)
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "invalid manager retry timeout override %s=%r for %s; using default",
+                env_var,
+                raw_value,
+                bot_name,
+            )
+            break
+
+    default_retry_timeout = max(primary_timeout + 15.0, primary_timeout * 1.5, 60.0)
+    return max(default_retry_timeout, 0.0)
+
 
 _SELF_DEBUG_BACKOFF_LOCK = threading.Lock()
 _SELF_DEBUG_LAST_TRIGGER: dict[str, float] = {}
@@ -4794,7 +4824,10 @@ def internalize_coding_bot(
                 timeout_seconds: float,
                 elapsed_seconds: float,
                 phase: str | None = None,
+                phase_elapsed_seconds: float | None = None,
                 phase_history: list[tuple[str, float]] | None = None,
+                retry_timeout_seconds: float | None = None,
+                fallback_used: bool = False,
             ) -> None:
                 _track_failure("manager_construction_timeout")
                 event_bus = getattr(bot_registry, "event_bus", None)
@@ -4809,7 +4842,10 @@ def internalize_coding_bot(
                     "timeout_seconds": timeout_seconds,
                     "elapsed_seconds": elapsed_seconds,
                     "phase": phase,
+                    "phase_elapsed_seconds": phase_elapsed_seconds,
                     "phase_history": phase_history or [],
+                    "retry_timeout_seconds": retry_timeout_seconds,
+                    "fallback_used": fallback_used,
                 }
                 if event_bus is not None:
                     try:
@@ -4826,7 +4862,10 @@ def internalize_coding_bot(
                     "timeout_seconds": timeout_seconds,
                     "elapsed_seconds": elapsed_seconds,
                     "phase": phase,
+                    "phase_elapsed_seconds": phase_elapsed_seconds,
                     "phase_history": phase_history or [],
+                    "retry_timeout_seconds": retry_timeout_seconds,
+                    "fallback_used": fallback_used,
                     "timestamp": time.time(),
                 }
                 if event_bus is not None:
@@ -4899,11 +4938,23 @@ def internalize_coding_bot(
                         raw_history = manager_phase_state.get("history", [])
                         timeout_history = list(raw_history) if isinstance(raw_history, list) else []
                     phase_elapsed = max(0.0, time.monotonic() - phase_started_at)
+                    is_bot_planning = _normalize_env_bot_name(bot_name) == "BOTPLANNINGBOT"
+                    retry_timeout = (
+                        _resolve_manager_retry_timeout_seconds(
+                            bot_name,
+                            primary_timeout=manager_timeout,
+                        )
+                        if is_bot_planning
+                        else None
+                    )
                     _emit_manager_construction_timeout_failure(
                         timeout_seconds=manager_timeout,
                         elapsed_seconds=elapsed,
                         phase=timeout_phase,
+                        phase_elapsed_seconds=phase_elapsed,
                         phase_history=timeout_history,
+                        retry_timeout_seconds=retry_timeout,
+                        fallback_used=False,
                     )
                     _clear_internalize_state(last_step=f"manager construction timeout ({timeout_phase})")
                     if node is not None:
@@ -4914,19 +4965,106 @@ def internalize_coding_bot(
                         bot_registry=bot_registry,
                     )
 
-                    if _normalize_env_bot_name(bot_name) == "BOTPLANNINGBOT":
+                    if is_bot_planning:
                         logger_ref.warning(
-                            "internalize_coding_bot timeout for %s; retrying once with reduced deferred scope",
+                            "internalize_coding_bot timeout for %s; retrying once with bounded timeout",
                             bot_name,
                             extra={
                                 "event": "internalize_manager_construction_timeout_retry",
                                 "bot": bot_name,
                                 "phase": timeout_phase,
                                 "phase_elapsed_seconds": phase_elapsed,
+                                "phase_history": timeout_history,
+                                "retry_timeout_seconds": retry_timeout,
+                                "fallback_used": False,
                             },
                         )
-                        manager = _build_manager()
-                        reduced_scope_after_timeout_retry = True
+                        retry_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                        retry_future = retry_executor.submit(_build_manager)
+                        try:
+                            manager = retry_future.result(timeout=retry_timeout)
+                            reduced_scope_after_timeout_retry = True
+                            logger_ref.info(
+                                "internalize_coding_bot retry succeeded for %s",
+                                bot_name,
+                                extra={
+                                    "event": "internalize_manager_construction_timeout_retry_succeeded",
+                                    "bot": bot_name,
+                                    "phase": timeout_phase,
+                                    "phase_elapsed_seconds": phase_elapsed,
+                                    "phase_history": timeout_history,
+                                    "retry_timeout_seconds": retry_timeout,
+                                    "fallback_used": False,
+                                },
+                            )
+                        except concurrent.futures.TimeoutError:
+                            retry_elapsed = max(0.0, time.monotonic() - manager_timer)
+                            with manager_phase_lock:
+                                retry_phase = str(manager_phase_state.get("phase", "unknown"))
+                                retry_phase_started_at = float(
+                                    manager_phase_state.get("phase_started_at", manager_timer)
+                                )
+                                retry_raw_history = manager_phase_state.get("history", [])
+                                retry_phase_history = (
+                                    list(retry_raw_history)
+                                    if isinstance(retry_raw_history, list)
+                                    else []
+                                )
+                            retry_phase_elapsed = max(
+                                0.0, time.monotonic() - retry_phase_started_at
+                            )
+                            fallback_manager: Any | None = None
+                            fallback_error: Exception | None = None
+                            try:
+                                fallback_manager = _cooldown_disabled_manager(bot_registry, data_bot)
+                            except Exception as exc:
+                                fallback_error = exc
+                            fallback_used = fallback_manager is not None
+                            _emit_manager_construction_timeout_failure(
+                                timeout_seconds=retry_timeout,
+                                elapsed_seconds=retry_elapsed,
+                                phase=retry_phase,
+                                phase_elapsed_seconds=retry_phase_elapsed,
+                                phase_history=retry_phase_history,
+                                retry_timeout_seconds=retry_timeout,
+                                fallback_used=fallback_used,
+                            )
+                            retry_event = {
+                                "event": "internalize_manager_construction_timeout_retry_failed",
+                                "bot": bot_name,
+                                "phase": retry_phase,
+                                "phase_elapsed_seconds": retry_phase_elapsed,
+                                "phase_history": retry_phase_history,
+                                "timeout_seconds": manager_timeout,
+                                "retry_timeout_seconds": retry_timeout,
+                                "fallback_used": fallback_used,
+                            }
+                            if fallback_manager is not None:
+                                logger_ref.warning(
+                                    "internalize_coding_bot retry timeout for %s; returning degraded fallback manager",
+                                    bot_name,
+                                    extra=retry_event,
+                                )
+                                return fallback_manager
+
+                            logger_ref.error(
+                                "internalize_coding_bot retry timeout for %s with no degraded fallback",
+                                bot_name,
+                                extra={
+                                    **retry_event,
+                                    "fallback_error": repr(fallback_error),
+                                    "failure_kind": "hard_timeout_without_fallback",
+                                },
+                            )
+                            if fallback_error is not None:
+                                raise fallback_error
+                            raise TimeoutError(
+                                "manager construction timed out for "
+                                f"{bot_name} after {manager_timeout:.2f}s "
+                                f"and retry timed out after {retry_timeout:.2f}s"
+                            )
+                        finally:
+                            retry_executor.shutdown(wait=False, cancel_futures=True)
                     else:
                         fallback_manager: Any | None = None
                         fallback_error: Exception | None = None
@@ -4946,7 +5084,8 @@ def internalize_coding_bot(
                             "retry_backoff_seconds": max(
                                 0.0, _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS
                             ),
-                            "fallback_available": fallback_manager is not None,
+                            "retry_timeout_seconds": retry_timeout,
+                            "fallback_used": fallback_manager is not None,
                         }
                         if fallback_manager is not None:
                             logger_ref.warning(
