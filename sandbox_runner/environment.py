@@ -10233,7 +10233,37 @@ def run_workflow_simulations(
     tracker = tracker or ROITracker()
     if module_threshold is None:
         k = getattr(SandboxSettings(), "synergy_dev_multiplier", 1.0)
-        module_threshold = tracker.get("synergy") + k * tracker.std("synergy")
+        synergy_values: list[float] = []
+        metric_history = getattr(tracker, "metrics_history", None)
+        if isinstance(metric_history, Mapping):
+            raw_values = metric_history.get("synergy")
+            if isinstance(raw_values, Sequence):
+                synergy_values = [
+                    float(v) for v in raw_values if isinstance(v, (int, float))
+                ]
+
+        if not synergy_values:
+            to_dict = getattr(tracker, "to_dict", None)
+            if callable(to_dict):
+                try:
+                    raw_history = to_dict().get("synergy", [])
+                except Exception:
+                    raw_history = []
+                if isinstance(raw_history, Sequence):
+                    synergy_values = [
+                        float(v) for v in raw_history if isinstance(v, (int, float))
+                    ]
+
+        if synergy_values:
+            synergy_mean = statistics.fmean(synergy_values)
+            synergy_std = statistics.pstdev(synergy_values) if len(synergy_values) > 1 else 0.0
+        else:
+            logger.debug(
+                "synergy metric unavailable on tracker; using fallback module threshold baseline"
+            )
+            synergy_mean = 0.0
+            synergy_std = 0.0
+        module_threshold = synergy_mean + k * synergy_std
     try:
         from menace.environment_generator import _PROFILE_ALIASES, CANONICAL_PROFILES
     except Exception:  # pragma: no cover - environment generator optional
