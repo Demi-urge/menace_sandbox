@@ -41,7 +41,10 @@ _INTERNALIZE_THROTTLE_SECONDS = 1.5
 _INTERNALIZE_THROTTLE_LOCK = threading.Lock()
 _LAST_INTERNALIZE_AT = 0.0
 _INTERNALIZE_IN_FLIGHT_LOCK = threading.Lock()
-_INTERNALIZE_IN_FLIGHT: set[str] = set()
+_INTERNALIZE_IN_FLIGHT: dict[str, float] = {}
+_INTERNALIZE_STALE_TIMEOUT_SECONDS = float(
+    os.getenv("SELF_CODING_INTERNALIZE_STALE_TIMEOUT_SECONDS", "1200")
+)
 _INTERNALIZE_BOT_LOCKS_LOCK = threading.Lock()
 _INTERNALIZE_BOT_LOCKS: dict[str, threading.Lock] = {}
 _INTERNALIZE_REUSE_WINDOW_SECONDS = float(
@@ -217,6 +220,26 @@ def _get_internalize_lock(bot_name: str) -> threading.Lock:
             lock = threading.Lock()
             _INTERNALIZE_BOT_LOCKS[bot_name] = lock
     return lock
+
+
+def _consume_stale_internalize_in_flight(
+    *,
+    now: float,
+) -> list[tuple[str, float]]:
+    """Return and remove stale in-flight entries older than the configured timeout."""
+
+    timeout = _INTERNALIZE_STALE_TIMEOUT_SECONDS
+    if timeout <= 0:
+        return []
+
+    stale: list[tuple[str, float]] = []
+    with _INTERNALIZE_IN_FLIGHT_LOCK:
+        for candidate, started_at in list(_INTERNALIZE_IN_FLIGHT.items()):
+            if now - started_at <= timeout:
+                continue
+            stale.append((candidate, started_at))
+            _INTERNALIZE_IN_FLIGHT.pop(candidate, None)
+    return stale
 
 
 def _internalize_in_cooldown(bot_name: str) -> bool:
@@ -3976,16 +3999,37 @@ def internalize_coding_bot(
     if bot_registry is not None:
         node = bot_registry.graph.nodes.get(bot_name)
 
+    stale_in_flight = _consume_stale_internalize_in_flight(now=time.monotonic())
+    for stale_bot, started_at in stale_in_flight:
+        logger_ref.warning(
+            "forcibly cleared stale internalize in-flight lock for %s after %.1fs",
+            stale_bot,
+            max(0.0, time.monotonic() - started_at),
+            extra={
+                "bot": stale_bot,
+                "stale_lock_seconds": max(0.0, time.monotonic() - started_at),
+                "stale_lock_timeout_seconds": _INTERNALIZE_STALE_TIMEOUT_SECONDS,
+            },
+        )
+        stale_node = None
+        if bot_registry is not None:
+            stale_node = bot_registry.graph.nodes.get(stale_bot)
+        if stale_node is not None:
+            stale_node.pop("internalization_in_progress", None)
+
     with _INTERNALIZE_IN_FLIGHT_LOCK:
-        if bot_name in _INTERNALIZE_IN_FLIGHT:
+        started_at = _INTERNALIZE_IN_FLIGHT.get(bot_name)
+        if started_at is not None:
+            age = max(0.0, time.monotonic() - started_at)
             _log_internalize_stack("in-flight")
             logged_internalize_stack = True
             logger_ref.info(
                 "internalize_coding_bot already in-flight for %s; skipping manager construction",
                 bot_name,
+                extra={"bot": bot_name, "in_flight_seconds": age},
             )
             return _inflight_manager_fallback()
-        _INTERNALIZE_IN_FLIGHT.add(bot_name)
+        _INTERNALIZE_IN_FLIGHT[bot_name] = time.monotonic()
         added_in_flight = True
 
     if node is not None:
@@ -4508,11 +4552,11 @@ def internalize_coding_bot(
         finally:
             internalize_lock.release()
     finally:
-        if node is not None:
-            node.pop("internalization_in_progress", None)
         if added_in_flight:
             with _INTERNALIZE_IN_FLIGHT_LOCK:
-                _INTERNALIZE_IN_FLIGHT.discard(bot_name)
+                _INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
+        if node is not None:
+            node.pop("internalization_in_progress", None)
 __all__ = [
     "SelfCodingManager",
     "PatchApprovalPolicy",
