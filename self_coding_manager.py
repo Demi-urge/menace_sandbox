@@ -278,6 +278,55 @@ def _resolve_manager_retry_timeout_seconds(bot_name: str, *, primary_timeout: fl
     return max(default_retry_timeout, 0.0)
 
 
+
+
+_MANAGER_PHASE_DURATION_ROLLING_LIMIT = max(1, int(os.getenv("SELF_CODING_MANAGER_PHASE_DURATION_ROLLING_LIMIT", "8")))
+
+
+def _compute_adaptive_manager_retry_timeout_seconds(
+    bot_name: str,
+    *,
+    primary_timeout: float,
+    timeout_phase: str,
+    timeout_phase_elapsed_seconds: float,
+    timeout_history: list[tuple[str, float]],
+    phase_metrics: dict[str, Any] | None,
+) -> float:
+    """Return a bounded adaptive timeout using successful phase timing history."""
+
+    configured_retry = _resolve_manager_retry_timeout_seconds(
+        bot_name, primary_timeout=primary_timeout
+    )
+    hard_cap = max(primary_timeout * 2.0, primary_timeout, 0.0)
+    retry_timeout = min(max(configured_retry, primary_timeout), hard_cap)
+
+    completed_manager_init = any(phase == "manager_init:return" for phase, _ in timeout_history)
+    if completed_manager_init:
+        return retry_timeout
+
+    phase_key = str(timeout_phase or "unknown")
+    metrics = phase_metrics or {}
+    phase_entry = metrics.get(phase_key) if isinstance(metrics, dict) else None
+    successful_samples = []
+    if isinstance(phase_entry, dict):
+        raw_samples = phase_entry.get("successful_elapsed_seconds", [])
+        if isinstance(raw_samples, list):
+            successful_samples = [
+                float(sample)
+                for sample in raw_samples
+                if isinstance(sample, (int, float)) and float(sample) > 0.0
+            ]
+
+    if not successful_samples:
+        return retry_timeout
+
+    longest_success = max(successful_samples)
+    if longest_success <= timeout_phase_elapsed_seconds:
+        return retry_timeout
+
+    adaptive_candidate = max(retry_timeout, longest_success * 1.1)
+    return min(max(adaptive_candidate, primary_timeout), hard_cap)
+
 _SELF_DEBUG_BACKOFF_LOCK = threading.Lock()
 _SELF_DEBUG_LAST_TRIGGER: dict[str, float] = {}
 _INTERNALIZE_TIMEOUT_RETRY_LOCK = threading.Lock()
@@ -4913,6 +4962,7 @@ def internalize_coding_bot(
 
             def _emit_manager_construction_timeout_failure(
                 *,
+                attempt_index: int,
                 timeout_seconds: float,
                 elapsed_seconds: float,
                 phase: str | None = None,
@@ -4932,6 +4982,7 @@ def internalize_coding_bot(
                     "post_validation_success": False,
                     "post_validation_error": "manager_construction_timeout",
                     "timeout_seconds": timeout_seconds,
+                    "attempt_index": attempt_index,
                     "elapsed_seconds": elapsed_seconds,
                     "phase": phase,
                     "phase_elapsed_seconds": phase_elapsed_seconds,
@@ -4952,6 +5003,7 @@ def internalize_coding_bot(
                     "bot": bot_name,
                     "reason": "manager_construction_timeout",
                     "timeout_seconds": timeout_seconds,
+                    "attempt_index": attempt_index,
                     "elapsed_seconds": elapsed_seconds,
                     "phase": phase,
                     "phase_elapsed_seconds": phase_elapsed_seconds,
@@ -4975,12 +5027,64 @@ def internalize_coding_bot(
             manager_timer = _start_step("manager construction")
             reduced_scope_after_timeout_retry = False
             manager_timeout = _resolve_manager_timeout_seconds(bot_name)
+            normalized_bot_name = _normalize_env_bot_name(bot_name)
             manager_phase_lock = threading.Lock()
             manager_phase_state: dict[str, Any] = {
                 "phase": "queued",
                 "phase_started_at": time.monotonic(),
                 "history": [("queued", time.monotonic())],
             }
+
+            def _phase_metrics_store() -> dict[str, Any]:
+                cache = getattr(bot_registry, "_manager_phase_duration_metrics", None)
+                if not isinstance(cache, dict):
+                    cache = {}
+                    setattr(bot_registry, "_manager_phase_duration_metrics", cache)
+                return cache
+
+            def _phase_metrics_for_bot() -> dict[str, Any]:
+                cache = _phase_metrics_store()
+                entry = cache.get(normalized_bot_name)
+                if not isinstance(entry, dict):
+                    entry = {}
+                    cache[normalized_bot_name] = entry
+                if node is not None:
+                    node.setdefault("manager_phase_duration_metrics", entry)
+                return entry
+
+            def _snapshot_phase_state() -> tuple[str, float, list[tuple[str, float]]]:
+                with manager_phase_lock:
+                    phase = str(manager_phase_state.get("phase", "unknown"))
+                    phase_started_at = float(
+                        manager_phase_state.get("phase_started_at", manager_timer)
+                    )
+                    raw_history = manager_phase_state.get("history", [])
+                    history = list(raw_history) if isinstance(raw_history, list) else []
+                return phase, phase_started_at, history
+
+            def _record_successful_phase_durations() -> None:
+                _, _, history = _snapshot_phase_state()
+                if len(history) < 2:
+                    return
+                metrics = _phase_metrics_for_bot()
+                for idx in range(1, len(history)):
+                    phase_name, phase_started = history[idx - 1]
+                    _, next_started = history[idx]
+                    elapsed = max(0.0, float(next_started) - float(phase_started))
+                    phase_key = str(phase_name or "unknown")
+                    phase_entry = metrics.setdefault(
+                        phase_key,
+                        {"successful_elapsed_seconds": [], "last_successful_elapsed_seconds": 0.0},
+                    )
+                    samples = phase_entry.get("successful_elapsed_seconds", [])
+                    if not isinstance(samples, list):
+                        samples = []
+                        phase_entry["successful_elapsed_seconds"] = samples
+                    samples.append(elapsed)
+                    if len(samples) > _MANAGER_PHASE_DURATION_ROLLING_LIMIT:
+                        del samples[:-_MANAGER_PHASE_DURATION_ROLLING_LIMIT]
+                    phase_entry["last_successful_elapsed_seconds"] = elapsed
+                    phase_entry["updated_at"] = time.time()
 
             def _record_manager_phase(phase: str) -> None:
                 now = time.monotonic()
@@ -5015,6 +5119,7 @@ def internalize_coding_bot(
 
             if manager_timeout == 0.0:
                 manager = _build_manager()
+                _record_successful_phase_durations()
             else:
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                 manager_future = executor.submit(_build_manager)
@@ -5029,26 +5134,25 @@ def internalize_coding_bot(
                         },
                     )
                     manager = manager_future.result(timeout=manager_timeout)
+                    _record_successful_phase_durations()
                 except concurrent.futures.TimeoutError:
                     elapsed = max(0.0, time.monotonic() - manager_timer)
-                    with manager_phase_lock:
-                        timeout_phase = str(manager_phase_state.get("phase", "unknown"))
-                        phase_started_at = float(
-                            manager_phase_state.get("phase_started_at", manager_timer)
-                        )
-                        raw_history = manager_phase_state.get("history", [])
-                        timeout_history = list(raw_history) if isinstance(raw_history, list) else []
+                    timeout_phase, phase_started_at, timeout_history = _snapshot_phase_state()
                     phase_elapsed = max(0.0, time.monotonic() - phase_started_at)
                     is_bot_planning = _normalize_env_bot_name(bot_name) == "BOTPLANNINGBOT"
-                    retry_timeout = (
-                        _resolve_manager_retry_timeout_seconds(
+                    phase_metrics = _phase_metrics_for_bot()
+                    retry_timeout = None
+                    if is_bot_planning:
+                        retry_timeout = _compute_adaptive_manager_retry_timeout_seconds(
                             bot_name,
                             primary_timeout=manager_timeout,
+                            timeout_phase=timeout_phase,
+                            timeout_phase_elapsed_seconds=phase_elapsed,
+                            timeout_history=timeout_history,
+                            phase_metrics=phase_metrics,
                         )
-                        if is_bot_planning
-                        else None
-                    )
                     _emit_manager_construction_timeout_failure(
+                        attempt_index=1,
                         timeout_seconds=manager_timeout,
                         elapsed_seconds=elapsed,
                         phase=timeout_phase,
@@ -5073,6 +5177,8 @@ def internalize_coding_bot(
                             extra={
                                 "event": "internalize_manager_construction_timeout_retry",
                                 "bot": bot_name,
+                                "attempt_index": 2,
+                                "timeout_seconds": retry_timeout,
                                 "phase": timeout_phase,
                                 "phase_elapsed_seconds": phase_elapsed,
                                 "phase_history": timeout_history,
@@ -5084,6 +5190,7 @@ def internalize_coding_bot(
                         retry_future = retry_executor.submit(_build_manager)
                         try:
                             manager = retry_future.result(timeout=retry_timeout)
+                            _record_successful_phase_durations()
                             reduced_scope_after_timeout_retry = True
                             logger_ref.info(
                                 "internalize_coding_bot retry succeeded for %s",
@@ -5091,6 +5198,8 @@ def internalize_coding_bot(
                                 extra={
                                     "event": "internalize_manager_construction_timeout_retry_succeeded",
                                     "bot": bot_name,
+                                    "attempt_index": 2,
+                                    "timeout_seconds": retry_timeout,
                                     "phase": timeout_phase,
                                     "phase_elapsed_seconds": phase_elapsed,
                                     "phase_history": timeout_history,
@@ -5100,17 +5209,7 @@ def internalize_coding_bot(
                             )
                         except concurrent.futures.TimeoutError:
                             retry_elapsed = max(0.0, time.monotonic() - manager_timer)
-                            with manager_phase_lock:
-                                retry_phase = str(manager_phase_state.get("phase", "unknown"))
-                                retry_phase_started_at = float(
-                                    manager_phase_state.get("phase_started_at", manager_timer)
-                                )
-                                retry_raw_history = manager_phase_state.get("history", [])
-                                retry_phase_history = (
-                                    list(retry_raw_history)
-                                    if isinstance(retry_raw_history, list)
-                                    else []
-                                )
+                            retry_phase, retry_phase_started_at, retry_phase_history = _snapshot_phase_state()
                             retry_phase_elapsed = max(
                                 0.0, time.monotonic() - retry_phase_started_at
                             )
@@ -5122,6 +5221,7 @@ def internalize_coding_bot(
                                 fallback_error = exc
                             fallback_used = fallback_manager is not None
                             _emit_manager_construction_timeout_failure(
+                                attempt_index=2,
                                 timeout_seconds=retry_timeout,
                                 elapsed_seconds=retry_elapsed,
                                 phase=retry_phase,
@@ -5133,6 +5233,7 @@ def internalize_coding_bot(
                             retry_event = {
                                 "event": "internalize_manager_construction_timeout_retry_failed",
                                 "bot": bot_name,
+                                "attempt_index": 2,
                                 "phase": retry_phase,
                                 "phase_elapsed_seconds": retry_phase_elapsed,
                                 "phase_history": retry_phase_history,
@@ -5141,10 +5242,19 @@ def internalize_coding_bot(
                                 "fallback_used": fallback_used,
                             }
                             if fallback_manager is not None:
+                                _schedule_internalization_timeout_retry(
+                                    bot_name=bot_name,
+                                    logger=logger_ref,
+                                    bot_registry=bot_registry,
+                                )
                                 logger_ref.warning(
-                                    "internalize_coding_bot retry timeout for %s; returning degraded fallback manager",
+                                    "internalize_coding_bot retry timeout for %s; returning degraded fallback manager and deferring completion",
                                     bot_name,
-                                    extra=retry_event,
+                                    extra={
+                                        **retry_event,
+                                        "deferred_completion_scheduled": True,
+                                        "fallback_used": True,
+                                    },
                                 )
                                 return fallback_manager
 
@@ -5177,6 +5287,7 @@ def internalize_coding_bot(
                         timeout_event = {
                             "event": "internalize_manager_construction_timeout",
                             "bot": bot_name,
+                            "attempt_index": 1,
                             "timeout_seconds": manager_timeout,
                             "elapsed_seconds": elapsed,
                             "phase": timeout_phase,

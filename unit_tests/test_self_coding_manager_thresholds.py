@@ -476,3 +476,51 @@ def test_manager_timeout_warns_for_heavy_bot_below_min(monkeypatch, caplog):
         assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 60.0
 
     assert "below recommended 90.00s" in caplog.text
+
+def test_compute_adaptive_retry_timeout_uses_success_history_for_late_phase_timeout(monkeypatch):
+    monkeypatch.setattr(
+        scm,
+        "_resolve_manager_retry_timeout_seconds",
+        lambda _bot_name, primary_timeout: primary_timeout,
+    )
+
+    retry_timeout = scm._compute_adaptive_manager_retry_timeout_seconds(
+        "BotPlanningBot",
+        primary_timeout=10.0,
+        timeout_phase="manager_init:deferred_scope",
+        timeout_phase_elapsed_seconds=9.0,
+        timeout_history=[("queued", 1.0), ("manager_init:enter", 2.0)],
+        phase_metrics={
+            "manager_init:deferred_scope": {
+                "successful_elapsed_seconds": [12.0, 14.0],
+            }
+        },
+    )
+
+    assert retry_timeout == pytest.approx(15.4)
+
+
+def test_compute_adaptive_retry_timeout_is_capped_and_ignored_after_return(monkeypatch):
+    monkeypatch.setattr(
+        scm,
+        "_resolve_manager_retry_timeout_seconds",
+        lambda _bot_name, primary_timeout: primary_timeout * 1.25,
+    )
+
+    # Hard cap at 2x primary timeout
+    retry_timeout = scm._compute_adaptive_manager_retry_timeout_seconds(
+        "BotPlanningBot",
+        primary_timeout=10.0,
+        timeout_phase="manager_init:deferred_scope",
+        timeout_phase_elapsed_seconds=1.0,
+        timeout_history=[("manager_init:return", 3.0)],
+        phase_metrics={
+            "manager_init:deferred_scope": {
+                "successful_elapsed_seconds": [50.0],
+            }
+        },
+    )
+
+    assert retry_timeout == 12.5
+
+
