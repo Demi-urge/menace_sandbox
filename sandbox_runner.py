@@ -137,6 +137,29 @@ from dependency_hints import format_system_package_instructions
 shutdown_event = threading.Event()
 
 
+def _resolve_self_debugger_sandbox_class() -> type[Any]:
+    """Import ``SelfDebuggerSandbox`` from supported module layouts."""
+    package_exc: ModuleNotFoundError | None = None
+    try:
+        from menace.self_debugger_sandbox import SelfDebuggerSandbox
+
+        return SelfDebuggerSandbox
+    except ModuleNotFoundError as exc:
+        package_exc = exc
+
+    try:
+        from self_debugger_sandbox import SelfDebuggerSandbox
+
+        return SelfDebuggerSandbox
+    except ModuleNotFoundError as flat_exc:
+        raise ModuleNotFoundError(
+            "Unable to import SelfDebuggerSandbox. "
+            "Tried 'menace.self_debugger_sandbox' and "
+            "'self_debugger_sandbox'. "
+            f"Package error: {package_exc!r}. Flat-module error: {flat_exc!r}."
+        ) from flat_exc
+
+
 def kill_handler(sig, frame):
     print("\n🔴 Caught interrupt — shutting down Menace cleanly...")
     shutdown_event.set()
@@ -1458,7 +1481,7 @@ def _sandbox_init(
             cur = self.db.conn.execute(query, [*params, limit])
             return [str(r[0]) for r in cur.fetchall()]
 
-    from menace.self_debugger_sandbox import SelfDebuggerSandbox
+    SelfDebuggerSandbox = _resolve_self_debugger_sandbox_class()
     from menace.self_coding_manager import (
         _manager_generate_helper_with_builder as _helper_fn,
     )
