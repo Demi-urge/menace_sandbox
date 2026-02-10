@@ -4183,6 +4183,56 @@ def internalize_coding_bot(
     added_in_flight = False
     logged_internalize_stack = False
 
+    def _shutdown_guard_state() -> dict[str, Any] | None:
+        reasons: list[str] = []
+        checks: dict[str, Any] = {}
+
+        finalizing = bool(sys.is_finalizing())
+        checks["sys_finalizing"] = finalizing
+        if finalizing:
+            reasons.append("sys_finalizing")
+
+        shutdown_events = {
+            "shutdown_event": manager_kwargs.get("shutdown_event"),
+            "stop_event": manager_kwargs.get("stop_event"),
+            "global_shutdown_event": manager_kwargs.get("global_shutdown_event"),
+            "pipeline_shutdown_event": getattr(pipeline, "shutdown_event", None),
+            "engine_shutdown_event": getattr(engine, "shutdown_event", None),
+            "data_bot_shutdown_event": getattr(data_bot, "shutdown_event", None),
+        }
+        for name, event in shutdown_events.items():
+            is_set = bool(getattr(event, "is_set", lambda: False)()) if event is not None else False
+            checks[name] = is_set
+            if is_set:
+                reasons.append(name)
+
+        loop = getattr(pipeline, "loop", None) or getattr(engine, "loop", None)
+        loop_closed = bool(getattr(loop, "is_closed", lambda: False)()) if loop is not None else False
+        checks["loop_closed"] = loop_closed
+        if loop_closed:
+            reasons.append("loop_closed")
+
+        executor = (
+            getattr(pipeline, "executor", None)
+            or getattr(engine, "executor", None)
+            or manager_kwargs.get("executor")
+        )
+        executor_shutdown = bool(getattr(executor, "_shutdown", False)) if executor is not None else False
+        checks["executor_shutdown"] = executor_shutdown
+        if executor_shutdown:
+            reasons.append("executor_shutdown")
+
+        if not reasons:
+            return None
+
+        return {
+            "event": "internalize_skipped_shutdown",
+            "bot": bot_name,
+            "reasons": sorted(set(reasons)),
+            "checks": checks,
+            "timestamp": time.time(),
+        }
+
     def _caller_metadata() -> Any | None:
         for key in (
             "caller_metadata",
@@ -4428,6 +4478,32 @@ def internalize_coding_bot(
 
             if _internalize_in_cooldown(bot_name):
                 return _cooldown_disabled_manager(bot_registry, data_bot)
+
+            shutdown_guard = _shutdown_guard_state()
+            if shutdown_guard is not None:
+                if node is not None:
+                    node["internalization_last_step"] = "internalization skipped: shutdown"
+                logger_ref.info(
+                    "internalize_coding_bot skipped for %s because shutdown is active",
+                    bot_name,
+                    extra=shutdown_guard,
+                )
+                event_bus = (
+                    getattr(evolution_orchestrator, "event_bus", None)
+                    or getattr(data_bot, "event_bus", None)
+                )
+                if event_bus is not None:
+                    try:
+                        event_bus.publish(
+                            "self_coding:internalize_skipped_shutdown",
+                            dict(shutdown_guard),
+                        )
+                    except Exception:
+                        logger_ref.exception(
+                            "failed to publish internalize shutdown skip event for %s",
+                            bot_name,
+                        )
+                return _inflight_manager_fallback()
 
             if _current_self_coding_import_depth() > 0:
                 print("Forcing manager despite depth lock")
