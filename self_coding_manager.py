@@ -45,6 +45,12 @@ _INTERNALIZE_IN_FLIGHT: dict[str, float] = {}
 _INTERNALIZE_STALE_TIMEOUT_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_STALE_TIMEOUT_SECONDS", "1200")
 )
+_INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS = float(
+    os.getenv("SELF_CODING_INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS", "300")
+)
+_INTERNALIZE_MONITOR_INTERVAL_SECONDS = float(
+    os.getenv("SELF_CODING_INTERNALIZE_MONITOR_INTERVAL_SECONDS", "30")
+)
 _INTERNALIZE_BOT_LOCKS_LOCK = threading.Lock()
 _INTERNALIZE_BOT_LOCKS: dict[str, threading.Lock] = {}
 _INTERNALIZE_REUSE_WINDOW_SECONDS = float(
@@ -58,6 +64,10 @@ _INTERNALIZE_FAILURE_COOLDOWN_SECONDS = float(
 )
 _INTERNALIZE_FAILURE_LOCK = threading.Lock()
 _INTERNALIZE_FAILURE_STATE: dict[str, dict[str, float | int | str | None]] = {}
+_INTERNALIZE_MONITOR_THREAD: threading.Thread | None = None
+_INTERNALIZE_MONITOR_STARTED = False
+_INTERNALIZE_MONITOR_START_LOCK = threading.Lock()
+_INTERNALIZE_MONITOR_LAST_LOGGED_AT: dict[str, float] = {}
 _SELF_DEBUG_BACKOFF_SECONDS = float(
     os.getenv("SELF_CODING_SELF_DEBUG_BACKOFF_SECONDS", "600")
 )
@@ -240,6 +250,88 @@ def _consume_stale_internalize_in_flight(
             stale.append((candidate, started_at))
             _INTERNALIZE_IN_FLIGHT.pop(candidate, None)
     return stale
+
+
+def _start_internalize_monitor(bot_registry: Any) -> None:
+    """Start a lightweight monitor that warns about long-running internalization."""
+
+    global _INTERNALIZE_MONITOR_STARTED, _INTERNALIZE_MONITOR_THREAD
+
+    if (
+        _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS <= 0
+        or _INTERNALIZE_MONITOR_INTERVAL_SECONDS <= 0
+    ):
+        return
+
+    with _INTERNALIZE_MONITOR_START_LOCK:
+        if _INTERNALIZE_MONITOR_STARTED:
+            return
+        _INTERNALIZE_MONITOR_STARTED = True
+
+        def _monitor() -> None:
+            logger = logging.getLogger(__name__)
+            while True:
+                now = time.monotonic()
+                with _INTERNALIZE_IN_FLIGHT_LOCK:
+                    inflight_entries = list(_INTERNALIZE_IN_FLIGHT.items())
+                for candidate, started_at in inflight_entries:
+                    age = max(0.0, now - started_at)
+                    if age < _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS:
+                        continue
+
+                    with _INTERNALIZE_IN_FLIGHT_LOCK:
+                        last_logged_at = _INTERNALIZE_MONITOR_LAST_LOGGED_AT.get(
+                            candidate, 0.0
+                        )
+                        if (
+                            last_logged_at
+                            and now - last_logged_at
+                            < _INTERNALIZE_MONITOR_INTERVAL_SECONDS
+                        ):
+                            continue
+                        _INTERNALIZE_MONITOR_LAST_LOGGED_AT[candidate] = now
+
+                    node = None
+                    if bot_registry is not None:
+                        try:
+                            node = bot_registry.graph.nodes.get(candidate)
+                        except Exception:
+                            node = None
+
+                    last_step = None
+                    started_epoch = None
+                    if node is not None:
+                        last_step = node.get("internalization_last_step")
+                        started_epoch = node.get("internalization_in_progress")
+
+                    logger.warning(
+                        "internalize_coding_bot in-flight for %s beyond threshold "
+                        "(%.1fs >= %.1fs); last_step=%s started_at=%s",
+                        candidate,
+                        age,
+                        _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS,
+                        last_step,
+                        started_epoch,
+                        extra={
+                            "bot": candidate,
+                            "in_flight_seconds": age,
+                            "in_flight_warn_threshold_seconds": (
+                                _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS
+                            ),
+                            "internalization_last_step": last_step,
+                            "internalization_in_progress": started_epoch,
+                        },
+                    )
+
+                time.sleep(_INTERNALIZE_MONITOR_INTERVAL_SECONDS)
+
+        monitor_thread = threading.Thread(
+            target=_monitor,
+            name="self-coding-internalize-monitor",
+            daemon=True,
+        )
+        monitor_thread.start()
+        _INTERNALIZE_MONITOR_THREAD = monitor_thread
 
 
 def _internalize_in_cooldown(bot_name: str) -> bool:
@@ -3999,6 +4091,8 @@ def internalize_coding_bot(
     if bot_registry is not None:
         node = bot_registry.graph.nodes.get(bot_name)
 
+    _start_internalize_monitor(bot_registry)
+
     stale_in_flight = _consume_stale_internalize_in_flight(now=time.monotonic())
     for stale_bot, started_at in stale_in_flight:
         logger_ref.warning(
@@ -4016,6 +4110,7 @@ def internalize_coding_bot(
             stale_node = bot_registry.graph.nodes.get(stale_bot)
         if stale_node is not None:
             stale_node.pop("internalization_in_progress", None)
+            stale_node["internalization_last_step"] = "stale in-flight cleanup"
 
     with _INTERNALIZE_IN_FLIGHT_LOCK:
         started_at = _INTERNALIZE_IN_FLIGHT.get(bot_name)
@@ -4023,17 +4118,26 @@ def internalize_coding_bot(
             age = max(0.0, time.monotonic() - started_at)
             _log_internalize_stack("in-flight")
             logged_internalize_stack = True
+            last_step = None
+            if node is not None:
+                last_step = node.get("internalization_last_step")
             logger_ref.info(
                 "internalize_coding_bot already in-flight for %s; skipping manager construction",
                 bot_name,
-                extra={"bot": bot_name, "in_flight_seconds": age},
+                extra={
+                    "bot": bot_name,
+                    "in_flight_seconds": age,
+                    "internalization_last_step": last_step,
+                },
             )
             return _inflight_manager_fallback()
         _INTERNALIZE_IN_FLIGHT[bot_name] = time.monotonic()
         added_in_flight = True
+        _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
 
     if node is not None:
-        node["internalization_in_progress"] = True
+        node["internalization_in_progress"] = time.time()
+        node["internalization_last_step"] = "internalization start"
 
     try:
         if _recent_internalization():
@@ -4076,6 +4180,8 @@ def internalize_coding_bot(
 
             def _start_step(step: str) -> float:
                 print(f"[debug] {bot_name}: starting {step}")
+                if node is not None:
+                    node["internalization_last_step"] = step
                 return time.monotonic()
 
             def _end_step(step: str, started_at: float) -> float:
@@ -4555,8 +4661,10 @@ def internalize_coding_bot(
         if added_in_flight:
             with _INTERNALIZE_IN_FLIGHT_LOCK:
                 _INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
+                _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
         if node is not None:
             node.pop("internalization_in_progress", None)
+            node["internalization_last_step"] = "internalization finished"
 __all__ = [
     "SelfCodingManager",
     "PatchApprovalPolicy",
