@@ -151,6 +151,102 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
         f"Flat attempt error: {flat_exc!r}."
     ) from (flat_exc or package_exc)
 
+
+def _resolve_workflow_db_types() -> tuple[type[Any], type[Any]]:
+    """Import ``WorkflowDB`` and ``WorkflowRecord`` from supported module layouts."""
+    package_exc: Exception | None = None
+    try:
+        package_module = importlib.import_module("menace.task_handoff_bot")
+        return package_module.WorkflowDB, package_module.WorkflowRecord
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        package_exc = exc
+
+    flat_exc: Exception | None = None
+    try:
+        flat_module = importlib.import_module("task_handoff_bot")
+        return flat_module.WorkflowDB, flat_module.WorkflowRecord
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        flat_exc = exc
+
+    raise ModuleNotFoundError(
+        "Unable to import WorkflowDB/WorkflowRecord. "
+        "Tried 'menace.task_handoff_bot' and 'task_handoff_bot'. "
+        f"Package attempt error: {package_exc!r}. "
+        f"Flat attempt error: {flat_exc!r}."
+    ) from (flat_exc or package_exc)
+
+
+def _resolve_self_coding_engine_class() -> type[Any]:
+    """Import ``SelfCodingEngine`` from supported module layouts."""
+    package_exc: Exception | None = None
+    try:
+        package_module = importlib.import_module("menace.self_coding_engine")
+        return package_module.SelfCodingEngine
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        package_exc = exc
+
+    flat_exc: Exception | None = None
+    try:
+        flat_module = importlib.import_module("self_coding_engine")
+        return flat_module.SelfCodingEngine
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        flat_exc = exc
+
+    raise ModuleNotFoundError(
+        "Unable to import SelfCodingEngine. "
+        "Tried 'menace.self_coding_engine' and 'self_coding_engine'. "
+        f"Package attempt error: {package_exc!r}. "
+        f"Flat attempt error: {flat_exc!r}."
+    ) from (flat_exc or package_exc)
+
+
+def _resolve_code_db_class() -> type[Any]:
+    """Import ``CodeDB`` from supported module layouts."""
+    package_exc: Exception | None = None
+    try:
+        package_module = importlib.import_module("menace.code_database")
+        return package_module.CodeDB
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        package_exc = exc
+
+    flat_exc: Exception | None = None
+    try:
+        flat_module = importlib.import_module("code_database")
+        return flat_module.CodeDB
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        flat_exc = exc
+
+    raise ModuleNotFoundError(
+        "Unable to import CodeDB. "
+        "Tried 'menace.code_database' and 'code_database'. "
+        f"Package attempt error: {package_exc!r}. "
+        f"Flat attempt error: {flat_exc!r}."
+    ) from (flat_exc or package_exc)
+
+
+def _resolve_memory_manager_class() -> type[Any]:
+    """Import ``MenaceMemoryManager`` from supported module layouts."""
+    package_exc: Exception | None = None
+    try:
+        package_module = importlib.import_module("menace.menace_memory_manager")
+        return package_module.MenaceMemoryManager
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        package_exc = exc
+
+    flat_exc: Exception | None = None
+    try:
+        flat_module = importlib.import_module("menace_memory_manager")
+        return flat_module.MenaceMemoryManager
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        flat_exc = exc
+
+    raise ModuleNotFoundError(
+        "Unable to import MenaceMemoryManager. "
+        "Tried 'menace.menace_memory_manager' and 'menace_memory_manager'. "
+        f"Package attempt error: {package_exc!r}. "
+        f"Flat attempt error: {flat_exc!r}."
+    ) from (flat_exc or package_exc)
+
 from .workflow_sandbox_runner import WorkflowSandboxRunner
 from metrics_exporter import Gauge, environment_failure_total
 
@@ -9064,9 +9160,9 @@ def run_repo_section_simulations(
     """
     from menace.roi_tracker import ROITracker
     SelfDebuggerSandbox = _resolve_self_debugger_sandbox_class()
-    from menace.self_coding_engine import SelfCodingEngine
-    from menace.code_database import CodeDB
-    from menace.menace_memory_manager import MenaceMemoryManager
+    SelfCodingEngine = _resolve_self_coding_engine_class()
+    CodeDB = _resolve_code_db_class()
+    MenaceMemoryManager = _resolve_memory_manager_class()
     from .metrics_plugins import (
         discover_metrics_plugins,
         collect_plugin_metrics,
@@ -9811,7 +9907,7 @@ def generate_workflows_for_modules(
         The database IDs of the newly stored workflows.
     """
 
-    from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
+    WorkflowDB, WorkflowRecord = _resolve_workflow_db_types()
 
     try:
         from dynamic_module_mapper import build_import_graph
@@ -9930,7 +10026,7 @@ def try_integrate_into_workflows(
     if context_builder is None:
         raise ValueError("context_builder must not be None")
 
-    from menace.task_handoff_bot import WorkflowDB
+    WorkflowDB, _WorkflowRecord = _resolve_workflow_db_types()
     from module_index_db import ModuleIndexDB
     try:  # pragma: no cover - service may be unavailable
         from self_test_service import SelfTestService
@@ -10209,7 +10305,7 @@ def append_orphan_modules_to_workflows(
         IDs of workflows that were updated.
     """
 
-    from menace.task_handoff_bot import WorkflowDB
+    WorkflowDB, _WorkflowRecord = _resolve_workflow_db_types()
     from db_router import GLOBAL_ROUTER
 
     repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
@@ -10277,11 +10373,11 @@ def run_workflow_simulations(
     ``module_threshold`` is ``None``, the value is derived from the
     ``tracker``'s synergy baseline.
     """
-    from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
+    WorkflowDB, WorkflowRecord = _resolve_workflow_db_types()
     SelfDebuggerSandbox = _resolve_self_debugger_sandbox_class()
-    from menace.self_coding_engine import SelfCodingEngine
-    from menace.code_database import CodeDB
-    from menace.menace_memory_manager import MenaceMemoryManager
+    SelfCodingEngine = _resolve_self_coding_engine_class()
+    CodeDB = _resolve_code_db_class()
+    MenaceMemoryManager = _resolve_memory_manager_class()
     from sandbox_settings import SandboxSettings
     get_error_logger(context_builder)
     ROITracker = _resolve_roi_tracker_class()
