@@ -2234,3 +2234,81 @@ def test_run_post_patch_cycle_escalates_after_budget(monkeypatch, tmp_path):
     assert len(quick_fix.apply_calls) == 1
     assert DummySelfTestService.call_kwargs[0]["pytest_args"] == "tests/test_mod.py"
     assert data_bot.validation_calls == []
+
+
+
+def test_resolve_manager_timeout_seconds_botplanningbot_override(monkeypatch):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT", "123"
+    )
+
+    assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 123.0
+
+
+
+def test_internalize_manager_timeout_returns_degraded_and_schedules_retry_once(monkeypatch):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+            self.retry_calls = []
+
+        def force_internalization_retry(self, bot_name, delay=0.0):
+            self.retry_calls.append((bot_name, delay))
+
+    registry = DummyRegistry()
+    data_bot = types.SimpleNamespace()
+    engine = object()
+    pipeline = object()
+
+    bot_name = "BotPlanningBot"
+    degraded = types.SimpleNamespace(degraded=True)
+
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        scm,
+        "_INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS",
+        30.0,
+    )
+    scm._INTERNALIZE_TIMEOUT_RETRY_STATE.pop(bot_name, None)
+    scm._INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
+
+    monkeypatch.setattr(
+        scm,
+        "_cooldown_disabled_manager",
+        lambda bot_registry, data_bot: degraded,
+    )
+
+    class SlowManager:
+        def __init__(self, *args, **kwargs):
+            import time as _time
+
+            _time.sleep(0.08)
+
+    monkeypatch.setattr(scm, "SelfCodingManager", SlowManager)
+
+    first = scm.internalize_coding_bot(
+        bot_name,
+        engine,
+        pipeline,
+        data_bot=data_bot,
+        bot_registry=registry,
+        provenance_token="token",
+    )
+    second = scm.internalize_coding_bot(
+        bot_name,
+        engine,
+        pipeline,
+        data_bot=data_bot,
+        bot_registry=registry,
+        provenance_token="token",
+    )
+
+    assert first is degraded
+    assert second is degraded
+    assert len(registry.retry_calls) == 1
+    assert registry.retry_calls[0][0] == bot_name
