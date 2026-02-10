@@ -381,6 +381,13 @@ atexit.register(_save_usage_counts)
 
 _IMPORT_HOOK_GUARD = contextvars.ContextVar("relevancy_radar_import_hook_guard", default=0)
 _PENDING_IMPORT_HOOKS: "weakref.WeakSet[RelevancyRadar]" = weakref.WeakSet()
+_IMPORT_HOOK_BYPASS_PREFIXES = (
+    "menace",
+    "sandbox_runner",
+    "self_coding_manager",
+    "task_handoff_bot",
+    "self_debugger_sandbox",
+)
 
 
 @contextlib.contextmanager
@@ -507,17 +514,26 @@ class RelevancyRadar:
         radar = self
 
         def tracked_import(name, globals=None, locals=None, fromlist=(), level=0):
-            root = name.split(".")[0]
-            info = radar._metrics.setdefault(
-                root,
-                {
-                    "imports": 0.0,
-                    "executions": 0.0,
-                    "impact": 0.0,
-                    "output_impact": 0.0,
-                },
-            )
-            info["imports"] = float(info.get("imports", 0.0)) + 1.0
+            if any(name == prefix or name.startswith(f"{prefix}.") for prefix in _IMPORT_HOOK_BYPASS_PREFIXES):
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Bypassing relevancy import instrumentation for %s", name)
+                return original_import(name, globals, locals, fromlist, level)
+
+            try:
+                root = name.split(".")[0]
+                info = radar._metrics.setdefault(
+                    root,
+                    {
+                        "imports": 0.0,
+                        "executions": 0.0,
+                        "impact": 0.0,
+                        "output_impact": 0.0,
+                    },
+                )
+                info["imports"] = float(info.get("imports", 0.0)) + 1.0
+            except Exception:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Failed to update import metrics for %s", name, exc_info=True)
             return original_import(name, globals, locals, fromlist, level)
 
         builtins._relevancy_radar_original_import = original_import
