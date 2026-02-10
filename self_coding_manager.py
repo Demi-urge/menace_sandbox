@@ -48,6 +48,22 @@ _INTERNALIZE_STALE_TIMEOUT_SECONDS = float(
 _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS", "300")
 )
+_RAW_INTERNALIZE_HARD_TIMEOUT_SECONDS = os.getenv(
+    "SELF_CODING_INTERNALIZE_HARD_TIMEOUT_SECONDS", ""
+).strip()
+if _RAW_INTERNALIZE_HARD_TIMEOUT_SECONDS:
+    try:
+        _INTERNALIZE_HARD_TIMEOUT_SECONDS = float(_RAW_INTERNALIZE_HARD_TIMEOUT_SECONDS)
+    except ValueError:
+        _INTERNALIZE_HARD_TIMEOUT_SECONDS = max(
+            _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS * 2,
+            _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS,
+        )
+else:
+    _INTERNALIZE_HARD_TIMEOUT_SECONDS = max(
+        _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS * 2,
+        _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS,
+    )
 _INTERNALIZE_MONITOR_INTERVAL_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_MONITOR_INTERVAL_SECONDS", "30")
 )
@@ -71,8 +87,13 @@ _INTERNALIZE_MONITOR_LAST_LOGGED_AT: dict[str, float] = {}
 _SELF_DEBUG_BACKOFF_SECONDS = float(
     os.getenv("SELF_CODING_SELF_DEBUG_BACKOFF_SECONDS", "600")
 )
+_INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS = float(
+    os.getenv("SELF_CODING_INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS", "15")
+)
 _SELF_DEBUG_BACKOFF_LOCK = threading.Lock()
 _SELF_DEBUG_LAST_TRIGGER: dict[str, float] = {}
+_INTERNALIZE_TIMEOUT_RETRY_LOCK = threading.Lock()
+_INTERNALIZE_TIMEOUT_RETRY_STATE: dict[str, float] = {}
 _RAW_BROKER_OWNER_READY_TIMEOUT = os.getenv(
     "BROKER_OWNER_READY_TIMEOUT_SECS", "3.0"
 ).strip()
@@ -250,6 +271,151 @@ def _consume_stale_internalize_in_flight(
             stale.append((candidate, started_at))
             _INTERNALIZE_IN_FLIGHT.pop(candidate, None)
     return stale
+
+
+def _replace_internalize_lock(bot_name: str) -> None:
+    """Replace the per-bot lock so fresh attempts are not blocked by stale state."""
+
+    with _INTERNALIZE_BOT_LOCKS_LOCK:
+        previous = _INTERNALIZE_BOT_LOCKS.get(bot_name)
+        if previous is not None and not previous.locked():
+            return
+        _INTERNALIZE_BOT_LOCKS[bot_name] = threading.Lock()
+
+
+def _record_stale_internalization_failure_event(
+    *,
+    bot_name: str,
+    started_at: float,
+    age_seconds: float,
+    threshold_seconds: float,
+    logger: logging.Logger,
+    bot_registry: Any = None,
+    node: dict[str, Any] | None = None,
+) -> None:
+    payload = {
+        "bot": bot_name,
+        "reason": "stale_internalization_timeout",
+        "started_at_monotonic": started_at,
+        "in_flight_seconds": age_seconds,
+        "hard_timeout_seconds": threshold_seconds,
+        "timestamp": time.time(),
+    }
+    event_bus = None
+    if node is not None:
+        manager = node.get("selfcoding_manager") or node.get("manager")
+        if manager is not None:
+            event_bus = getattr(manager, "event_bus", None)
+    if event_bus is None and bot_registry is not None:
+        event_bus = getattr(bot_registry, "event_bus", None)
+    if event_bus is None:
+        return
+    try:
+        event_bus.publish("self_coding:internalization_failure", payload)
+    except Exception:
+        logger.exception(
+            "failed to publish stale internalization timeout failure for %s",
+            bot_name,
+        )
+
+
+def _launch_internalize_timeout_self_debug(
+    *,
+    bot_name: str,
+    age_seconds: float,
+    timeout_seconds: float,
+    started_at: float,
+    logger: logging.Logger,
+) -> None:
+    if not _should_trigger_self_debug(bot_name):
+        return
+
+    payload = {
+        "event": "stale_internalization_timeout",
+        "bot": bot_name,
+        "in_flight_seconds": age_seconds,
+        "hard_timeout_seconds": timeout_seconds,
+        "started_at_monotonic": started_at,
+        "timestamp": time.time(),
+    }
+    try:
+        context_dir = Path(tempfile.mkdtemp(prefix="stale_internalize_self_debug_"))
+        context_path = context_dir / "failure_context.json"
+        context_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception:
+        logger.exception(
+            "failed to persist stale internalization timeout failure context for %s",
+            bot_name,
+        )
+        return
+
+    def _run_self_debug() -> None:
+        try:
+            from menace_sandbox import menace_workflow_self_debug
+        except Exception:
+            logger.exception(
+                "self-debug import failed while handling stale internalization timeout for %s",
+                bot_name,
+                extra={"bot": bot_name, "context_path": str(context_path)},
+            )
+            return
+        args = [
+            "--repo-root",
+            str(Path(".").resolve()),
+            "--metrics-source",
+            "stale_internalization_timeout",
+            "--source-menace-id",
+            "stale_internalization_timeout",
+            "--failure-context-path",
+            str(context_path),
+        ]
+        try:
+            exit_code = menace_workflow_self_debug.main(args)
+        except Exception:
+            logger.exception(
+                "self-debug run failed for stale internalization timeout on %s",
+                bot_name,
+                extra={"bot": bot_name},
+            )
+            return
+        logger.info(
+            "self-debug run completed for stale internalization timeout on %s",
+            bot_name,
+            extra={"bot": bot_name, "exit_code": exit_code},
+        )
+
+    thread = threading.Thread(
+        target=_run_self_debug,
+        name=f"stale_internalization_self_debug:{bot_name}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _schedule_internalization_timeout_retry(
+    *,
+    bot_name: str,
+    logger: logging.Logger,
+    bot_registry: Any = None,
+) -> None:
+    if bot_registry is None or not hasattr(bot_registry, "force_internalization_retry"):
+        return
+    now = time.monotonic()
+    with _INTERNALIZE_TIMEOUT_RETRY_LOCK:
+        retry_after = _INTERNALIZE_TIMEOUT_RETRY_STATE.get(bot_name, 0.0)
+        if retry_after and now < retry_after:
+            return
+        _INTERNALIZE_TIMEOUT_RETRY_STATE[bot_name] = now + _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS
+    try:
+        bot_registry.force_internalization_retry(
+            bot_name,
+            delay=max(0.0, _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS),
+        )
+    except Exception:
+        logger.exception(
+            "failed to schedule stale internalization timeout retry for %s",
+            bot_name,
+        )
 
 
 def _start_internalize_monitor(bot_registry: Any) -> None:
@@ -4095,13 +4261,14 @@ def internalize_coding_bot(
 
     stale_in_flight = _consume_stale_internalize_in_flight(now=time.monotonic())
     for stale_bot, started_at in stale_in_flight:
+        stale_age = max(0.0, time.monotonic() - started_at)
         logger_ref.warning(
             "forcibly cleared stale internalize in-flight lock for %s after %.1fs",
             stale_bot,
-            max(0.0, time.monotonic() - started_at),
+            stale_age,
             extra={
                 "bot": stale_bot,
-                "stale_lock_seconds": max(0.0, time.monotonic() - started_at),
+                "stale_lock_seconds": stale_age,
                 "stale_lock_timeout_seconds": _INTERNALIZE_STALE_TIMEOUT_SECONDS,
             },
         )
@@ -4111,26 +4278,79 @@ def internalize_coding_bot(
         if stale_node is not None:
             stale_node.pop("internalization_in_progress", None)
             stale_node["internalization_last_step"] = "stale in-flight cleanup"
+        _replace_internalize_lock(stale_bot)
 
     with _INTERNALIZE_IN_FLIGHT_LOCK:
         started_at = _INTERNALIZE_IN_FLIGHT.get(bot_name)
         if started_at is not None:
             age = max(0.0, time.monotonic() - started_at)
-            _log_internalize_stack("in-flight")
-            logged_internalize_stack = True
-            last_step = None
-            if node is not None:
-                last_step = node.get("internalization_last_step")
-            logger_ref.info(
-                "internalize_coding_bot already in-flight for %s; skipping manager construction",
-                bot_name,
-                extra={
-                    "bot": bot_name,
-                    "in_flight_seconds": age,
-                    "internalization_last_step": last_step,
-                },
-            )
-            return _inflight_manager_fallback()
+            hard_timeout = _INTERNALIZE_HARD_TIMEOUT_SECONDS
+            if hard_timeout > 0 and age >= hard_timeout:
+                _INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
+                _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
+                last_step = None
+                started_epoch = None
+                if node is not None:
+                    last_step = node.get("internalization_last_step")
+                    started_epoch = node.pop("internalization_in_progress", None)
+                    node["internalization_last_step"] = "stale hard-timeout recovery"
+                _replace_internalize_lock(bot_name)
+                logger_ref.error(
+                    "internalize_coding_bot hard timeout exceeded for %s; forcing recovery",
+                    bot_name,
+                    extra={
+                        "bot": bot_name,
+                        "in_flight_seconds": age,
+                        "internalization_last_step": last_step,
+                        "internalization_in_progress": started_epoch,
+                        "in_flight_hard_timeout_seconds": hard_timeout,
+                        "reason": "stale_internalization_timeout",
+                    },
+                )
+                _record_internalize_failure(
+                    bot_name,
+                    module_path=None,
+                    reason="stale_internalization_timeout",
+                    logger=logger_ref,
+                )
+                _record_stale_internalization_failure_event(
+                    bot_name=bot_name,
+                    started_at=started_at,
+                    age_seconds=age,
+                    threshold_seconds=hard_timeout,
+                    logger=logger_ref,
+                    bot_registry=bot_registry,
+                    node=node,
+                )
+                _launch_internalize_timeout_self_debug(
+                    bot_name=bot_name,
+                    age_seconds=age,
+                    timeout_seconds=hard_timeout,
+                    started_at=started_at,
+                    logger=logger_ref,
+                )
+                _schedule_internalization_timeout_retry(
+                    bot_name=bot_name,
+                    logger=logger_ref,
+                    bot_registry=bot_registry,
+                )
+                return _inflight_manager_fallback()
+            else:
+                _log_internalize_stack("in-flight")
+                logged_internalize_stack = True
+                last_step = None
+                if node is not None:
+                    last_step = node.get("internalization_last_step")
+                logger_ref.info(
+                    "internalize_coding_bot already in-flight for %s; skipping manager construction",
+                    bot_name,
+                    extra={
+                        "bot": bot_name,
+                        "in_flight_seconds": age,
+                        "internalization_last_step": last_step,
+                    },
+                )
+                return _inflight_manager_fallback()
         _INTERNALIZE_IN_FLIGHT[bot_name] = time.monotonic()
         added_in_flight = True
         _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
