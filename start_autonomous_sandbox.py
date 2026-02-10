@@ -3329,10 +3329,18 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Run sandbox health checks and exit",
     )
+    monitor_roi_backoff_default = (
+        os.getenv("SANDBOX_MONITOR_ROI_BACKOFF", "0").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     parser.add_argument(
         "--monitor-roi-backoff",
         action="store_true",
-        help="Continuously monitor ROI backoff and pause launch when triggered",
+        default=monitor_roi_backoff_default,
+        help=(
+            "Continuously monitor ROI backoff and pause launch when triggered "
+            "(or set SANDBOX_MONITOR_ROI_BACKOFF=1)"
+        ),
     )
     parser.add_argument(
         "--heavy-bootstrap",
