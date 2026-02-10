@@ -1133,6 +1133,14 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
         help="start Prometheus metrics server on this port",
     )
     parser.add_argument(
+        "--monitor-roi-backoff",
+        action="store_true",
+        help=(
+            "request ROI backoff monitoring in downstream sandbox launchers "
+            "(sets SANDBOX_MONITOR_ROI_BACKOFF=1)"
+        ),
+    )
+    parser.add_argument(
         "--roi-cycles",
         type=int,
         default=3,
@@ -2634,6 +2642,10 @@ def main(argv: List[str] | None = None) -> None:
     _console("arguments parsed; configuring logging")
 
     log_level = "DEBUG" if args.verbose else args.log_level
+
+    os.environ["SANDBOX_MONITOR_ROI_BACKOFF"] = (
+        "1" if getattr(args, "monitor_roi_backoff", False) else "0"
+    )
 
     configure_logging = (
         setup_logging if callable(setup_logging) else _basic_setup_logging
