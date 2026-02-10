@@ -2768,23 +2768,79 @@ def start_self_improvement_cycle(
                                 loop_running=loop.is_running(),
                             ),
                         )
+                    try:
+                        asyncgen_timeout = _remaining_cleanup_timeout("shutdown_asyncgens")
+                        if asyncgen_timeout is None:
+                            raise asyncio.TimeoutError
+                        logger.debug(
+                            "shutting down async generators before loop close",
+                            extra=log_record(
+                                step="shutdown_asyncgens",
+                                timeout_seconds=asyncgen_timeout,
+                                loop_closed=loop.is_closed(),
+                                loop_running=loop.is_running(),
+                                thread_ident=self._thread.ident,
+                            ),
+                        )
+                        _run_loop_cleanup(
+                            loop.shutdown_asyncgens,
+                            step="shutdown_asyncgens",
+                            timeout=asyncgen_timeout,
+                        )
+                    except (asyncio.CancelledError, RuntimeError) as exc:
+                        logger.info(
+                            "shutdown async generators cancelled during stop request; ignoring",
+                            extra=log_record(
+                                loop_running=loop.is_running(),
+                                loop_closed=loop.is_closed(),
+                                thread_ident=self._thread.ident,
+                                reason="stop_requested",
+                                error=str(exc),
+                            ),
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "timed out shutting down async generators for self improvement loop",
+                            extra=log_record(
+                                timeout_seconds=cleanup_timeout,
+                                thread_ident=self._thread.ident,
+                                loop_running=loop.is_running(),
+                            ),
+                        )
                 finally:
                     try:
                         loop.stop()
                     except Exception:
                         pass
-                    self._loop_finished.set()
+                    logger.debug(
+                        "finalizing self improvement event loop",
+                        extra=log_record(
+                            runner_present=runner is not None,
+                            loop_closed=loop.is_closed(),
+                            thread_ident=self._thread.ident,
+                            shutdown_order=(
+                                "pending_tasks->shutdown_default_executor"
+                                "->shutdown_asyncgens->loop_close->set_event_loop_none"
+                            ),
+                        ),
+                    )
                     try:
-                        loop.close()
-                    except Exception:
-                        pass
+                        if runner is not None:
+                            runner.close()
+                        elif not loop.is_closed():
+                            loop.close()
+                    except Exception as exc:
+                        logger.warning(
+                            "self improvement loop close raised during shutdown",
+                            extra=log_record(
+                                loop_closed=loop.is_closed(),
+                                thread_ident=self._thread.ident,
+                                error=str(exc),
+                            ),
+                        )
                     asyncio.set_event_loop(None)
+                    self._loop_finished.set()
                     self._shutdown_complete.set()
-                if runner is not None:
-                    try:
-                        runner.close()
-                    except Exception:
-                        pass
 
         # --------------------------------------------------
         def start(self) -> None:
