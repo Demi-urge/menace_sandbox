@@ -673,3 +673,91 @@ def test_register_bot_records_patch_id():
     latest = history[-1]
     assert latest.get("patch_id") == 123
     assert latest.get("source") == "registration"
+
+
+def test_internalize_manager_construction_timeout_clears_inflight(monkeypatch):
+    import menace_sandbox.self_coding_manager as scm
+    import time as _time
+
+    bot_name = "TimeoutBot"
+
+    class StubDataBot:
+        def __init__(self):
+            self.settings = None
+            self.event_bus = None
+
+        def schedule_monitoring(self, _name: str) -> None:
+            pass
+
+    class StubBus:
+        def __init__(self):
+            self.events = []
+
+        def publish(self, topic, payload):
+            self.events.append((topic, payload))
+
+    class StubRegistry:
+        def __init__(self):
+            self.modules = {}
+            self.event_bus = StubBus()
+            self.retry_calls = []
+            self.graph = types.SimpleNamespace(nodes={bot_name: {}})
+
+        def register_bot(self, name, **_kwargs):
+            self.graph.nodes.setdefault(name, {})
+
+        def force_internalization_retry(self, name, delay=0.0):
+            self.retry_calls.append((name, delay))
+
+    class SlowManager:
+        def __init__(self, *_args, **_kwargs):
+            _time.sleep(0.2)
+
+    class StubFailureGuard:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, _tb):
+            return True
+
+    fallback_manager = object()
+    registry = StubRegistry()
+
+    monkeypatch.setattr(scm, "SelfCodingManager", SlowManager)
+    monkeypatch.setattr(scm, "FailureGuard", StubFailureGuard)
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(scm, "_INTERNALIZE_THROTTLE_SECONDS", 0)
+    monkeypatch.setattr(scm, "_cooldown_disabled_manager", lambda *_a, **_k: fallback_manager)
+
+    manager = scm.internalize_coding_bot(
+        bot_name,
+        object(),
+        object(),
+        data_bot=StubDataBot(),
+        bot_registry=registry,
+        evolution_orchestrator=None,
+    )
+
+    assert manager is fallback_manager
+    assert bot_name not in scm._INTERNALIZE_IN_FLIGHT
+    node = registry.graph.nodes[bot_name]
+    assert "internalization_in_progress" not in node
+    assert node.get("internalization_last_step") == "internalization finished"
+    assert node.get("internalization_deferred_retry_at") is not None
+    assert registry.retry_calls
+
+    lock = scm._get_internalize_lock(bot_name)
+    assert lock.acquire(blocking=False)
+    lock.release()
+
+    failure_events = [
+        payload
+        for topic, payload in registry.event_bus.events
+        if topic == "self_coding:internalization_failure"
+    ]
+    assert failure_events
+    assert failure_events[-1]["reason"] == "manager_construction_timeout"
