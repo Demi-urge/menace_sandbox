@@ -96,6 +96,37 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
 
 T = TypeVar("T")
 
+_SELF_DEBUGGER_SANDBOX_MODULE_NAMES = frozenset(
+    {
+        "menace.self_debugger_sandbox",
+        "self_debugger_sandbox",
+    }
+)
+
+
+def module_name_from_module_not_found(exc: ModuleNotFoundError) -> str | None:
+    """Return the missing module name when available."""
+
+    module_name = getattr(exc, "name", None)
+    if isinstance(module_name, str) and module_name:
+        return module_name
+    text = str(exc)
+    if "No module named" not in text:
+        return None
+    parts = text.split("'", 2)
+    if len(parts) < 2:
+        return None
+    return parts[1] or None
+
+
+def is_self_debugger_sandbox_import_failure(exc: BaseException) -> bool:
+    """Return ``True`` when an exception indicates self-debugger import layout issues."""
+
+    if not isinstance(exc, ModuleNotFoundError):
+        return False
+    module_name = module_name_from_module_not_found(exc)
+    return module_name in _SELF_DEBUGGER_SANDBOX_MODULE_NAMES
+
 
 def _resolve_self_debugger_sandbox_class() -> type[Any]:
     """Import ``SelfDebuggerSandbox`` from supported module layouts."""
