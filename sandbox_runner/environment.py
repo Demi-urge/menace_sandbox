@@ -130,26 +130,44 @@ def is_self_debugger_sandbox_import_failure(exc: BaseException) -> bool:
 
 def _resolve_self_debugger_sandbox_class() -> type[Any]:
     """Import ``SelfDebuggerSandbox`` from supported module layouts."""
-    package_exc: Exception | None = None
-    try:
-        package_module = importlib.import_module("menace.self_debugger_sandbox")
-        return package_module.SelfDebuggerSandbox
-    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
-        package_exc = exc
+    candidates = [
+        "menace.self_debugger_sandbox",
+        "self_debugger_sandbox",
+    ]
+    attempt_details: list[tuple[str, str, str]] = []
+    last_exc: Exception | None = None
 
-    flat_exc: Exception | None = None
-    try:
-        flat_module = importlib.import_module("self_debugger_sandbox")
-        return flat_module.SelfDebuggerSandbox
-    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
-        flat_exc = exc
+    for module_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except (ModuleNotFoundError, ImportError) as exc:
+            last_exc = exc
+            attempt_details.append((module_name, type(exc).__name__, str(exc)))
+            continue
 
-    raise ModuleNotFoundError(
-        "Unable to import SelfDebuggerSandbox. "
-        "Tried 'menace.self_debugger_sandbox' and 'self_debugger_sandbox'. "
-        f"Package attempt error: {package_exc!r}. "
-        f"Flat attempt error: {flat_exc!r}."
-    ) from (flat_exc or package_exc)
+        if not hasattr(module, "SelfDebuggerSandbox"):
+            attr_exc = AttributeError(
+                f"module '{module_name}' has no attribute 'SelfDebuggerSandbox'"
+            )
+            last_exc = attr_exc
+            attempt_details.append((module_name, type(attr_exc).__name__, str(attr_exc)))
+            continue
+
+        return module.SelfDebuggerSandbox
+
+    details = "; ".join(
+        f"{module}: {exc_type}: {message}"
+        for module, exc_type, message in attempt_details
+    )
+    error_cls: type[ImportError]
+    if attempt_details and all(exc_type == "ModuleNotFoundError" for _, exc_type, _ in attempt_details):
+        error_cls = ModuleNotFoundError
+    else:
+        error_cls = ImportError
+    raise error_cls(
+        "Unable to import SelfDebuggerSandbox after trying all supported module paths. "
+        f"Attempts: {details}"
+    ) from last_exc
 
 
 def _resolve_workflow_db_types() -> tuple[type[Any], type[Any]]:
