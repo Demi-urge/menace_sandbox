@@ -410,6 +410,55 @@ def test_falsey_manager_preserved_and_disabled_only_on_runtime_failure(
     assert isinstance(fallback_bot.manager, cbi._DisabledSelfCodingManager)
 
 
+def test_bootstrap_wait_timeout_override_avoids_name_error(monkeypatch):
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    start_event = threading.Event()
+    release_event = threading.Event()
+
+    def _blocking_bootstrap_manager(name, bot_registry, data_bot, **_kwargs):
+        start_event.set()
+        release_event.wait(timeout=1)
+        return DummyManager(bot_registry=bot_registry, data_bot=data_bot)
+
+    monkeypatch.setattr(cbi, "_bootstrap_manager", _blocking_bootstrap_manager)
+    monkeypatch.setattr(cbi, "_self_coding_runtime_available", lambda: True)
+    monkeypatch.setattr(cbi, "ensure_self_coding_ready", lambda: (True, ()))
+    monkeypatch.setattr(cbi, "_registry_hot_swap_active", lambda _registry: False)
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class Bot:
+        name = "bootstrap-wait"
+
+        def __init__(self):
+            pass
+
+    errors: list[BaseException] = []
+
+    def _init_bot() -> None:
+        try:
+            Bot()
+        except BaseException as exc:  # pragma: no cover - should not happen
+            errors.append(exc)
+
+    thread = threading.Thread(target=_init_bot)
+    thread.start()
+    assert start_event.wait(timeout=1)
+
+    def _release() -> None:
+        time.sleep(0.05)
+        release_event.set()
+
+    threading.Thread(target=_release, daemon=True).start()
+
+    try:
+        Bot(bootstrap_wait_timeout=1.0)
+    finally:
+        thread.join(timeout=1)
+
+    assert not errors
+
+
 def test_bootstrap_helpers_promotes_manager_with_reentrant_depth(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger=cbi.logger.name)
 
