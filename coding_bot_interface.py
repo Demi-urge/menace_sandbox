@@ -11241,6 +11241,7 @@ def self_coding_managed(
         bootstrap_error: BaseException | None = None
         bootstrap_done = False
         bootstrap_wait_timeout: float | None = None
+        bootstrap_wait_timeout_unset = object()
 
         def _resolve_candidate(candidate: Any) -> Any:
             if getattr(candidate, "__self_coding_lazy__", False):
@@ -12041,9 +12042,11 @@ def self_coding_managed(
             data_bot_obj: DataBot | None = None
             pipeline_ref: Any | None = self if is_pipeline_cls else None
             context_guard: _BootstrapContextGuard | None = None
-            bootstrap_wait_timeout_value = kwargs.get("bootstrap_wait_timeout")
+            bootstrap_wait_timeout_value = kwargs.get(
+                "bootstrap_wait_timeout", bootstrap_wait_timeout_unset
+            )
             try:
-                if "bootstrap_wait_timeout" in kwargs:
+                if bootstrap_wait_timeout_value is not bootstrap_wait_timeout_unset:
                     bootstrap_wait_timeout_candidate = bootstrap_wait_timeout_value
                     if (
                         bootstrap_wait_timeout_candidate is None
