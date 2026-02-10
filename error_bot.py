@@ -60,12 +60,19 @@ from jinja2 import Template
 import yaml
 
 _BROKER_REUSE_LOGGED_AT: float | None = None
+_BROKER_REUSE_LAST_STATE: tuple[bool, bool, bool] | None = None
 
 
-def _should_log_broker_reuse() -> bool:
-    global _BROKER_REUSE_LOGGED_AT
+def _should_log_broker_reuse(*, broker_pipeline: bool, broker_manager: bool, bootstrap_inflight: bool) -> bool:
+    global _BROKER_REUSE_LOGGED_AT, _BROKER_REUSE_LAST_STATE
+    state = (broker_pipeline, broker_manager, bootstrap_inflight)
     now = time.monotonic()
-    if _BROKER_REUSE_LOGGED_AT is None or (now - _BROKER_REUSE_LOGGED_AT) >= 60:
+    if _BROKER_REUSE_LAST_STATE != state:
+        _BROKER_REUSE_LAST_STATE = state
+        _BROKER_REUSE_LOGGED_AT = now
+        return True
+    if _BROKER_REUSE_LOGGED_AT is None or (now - _BROKER_REUSE_LOGGED_AT) >= 300:
+        _BROKER_REUSE_LAST_STATE = state
         _BROKER_REUSE_LOGGED_AT = now
         return True
     return False
@@ -228,7 +235,11 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
                     sentinel=bootstrap_manager
                     or getattr(bootstrap_pipeline, "manager", None),
                 )
-                if _should_log_broker_reuse():
+                if _should_log_broker_reuse(
+                    broker_pipeline=broker_pipeline is not None,
+                    broker_manager=broker_manager is not None,
+                    bootstrap_inflight=bootstrap_inflight,
+                ):
                     logger.info(
                         "error bot bootstrap reusing broker pipeline",
                         extra={
