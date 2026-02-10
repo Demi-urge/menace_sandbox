@@ -99,42 +99,26 @@ T = TypeVar("T")
 
 def _resolve_self_debugger_sandbox_class() -> type[Any]:
     """Import ``SelfDebuggerSandbox`` from supported module layouts."""
-    package_missing_exc: ModuleNotFoundError | None = None
-    package_import_exc: ImportError | None = None
+    package_exc: Exception | None = None
     try:
-        from menace.self_debugger_sandbox import SelfDebuggerSandbox
+        package_module = importlib.import_module("menace.self_debugger_sandbox")
+        return package_module.SelfDebuggerSandbox
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        package_exc = exc
 
-        return SelfDebuggerSandbox
-    except ModuleNotFoundError as exc:
-        if exc.name == "menace.self_debugger_sandbox":
-            package_missing_exc = exc
-        else:
-            package_import_exc = exc
-    except ImportError as exc:
-        package_import_exc = exc
-
-    flat_missing_exc: ModuleNotFoundError | None = None
-    flat_import_exc: ImportError | None = None
+    flat_exc: Exception | None = None
     try:
-        from self_debugger_sandbox import SelfDebuggerSandbox
-
-        return SelfDebuggerSandbox
-    except ModuleNotFoundError as flat_exc:
-        if flat_exc.name == "self_debugger_sandbox":
-            flat_missing_exc = flat_exc
-        else:
-            flat_import_exc = flat_exc
-    except ImportError as exc:
-        flat_import_exc = exc
+        flat_module = importlib.import_module("self_debugger_sandbox")
+        return flat_module.SelfDebuggerSandbox
+    except (ModuleNotFoundError, ImportError, AttributeError) as exc:
+        flat_exc = exc
 
     raise ModuleNotFoundError(
         "Unable to import SelfDebuggerSandbox. "
         "Tried 'menace.self_debugger_sandbox' and 'self_debugger_sandbox'. "
-        f"Package module missing: {package_missing_exc!r}. "
-        f"Package import failure: {package_import_exc!r}. "
-        f"Flat module missing: {flat_missing_exc!r}. "
-        f"Flat import failure: {flat_import_exc!r}."
-    ) from (flat_import_exc or flat_missing_exc or package_import_exc or package_missing_exc)
+        f"Package attempt error: {package_exc!r}. "
+        f"Flat attempt error: {flat_exc!r}."
+    ) from (flat_exc or package_exc)
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
 from metrics_exporter import Gauge, environment_failure_total
