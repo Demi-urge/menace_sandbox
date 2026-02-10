@@ -2246,6 +2246,79 @@ def test_resolve_manager_timeout_seconds_botplanningbot_override(monkeypatch):
     assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 123.0
 
 
+def test_resolve_manager_timeout_seconds_per_bot_override_precedence(monkeypatch):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setattr(
+        scm,
+        "_BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS",
+        105.0,
+    )
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT", "110"
+    )
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_TIMEOUT_SECONDS_BOTPLANNINGBOT", "135"
+    )
+
+    assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 110.0
+
+
+def test_resolve_manager_timeout_seconds_invalid_env_value_falls_back_safely(monkeypatch):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setattr(
+        scm,
+        "_BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS",
+        105.0,
+    )
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT", "invalid"
+    )
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_TIMEOUT_SECONDS_BOTPLANNINGBOT", "118"
+    )
+
+    assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 118.0
+
+
+def test_resolve_manager_timeout_seconds_botplanningbot_default_fallback(monkeypatch):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setattr(
+        scm,
+        "_BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS",
+        105.0,
+    )
+    monkeypatch.delenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "SELF_CODING_MANAGER_TIMEOUT_SECONDS_BOTPLANNINGBOT",
+        raising=False,
+    )
+
+    assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 105.0
+
+
+def test_resolve_manager_timeout_seconds_warns_on_low_heavy_bot_timeout(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(scm, "_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", 45.0)
+    monkeypatch.setattr(
+        scm,
+        "_BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS",
+        105.0,
+    )
+    monkeypatch.setattr(scm, "_HEAVY_MANAGER_TIMEOUT_MIN_SECONDS", 90.0)
+    monkeypatch.setenv(
+        "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT", "60"
+    )
+
+    with caplog.at_level("WARNING"):
+        assert scm._resolve_manager_timeout_seconds("BotPlanningBot") == 60.0
+
+    assert "below recommended 90.00s" in caplog.text
+
+
 
 def test_internalize_manager_timeout_emits_internalization_failure(monkeypatch):
     class DummyEventBus:
