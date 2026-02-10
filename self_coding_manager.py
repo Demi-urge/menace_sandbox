@@ -90,6 +90,15 @@ _SELF_DEBUG_BACKOFF_SECONDS = float(
 _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS", "15")
 )
+_RAW_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS = os.getenv(
+    "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", "45"
+).strip()
+try:
+    _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS = float(
+        _RAW_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS
+    )
+except ValueError:
+    _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS = 45.0
 _SELF_DEBUG_BACKOFF_LOCK = threading.Lock()
 _SELF_DEBUG_LAST_TRIGGER: dict[str, float] = {}
 _INTERNALIZE_TIMEOUT_RETRY_LOCK = threading.Lock()
@@ -102,6 +111,14 @@ try:
 except ValueError:
     _BROKER_OWNER_READY_TIMEOUT_SECS = 3.0
 from contextlib import contextmanager
+
+try:  # pragma: no cover - optional dependency in stripped environments
+    from .failure_guard import FailureGuard
+except Exception:  # pragma: no cover - fallback for flat layouts
+    try:
+        from failure_guard import FailureGuard  # type: ignore
+    except Exception:  # pragma: no cover - guard is best-effort
+        FailureGuard = None  # type: ignore
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
 from .failure_fingerprint_store import (
@@ -4458,17 +4475,118 @@ def internalize_coding_bot(
 
             print(f"[debug] internalize_coding_bot invoked for bot: {bot_name}")
 
+            def _clear_internalize_state(*, last_step: str) -> None:
+                nonlocal added_in_flight
+                with _INTERNALIZE_IN_FLIGHT_LOCK:
+                    _INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
+                    _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
+                added_in_flight = False
+                if node is not None:
+                    node.pop("internalization_in_progress", None)
+                    node["internalization_last_step"] = last_step
+
+            def _emit_manager_construction_timeout_failure(
+                *,
+                timeout_seconds: float,
+                elapsed_seconds: float,
+            ) -> None:
+                _track_failure("manager_construction_timeout")
+                event_bus = getattr(bot_registry, "event_bus", None)
+                payload = {
+                    "bot": bot_name,
+                    "description": f"internalize:{bot_name}",
+                    "path": str(module_path) if module_path else module_hint,
+                    "severity": 0.0,
+                    "success": False,
+                    "post_validation_success": False,
+                    "post_validation_error": "manager_construction_timeout",
+                    "timeout_seconds": timeout_seconds,
+                    "elapsed_seconds": elapsed_seconds,
+                }
+                if event_bus is not None:
+                    try:
+                        event_bus.publish("self_coding:patch_attempt", payload)
+                    except Exception:
+                        logger_ref.exception(
+                            "failed to publish manager construction timeout failure for %s",
+                            bot_name,
+                        )
+
+                internalize_failure_payload = {
+                    "bot": bot_name,
+                    "reason": "manager_construction_timeout",
+                    "timeout_seconds": timeout_seconds,
+                    "elapsed_seconds": elapsed_seconds,
+                    "timestamp": time.time(),
+                }
+                if event_bus is not None:
+                    try:
+                        event_bus.publish(
+                            "self_coding:internalization_failure",
+                            internalize_failure_payload,
+                        )
+                    except Exception:
+                        logger_ref.exception(
+                            "failed to publish internalization timeout failure for %s",
+                            bot_name,
+                        )
+
             manager_timer = _start_step("manager construction")
-            manager = SelfCodingManager(
-                engine,
-                pipeline,
-                bot_name=bot_name,
-                data_bot=data_bot,
-                bot_registry=bot_registry,
-                roi_drop_threshold=roi_threshold,
-                error_rate_threshold=error_threshold,
-                **manager_kwargs,
-            )
+            manager_timeout = max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
+
+            def _build_manager() -> SelfCodingManager:
+                return SelfCodingManager(
+                    engine,
+                    pipeline,
+                    bot_name=bot_name,
+                    data_bot=data_bot,
+                    bot_registry=bot_registry,
+                    roi_drop_threshold=roi_threshold,
+                    error_rate_threshold=error_threshold,
+                    **manager_kwargs,
+                )
+
+            if manager_timeout == 0.0:
+                manager = _build_manager()
+            else:
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                manager_future = executor.submit(_build_manager)
+                try:
+                    manager = manager_future.result(timeout=manager_timeout)
+                except concurrent.futures.TimeoutError:
+                    elapsed = max(0.0, time.monotonic() - manager_timer)
+                    _emit_manager_construction_timeout_failure(
+                        timeout_seconds=manager_timeout,
+                        elapsed_seconds=elapsed,
+                    )
+                    _clear_internalize_state(last_step="manager construction timeout")
+                    if node is not None:
+                        node["internalization_deferred_retry_at"] = time.time()
+                    _schedule_internalization_timeout_retry(
+                        bot_name=bot_name,
+                        logger=logger_ref,
+                        bot_registry=bot_registry,
+                    )
+
+                    if FailureGuard is not None:
+                        with FailureGuard(
+                            stage="internalize_manager_construction",
+                            metadata={
+                                "bot": bot_name,
+                                "reason": "manager_construction_timeout",
+                                "severity": "fatal",
+                                "timeout_seconds": manager_timeout,
+                                "elapsed_seconds": elapsed,
+                            },
+                            logger=logger_ref,
+                            suppress=True,
+                        ):
+                            raise TimeoutError(
+                                f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
+                            )
+                    return _cooldown_disabled_manager(bot_registry, data_bot)
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
             _end_step("manager construction", manager_timer)
             if provenance_token:
                 try:
