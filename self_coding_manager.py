@@ -99,6 +99,15 @@ try:
     )
 except ValueError:
     _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS = 45.0
+_RAW_BOTPLANNINGBOT_TIMEOUT_FALLBACK_SECONDS = os.getenv(
+    "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS_BOTPLANNINGBOT", "75"
+).strip()
+try:
+    _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS = float(
+        _RAW_BOTPLANNINGBOT_TIMEOUT_FALLBACK_SECONDS
+    )
+except ValueError:
+    _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS = 75.0
 
 
 def _normalize_env_bot_name(bot_name: str) -> str:
@@ -138,6 +147,12 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
                 _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS,
             )
             break
+    if bot_key == "BOTPLANNINGBOT":
+        return max(
+            _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS,
+            _MANAGER_CONSTRUCTION_TIMEOUT_SECONDS,
+            0.0,
+        )
     return max(_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS, 0.0)
 
 
@@ -265,6 +280,52 @@ def _automation_result(*args: Any, **kwargs: Any) -> "AutomationResult":
 
     _, result_cls = _load_pipeline_components()
     return result_cls(*args, **kwargs)
+
+
+def _emit_timing_marker(
+    logger: logging.Logger,
+    bot_name: str,
+    stage: str,
+    *,
+    event: str,
+    elapsed_seconds: float | None = None,
+) -> None:
+    """Emit structured timing markers for manager construction diagnostics."""
+
+    payload: dict[str, Any] = {
+        "event": "self_coding_manager_timing",
+        "bot": bot_name,
+        "stage": stage,
+        "marker": event,
+    }
+    if elapsed_seconds is not None:
+        payload["elapsed_seconds"] = elapsed_seconds
+    logger.info(
+        "self_coding_manager timing marker %s stage=%s bot=%s",
+        event,
+        stage,
+        bot_name,
+        extra=payload,
+    )
+
+
+@contextmanager
+def _timed_marker(logger: logging.Logger, bot_name: str, stage: str) -> Iterator[None]:
+    """Emit begin/end timing markers around expensive manager stages."""
+
+    started_at = time.monotonic()
+    _emit_timing_marker(logger, bot_name, stage, event="begin")
+    try:
+        yield
+    finally:
+        elapsed = max(0.0, time.monotonic() - started_at)
+        _emit_timing_marker(
+            logger,
+            bot_name,
+            stage,
+            event="end",
+            elapsed_seconds=elapsed,
+        )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
     from .coding_bot_interface import manager_generate_helper as _ManagerGenerateHelperProto
@@ -1212,9 +1273,11 @@ class SelfCodingManager:
             )
         self._context_builder = builder
         self._mark_construction_phase("context_builder:prepare")
-        self._prepare_context_builder(builder)
+        with _timed_marker(self.logger, self.bot_name, "context_builder:prepare"):
+            self._prepare_context_builder(builder)
         self._mark_construction_phase("quick_fix:init")
-        self._init_quick_fix_engine(builder)
+        with _timed_marker(self.logger, self.bot_name, "quick_fix:init"):
+            self._init_quick_fix_engine(builder)
 
         if defer_orchestrator_init:
             self._mark_construction_phase("orchestrator:init:deferred")
@@ -1233,10 +1296,15 @@ class SelfCodingManager:
                 self.logger.debug("construction phase callback failed", exc_info=True)
         self.logger.debug("%s: manager construction phase=%s", self.bot_name, phase)
 
-    def initialize_deferred_components(self) -> None:
+    def initialize_deferred_components(self, *, skip_non_critical: bool = False) -> None:
         """Initialize expensive orchestration components when deferred."""
 
-        self._mark_construction_phase("orchestrator:init:begin")
+        stage = (
+            "orchestrator:init:begin:reduced"
+            if skip_non_critical
+            else "orchestrator:init:begin"
+        )
+        self._mark_construction_phase(stage)
         if self.evolution_orchestrator is None:
             try:  # pragma: no cover - optional dependencies
                 from .capital_management_bot import CapitalManagementBot
@@ -1244,7 +1312,8 @@ class SelfCodingManager:
                 from .system_evolution_manager import SystemEvolutionManager
                 from .evolution_orchestrator import EvolutionOrchestrator
 
-                capital = CapitalManagementBot(data_bot=self.data_bot)
+                with _timed_marker(self.logger, self.bot_name, "orchestrator:init:capital"):
+                    capital = CapitalManagementBot(data_bot=self.data_bot)
                 pipeline_promoter = getattr(self.pipeline, "_pipeline_promoter", None)
                 bootstrap_owner = getattr(self, "_bootstrap_owner_token", None)
                 if bootstrap_owner is None:
@@ -1259,28 +1328,55 @@ class SelfCodingManager:
                 # Startup order: ensure broker owner is active -> SelfImprovementEngine
                 # (which constructs ResearchAggregatorBot) -> EvolutionOrchestrator.
                 self._mark_construction_phase("orchestrator:init:broker_owner_ready")
-                self._ensure_broker_owner_ready(bootstrap_owner=bootstrap_owner)
+                with _timed_marker(
+                    self.logger,
+                    self.bot_name,
+                    "orchestrator:init:broker_owner_ready",
+                ):
+                    self._ensure_broker_owner_ready(bootstrap_owner=bootstrap_owner)
+                if skip_non_critical:
+                    self.logger.info(
+                        "%s: deferred orchestrator initialization reduced scope active",
+                        self.bot_name,
+                    )
+                    self._mark_construction_phase("orchestrator:init:reduced_complete")
+                    return
                 self._mark_construction_phase("orchestrator:init:self_improvement")
-                improv = SelfImprovementEngine(
-                    context_builder=self._context_builder,
-                    data_bot=self.data_bot,
-                    bot_name=self.bot_name,
-                    manager=self,
-                    pipeline=self.pipeline,
-                    pipeline_promoter=pipeline_promoter,
-                    bootstrap_owner=bootstrap_owner,
-                )
-                bots = list(getattr(self.bot_registry, "graph", {}).keys())
-                evol_mgr = SystemEvolutionManager(bots)
+                with _timed_marker(
+                    self.logger,
+                    self.bot_name,
+                    "orchestrator:init:self_improvement",
+                ):
+                    improv = SelfImprovementEngine(
+                        context_builder=self._context_builder,
+                        data_bot=self.data_bot,
+                        bot_name=self.bot_name,
+                        manager=self,
+                        pipeline=self.pipeline,
+                        pipeline_promoter=pipeline_promoter,
+                        bootstrap_owner=bootstrap_owner,
+                    )
+                with _timed_marker(
+                    self.logger,
+                    self.bot_name,
+                    "orchestrator:init:system_evolution_manager",
+                ):
+                    bots = list(getattr(self.bot_registry, "graph", {}).keys())
+                    evol_mgr = SystemEvolutionManager(bots)
                 self._mark_construction_phase("orchestrator:init:evolution_orchestrator")
-                self.evolution_orchestrator = EvolutionOrchestrator(
-                    data_bot=self.data_bot,
-                    capital_bot=capital,
-                    improvement_engine=improv,
-                    evolution_manager=evol_mgr,
-                    selfcoding_manager=self,
-                    event_bus=self.event_bus,
-                )
+                with _timed_marker(
+                    self.logger,
+                    self.bot_name,
+                    "orchestrator:init:evolution_orchestrator",
+                ):
+                    self.evolution_orchestrator = EvolutionOrchestrator(
+                        data_bot=self.data_bot,
+                        capital_bot=capital,
+                        improvement_engine=improv,
+                        evolution_manager=evol_mgr,
+                        selfcoding_manager=self,
+                        event_bus=self.event_bus,
+                    )
                 self.logger.debug(
                     "%s: EvolutionOrchestrator initialized successfully", self.bot_name
                 )
@@ -4746,6 +4842,7 @@ def internalize_coding_bot(
                         )
 
             manager_timer = _start_step("manager construction")
+            reduced_scope_after_timeout_retry = False
             manager_timeout = _resolve_manager_timeout_seconds(bot_name)
             manager_phase_lock = threading.Lock()
             manager_phase_state: dict[str, Any] = {
@@ -4817,73 +4914,105 @@ def internalize_coding_bot(
                         bot_registry=bot_registry,
                     )
 
-                    fallback_manager: Any | None = None
-                    fallback_error: Exception | None = None
-                    try:
-                        fallback_manager = _cooldown_disabled_manager(bot_registry, data_bot)
-                    except Exception as exc:
-                        fallback_error = exc
-
-                    timeout_event = {
-                        "event": "internalize_manager_construction_timeout",
-                        "bot": bot_name,
-                        "timeout_seconds": manager_timeout,
-                        "elapsed_seconds": elapsed,
-                        "phase": timeout_phase,
-                        "phase_elapsed_seconds": phase_elapsed,
-                        "phase_history": timeout_history,
-                        "retry_backoff_seconds": max(
-                            0.0, _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS
-                        ),
-                        "fallback_available": fallback_manager is not None,
-                    }
-                    if fallback_manager is not None:
+                    if _normalize_env_bot_name(bot_name) == "BOTPLANNINGBOT":
                         logger_ref.warning(
-                            "internalize_coding_bot transient timeout for %s; returning degraded fallback manager",
+                            "internalize_coding_bot timeout for %s; retrying once with reduced deferred scope",
                             bot_name,
-                            extra=timeout_event,
+                            extra={
+                                "event": "internalize_manager_construction_timeout_retry",
+                                "bot": bot_name,
+                                "phase": timeout_phase,
+                                "phase_elapsed_seconds": phase_elapsed,
+                            },
                         )
-                        if FailureGuard is not None:
-                            with FailureGuard(
-                                stage="internalize_manager_construction",
-                                metadata={
-                                    "bot": bot_name,
-                                    "reason": "manager_construction_timeout",
-                                    "severity": "warning",
-                                    "timeout_seconds": manager_timeout,
-                                    "elapsed_seconds": elapsed,
-                                    "fallback": "cooldown_disabled_manager",
-                                },
-                                logger=logger_ref,
-                                suppress=True,
-                            ):
-                                raise TimeoutError(
-                                    f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
-                                )
-                        return fallback_manager
+                        manager = _build_manager()
+                        reduced_scope_after_timeout_retry = True
+                    else:
+                        fallback_manager: Any | None = None
+                        fallback_error: Exception | None = None
+                        try:
+                            fallback_manager = _cooldown_disabled_manager(bot_registry, data_bot)
+                        except Exception as exc:
+                            fallback_error = exc
 
-                    logger_ref.error(
-                        "internalize_coding_bot hard failure for %s after manager construction timeout; degraded fallback unavailable",
-                        bot_name,
-                        extra={
-                            **timeout_event,
-                            "fallback_error": repr(fallback_error),
-                            "failure_kind": "hard_timeout_without_fallback",
-                        },
-                    )
-                    if fallback_error is not None:
-                        raise fallback_error
-                    raise TimeoutError(
-                        f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
-                    )
+                        timeout_event = {
+                            "event": "internalize_manager_construction_timeout",
+                            "bot": bot_name,
+                            "timeout_seconds": manager_timeout,
+                            "elapsed_seconds": elapsed,
+                            "phase": timeout_phase,
+                            "phase_elapsed_seconds": phase_elapsed,
+                            "phase_history": timeout_history,
+                            "retry_backoff_seconds": max(
+                                0.0, _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS
+                            ),
+                            "fallback_available": fallback_manager is not None,
+                        }
+                        if fallback_manager is not None:
+                            logger_ref.warning(
+                                "internalize_coding_bot transient timeout for %s; returning degraded fallback manager",
+                                bot_name,
+                                extra=timeout_event,
+                            )
+                            if FailureGuard is not None:
+                                with FailureGuard(
+                                    stage="internalize_manager_construction",
+                                    metadata={
+                                        "bot": bot_name,
+                                        "reason": "manager_construction_timeout",
+                                        "severity": "warning",
+                                        "timeout_seconds": manager_timeout,
+                                        "elapsed_seconds": elapsed,
+                                        "fallback": "cooldown_disabled_manager",
+                                    },
+                                    logger=logger_ref,
+                                    suppress=True,
+                                ):
+                                    raise TimeoutError(
+                                        f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
+                                    )
+                            return fallback_manager
+
+                        logger_ref.error(
+                            "internalize_coding_bot hard failure for %s after manager construction timeout; degraded fallback unavailable",
+                            bot_name,
+                            extra={
+                                **timeout_event,
+                                "fallback_error": repr(fallback_error),
+                                "failure_kind": "hard_timeout_without_fallback",
+                            },
+                        )
+                        if fallback_error is not None:
+                            raise fallback_error
+                        raise TimeoutError(
+                            f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
+                        )
                 finally:
                     executor.shutdown(wait=False, cancel_futures=True)
             _end_step("manager construction", manager_timer)
             deferred_orchestrator_timer = _start_step("deferred orchestrator initialization")
             try:
-                manager.initialize_deferred_components()
+                if reduced_scope_after_timeout_retry:
+                    manager.initialize_deferred_components(skip_non_critical=True)
+                else:
+                    manager.initialize_deferred_components()
             finally:
                 _end_step("deferred orchestrator initialization", deferred_orchestrator_timer)
+            if reduced_scope_after_timeout_retry:
+                def _finish_deferred_setup() -> None:
+                    try:
+                        manager.initialize_deferred_components()
+                    except Exception:
+                        logger_ref.exception(
+                            "internalize_coding_bot deferred completion failed for %s",
+                            bot_name,
+                        )
+
+                threading.Thread(
+                    target=_finish_deferred_setup,
+                    name=f"internalize-deferred-complete-{bot_name}",
+                    daemon=True,
+                ).start()
             if provenance_token:
                 try:
                     setattr(manager, "_bootstrap_provenance_token", provenance_token)
