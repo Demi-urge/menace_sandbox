@@ -12052,8 +12052,15 @@ def self_coding_managed(
                         else:
                             bootstrap_wait_timeout = bootstrap_wait_timeout_candidate
                     else:
-                        vector_heavy = bool(getattr(_BOOTSTRAP_STATE, "vector_heavy", False))
-                        bootstrap_wait_timeout = _resolve_bootstrap_wait_timeout(vector_heavy)
+                        bootstrap_wait_timeout = None
+                elif bootstrap_wait_timeout is None:
+                    active_context = _current_bootstrap_context()
+                    context_timeout = getattr(active_context, "bootstrap_wait_timeout", None)
+                    if context_timeout is None or isinstance(context_timeout, (int, float)):
+                        if isinstance(context_timeout, int):
+                            bootstrap_wait_timeout = float(context_timeout)
+                        else:
+                            bootstrap_wait_timeout = context_timeout
 
                 if (not bootstrap_done) or resolved_registry is None or resolved_data_bot is None:
                     registry_obj, data_bot_obj, context_guard = _bootstrap_helpers(
