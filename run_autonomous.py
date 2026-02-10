@@ -636,9 +636,7 @@ elif not os.environ.get("SANDBOX_SKIP_DEPENDENCY_CHECKS"):
     # (including Windows developer machines) can still execute the runner.
     os.environ["SANDBOX_SKIP_DEPENDENCY_CHECKS"] = "1"
 
-if not (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
-    _prepare_sandbox_data_dir_environment(_INITIAL_ARGV)
-else:  # pragma: no cover - convenience path used during CLI discovery
+if _DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT:  # pragma: no cover - CLI/help path
     os.environ.setdefault("SANDBOX_SKIP_DEPENDENCY_CHECKS", "1")
 
 _BOOTSTRAP_HELPERS: tuple[Callable[..., object], Callable[..., object]] | None = None
@@ -1019,16 +1017,6 @@ def _initialise_settings() -> SandboxSettings:
         return relaxed_settings
 
 
-if _DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT:
-    settings = SandboxSettings()
-else:
-    try:
-        settings = _initialise_settings()
-    except KeyboardInterrupt:  # pragma: no cover - CLI interrupt path
-        logger.debug("initialisation interrupted", exc_info=True)
-        _console("initialisation interrupted; exiting")
-        raise SystemExit(130) from None
-os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
 def _normalise_refresh_interval(value: float | int | None) -> float:
     """Return a sane refresh interval even when settings provide bad values."""
 
@@ -1046,15 +1034,12 @@ def _normalise_refresh_interval(value: float | int | None) -> float:
 
     return interval
 
-
-LOCAL_KNOWLEDGE_REFRESH_INTERVAL = _normalise_refresh_interval(
-    settings.local_knowledge_refresh_interval
-)
+LOCAL_KNOWLEDGE_REFRESH_INTERVAL = 600.0
 _LKM_REFRESH_STOP = threading.Event()
 _LKM_REFRESH_THREAD: threading.Thread | None = None
 
 
-def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser:
+def _build_argument_parser(settings: SandboxSettings | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run full autonomous sandbox with environment presets",
     )
@@ -1064,7 +1049,7 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
         default=3,
         help="number of presets per iteration",
     )
-    default_max_iterations = getattr(settings, "max_iterations", None)
+    default_max_iterations = getattr(settings, "max_iterations", None) if settings is not None else None
     if default_max_iterations is None:
         default_max_iterations = 1
     parser.add_argument(
@@ -1252,7 +1237,11 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
     )
     parser.add_argument(
         "--log-level",
-        default=settings.sandbox_log_level or settings.log_level,
+        default=(
+            (settings.sandbox_log_level or settings.log_level)
+            if settings is not None
+            else "INFO"
+        ),
         help="logging level for console output",
     )
     parser.add_argument(
@@ -1363,20 +1352,37 @@ def _build_argument_parser(settings: SandboxSettings) -> argparse.ArgumentParser
     return parser
 
 
-if __name__ == "__main__" and (_DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT):
-    parser = _build_argument_parser(settings)
+if __name__ == "__main__":
+    parser = _build_argument_parser(None)
     try:
         parsed = parser.parse_args(sys.argv[1:])
     except SystemExit:
         # ``argparse`` has already emitted the relevant help or error output.
         # Re-raise so the interpreter terminates without importing heavyweight
-        # modules.  This keeps ``python run_autonomous.py --help`` snappy while
-        # still allowing other lightweight invocations (``--runs 0`` for
-        # example) to flow through :func:`main` for their tailored output.
+        # modules.  This keeps ``python run_autonomous.py --help`` and parser
+        # failures snappy while avoiding startup of expensive subsystems.
         raise
     else:
         _PREPARSED_ARGS = parsed
         _PREPARSED_ARGV = list(sys.argv[1:])
+        _DEFER_BOOTSTRAP = _DEFER_BOOTSTRAP or (
+            parsed.check_settings
+            or parsed.smoke_test
+            or parsed.runs <= 0
+            or parsed.max_iterations <= 0
+        )
+
+if _DEFER_BOOTSTRAP or _LIGHTWEIGHT_IMPORT:
+    settings = SandboxSettings()
+else:
+    _prepare_sandbox_data_dir_environment(_INITIAL_ARGV)
+    try:
+        settings = _initialise_settings()
+    except KeyboardInterrupt:  # pragma: no cover - CLI interrupt path
+        logger.debug("initialisation interrupted", exc_info=True)
+        _console("initialisation interrupted; exiting")
+        raise SystemExit(130) from None
+os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
 
 
 # Initialise database router with a unique menace_id. All DB access must go
