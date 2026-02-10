@@ -1,3 +1,4 @@
+import pytest
 import importlib.util
 import sys
 import types
@@ -129,3 +130,51 @@ def test_run_workflow_simulations_uses_synergy_history_not_get(monkeypatch, tmp_
     )
 
     assert result is tracker
+
+
+def test_environment_self_debugger_import_prefers_package(monkeypatch):
+    env = _load_env()
+
+    class PackageSandbox:
+        pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.self_debugger_sandbox",
+        types.SimpleNamespace(SelfDebuggerSandbox=PackageSandbox),
+    )
+    monkeypatch.delitem(sys.modules, "self_debugger_sandbox", raising=False)
+
+    resolved = env._resolve_self_debugger_sandbox_class()
+    assert resolved is PackageSandbox
+
+
+def test_environment_self_debugger_import_falls_back_to_flat(monkeypatch):
+    env = _load_env()
+
+    class FlatSandbox:
+        pass
+
+    monkeypatch.delitem(sys.modules, "menace.self_debugger_sandbox", raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "self_debugger_sandbox",
+        types.SimpleNamespace(SelfDebuggerSandbox=FlatSandbox),
+    )
+
+    resolved = env._resolve_self_debugger_sandbox_class()
+    assert resolved is FlatSandbox
+
+
+def test_environment_self_debugger_import_error_includes_both_paths(monkeypatch):
+    env = _load_env()
+
+    monkeypatch.setitem(sys.modules, "menace.self_debugger_sandbox", None)
+    monkeypatch.setitem(sys.modules, "self_debugger_sandbox", None)
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        env._resolve_self_debugger_sandbox_class()
+
+    msg = str(exc_info.value)
+    assert "menace.self_debugger_sandbox" in msg
+    assert "self_debugger_sandbox" in msg

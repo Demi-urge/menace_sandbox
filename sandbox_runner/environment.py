@@ -96,6 +96,29 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
 
 T = TypeVar("T")
 
+
+def _resolve_self_debugger_sandbox_class() -> type[Any]:
+    """Import ``SelfDebuggerSandbox`` from supported module layouts."""
+    package_exc: ModuleNotFoundError | None = None
+    try:
+        from menace.self_debugger_sandbox import SelfDebuggerSandbox
+
+        return SelfDebuggerSandbox
+    except ModuleNotFoundError as exc:
+        package_exc = exc
+
+    try:
+        from self_debugger_sandbox import SelfDebuggerSandbox
+
+        return SelfDebuggerSandbox
+    except ModuleNotFoundError as flat_exc:
+        raise ModuleNotFoundError(
+            "Unable to import SelfDebuggerSandbox. "
+            "Tried 'menace.self_debugger_sandbox' and "
+            "'self_debugger_sandbox'. "
+            f"Package error: {package_exc!r}. Flat-module error: {flat_exc!r}."
+        ) from flat_exc
+
 from .workflow_sandbox_runner import WorkflowSandboxRunner
 from metrics_exporter import Gauge, environment_failure_total
 
@@ -9008,7 +9031,7 @@ def run_repo_section_simulations(
         paths are scanned for sections.
     """
     from menace.roi_tracker import ROITracker
-    from menace.self_debugger_sandbox import SelfDebuggerSandbox
+    SelfDebuggerSandbox = _resolve_self_debugger_sandbox_class()
     from menace.self_coding_engine import SelfCodingEngine
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
@@ -10223,7 +10246,7 @@ def run_workflow_simulations(
     ``tracker``'s synergy baseline.
     """
     from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
-    from menace.self_debugger_sandbox import SelfDebuggerSandbox
+    SelfDebuggerSandbox = _resolve_self_debugger_sandbox_class()
     from menace.self_coding_engine import SelfCodingEngine
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
