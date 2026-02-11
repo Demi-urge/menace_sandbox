@@ -11,6 +11,7 @@ The guard enforces two protections:
 
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -52,6 +53,7 @@ class ObjectiveGuard:
         protected_specs: Sequence[str] | None = None,
         hash_specs: Sequence[str] | None = None,
         enabled: bool | None = None,
+        manifest_path: Path | None = None,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.enabled = self._resolve_enabled(enabled)
@@ -70,6 +72,11 @@ class ObjectiveGuard:
         )
         self.hash_specs = tuple(self._build_spec(spec) for spec in resolved_hash_specs)
         self._baseline_hashes = self.snapshot_hashes()
+        self.manifest_path = (
+            manifest_path
+            if manifest_path is not None
+            else self.repo_root / ".security" / "state" / "objective_guard_manifest.json"
+        )
 
     @staticmethod
     def _resolve_enabled(enabled: bool | None) -> bool:
@@ -128,6 +135,17 @@ class ObjectiveGuard:
             digest.update(handle.read())
         return digest.hexdigest()
 
+    def _expected_manifest_paths(self) -> tuple[str, ...]:
+        expected: list[str] = []
+        for spec in self.hash_specs:
+            if spec.prefix:
+                continue
+            target = (self.repo_root / spec.normalized).resolve()
+            if not target.exists() or not target.is_file():
+                continue
+            expected.append(self._as_repo_rel(target))
+        return tuple(sorted(expected))
+
     def _hash_targets(self, specs: Iterable[GuardSpec]) -> dict[str, str]:
         hashes: dict[str, str] = {}
         for spec in specs:
@@ -145,6 +163,88 @@ class ObjectiveGuard:
             return {}
         return self._hash_targets(self.hash_specs)
 
+    def write_manifest(self) -> dict[str, str]:
+        """Persist hashes for protected objective files.
+
+        This method is intended for explicit operator workflows.
+        """
+
+        hashes = self.snapshot_hashes()
+        payload = {
+            "version": 1,
+            "algorithm": "sha256",
+            "files": hashes,
+        }
+        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        self.manifest_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return hashes
+
+    def verify_manifest(self) -> dict[str, object]:
+        """Validate protected file hashes against the persisted manifest."""
+
+        manifest = self.manifest_path
+        if not manifest.exists():
+            raise ObjectiveGuardViolation(
+                "manifest_missing",
+                details={
+                    "manifest_path": self._as_repo_rel(manifest),
+                    "expected_files": list(self._expected_manifest_paths()),
+                },
+            )
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ObjectiveGuardViolation(
+                "manifest_invalid",
+                details={
+                    "manifest_path": self._as_repo_rel(manifest),
+                    "error": str(exc),
+                },
+            ) from exc
+        expected = payload.get("files")
+        if not isinstance(expected, dict):
+            raise ObjectiveGuardViolation(
+                "manifest_invalid",
+                details={
+                    "manifest_path": self._as_repo_rel(manifest),
+                    "error": "manifest missing files mapping",
+                },
+            )
+        expected_hashes = {
+            str(path): str(digest)
+            for path, digest in expected.items()
+            if isinstance(path, str) and isinstance(digest, str)
+        }
+        current_hashes = self.snapshot_hashes()
+        deltas: list[dict[str, object]] = []
+        for path in sorted(set(expected_hashes) | set(current_hashes)):
+            expected_digest = expected_hashes.get(path)
+            current_digest = current_hashes.get(path)
+            if expected_digest != current_digest:
+                deltas.append(
+                    {
+                        "path": path,
+                        "expected": expected_digest,
+                        "current": current_digest,
+                    }
+                )
+        if deltas:
+            raise ObjectiveGuardViolation(
+                "manifest_hash_mismatch",
+                details={
+                    "manifest_path": self._as_repo_rel(manifest),
+                    "deltas": deltas,
+                    "changed_files": [entry["path"] for entry in deltas],
+                },
+            )
+        return {
+            "manifest_path": self._as_repo_rel(manifest),
+            "files": sorted(current_hashes),
+        }
+
     def assert_patch_target_safe(self, path: Path) -> None:
         if self.is_protected_target(path):
             raise ObjectiveGuardViolation(
@@ -155,6 +255,8 @@ class ObjectiveGuard:
     def assert_integrity(self) -> None:
         if not self.enabled:
             return
+        # Persisted manifest verification is the primary integrity gate.
+        self.verify_manifest()
         current = self.snapshot_hashes()
         if current == self._baseline_hashes:
             return

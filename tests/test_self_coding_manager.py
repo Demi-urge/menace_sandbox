@@ -2816,3 +2816,89 @@ def test_generate_and_patch_enforces_objective_guard(monkeypatch, tmp_path):
             provenance_token="token",
             context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None),
         )
+
+
+def test_register_patch_cycle_manifest_mismatch_pauses_self_coding(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+            self.patch_db = None
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, payload))
+    )
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+        event_bus=event_bus,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+
+    def breach() -> None:
+        raise scm.ObjectiveGuardViolation(
+            "manifest_hash_mismatch",
+            details={
+                "deltas": [
+                    {
+                        "path": "reward_dispatcher.py",
+                        "expected": "old",
+                        "current": "new",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(mgr.objective_guard, "assert_integrity", breach)
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        mgr.register_patch_cycle("desc", provenance_token="token")
+
+    assert mgr._self_coding_paused is True
+    assert any(topic == "self_coding:objective_integrity_breach" for topic, _ in events)
+
+    with pytest.raises(RuntimeError, match="self-coding paused"):
+        mgr.register_patch_cycle("desc", provenance_token="token")
+
+
+def test_reset_objective_integrity_lock_allows_cycles(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+            self.patch_db = None
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+
+    mgr._self_coding_paused = True
+    mgr._self_coding_disabled_reason = "objective_integrity_breach"
+
+    mgr.reset_objective_integrity_lock()
+    monkeypatch.setattr(mgr, "_enforce_objective_manifest", lambda **_kwargs: None)
+
+    patch_id, commit = mgr.register_patch_cycle("desc", provenance_token="token")
+
+    assert mgr._self_coding_paused is False
+    assert mgr._self_coding_disabled_reason is None
+    assert patch_id is None
+    assert isinstance(commit, str) or commit is None
