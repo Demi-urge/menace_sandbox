@@ -3112,6 +3112,12 @@ class SelfCodingManager:
             )
             raise PermissionError("invalid provenance token")
 
+    def _ensure_self_coding_active(self) -> None:
+        if getattr(self, "_self_coding_paused", False):
+            raise RuntimeError(
+                f"self-coding paused: {getattr(self, '_self_coding_disabled_reason', 'paused')}"
+            )
+
     # ------------------------------------------------------------------
     def register_patch_cycle(
         self,
@@ -3132,6 +3138,8 @@ class SelfCodingManager:
         """
 
         self.validate_provenance(provenance_token)
+        self._ensure_self_coding_active()
+        self._enforce_objective_manifest(stage="cycle_registration")
 
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         errors = self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
@@ -3424,11 +3432,43 @@ class SelfCodingManager:
                     self.logger.exception("failed to record post validation metrics")
         return outcome
 
+    def _enforce_objective_manifest(self, *, stage: str, path: Path | None = None) -> None:
+        guard = getattr(self, "objective_guard", None)
+        if guard is None:
+            return
+        target_path = path or Path("self_coding_manager.py")
+        try:
+            guard.assert_integrity()
+        except ObjectiveGuardViolation as exc:
+            details = dict(getattr(exc, "details", {}) or {})
+            details.setdefault("bot", self.bot_name)
+            details.setdefault("path", path_for_prompt(target_path))
+            self.logger.critical("objective guard blocked self-coding action", extra=details)
+            if self.event_bus:
+                try:
+                    payload = {"bot": self.bot_name, "reason": exc.reason, "details": details}
+                    self.event_bus.publish("self_coding:objective_guard_block", payload)
+                except Exception:
+                    self.logger.exception("failed to publish objective guard block event")
+            if getattr(exc, "reason", "") in {
+                "objective_integrity_breach",
+                "manifest_hash_mismatch",
+                "manifest_missing",
+                "manifest_invalid",
+            }:
+                self._handle_objective_integrity_breach(
+                    violation=exc,
+                    path=target_path,
+                    stage=stage,
+                )
+                raise RuntimeError("objective integrity breach triggered self-coding halt")
+            raise
+
     def _enforce_objective_guard(self, path: Path) -> None:
+        self._enforce_objective_manifest(stage="pre_patch_guard_check", path=path)
         guard = getattr(self, "objective_guard", None)
         if guard is not None:
             try:
-                guard.assert_integrity()
                 guard.assert_patch_target_safe(path)
             except ObjectiveGuardViolation as exc:
                 details = dict(getattr(exc, "details", {}) or {})
@@ -3631,10 +3671,7 @@ class SelfCodingManager:
         :class:`ContextBuilder` is created for each attempt.
         """
         self.validate_provenance(provenance_token)
-        if getattr(self, "_self_coding_paused", False):
-            raise RuntimeError(
-                f"self-coding paused: {getattr(self, '_self_coding_disabled_reason', 'paused')}"
-            )
+        self._ensure_self_coding_active()
         try:
             self._enforce_objective_guard(path)
         except ObjectiveGuardViolation as exc:
