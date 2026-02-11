@@ -39,7 +39,7 @@ import uuid
 import os
 import importlib
 import shlex
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
 
 
@@ -1208,8 +1208,90 @@ class PatchApprovalPolicy:
         """Refresh the command used for running tests."""
         self.test_command = list(new_cmd)
 
-    def approve(self, path: Path) -> bool:
+    def classify_target(self, path: Path) -> str:
+        """Classify *path* for approval handling."""
+
+        policy = get_patch_promotion_policy(repo_root=Path.cwd().resolve())
+        if policy.is_safe_target(path):
+            return "standard"
+        return "objective_adjacent"
+
+    @staticmethod
+    def _path_matches_rule(path: Path, rule: str) -> bool:
+        cleaned_rule = str(rule).replace("\\", "/").strip().strip("/")
+        if not cleaned_rule:
+            return False
+        target = str(path).replace("\\", "/").strip().strip("/")
+        return target == cleaned_rule or target.startswith(f"{cleaned_rule}/")
+
+    def _manual_approval_source(
+        self,
+        path: Path,
+        *,
+        manual_approval_token: str | None = None,
+    ) -> str | None:
+        token = (manual_approval_token or "").strip()
+        if token:
+            return "token"
+        token_file = os.getenv("MENACE_MANUAL_APPROVAL_FILE", "").strip()
+        if token_file:
+            candidate = Path(token_file).expanduser()
+            try:
+                raw_payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except Exception:
+                raw_payload = None
+            if isinstance(raw_payload, dict):
+                approved_paths = raw_payload.get("approved_paths", [])
+                if isinstance(approved_paths, list):
+                    rel_path = path_for_prompt(path)
+                    if any(self._path_matches_rule(Path(rel_path), str(item)) for item in approved_paths):
+                        return "record"
+            elif isinstance(raw_payload, list):
+                rel_path = path_for_prompt(path)
+                if any(self._path_matches_rule(Path(rel_path), str(item)) for item in raw_payload):
+                    return "record"
+        queue_file = os.getenv("MENACE_MANUAL_APPROVAL_QUEUE", "").strip()
+        if queue_file:
+            candidate = Path(queue_file).expanduser()
+            if candidate.exists():
+                rel_path = path_for_prompt(path)
+                try:
+                    for line in candidate.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        entry = json.loads(line)
+                        if not isinstance(entry, dict):
+                            continue
+                        if not bool(entry.get("approved", False)):
+                            continue
+                        if self._path_matches_rule(Path(rel_path), str(entry.get("path", ""))):
+                            return "queue"
+                except Exception:
+                    return None
+        return None
+
+    def approve(self, path: Path, *, manual_approval_token: str | None = None) -> bool:
         ok = True
+        classification = self.classify_target(path)
+        approval_source: str | None = None
+        if classification == "objective_adjacent":
+            approval_source = self._manual_approval_source(
+                path,
+                manual_approval_token=manual_approval_token,
+            )
+            if approval_source is None:
+                self.logger.warning(
+                    "manual approval required for objective-adjacent target: %s",
+                    path_for_prompt(path),
+                    extra={
+                        "event": "self_coding_approval_denied",
+                        "target_classification": classification,
+                        "approval_required": True,
+                        "approval_source": None,
+                    },
+                )
+                return False
         try:
             if self.verifier and not self.verifier.verify(path):
                 ok = False
@@ -1228,6 +1310,17 @@ class PatchApprovalPolicy:
                 )
             except Exception as exc:  # pragma: no cover - audit logging issues
                 self.logger.exception("failed to log healing action: %s", exc)
+        if ok:
+            self.logger.info(
+                "patch approval succeeded for %s",
+                path_for_prompt(path),
+                extra={
+                    "event": "self_coding_approval_approved",
+                    "target_classification": classification,
+                    "approval_required": classification == "objective_adjacent",
+                    "approval_source": approval_source,
+                },
+            )
         return ok
 
 
@@ -3489,24 +3582,12 @@ class SelfCodingManager:
                 "bot": self.bot_name,
                 "path": path_for_prompt(path),
                 "policy": "self_coding_patch_promotion",
+                "classification": "objective_adjacent",
             }
-            self.logger.critical(
-                "self-coding policy blocked objective-adjacent patch target",
+            self.logger.warning(
+                "self-coding target classified as objective-adjacent and requires manual approval",
                 extra=details,
             )
-            if self.event_bus:
-                try:
-                    self.event_bus.publish(
-                        "self_coding:objective_guard_block",
-                        {
-                            "bot": self.bot_name,
-                            "reason": "unsafe_target",
-                            "details": details,
-                        },
-                    )
-                except Exception:
-                    self.logger.exception("failed to publish objective guard block event")
-            raise ObjectiveGuardViolation("unsafe_target", details=details)
 
     def _set_self_coding_disabled_state(self, reason: str, *, details: Dict[str, Any]) -> None:
         """Persist disabled state in-memory and in registry metadata when possible."""
@@ -3656,6 +3737,7 @@ class SelfCodingManager:
         auto_merge: bool = False,
         backend: str = "venv",
         clone_command: list[str] | None = None,
+        manual_approval_token: str | None = None,
     ) -> AutomationResult:
         """Patch *path* then deploy using the automation pipeline.
 
@@ -3683,8 +3765,64 @@ class SelfCodingManager:
                 )
             raise
         self.refresh_quick_fix_context()
-        if self.approval_policy and not self.approval_policy.approve(path):
-            raise RuntimeError("patch approval failed")
+        if self.approval_policy:
+            target_classification = "standard"
+            classify = getattr(self.approval_policy, "classify_target", None)
+            if callable(classify):
+                try:
+                    target_classification = str(classify(path))
+                except Exception:
+                    target_classification = "standard"
+            approval_required = target_classification == "objective_adjacent"
+            approval_event = {
+                "bot": self.bot_name,
+                "path": path_for_prompt(path),
+                "classification": target_classification,
+                "approval_required": approval_required,
+            }
+            if approval_required:
+                self.logger.info(
+                    "manual approval required before patching objective-adjacent target %s",
+                    path_for_prompt(path),
+                    extra={"event": "self_coding_approval_required", **approval_event},
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish("self_coding:approval_required", approval_event)
+                    except Exception:
+                        self.logger.exception("failed to publish approval_required event")
+            approved = self.approval_policy.approve(
+                path,
+                manual_approval_token=manual_approval_token,
+            )
+            if not approved:
+                deny_payload = {**approval_event, "outcome": "denied"}
+                self.logger.warning(
+                    "patch approval denied for %s",
+                    path_for_prompt(path),
+                    extra={"event": "self_coding_approval_denied", **deny_payload},
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish("self_coding:approval_denied", deny_payload)
+                    except Exception:
+                        self.logger.exception("failed to publish approval_denied event")
+                raise RuntimeError("patch approval failed")
+            approved_payload = {
+                **approval_event,
+                "outcome": "approved",
+                "manual_approval": approval_required,
+            }
+            self.logger.info(
+                "patch approval granted for %s",
+                path_for_prompt(path),
+                extra={"event": "self_coding_approval_approved", **approved_payload},
+            )
+            if self.event_bus:
+                try:
+                    self.event_bus.publish("self_coding:approval_approved", approved_payload)
+                except Exception:
+                    self.logger.exception("failed to publish approval_approved event")
         if self.data_bot:
             self._refresh_thresholds()
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
