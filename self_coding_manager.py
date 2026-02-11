@@ -19,6 +19,10 @@ try:  # pragma: no cover - import module for cache management
     from . import dynamic_path_router as _path_router
 except Exception:  # pragma: no cover - fallback for flat layout
     import dynamic_path_router as _path_router  # type: ignore
+try:  # pragma: no cover - objective integrity guard
+    from .objective_guard import ObjectiveGuard, ObjectiveGuardViolation
+except Exception:  # pragma: no cover - fallback for flat layout
+    from objective_guard import ObjectiveGuard, ObjectiveGuardViolation  # type: ignore
 import logging
 import subprocess
 import tempfile
@@ -1273,6 +1277,7 @@ class SelfCodingManager:
         self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.approval_policy = approval_policy
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.objective_guard = ObjectiveGuard(repo_root=Path.cwd().resolve())
         self._mark_construction_phase("init:start")
         registry_bootstrap = bool(getattr(bot_registry, "bootstrap", False))
         resolved_bootstrap = registry_bootstrap if bootstrap_mode is None else bootstrap_mode
@@ -3408,6 +3413,26 @@ class SelfCodingManager:
                     self.logger.exception("failed to record post validation metrics")
         return outcome
 
+    def _enforce_objective_guard(self, path: Path) -> None:
+        guard = getattr(self, "objective_guard", None)
+        if guard is None:
+            return
+        try:
+            guard.assert_integrity()
+            guard.assert_patch_target_safe(path)
+        except ObjectiveGuardViolation as exc:
+            details = dict(getattr(exc, "details", {}) or {})
+            details.setdefault("bot", self.bot_name)
+            details.setdefault("path", path_for_prompt(path))
+            self.logger.critical("objective guard blocked self-coding action", extra=details)
+            if self.event_bus:
+                try:
+                    payload = {"bot": self.bot_name, "reason": exc.reason, "details": details}
+                    self.event_bus.publish("self_coding:objective_guard_block", payload)
+                except Exception:
+                    self.logger.exception("failed to publish objective guard block event")
+            raise
+
     # ------------------------------------------------------------------
     def run_patch(
         self,
@@ -3438,6 +3463,7 @@ class SelfCodingManager:
         :class:`ContextBuilder` is created for each attempt.
         """
         self.validate_provenance(provenance_token)
+        self._enforce_objective_guard(path)
         self.refresh_quick_fix_context()
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
