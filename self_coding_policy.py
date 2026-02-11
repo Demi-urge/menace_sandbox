@@ -15,6 +15,21 @@ from menace_sandbox.stabilization.roi import evaluate_roi_delta_policy
 logger = logging.getLogger(__name__)
 
 
+_DEFAULT_SELF_CODING_UNSAFE_PATHS: Tuple[str, ...] = (
+    "reward_dispatcher.py",
+    "reward_sanity_checker.py",
+    "kpi_reward_core.py",
+    "mvp_evaluator.py",
+    "kpi_editing_detector.py",
+    "menace/core/evaluator.py",
+    "billing/billing_ledger.py",
+    "billing/stripe_ledger.py",
+    "payout",
+    "payouts",
+    "ledger",
+)
+
+
 def _parse_names(raw: str | None) -> FrozenSet[str]:
     """Return a normalised set of bot names parsed from *raw*."""
 
@@ -63,6 +78,29 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _as_repo_relative(path: Path, *, repo_root: Path) -> str | None:
+    candidate = path if path.is_absolute() else (repo_root / path)
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    try:
+        relative = resolved.relative_to(repo_root)
+    except ValueError:
+        return None
+    normalised = relative.as_posix().strip("/")
+    if normalised in {"", "."}:
+        return ""
+    return normalised
+
+
+def _rule_matches_target(*, target: str, rule: str) -> bool:
+    cleaned_rule = rule.strip("/")
+    if not cleaned_rule:
+        return True
+    return target == cleaned_rule or target.startswith(f"{cleaned_rule}/")
 
 
 @dataclass(frozen=True)
@@ -148,14 +186,37 @@ class PatchPromotionPolicy:
     min_roi_delta: Decimal
     safe_roots: Tuple[Path, ...]
     deny_roots: Tuple[Path, ...]
+    repo_root: Path | None = None
 
     def is_safe_target(self, path: Path) -> bool:
-        resolved = path.resolve()
-        if not self.safe_roots:
+        repo_root = self.repo_root.resolve() if self.repo_root is not None else Path.cwd().resolve()
+        target = path if path.is_absolute() else (repo_root / path)
+        relative_target = _as_repo_relative(target, repo_root=repo_root)
+        if relative_target is None:
             return False
-        if not any(_is_relative_to(resolved, root) for root in self.safe_roots):
+
+        safe_rules = tuple(
+            rule
+            for rule in (_as_repo_relative(root, repo_root=repo_root) for root in self.safe_roots)
+            if rule is not None
+        )
+        if not safe_rules:
             return False
-        if any(_is_relative_to(resolved, root) for root in self.deny_roots):
+        if not any(
+            _rule_matches_target(target=relative_target, rule=rule)
+            for rule in safe_rules
+        ):
+            return False
+
+        deny_rules = tuple(
+            rule
+            for rule in (_as_repo_relative(root, repo_root=repo_root) for root in self.deny_roots)
+            if rule is not None
+        )
+        if any(
+            _rule_matches_target(target=relative_target, rule=rule)
+            for rule in deny_rules
+        ):
             return False
         return True
 
@@ -172,13 +233,19 @@ def get_patch_promotion_policy(repo_root: Path | None = None) -> PatchPromotionP
         os.environ.get("MENACE_SELF_CODING_MIN_ROI_DELTA"), Decimal("0")
     )
     safe_roots = _parse_paths(os.environ.get("MENACE_SELF_CODING_SAFE_PATHS"))
-    deny_roots = _parse_paths(os.environ.get("MENACE_SELF_CODING_UNSAFE_PATHS"))
-    if not safe_roots and repo_root is not None:
-        safe_roots = (repo_root.resolve(),)
+    unsafe_raw = os.environ.get("MENACE_SELF_CODING_UNSAFE_PATHS")
+    if unsafe_raw is None:
+        deny_roots = tuple(Path(path) for path in _DEFAULT_SELF_CODING_UNSAFE_PATHS)
+    else:
+        deny_roots = _parse_paths(unsafe_raw)
+    resolved_repo_root = repo_root.resolve() if repo_root is not None else None
+    if not safe_roots and resolved_repo_root is not None:
+        safe_roots = (resolved_repo_root,)
     return PatchPromotionPolicy(
         min_roi_delta=min_delta,
         safe_roots=safe_roots,
         deny_roots=deny_roots,
+        repo_root=resolved_repo_root,
     )
 
 

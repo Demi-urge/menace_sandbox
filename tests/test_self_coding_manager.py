@@ -2750,3 +2750,69 @@ def test_internalize_manager_timeout_botplanningbot_retry_success_records_phase_
     assert "manager_init:enter" in per_bot_metrics
     node_metrics = registry.graph.nodes["BotPlanningBot"]["manager_phase_duration_metrics"]
     assert node_metrics is per_bot_metrics
+
+
+def test_generate_patch_enforces_objective_guard(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda *_a, **_k: object())
+
+    def reject(_path):
+        raise scm.ObjectiveGuardViolation("unsafe_target", details={"path": "reward_dispatcher.py"})
+
+    monkeypatch.setattr(mgr, "_enforce_objective_guard", reject)
+
+    with pytest.raises(scm.ObjectiveGuardViolation):
+        mgr.generate_patch(
+            str(tmp_path / "reward_dispatcher.py"),
+            provenance_token="token",
+            context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None),
+        )
+
+
+def test_generate_and_patch_enforces_objective_guard(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+
+    def reject(_path):
+        raise scm.ObjectiveGuardViolation("unsafe_target", details={"path": "billing/stripe_ledger.py"})
+
+    monkeypatch.setattr(mgr, "_enforce_objective_guard", reject)
+
+    with pytest.raises(scm.ObjectiveGuardViolation):
+        mgr.generate_and_patch(
+            tmp_path / "billing" / "stripe_ledger.py",
+            "fix",
+            provenance_token="token",
+            context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None),
+        )

@@ -23,6 +23,10 @@ try:  # pragma: no cover - objective integrity guard
     from .objective_guard import ObjectiveGuard, ObjectiveGuardViolation
 except Exception:  # pragma: no cover - fallback for flat layout
     from objective_guard import ObjectiveGuard, ObjectiveGuardViolation  # type: ignore
+try:  # pragma: no cover - policy import for unsafe paths
+    from .self_coding_policy import get_patch_promotion_policy
+except Exception:  # pragma: no cover - fallback for flat layout
+    from self_coding_policy import get_patch_promotion_policy  # type: ignore
 import logging
 import subprocess
 import tempfile
@@ -2966,6 +2970,8 @@ class SelfCodingManager:
             raise ImportError(
                 "QuickFixEngine is required but generate_patch is unavailable"
             )
+        module_path = Path(module)
+        self._enforce_objective_guard(module_path)
         self._ensure_quick_fix_engine(context_builder)
         helper = helper_fn or _manager_generate_helper_with_builder
         return generate_patch(
@@ -3223,6 +3229,7 @@ class SelfCodingManager:
 
         if context_builder is None:  # pragma: no cover - defensive
             raise ValueError("ContextBuilder is required")
+        self._enforce_objective_guard(path)
         builder = context_builder
         try:
             ensure_fresh_weights(builder)
@@ -3415,23 +3422,47 @@ class SelfCodingManager:
 
     def _enforce_objective_guard(self, path: Path) -> None:
         guard = getattr(self, "objective_guard", None)
-        if guard is None:
-            return
-        try:
-            guard.assert_integrity()
-            guard.assert_patch_target_safe(path)
-        except ObjectiveGuardViolation as exc:
-            details = dict(getattr(exc, "details", {}) or {})
-            details.setdefault("bot", self.bot_name)
-            details.setdefault("path", path_for_prompt(path))
-            self.logger.critical("objective guard blocked self-coding action", extra=details)
+        if guard is not None:
+            try:
+                guard.assert_integrity()
+                guard.assert_patch_target_safe(path)
+            except ObjectiveGuardViolation as exc:
+                details = dict(getattr(exc, "details", {}) or {})
+                details.setdefault("bot", self.bot_name)
+                details.setdefault("path", path_for_prompt(path))
+                self.logger.critical("objective guard blocked self-coding action", extra=details)
+                if self.event_bus:
+                    try:
+                        payload = {"bot": self.bot_name, "reason": exc.reason, "details": details}
+                        self.event_bus.publish("self_coding:objective_guard_block", payload)
+                    except Exception:
+                        self.logger.exception("failed to publish objective guard block event")
+                raise
+
+        policy = get_patch_promotion_policy(repo_root=Path.cwd().resolve())
+        if not policy.is_safe_target(path):
+            details = {
+                "bot": self.bot_name,
+                "path": path_for_prompt(path),
+                "policy": "self_coding_patch_promotion",
+            }
+            self.logger.critical(
+                "self-coding policy blocked objective-adjacent patch target",
+                extra=details,
+            )
             if self.event_bus:
                 try:
-                    payload = {"bot": self.bot_name, "reason": exc.reason, "details": details}
-                    self.event_bus.publish("self_coding:objective_guard_block", payload)
+                    self.event_bus.publish(
+                        "self_coding:objective_guard_block",
+                        {
+                            "bot": self.bot_name,
+                            "reason": "unsafe_target",
+                            "details": details,
+                        },
+                    )
                 except Exception:
                     self.logger.exception("failed to publish objective guard block event")
-            raise
+            raise ObjectiveGuardViolation("unsafe_target", details=details)
 
     # ------------------------------------------------------------------
     def run_patch(
