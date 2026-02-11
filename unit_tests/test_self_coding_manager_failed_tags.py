@@ -304,3 +304,173 @@ def test_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError):
         mgr.run_patch(file_path, "add")
+
+
+def test_objective_integrity_breach_halts_loop_and_rolls_back(monkeypatch, tmp_path):
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("def x():\n    return 1\n", encoding="utf-8")
+
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+
+    class Engine:
+        def __init__(self):
+            self.patch_suggestion_db = PatchSuggestionDB(tmp_path / "s.db")
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+            self.last_prompt_text = ""
+
+    engine = Engine()
+    pipeline = ModelAutomationPipeline(context_builder=builder)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        data_bot=scm.DataBot(),
+        bot_registry=types.SimpleNamespace(register_bot=lambda *a, **k: None, graph=types.SimpleNamespace(nodes={})),
+    )
+
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **k):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, **kw: HarnessResultClass(True, None, "", "", 0.0),
+    )
+
+    monkeypatch.setattr(scm, "create_context_builder", lambda: builder)
+    monkeypatch.setattr(scm, "ensure_fresh_weights", lambda *_a, **_k: None)
+
+    mgr.data_bot.check_degradation = lambda *a, **k: True
+    mgr.refresh_quick_fix_context = lambda: None
+    mgr._ensure_quick_fix_engine = lambda *_a, **_k: None
+    mgr._enforce_objective_guard = lambda _path: None
+    mgr._last_commit_hash = "commit123"
+    mgr._last_patch_id = 77
+    monkeypatch.setattr(
+        scm,
+        "get_patch_by_commit",
+        lambda commit: {"commit": commit, "source": "patch_ledger"},
+    )
+
+    mgr.quick_fix = types.SimpleNamespace(
+        validate_patch=lambda *a, **k: (_ for _ in ()).throw(
+            scm.ObjectiveGuardViolation(
+                "objective_integrity_breach",
+                details={"changed_files": ["reward_dispatcher.py"]},
+            )
+        )
+    )
+
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, name: str, payload: dict) -> None:
+            events.append((name, payload))
+
+    mgr.event_bus = Bus()
+
+    rollbacks: list[str] = []
+
+    class RB:
+        def rollback(self, pid: str, requesting_bot: str | None = None) -> None:
+            rollbacks.append(pid)
+
+    monkeypatch.setattr(scm, "RollbackManager", lambda: RB())
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        mgr.run_patch(file_path, "add", provenance_token="token")
+
+    assert rollbacks == ["commit123"]
+    assert mgr._self_coding_paused is True
+    breach_payloads = [
+        payload for name, payload in events if name == "self_coding:objective_integrity_breach"
+    ]
+    assert breach_payloads
+    assert breach_payloads[0]["changed_objective_files"] == ["reward_dispatcher.py"]
+
+    with pytest.raises(RuntimeError, match="self-coding paused"):
+        mgr.run_patch(file_path, "add", provenance_token="token")
+    assert rollbacks == ["commit123"]
+
+
+def test_objective_integrity_breach_partial_rollback_emits_critical(monkeypatch):
+    mgr = object.__new__(scm.SelfCodingManager)
+    mgr.bot_name = "bot"
+    mgr.logger = types.SimpleNamespace(critical=lambda *a, **k: None, exception=lambda *a, **k: None)
+    mgr._objective_breach_lock = scm.threading.Lock()
+    mgr._objective_breach_handled = False
+    mgr._self_coding_paused = False
+    mgr._self_coding_disabled_reason = None
+    mgr._last_commit_hash = "commit999"
+    mgr._last_patch_id = 88
+    mgr.bot_registry = types.SimpleNamespace(graph=types.SimpleNamespace(nodes={"bot": {}}))
+
+    monkeypatch.setattr(
+        scm,
+        "get_patch_by_commit",
+        lambda commit: {"commit": commit, "source": "patch_ledger"},
+    )
+
+    calls: list[str] = []
+
+    class RB:
+        def rollback(self, pid: str, requesting_bot: str | None = None) -> None:
+            calls.append(pid)
+            raise RuntimeError("rollback failed")
+
+    monkeypatch.setattr(scm, "RollbackManager", lambda: RB())
+
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, name: str, payload: dict) -> None:
+            events.append((name, payload))
+
+    mgr.event_bus = Bus()
+
+    violation = scm.ObjectiveGuardViolation(
+        "objective_integrity_breach",
+        details={"changed_files": ["kpi_reward_core.py"]},
+    )
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        mgr._handle_objective_integrity_breach(
+            violation=violation,
+            path=Path("kpi_reward_core.py"),
+            stage="test",
+        )
+
+    assert calls == ["commit999"]
+    assert any(
+        name == "self_coding:objective_integrity_breach_rollback_failed"
+        for name, _ in events
+    )
+
+    mgr._handle_objective_integrity_breach(
+        violation=violation,
+        path=Path("kpi_reward_core.py"),
+        stage="repeat",
+    )
+    assert calls == ["commit999"]
+    assert any(
+        name == "self_coding:objective_integrity_breach" and payload.get("already_handled")
+        for name, payload in events
+    )
