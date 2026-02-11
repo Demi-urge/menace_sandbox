@@ -1333,6 +1333,10 @@ class SelfCodingManager:
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
         self._last_validation_summary: Dict[str, Any] | None = None
+        self._objective_breach_lock = threading.Lock()
+        self._objective_breach_handled = False
+        self._self_coding_paused = False
+        self._self_coding_disabled_reason: str | None = None
         thresholds = self.threshold_service.get(
             bot_name, bootstrap_mode=self.bootstrap_mode
         )
@@ -3464,6 +3468,139 @@ class SelfCodingManager:
                     self.logger.exception("failed to publish objective guard block event")
             raise ObjectiveGuardViolation("unsafe_target", details=details)
 
+    def _set_self_coding_disabled_state(self, reason: str, *, details: Dict[str, Any]) -> None:
+        """Persist disabled state in-memory and in registry metadata when possible."""
+
+        self._self_coding_paused = True
+        self._self_coding_disabled_reason = reason
+        registry = getattr(self, "bot_registry", None)
+        graph = getattr(registry, "graph", None)
+        nodes = getattr(graph, "nodes", None)
+        if isinstance(nodes, dict):
+            node_state = nodes.setdefault(self.bot_name, {})
+            if isinstance(node_state, dict):
+                node_state["self_coding_disabled"] = {
+                    "source": "objective_integrity_breach",
+                    "reason": reason,
+                    "details": details,
+                }
+
+    def reset_objective_integrity_lock(self) -> None:
+        """Allow operators to explicitly resume self-coding after an objective breach."""
+
+        with self._objective_breach_lock:
+            self._objective_breach_handled = False
+            self._self_coding_paused = False
+            self._self_coding_disabled_reason = None
+
+    def _resolve_current_or_last_patch_commit(self) -> tuple[str | None, Dict[str, Any]]:
+        """Resolve the best-known patch commit and associated provenance metadata."""
+
+        commit = getattr(self, "_last_commit_hash", None)
+        metadata: Dict[str, Any] = {}
+        if commit and get_patch_by_commit:
+            try:
+                metadata = dict(get_patch_by_commit(commit) or {})
+            except Exception:
+                self.logger.exception("failed to resolve patch provenance metadata")
+        patch_id = getattr(self, "_last_patch_id", None)
+        if patch_id is not None:
+            metadata.setdefault("patch_id", patch_id)
+        return commit, metadata
+
+    def _handle_objective_integrity_breach(
+        self,
+        *,
+        violation: ObjectiveGuardViolation,
+        path: Path,
+        stage: str,
+    ) -> None:
+        """Roll back latest patch state and halt self-coding after objective drift."""
+
+        details = dict(getattr(violation, "details", {}) or {})
+        details.setdefault("bot", self.bot_name)
+        details.setdefault("path", path_for_prompt(path))
+        changed_files = sorted(
+            str(item) for item in (details.get("changed_files") or []) if item
+        )
+        details["changed_files"] = changed_files
+        commit, commit_meta = self._resolve_current_or_last_patch_commit()
+        telemetry_payload: Dict[str, Any] = {
+            "severity": "critical",
+            "bot": self.bot_name,
+            "reason": violation.reason,
+            "stage": stage,
+            "details": details,
+            "changed_objective_files": changed_files,
+            "reverted_commit": commit,
+            "reverted_commit_metadata": commit_meta,
+            "already_handled": False,
+        }
+        with self._objective_breach_lock:
+            if self._objective_breach_handled:
+                telemetry_payload["already_handled"] = True
+                self._set_self_coding_disabled_state(
+                    "objective_integrity_breach", details=details
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "self_coding:objective_integrity_breach",
+                            telemetry_payload,
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish objective integrity breach duplicate event"
+                        )
+                return
+            self._objective_breach_handled = True
+
+        rollback_attempted = bool(commit)
+        rollback_ok = False
+        rollback_error: str | None = None
+        if commit and RollbackManager is not None:
+            try:
+                RollbackManager().rollback(commit, requesting_bot=self.bot_name)
+                rollback_ok = True
+            except Exception as exc:
+                rollback_error = str(exc)
+                self.logger.critical(
+                    "rollback failed during objective integrity breach handling",
+                    exc_info=True,
+                )
+        elif commit and RollbackManager is None:
+            rollback_error = "rollback_manager_unavailable"
+        else:
+            rollback_error = "no_commit_available"
+
+        telemetry_payload.update(
+            {
+                "rollback_attempted": rollback_attempted,
+                "rollback_ok": rollback_ok,
+                "rollback_error": rollback_error,
+            }
+        )
+        self._set_self_coding_disabled_state("objective_integrity_breach", details=details)
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "self_coding:objective_integrity_breach",
+                    telemetry_payload,
+                )
+            except Exception:
+                self.logger.exception("failed to publish objective integrity breach event")
+        if rollback_attempted and not rollback_ok and self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "self_coding:objective_integrity_breach_rollback_failed",
+                    telemetry_payload,
+                )
+            except Exception:
+                self.logger.exception(
+                    "failed to publish objective integrity rollback failure telemetry"
+                )
+        raise RuntimeError("objective integrity breach triggered self-coding halt")
+
     # ------------------------------------------------------------------
     def run_patch(
         self,
@@ -3494,7 +3631,20 @@ class SelfCodingManager:
         :class:`ContextBuilder` is created for each attempt.
         """
         self.validate_provenance(provenance_token)
-        self._enforce_objective_guard(path)
+        if getattr(self, "_self_coding_paused", False):
+            raise RuntimeError(
+                f"self-coding paused: {getattr(self, '_self_coding_disabled_reason', 'paused')}"
+            )
+        try:
+            self._enforce_objective_guard(path)
+        except ObjectiveGuardViolation as exc:
+            if getattr(exc, "reason", "") == "objective_integrity_breach":
+                self._handle_objective_integrity_breach(
+                    violation=exc,
+                    path=path,
+                    stage="pre_patch_guard_check",
+                )
+            raise
         self.refresh_quick_fix_context()
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
@@ -3843,6 +3993,14 @@ class SelfCodingManager:
                         repo_root=clone_root,
                         provenance_token=provenance_token,
                     )
+                except ObjectiveGuardViolation as exc:
+                    if getattr(exc, "reason", "") == "objective_integrity_breach":
+                        self._handle_objective_integrity_breach(
+                            violation=exc,
+                            path=path,
+                            stage="quick_fix_validate_patch",
+                        )
+                    raise
                 except Exception as exc:
                     try:
                         RollbackManager().rollback(
