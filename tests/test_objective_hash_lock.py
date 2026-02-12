@@ -102,7 +102,7 @@ def test_verify_objective_hash_lock_aligned_baseline(tmp_path: Path) -> None:
     assert report["files"] == ["reward_dispatcher.py"]
 
 
-def test_verify_objective_hash_lock_detects_file_set_drift(tmp_path: Path) -> None:
+def test_verify_objective_hash_lock_prefers_manifest_spec_snapshot(tmp_path: Path) -> None:
     reward = tmp_path / "reward_dispatcher.py"
     kpi = tmp_path / "kpi_reward_core.py"
     reward.write_text("ORIGINAL\n", encoding="utf-8")
@@ -127,11 +127,9 @@ def test_verify_objective_hash_lock_detects_file_set_drift(tmp_path: Path) -> No
         manifest_path=tmp_path / "config" / "objective_hash_lock.json",
     )
 
-    with pytest.raises(ObjectiveGuardViolation) as exc_info:
-        verify_objective_hash_lock(guard=drifted_guard)
+    report = verify_objective_hash_lock(guard=drifted_guard)
 
-    assert exc_info.value.reason == "manifest_file_set_mismatch"
-    assert exc_info.value.details["extra_in_manifest"] == ["kpi_reward_core.py"]
+    assert report["files"] == ["kpi_reward_core.py", "reward_dispatcher.py"]
 
 
 def test_verify_objective_hash_lock_allows_legitimate_rotation(tmp_path: Path) -> None:
@@ -163,3 +161,34 @@ def test_verify_objective_hash_lock_allows_legitimate_rotation(tmp_path: Path) -
 
     report = verify_objective_hash_lock(guard=guard)
     assert report["files"] == ["reward_dispatcher.py"]
+
+
+def test_verify_objective_hash_lock_uses_manifest_directory_specs_without_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payout = tmp_path / "finance_logs" / "payout_log.json"
+    payout.parent.mkdir(parents=True, exist_ok=True)
+    payout.write_text('{\"payout\": 1}\n', encoding="utf-8")
+
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["finance_logs/"],
+        hash_specs=["finance_logs/"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+    guard.write_manifest(
+        operator="alice",
+        reason="approved bootstrap",
+        command_source="tools/objective_guard_manifest_cli.py",
+    )
+
+    monkeypatch.setenv("MENACE_SELF_CODING_OBJECTIVE_HASH_PATHS", "reward_dispatcher.py")
+    monkeypatch.setenv("MENACE_SELF_CODING_PROTECTED_PATHS", "reward_dispatcher.py")
+
+    report = verify_objective_hash_lock(
+        repo_root=tmp_path,
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+
+    assert report["files"] == ["finance_logs/payout_log.json"]
+    assert report["configured_hash_specs"] == ["finance_logs/"]

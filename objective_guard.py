@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Iterable, Sequence
 
 from objective_inventory import (
@@ -26,6 +27,13 @@ from objective_inventory import (
 _DEFAULT_PROTECTED_SPECS: tuple[str, ...] = OBJECTIVE_ADJACENT_UNSAFE_PATHS
 _DEFAULT_HASH_SPECS: tuple[str, ...] = OBJECTIVE_ADJACENT_HASH_PATHS
 
+_DIRECTORY_HASH_RULES: dict[str, dict[str, tuple[str, ...]]] = {
+    "finance_logs": {
+        "include": ("payout_log.json",),
+        "exclude": ("*.db", "*.db-*", "*.sqlite*", "*.journal"),
+    }
+}
+
 DEFAULT_OBJECTIVE_HASH_MANIFEST = "config/objective_hash_lock.json"
 
 
@@ -34,6 +42,12 @@ class GuardSpec:
     raw: str
     normalized: str
     prefix: bool
+
+
+@dataclass(frozen=True)
+class DirectoryHashRule:
+    include: tuple[str, ...]
+    exclude: tuple[str, ...]
 
 
 class ObjectiveGuardViolation(PermissionError):
@@ -136,10 +150,76 @@ class ObjectiveGuard:
             digest.update(handle.read())
         return digest.hexdigest()
 
-    def _expected_manifest_paths(self) -> tuple[str, ...]:
+    @staticmethod
+    def _matches_pattern(path: str, pattern: str) -> bool:
+        candidate = PurePosixPath(path)
+        normalized = pattern.strip()
+        if not normalized:
+            return False
+        if candidate.match(normalized):
+            return True
+        if "/" not in normalized and candidate.name == normalized:
+            return True
+        return False
+
+    def _directory_hash_rule(
+        self,
+        spec: GuardSpec,
+        manifest_rules: dict[str, dict[str, object]] | None = None,
+    ) -> DirectoryHashRule:
+        rule_payload: dict[str, object] = {}
+        if manifest_rules and isinstance(manifest_rules.get(spec.normalized), dict):
+            rule_payload = dict(manifest_rules[spec.normalized])
+        elif spec.normalized in _DIRECTORY_HASH_RULES:
+            rule_payload = {
+                "include": list(_DIRECTORY_HASH_RULES[spec.normalized].get("include", ())),
+                "exclude": list(_DIRECTORY_HASH_RULES[spec.normalized].get("exclude", ())),
+            }
+        include = tuple(
+            str(item).strip()
+            for item in rule_payload.get("include", [])
+            if str(item).strip()
+        )
+        exclude = tuple(
+            str(item).strip()
+            for item in rule_payload.get("exclude", [])
+            if str(item).strip()
+        )
+        return DirectoryHashRule(include=include or ("**/*",), exclude=exclude)
+
+    def _expand_directory_targets(
+        self,
+        spec: GuardSpec,
+        *,
+        manifest_rules: dict[str, dict[str, object]] | None = None,
+    ) -> tuple[str, ...]:
+        target = (self.repo_root / spec.normalized).resolve()
+        if not target.exists() or not target.is_dir():
+            return ()
+        rule = self._directory_hash_rule(spec, manifest_rules=manifest_rules)
+        matches: list[str] = []
+        for path in sorted(target.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = self._as_repo_rel(path)
+            rel_from_spec = rel[len(spec.normalized) + 1 :] if rel.startswith(f"{spec.normalized}/") else path.name
+            if not any(self._matches_pattern(rel_from_spec, pattern) for pattern in rule.include):
+                continue
+            if any(self._matches_pattern(rel_from_spec, pattern) for pattern in rule.exclude):
+                continue
+            matches.append(rel)
+        return tuple(sorted(matches))
+
+    def _expected_manifest_paths(
+        self,
+        *,
+        specs: Iterable[GuardSpec] | None = None,
+        manifest_rules: dict[str, dict[str, object]] | None = None,
+    ) -> tuple[str, ...]:
         expected: list[str] = []
-        for spec in self.hash_specs:
+        for spec in specs or self.hash_specs:
             if spec.prefix:
+                expected.extend(self._expand_directory_targets(spec, manifest_rules=manifest_rules))
                 continue
             target = (self.repo_root / spec.normalized).resolve()
             if not target.exists() or not target.is_file():
@@ -147,12 +227,19 @@ class ObjectiveGuard:
             expected.append(self._as_repo_rel(target))
         return tuple(sorted(expected))
 
-    def _hash_targets(self, specs: Iterable[GuardSpec]) -> dict[str, str]:
+    def _hash_targets(
+        self,
+        specs: Iterable[GuardSpec],
+        *,
+        manifest_rules: dict[str, dict[str, object]] | None = None,
+    ) -> dict[str, str]:
         hashes: dict[str, str] = {}
         for spec in specs:
-            target = (self.repo_root / spec.normalized).resolve()
             if spec.prefix:
+                for rel in self._expand_directory_targets(spec, manifest_rules=manifest_rules):
+                    hashes[rel] = self._hash_file(self.repo_root / rel)
                 continue
+            target = (self.repo_root / spec.normalized).resolve()
             if not target.exists() or not target.is_file():
                 continue
             rel = self._as_repo_rel(target)
@@ -240,8 +327,16 @@ class ObjectiveGuard:
             "algorithm": "sha256",
             "hash_spec_source": "objective_inventory.OBJECTIVE_ADJACENT_HASH_PATHS",
             "configured_hash_specs": [
-                spec.normalized for spec in self.hash_specs if not spec.prefix
+                f"{spec.normalized}/" if spec.prefix else spec.normalized for spec in self.hash_specs
             ],
+            "directory_expansion_rules": {
+                spec.normalized: {
+                    "include": list(self._directory_hash_rule(spec).include),
+                    "exclude": list(self._directory_hash_rule(spec).exclude),
+                }
+                for spec in self.hash_specs
+                if spec.prefix
+            },
             "files": hashes,
             "trusted_baseline": {
                 "mode": "rotate" if is_rotation else "bootstrap",
@@ -297,7 +392,22 @@ class ObjectiveGuard:
             for path, digest in expected.items()
             if isinstance(path, str) and isinstance(digest, str)
         }
-        current_hashes = self.snapshot_hashes()
+        configured_hash_specs = payload.get("configured_hash_specs")
+        if isinstance(configured_hash_specs, list) and configured_hash_specs:
+            manifest_specs = tuple(
+                self._build_spec(str(spec))
+                for spec in configured_hash_specs
+                if isinstance(spec, str) and str(spec).strip()
+            )
+        else:
+            manifest_specs = self.hash_specs
+        manifest_rules = payload.get("directory_expansion_rules")
+        resolved_manifest_rules = (
+            dict(manifest_rules)
+            if isinstance(manifest_rules, dict)
+            else {}
+        )
+        current_hashes = self._hash_targets(manifest_specs, manifest_rules=resolved_manifest_rules)
         expected_file_set = set(current_hashes)
         manifest_file_set = set(expected_hashes)
         if expected_file_set != manifest_file_set:
@@ -342,6 +452,11 @@ class ObjectiveGuard:
         return {
             "manifest_path": self._as_repo_rel(manifest),
             "files": sorted(current_hashes),
+            "configured_hash_specs": [
+                f"{spec.normalized}/" if spec.prefix else spec.normalized
+                for spec in manifest_specs
+            ],
+            "directory_expansion_rules": resolved_manifest_rules,
         }
 
     def assert_patch_target_safe(self, path: Path) -> None:
