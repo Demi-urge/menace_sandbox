@@ -210,6 +210,30 @@ def test_patch_policy_merges_canonical_paths_into_environment(monkeypatch, tmp_p
     assert "menace/core/evaluator.py" in merged
 
 
+
+
+def test_patch_promotion_rejects_protected_paths_even_without_env(monkeypatch, tmp_path):
+    from menace_sandbox.self_coding_policy import evaluate_patch_promotion, get_patch_promotion_policy
+
+    monkeypatch.delenv("MENACE_SELF_CODING_SAFE_PATHS", raising=False)
+    monkeypatch.delenv("MENACE_SELF_CODING_UNSAFE_PATHS", raising=False)
+
+    protected = tmp_path / "billing" / "billing_ledger.py"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text("x\n", encoding="utf-8")
+
+    policy = get_patch_promotion_policy(repo_root=tmp_path)
+    decision = evaluate_patch_promotion(
+        policy=policy,
+        roi_delta={"total": "1.0"},
+        patch_validation={"valid": True},
+        source_path=protected,
+    )
+
+    assert decision.allowed is False
+    assert "unsafe_target" in decision.reasons
+
+
 def test_is_self_coding_unsafe_path_uses_default_and_env(monkeypatch, tmp_path):
     from menace_sandbox.self_coding_policy import is_self_coding_unsafe_path
 
