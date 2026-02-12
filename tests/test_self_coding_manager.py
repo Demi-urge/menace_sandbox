@@ -3231,3 +3231,96 @@ def test_idle_cycle_objective_breach_stops_loop_and_skips_followup(monkeypatch, 
     assert mgr._self_coding_paused is True
     assert rollbacks == [("99", "bot")]
     assert any(topic == "self_coding:objective_integrity_trip" for topic, _ in events)
+
+def test_divergence_guard_pauses_when_reward_present_and_real_metrics_missing(monkeypatch):
+    class Engine:
+        def __init__(self):
+            self.patch_db = None
+            self.audit_events: list[dict[str, object]] = []
+            self.audit_trail = types.SimpleNamespace(
+                record=lambda payload: self.audit_events.append(dict(payload))
+            )
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, dict(payload)))
+    )
+    engine = Engine()
+    mgr = scm.SelfCodingManager(
+        engine,
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        event_bus=event_bus,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+    mgr._missing_metric_pause_cycles = 2
+    mgr._divergence_fail_closed_on_missing_metrics = True
+
+    mgr._evaluate_divergence_guard({"reward": 1.0, "workflow_id": "wf-1"})
+    assert mgr._self_coding_paused is False
+
+    mgr._evaluate_divergence_guard({"reward": 1.2, "workflow_id": "wf-2"})
+
+    assert mgr._self_coding_paused is True
+    assert mgr._self_coding_disabled_reason == "reward_real_metrics_unavailable"
+    assert mgr._missing_real_metric_streak == 2
+    assert any(topic == "self_coding:divergence_kill_switch" for topic, _ in events)
+    pause_audit = [
+        payload
+        for payload in engine.audit_events
+        if payload.get("action") == "self_coding_auto_pause"
+    ]
+    assert pause_audit
+    assert pause_audit[-1]["check_status"] == "data_unavailable"
+
+
+def test_divergence_guard_recovers_after_metrics_resume(monkeypatch):
+    class Engine:
+        def __init__(self):
+            self.patch_db = None
+            self.audit_events: list[dict[str, object]] = []
+            self.audit_trail = types.SimpleNamespace(
+                record=lambda payload: self.audit_events.append(dict(payload))
+            )
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, dict(payload)))
+    )
+    engine = Engine()
+    mgr = scm.SelfCodingManager(
+        engine,
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        event_bus=event_bus,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+    mgr._missing_metric_pause_cycles = 1
+    mgr._divergence_fail_closed_on_missing_metrics = True
+    mgr._divergence_recovery_cycles = 2
+
+    mgr._evaluate_divergence_guard({"reward": 1.0, "workflow_id": "wf-missing"})
+    assert mgr._self_coding_paused is True
+    assert mgr._self_coding_pause_source == "divergence_monitor"
+
+    mgr._evaluate_divergence_guard(
+        {"reward": 1.1, "profit": 12.0, "revenue": 33.0, "workflow_id": "wf-ok-1"}
+    )
+    assert mgr._self_coding_paused is True
+    assert mgr._missing_real_metric_streak == 0
+
+    mgr._evaluate_divergence_guard(
+        {"reward": 1.2, "profit": 12.5, "revenue": 33.5, "workflow_id": "wf-ok-2"}
+    )
+
+    assert mgr._self_coding_paused is False
+    assert mgr._self_coding_disabled_reason is None
+    assert any(topic == "self_coding:divergence_recovered" for topic, _ in events)

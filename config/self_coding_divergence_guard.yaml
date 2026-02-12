@@ -5,3 +5,5 @@ self_coding_divergence_guard:
   minimum_confidence: 1.0
   divergence_threshold_cycles: 2
   recovery_threshold_cycles: 2
+  fail_closed_on_missing_metrics: true
+  missing_metric_pause_cycles: 3
