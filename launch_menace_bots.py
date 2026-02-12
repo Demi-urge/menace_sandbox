@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Type
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path
+from sandbox_runner.import_candidates import SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES
 
 MENACE_ID = uuid.uuid4().hex
 LOCAL_DB_PATH = os.getenv(
@@ -51,11 +52,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 
 _BOT_TESTING_CLS: Type["BotTestingBot"] | None = None
-_SELF_DEBUGGER_SANDBOX_CANDIDATES = (
-    "menace.self_debugger_sandbox",
-    "self_debugger_sandbox",
-)
-
 
 def _get_bot_testing_bot_class() -> Type["BotTestingBot"]:
     """Return :class:`BotTestingBot` lazily to avoid circular imports."""
@@ -83,7 +79,7 @@ def _resolve_self_debugger_sandbox_class() -> type[object]:
     attempt_details: list[tuple[str, str, str]] = []
     last_exc: Exception | None = None
 
-    for module_name in _SELF_DEBUGGER_SANDBOX_CANDIDATES:
+    for module_name in SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES:
         try:
             module = importlib.import_module(module_name)
         except (ModuleNotFoundError, ImportError) as exc:
@@ -118,7 +114,7 @@ def _resolve_self_debugger_sandbox_class() -> type[object]:
     raise ModuleNotFoundError(
         "Unable to import SelfDebuggerSandbox. "
         "Tried package and flat layouts: "
-        f"{', '.join(_SELF_DEBUGGER_SANDBOX_CANDIDATES)}. "
+        f"{', '.join(SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES)}. "
         f"Failure chain: {details}"
     ) from last_exc
 

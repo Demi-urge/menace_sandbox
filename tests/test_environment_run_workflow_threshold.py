@@ -102,6 +102,11 @@ def test_run_workflow_simulations_uses_synergy_history_not_get(monkeypatch, tmp_
     )
     monkeypatch.setitem(
         sys.modules,
+        "menace_sandbox.self_debugger_sandbox",
+        types.SimpleNamespace(SelfDebuggerSandbox=type("S2", (), {"analyse_and_fix": lambda self: None})),
+    )
+    monkeypatch.setitem(
+        sys.modules,
         "menace.self_coding_engine",
         types.SimpleNamespace(SelfCodingEngine=object),
     )
@@ -156,6 +161,23 @@ def test_environment_self_debugger_import_prefers_package(monkeypatch):
     assert resolved is PackageSandbox
 
 
+def test_environment_self_debugger_import_falls_back_to_menace_sandbox_package(monkeypatch):
+    env = _load_env()
+
+    class PackageSandbox:
+        pass
+
+    monkeypatch.delitem(sys.modules, "menace.self_debugger_sandbox", raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.self_debugger_sandbox",
+        types.SimpleNamespace(SelfDebuggerSandbox=PackageSandbox),
+    )
+
+    resolved = env._resolve_self_debugger_sandbox_class()
+    assert resolved is PackageSandbox
+
+
 def test_environment_self_debugger_import_falls_back_to_flat(monkeypatch):
     env = _load_env()
 
@@ -163,6 +185,7 @@ def test_environment_self_debugger_import_falls_back_to_flat(monkeypatch):
         pass
 
     monkeypatch.delitem(sys.modules, "menace.self_debugger_sandbox", raising=False)
+    monkeypatch.delitem(sys.modules, "menace_sandbox.self_debugger_sandbox", raising=False)
     monkeypatch.setitem(
         sys.modules,
         "self_debugger_sandbox",
@@ -177,11 +200,14 @@ def test_environment_self_debugger_import_error_includes_detailed_diagnostics(mo
     env = _load_env()
 
     monkeypatch.delitem(sys.modules, "menace.self_debugger_sandbox", raising=False)
+    monkeypatch.delitem(sys.modules, "menace_sandbox.self_debugger_sandbox", raising=False)
     monkeypatch.delitem(sys.modules, "self_debugger_sandbox", raising=False)
 
     def fake_import_module(name):
         if name == "menace.self_debugger_sandbox":
             raise ModuleNotFoundError("No module named 'menace.self_debugger_sandbox'")
+        if name == "menace_sandbox.self_debugger_sandbox":
+            raise ModuleNotFoundError("No module named 'menace_sandbox.self_debugger_sandbox'")
         if name == "self_debugger_sandbox":
             raise ImportError("No module named 'missing_nested_dep'")
         raise AssertionError(f"unexpected module import: {name}")
@@ -193,8 +219,13 @@ def test_environment_self_debugger_import_error_includes_detailed_diagnostics(mo
 
     msg = str(exc_info.value)
     assert "menace.self_debugger_sandbox" in msg
+    assert "menace_sandbox.self_debugger_sandbox" in msg
     assert "self_debugger_sandbox" in msg
     assert "ModuleNotFoundError" in msg
+    attempts = msg.split("Attempts: ", 1)[1].split("; ")
+    assert attempts[0].startswith("menace.self_debugger_sandbox:")
+    assert attempts[1].startswith("menace_sandbox.self_debugger_sandbox:")
+    assert attempts[2].startswith("self_debugger_sandbox:")
     assert "ImportError" in msg
     assert "missing_nested_dep" in msg
 
@@ -205,10 +236,15 @@ def test_environment_self_debugger_import_error_is_module_not_found_when_all_can
     env = _load_env()
 
     monkeypatch.delitem(sys.modules, "menace.self_debugger_sandbox", raising=False)
+    monkeypatch.delitem(sys.modules, "menace_sandbox.self_debugger_sandbox", raising=False)
     monkeypatch.delitem(sys.modules, "self_debugger_sandbox", raising=False)
 
     def fake_import_module(name):
-        if name in {"menace.self_debugger_sandbox", "self_debugger_sandbox"}:
+        if name in {
+            "menace.self_debugger_sandbox",
+            "menace_sandbox.self_debugger_sandbox",
+            "self_debugger_sandbox",
+        }:
             raise ModuleNotFoundError(f"No module named '{name}'", name=name)
         raise AssertionError(f"unexpected module import: {name}")
 
@@ -219,5 +255,10 @@ def test_environment_self_debugger_import_error_is_module_not_found_when_all_can
 
     msg = str(exc_info.value)
     assert "menace.self_debugger_sandbox" in msg
+    assert "menace_sandbox.self_debugger_sandbox" in msg
     assert "self_debugger_sandbox" in msg
     assert "ModuleNotFoundError" in msg
+    attempts = msg.split("Attempts: ", 1)[1].split("; ")
+    assert attempts[0].startswith("menace.self_debugger_sandbox:")
+    assert attempts[1].startswith("menace_sandbox.self_debugger_sandbox:")
+    assert attempts[2].startswith("self_debugger_sandbox:")

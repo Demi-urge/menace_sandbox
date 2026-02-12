@@ -42,6 +42,7 @@ import re
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
 from error_ontology import ErrorCategory, classify_error as classify_ontology_error
 
+from .import_candidates import SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES
 from .orphan_integration import integrate_and_graph_orphans
 from .scoring import record_run as _score_record_run, load_summary as _load_run_summary
 
@@ -96,13 +97,7 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
 
 T = TypeVar("T")
 
-_SELF_DEBUGGER_SANDBOX_MODULE_NAMES = frozenset(
-    {
-        "menace.self_debugger_sandbox",
-        "menace_sandbox.self_debugger_sandbox",
-        "self_debugger_sandbox",
-    }
-)
+_SELF_DEBUGGER_SANDBOX_MODULE_NAMES = frozenset(SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES)
 
 
 def module_name_from_module_not_found(exc: ModuleNotFoundError) -> str | None:
@@ -131,16 +126,11 @@ def is_self_debugger_sandbox_import_failure(exc: BaseException) -> bool:
 
 def _resolve_self_debugger_sandbox_class() -> type[Any]:
     """Import ``SelfDebuggerSandbox`` from supported module layouts."""
-    candidates = [
-        "menace.self_debugger_sandbox",
-        "menace_sandbox.self_debugger_sandbox",
-        "self_debugger_sandbox",
-    ]
     attempt_details: list[tuple[str, str, str]] = []
     all_attempts_candidate_missing = True
     last_exc: Exception | None = None
 
-    for module_name in candidates:
+    for module_name in SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES:
         try:
             module = importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
