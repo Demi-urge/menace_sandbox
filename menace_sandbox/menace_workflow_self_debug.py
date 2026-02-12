@@ -43,6 +43,7 @@ from sandbox_runner.environment import is_self_debugger_sandbox_import_failure, 
 from sandbox_settings import SandboxSettings
 from task_handoff_bot import WorkflowDB
 from sandbox_results_logger import record_self_debug_metrics
+from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
 from self_coding_policy import (
     ensure_self_coding_unsafe_paths_env,
     evaluate_patch_promotion,
@@ -55,6 +56,7 @@ LOGGER = logging.getLogger(__name__)
 
 ensure_self_coding_unsafe_paths_env()
 DEFAULT_METRICS_SOURCE = "menace_workflow_self_debug"
+_SELF_DEBUG_PAUSED = False
 _CERTIFICATION_PATH = Path(resolve_path("sandbox_data")) / "self_improvement_certification.json"
 
 
@@ -210,6 +212,9 @@ def _apply_pipeline_patch(
     allow_new_files: bool = False,
     allow_deletes: bool = False,
 ) -> bool:
+    global _SELF_DEBUG_PAUSED
+    if _SELF_DEBUG_PAUSED:
+        return False
     validation = pipeline_result.get("validation")
     if not isinstance(validation, Mapping) or not validation.get("valid"):
         return False
@@ -282,6 +287,24 @@ def _apply_pipeline_patch(
     )
     if not isinstance(modified_source, str) or not modified_source:
         return False
+
+    try:
+        ObjectiveGuard(repo_root=repo_root).assert_integrity()
+    except ObjectiveGuardViolation as exc:
+        if getattr(exc, "reason", "") in {"objective_integrity_breach", "manifest_hash_mismatch"}:
+            _SELF_DEBUG_PAUSED = True
+            LOGGER.critical(
+                "self-debug objective circuit breaker tripped",
+                extra={
+                    "event": "self_coding:objective_circuit_breaker_trip",
+                    "severity": "critical",
+                    "reason": getattr(exc, "reason", "objective_integrity_breach"),
+                    "changed_files": list((getattr(exc, "details", {}) or {}).get("changed_files", [])),
+                    "rollback_ok": False,
+                },
+            )
+            return False
+        raise
 
     original_source = source_path.read_text(encoding="utf-8")
     temp_dir = Path(tempfile.mkdtemp(prefix="menace_self_debug_"))

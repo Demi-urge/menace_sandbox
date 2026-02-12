@@ -3970,6 +3970,10 @@ class SelfCodingManager:
                             "self_coding:objective_integrity_breach",
                             telemetry_payload,
                         )
+                        self.event_bus.publish(
+                            "self_coding:objective_circuit_breaker_trip",
+                            telemetry_payload,
+                        )
                     except Exception:
                         self.logger.exception(
                             "failed to publish objective integrity breach duplicate event"
@@ -4007,6 +4011,10 @@ class SelfCodingManager:
             try:
                 self.event_bus.publish(
                     "self_coding:objective_integrity_breach",
+                    telemetry_payload,
+                )
+                self.event_bus.publish(
+                    "self_coding:objective_circuit_breaker_trip",
                     telemetry_payload,
                 )
             except Exception:
@@ -4059,7 +4067,7 @@ class SelfCodingManager:
             self._enforce_objective_guard(path)
         except ObjectiveGuardViolation as exc:
             if getattr(exc, "reason", "") == "objective_integrity_breach":
-                self._trigger_objective_circuit_breaker(
+                self._handle_objective_integrity_breach(
                     violation=exc,
                     path=path,
                     stage="pre_patch_guard_check",

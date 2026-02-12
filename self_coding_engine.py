@@ -203,6 +203,13 @@ except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
 except Exception:  # pragma: no cover - degrade gracefully
     RollbackManager = object  # type: ignore[misc,assignment]
 
+try:  # pragma: no cover - objective integrity guard
+    ObjectiveGuardViolation = load_internal("objective_guard").ObjectiveGuardViolation
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    class ObjectiveGuardViolation(Exception):
+        reason = ""
+        details: dict[str, object] = {}
+
 _audit_trail = load_internal("audit_trail")
 AuditTrail = _audit_trail.AuditTrail
 load_private_key_material = _audit_trail.load_private_key_material
@@ -934,6 +941,9 @@ class SelfCodingEngine:
             except Exception:
                 logger.exception("failed to attach gpt_memory to llm_client")
         self.rollback_mgr = rollback_mgr
+        self._last_patch_id: int | None = None
+        self._last_commit_hash: str | None = None
+        self._self_coding_paused = False
         if formal_verifier is None:
             try:
                 formal_verifier = FormalVerifier()
@@ -3232,6 +3242,8 @@ class SelfCodingEngine:
             "apply_patch_start",
             {"path": str(path), "description": description},
         )
+        if getattr(self, "_self_coding_paused", False):
+            raise RuntimeError("self-coding paused after objective circuit breaker")
         try:
             self._check_permission(WRITE, requesting_bot)
         except PermissionError:
@@ -3464,6 +3476,7 @@ class SelfCodingEngine:
                     except Exception:
                         patch_id = None
                 patch_key = str(patch_id) if patch_id is not None else description
+                self._last_patch_id = patch_id
                 if patch_id is not None and self.rollback_mgr:
                     if target_region is not None:
                         self.rollback_mgr.rollback_region(
@@ -3849,6 +3862,7 @@ class SelfCodingEngine:
                         self.logger.exception("event bus publish failed")
                 patch_id = None
         patch_key = str(patch_id) if patch_id is not None else description
+        self._last_patch_id = patch_id
         branch_name = "main"
         if not reverted:
             if patch_id is not None:
@@ -4059,6 +4073,53 @@ class SelfCodingEngine:
                 self.logger.exception("failed to refresh prompt config")
         return patch_id, reverted, roi_delta
 
+    def _handle_objective_circuit_breaker(
+        self,
+        *,
+        violation: ObjectiveGuardViolation,
+        path: Path,
+        stage: str,
+    ) -> None:
+        details = dict(getattr(violation, "details", {}) or {})
+        changed_files = sorted(str(item) for item in (details.get("changed_files") or []) if item)
+        details["changed_files"] = changed_files
+        self._self_coding_paused = True
+        patch_id = getattr(self, "_last_patch_id", None)
+        commit = getattr(self, "_last_commit_hash", None)
+        rollback_attempted = patch_id is not None or bool(commit)
+        rollback_ok = False
+        rollback_error: str | None = None
+        try:
+            if patch_id is not None and self.rollback_mgr:
+                self.rollback_mgr.rollback(str(patch_id), requesting_bot=self.bot_name)
+                rollback_ok = True
+            elif commit and self.rollback_mgr:
+                self.rollback_mgr.rollback(str(commit), requesting_bot=self.bot_name)
+                rollback_ok = True
+            else:
+                rollback_error = "no_patch_or_commit_available"
+        except Exception as exc:
+            rollback_error = str(exc)
+        payload = {
+            "severity": "critical",
+            "bot": self.bot_name,
+            "reason": getattr(violation, "reason", "objective_integrity_breach"),
+            "stage": stage,
+            "details": details,
+            "changed_objective_files": changed_files,
+            "reverted_commit": commit,
+            "reverted_patch_id": patch_id,
+            "rollback_attempted": rollback_attempted,
+            "rollback_ok": rollback_ok,
+            "rollback_error": rollback_error,
+        }
+        if self.event_bus:
+            try:
+                self.event_bus.publish("self_coding:objective_circuit_breaker_trip", payload)
+            except Exception:
+                self.logger.exception("failed to publish objective circuit breaker event")
+        raise RuntimeError("objective integrity breach triggered self-coding halt")
+
     def _build_retry_context(
         self, description: str, report: "ErrorReport" | None
     ) -> Dict[str, Any]:
@@ -4233,6 +4294,14 @@ class SelfCodingEngine:
                     target_region=active_region,
                     **kwargs,
                 )
+            except ObjectiveGuardViolation as exc:
+                if getattr(exc, "reason", "") == "objective_integrity_breach":
+                    self._handle_objective_circuit_breaker(
+                        violation=exc,
+                        path=path,
+                        stage="apply_patch_with_retry",
+                    )
+                raise
             except Exception as exc:
                 trace = traceback.format_exc()
                 roi_val = 0.0

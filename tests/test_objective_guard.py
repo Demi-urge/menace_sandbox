@@ -130,3 +130,25 @@ def test_objective_guard_defaults_include_shared_objective_paths(tmp_path: Path)
 
     protected = {spec.normalized for spec in guard.protected_specs}
     assert set(OBJECTIVE_ADJACENT_UNSAFE_PATHS).issubset(protected)
+
+
+
+def test_objective_guard_manifest_hash_mismatch_exposes_changed_files(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    ledger = tmp_path / "reward_ledger.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    ledger.write_text("ORIGINAL\n", encoding="utf-8")
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py", "reward_ledger.py"],
+        hash_specs=["reward_dispatcher.py", "reward_ledger.py"],
+        manifest_path=tmp_path / ".security" / "state" / "objective_guard_manifest.json",
+    )
+    guard.write_manifest()
+    reward.write_text("MODIFIED\n", encoding="utf-8")
+
+    with pytest.raises(ObjectiveGuardViolation) as exc:
+        guard.assert_integrity()
+
+    assert exc.value.reason == "manifest_hash_mismatch"
+    assert "reward_dispatcher.py" in (exc.value.details.get("changed_files") or [])

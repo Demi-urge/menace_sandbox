@@ -86,6 +86,12 @@ _qfe_log("traceback imported")
 import concurrent.futures
 _qfe_log("concurrent.futures imported")
 
+try:
+    from objective_guard import ObjectiveGuardViolation
+except Exception:  # pragma: no cover - fallback for optional dependency
+    class ObjectiveGuardViolation(Exception):
+        reason = ""
+
 import os
 _qfe_log("os imported")
 
@@ -2107,6 +2113,7 @@ class SelfImprovementEngine:
         self._cycle_count = 0
         self._last_mutation_id: int | None = None
         self._last_patch_id: int | None = None
+        self._self_coding_paused: bool = False
         self._last_scenario_metrics: dict[str, float] = {}
         self._last_scenario_trend: dict[str, float] = {}
         self._scenario_pass_rate: float = 0.0
@@ -5571,13 +5578,21 @@ class SelfImprovementEngine:
                 before_target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, before_target)
                 start_time = time.perf_counter()
-                patch_id, reverted, delta = self.self_coding_engine.apply_patch(
-                    resolve_path("self_improvement/engine.py"),
-                    "self_improvement",
-                    parent_patch_id=self._last_patch_id,
-                    reason="self_improvement",
-                    trigger="optimize_self",
-                )
+                try:
+                    patch_id, reverted, delta = self.self_coding_engine.apply_patch(
+                        resolve_path("self_improvement/engine.py"),
+                        "self_improvement",
+                        parent_patch_id=self._last_patch_id,
+                        reason="self_improvement",
+                        trigger="optimize_self",
+                    )
+                except ObjectiveGuardViolation as exc:
+                    if getattr(exc, "reason", "") == "objective_integrity_breach":
+                        self._self_coding_paused = True
+                        handler = getattr(self.self_coding_engine, "_handle_objective_circuit_breaker", None)
+                        if callable(handler):
+                            handler(violation=exc, path=resolve_path("self_improvement/engine.py"), stage="self_improvement_optimize_self")
+                    raise
                 if patch_id is not None and not reverted:
                     after_target = Path(after_dir) / rel
                     after_target.parent.mkdir(parents=True, exist_ok=True)
@@ -8814,14 +8829,22 @@ class SelfImprovementEngine:
                     )
                     mod_path = resolve_path("auto_helpers.py")
                     start_patch = time.perf_counter()
-                    patch_id, reverted, delta = self.self_coding_engine.apply_patch(
-                        mod_path,
-                        "helper",
-                        trending_topic=trending_topic,
-                        parent_patch_id=self._last_patch_id,
-                        reason="helper_patch",
-                        trigger="automation_cycle",
-                    )
+                    try:
+                        patch_id, reverted, delta = self.self_coding_engine.apply_patch(
+                            mod_path,
+                            "helper",
+                            trending_topic=trending_topic,
+                            parent_patch_id=self._last_patch_id,
+                            reason="helper_patch",
+                            trigger="automation_cycle",
+                        )
+                    except ObjectiveGuardViolation as exc:
+                        if getattr(exc, "reason", "") == "objective_integrity_breach":
+                            self._self_coding_paused = True
+                            handler = getattr(self.self_coding_engine, "_handle_objective_circuit_breaker", None)
+                            if callable(handler):
+                                handler(violation=exc, path=mod_path, stage="self_improvement_automation_cycle")
+                        raise
                     before_metric = 0.0
                     after_metric = delta
                     patch_diff = ""

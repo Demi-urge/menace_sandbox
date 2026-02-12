@@ -3039,6 +3039,7 @@ def test_run_post_patch_cycle_circuit_breaker_blocks_followup_patches(monkeypatc
     assert rollbacks == [("deadbeef", "bot")]
     assert quick_fix.apply_calls == 1
     assert any(topic == "self_coding:circuit_breaker_triggered" for topic, _ in events)
+    assert any(topic == "self_coding:objective_circuit_breaker_trip" for topic, _ in events)
     assert registry.saved > 0
     assert json.loads(persist_file.read_text(encoding="utf-8"))["bot"][
         "self_coding_disabled"
@@ -3057,3 +3058,51 @@ def test_run_post_patch_cycle_circuit_breaker_blocks_followup_patches(monkeypatc
     )
     assert mgr2._self_coding_paused is True
     assert mgr2._self_coding_disabled_reason == "objective_integrity_breach"
+
+
+def test_handle_objective_integrity_breach_emits_trip_event_and_rolls_back(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+            self.patch_db = None
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(publish=lambda topic, payload: events.append((topic, dict(payload))))
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+        event_bus=event_bus,
+        evolution_orchestrator=types.SimpleNamespace(register_bot=lambda *a, **k: None, provenance_token="token"),
+    )
+    mgr._last_commit_hash = "abc123"
+    mgr._last_patch_id = 7
+    rollbacks: list[tuple[str, str]] = []
+
+    class DummyRollbackManager:
+        def rollback(self, commit, requesting_bot=None):
+            rollbacks.append((str(commit), str(requesting_bot)))
+
+    monkeypatch.setattr(scm, "RollbackManager", DummyRollbackManager)
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        mgr._handle_objective_integrity_breach(
+            violation=scm.ObjectiveGuardViolation(
+                "objective_integrity_breach",
+                details={"changed_files": ["reward_dispatcher.py"]},
+            ),
+            path=tmp_path / "module.py",
+            stage="unit_test",
+        )
+
+    assert mgr._self_coding_paused is True
+    assert rollbacks == [("abc123", "bot")]
+    payload = [p for t, p in events if t == "self_coding:objective_circuit_breaker_trip"][0]
+    assert payload["changed_objective_files"] == ["reward_dispatcher.py"]
+    assert payload["rollback_ok"] is True
