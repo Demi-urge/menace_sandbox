@@ -42,12 +42,12 @@ def test_resolver_falls_back_to_flat_module(monkeypatch):
     assert env._resolve_self_debugger_sandbox_class() is flat_cls
 
 
-def test_resolver_raises_enriched_error_when_all_imports_fail(monkeypatch):
+def test_resolver_raises_module_not_found_when_all_candidates_absent(monkeypatch):
     def fake_import_module(name):
         if name == "menace.self_debugger_sandbox":
             raise ModuleNotFoundError("package missing", name=name)
         if name == "self_debugger_sandbox":
-            raise ImportError("flat import broke")
+            raise ModuleNotFoundError("flat missing", name=name)
         raise AssertionError(f"unexpected import: {name}")
 
     monkeypatch.setattr(env.importlib, "import_module", fake_import_module)
@@ -58,5 +58,26 @@ def test_resolver_raises_enriched_error_when_all_imports_fail(monkeypatch):
     message = str(exc_info.value)
     assert "menace.self_debugger_sandbox" in message
     assert "self_debugger_sandbox" in message
-    assert "ModuleNotFoundError('package missing')" in message
-    assert "ImportError('flat import broke')" in message
+    assert "candidate missing ('menace.self_debugger_sandbox')" in message
+    assert "candidate missing ('self_debugger_sandbox')" in message
+
+
+def test_resolver_raises_import_error_when_nested_dependency_missing(monkeypatch):
+    def fake_import_module(name):
+        if name == "menace.self_debugger_sandbox":
+            raise ModuleNotFoundError(
+                "No module named 'missing_dependency'", name="missing_dependency"
+            )
+        if name == "self_debugger_sandbox":
+            raise ModuleNotFoundError("flat missing", name=name)
+        raise AssertionError(f"unexpected import: {name}")
+
+    monkeypatch.setattr(env.importlib, "import_module", fake_import_module)
+
+    with pytest.raises(ImportError) as exc_info:
+        env._resolve_self_debugger_sandbox_class()
+
+    message = str(exc_info.value)
+    assert "dependency import failure" in message
+    assert "missing_dependency" in message
+    assert "self_debugger_sandbox" in message
