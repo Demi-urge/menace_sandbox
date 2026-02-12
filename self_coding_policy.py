@@ -11,7 +11,7 @@ import logging
 import os
 
 from menace_sandbox.stabilization.roi import evaluate_roi_delta_policy
-from self_coding_objective_paths import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,29 @@ def ensure_self_coding_unsafe_paths_env() -> Tuple[str, ...]:
     os.environ["MENACE_SELF_CODING_UNSAFE_PATHS"] = ",".join(merged)
     return merged
 
+
+
+
+def get_self_coding_unsafe_path_rules() -> Tuple[str, ...]:
+    """Return merged objective-surface deny rules plus env overrides."""
+
+    return _merge_unsafe_path_rules(os.environ.get("MENACE_SELF_CODING_UNSAFE_PATHS"))
+
+
+def is_self_coding_unsafe_path(path: Path | str, *, repo_root: Path | None = None) -> bool:
+    """Return ``True`` when *path* matches objective-adjacent deny rules."""
+
+    base = repo_root.resolve() if repo_root is not None else Path.cwd().resolve()
+    candidate = Path(path)
+    relative_target = _as_repo_relative(candidate, repo_root=base)
+    if relative_target is None:
+        return False
+    deny_rules = tuple(
+        rule
+        for rule in (_as_repo_relative(Path(item), repo_root=base) for item in get_self_coding_unsafe_path_rules())
+        if rule is not None
+    )
+    return any(_rule_matches_target(target=relative_target, rule=rule) for rule in deny_rules)
 
 def _parse_names(raw: str | None) -> FrozenSet[str]:
     """Return a normalised set of bot names parsed from *raw*."""
@@ -244,7 +267,8 @@ def get_patch_promotion_policy(repo_root: Path | None = None) -> PatchPromotionP
         os.environ.get("MENACE_SELF_CODING_MIN_ROI_DELTA"), Decimal("0")
     )
     safe_roots = _parse_paths(os.environ.get("MENACE_SELF_CODING_SAFE_PATHS"))
-    deny_roots = tuple(Path(path) for path in ensure_self_coding_unsafe_paths_env())
+    ensure_self_coding_unsafe_paths_env()
+    deny_roots = tuple(Path(path) for path in get_self_coding_unsafe_path_rules())
     resolved_repo_root = repo_root.resolve() if repo_root is not None else None
     if not safe_roots and resolved_repo_root is not None:
         safe_roots = (resolved_repo_root,)

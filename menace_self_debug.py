@@ -31,6 +31,7 @@ from self_coding_policy import (
     ensure_self_coding_unsafe_paths_env,
     evaluate_patch_promotion,
     get_patch_promotion_policy,
+    is_self_coding_unsafe_path,
 )
 from self_improvement.workflow_discovery import discover_workflow_specs
 from task_handoff_bot import WorkflowDB
@@ -145,6 +146,30 @@ def _apply_pipeline_patch(
             extra={
                 "source_path": str(source_path),
                 "rejection_reasons": ["invalid patch"],
+            },
+        )
+        return False
+    patch_paths = validation_result.get("context", {}).get("file_paths", [])
+    if isinstance(patch_paths, list):
+        for rel_path in patch_paths:
+            if not isinstance(rel_path, str):
+                continue
+            if is_self_coding_unsafe_path(rel_path, repo_root=repo_root):
+                LOGGER.info(
+                    "mvp patch promotion rejected",
+                    extra={
+                        "source_path": str(source_path),
+                        "rejection_reasons": ["unsafe file target"],
+                        "unsafe_path": rel_path,
+                    },
+                )
+                return False
+    if is_self_coding_unsafe_path(source_path, repo_root=repo_root):
+        LOGGER.info(
+            "mvp patch promotion rejected",
+            extra={
+                "source_path": str(source_path),
+                "rejection_reasons": ["unsafe file target"],
             },
         )
         return False
