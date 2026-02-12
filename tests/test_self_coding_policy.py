@@ -6,6 +6,29 @@ import pytest
 
 from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
 
+REQUIRED_OBJECTIVE_ADJACENT_PATHS = {
+    "config/objective_hash_lock.json",
+    "objective_guard.py",
+    "objective_hash_lock.py",
+    "tools/objective_guard_manifest_cli.py",
+    "reward_dispatcher.py",
+    "kpi_reward_core.py",
+    "reward_sanity_checker.py",
+    "kpi_editing_detector.py",
+    "mvp_evaluator.py",
+    "menace/core/evaluator.py",
+    "neurosales/neurosales/hierarchical_reward.py",
+    "neurosales/neurosales/reward_ledger.py",
+    "billing/billing_ledger.py",
+    "billing/billing_logger.py",
+    "billing/stripe_ledger.py",
+    "stripe_billing_router.py",
+    "finance_router_bot.py",
+    "stripe_watchdog.py",
+    "startup_health_check.py",
+    "finance_logs/",
+}
+
 
 class DummyManager:
     def __init__(self, *_, **kwargs):
@@ -259,3 +282,7 @@ def test_is_self_coding_unsafe_path_blocks_all_canonical_objective_paths(monkeyp
         candidate.parent.mkdir(parents=True, exist_ok=True)
         candidate.write_text("pass\n", encoding="utf-8")
         assert is_self_coding_unsafe_path(candidate, repo_root=tmp_path), rule
+
+
+def test_objective_adjacent_inventory_contains_required_control_and_payout_paths():
+    assert REQUIRED_OBJECTIVE_ADJACENT_PATHS.issubset(set(OBJECTIVE_ADJACENT_UNSAFE_PATHS))
