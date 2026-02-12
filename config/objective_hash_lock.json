@@ -1,5 +1,29 @@
 {
   "algorithm": "sha256",
+  "audit": [
+    {
+      "action": "rotate",
+      "files": [
+        "billing/billing_ledger.py",
+        "billing/billing_logger.py",
+        "billing/stripe_ledger.py",
+        "finance_router_bot.py",
+        "kpi_editing_detector.py",
+        "kpi_reward_core.py",
+        "menace/core/evaluator.py",
+        "mvp_evaluator.py",
+        "neurosales/neurosales/hierarchical_reward.py",
+        "neurosales/neurosales/reward_ledger.py",
+        "reward_dispatcher.py",
+        "reward_sanity_checker.py",
+        "startup_health_check.py",
+        "stripe_billing_router.py"
+      ],
+      "when": "2026-02-12T03:12:32.126610+00:00",
+      "who": "codex",
+      "why": "align canonical objective surface"
+    }
+  ],
   "files": {
     "billing/billing_ledger.py": "26861ddc632f28aac1b84c9f0ba7318ac5b84093e8dcaf1fe30a5cc21e086a80",
     "billing/billing_logger.py": "e4bb17a0fdfc1480084036f9c6351157dfcdef0eeeb9454efece8ae3bd24aee8",
@@ -15,6 +39,14 @@
     "reward_sanity_checker.py": "92fcb8215dcd16e2964406071cff3813b18cff25221bde184d34c7873a6c3678",
     "startup_health_check.py": "8989356ee14cea5ec32657159a5e416a8002dc26caca4287dc7f5a4665a38528",
     "stripe_billing_router.py": "c1eefa61ad255befa2025575cf8fb2aad791acd4bfcbc6880c80405095d67814"
+  },
+  "manifest_sha256": "72199d351ae280cd774f993d416f9b57ab7121db35c62c8b42a10346082962fe",
+  "trusted_baseline": {
+    "mode": "rotate",
+    "previous_manifest_sha256": null,
+    "when": "2026-02-12T03:12:32.126610+00:00",
+    "who": "codex",
+    "why": "align canonical objective surface"
   },
   "version": 1
 }

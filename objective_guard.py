@@ -17,10 +17,14 @@ import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+from objective_surface_policy import (
+    OBJECTIVE_ADJACENT_HASH_PATHS,
+    OBJECTIVE_ADJACENT_UNSAFE_PATHS,
+)
 
 
 _DEFAULT_PROTECTED_SPECS: tuple[str, ...] = OBJECTIVE_ADJACENT_UNSAFE_PATHS
+_DEFAULT_HASH_SPECS: tuple[str, ...] = OBJECTIVE_ADJACENT_HASH_PATHS
 
 DEFAULT_OBJECTIVE_HASH_MANIFEST = "config/objective_hash_lock.json"
 
@@ -66,7 +70,7 @@ class ObjectiveGuard:
         resolved_hash_specs = self._parse_specs(
             hash_specs,
             env_var="MENACE_SELF_CODING_OBJECTIVE_HASH_PATHS",
-            default=tuple(spec.raw for spec in self.protected_specs if not spec.prefix),
+            default=_DEFAULT_HASH_SPECS,
         )
         self.hash_specs = tuple(self._build_spec(spec) for spec in resolved_hash_specs)
         self.manifest_path = (

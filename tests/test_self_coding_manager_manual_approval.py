@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+
 stub_env = types.ModuleType("environment_bootstrap")
 stub_env.EnvironmentBootstrapper = object
 sys.modules.setdefault("environment_bootstrap", stub_env)
@@ -258,3 +260,35 @@ def test_run_patch_denied_includes_reason_code():
     assert denied
     assert denied[0]["reason_code"] == "manual_approval_missing"
     assert denied[0]["reason_codes"] == ("manual_approval_missing",)
+
+
+def test_manual_approval_policy_blocks_all_canonical_objective_paths(monkeypatch, tmp_path):
+    from menace_sandbox.self_coding_policy import is_self_coding_unsafe_path as real_is_unsafe
+
+    class DummyVerifier:
+        def verify(self, path: Path) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        scm,
+        "is_self_coding_unsafe_path",
+        lambda path, *, repo_root=None: real_is_unsafe(path, repo_root=tmp_path),
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0),
+    )
+
+    policy = scm.PatchApprovalPolicy(verifier=DummyVerifier(), bot_name="bot")
+
+    for rule in OBJECTIVE_ADJACENT_UNSAFE_PATHS:
+        if rule.endswith("/"):
+            candidate = tmp_path / rule.rstrip("/") / "nested.py"
+        else:
+            candidate = tmp_path / rule
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text("x = 1\n", encoding="utf-8")
+
+        assert policy.approve(candidate) is False, rule
+        assert "manual_approval_missing" in policy.last_decision["reason_codes"]
