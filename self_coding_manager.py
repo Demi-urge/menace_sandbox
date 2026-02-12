@@ -32,11 +32,13 @@ try:  # pragma: no cover - policy import for unsafe paths
     from .self_coding_policy import (
         ensure_self_coding_unsafe_paths_env,
         get_patch_promotion_policy,
+        is_self_coding_unsafe_path,
     )
 except Exception:  # pragma: no cover - fallback for flat layout
     from self_coding_policy import (  # type: ignore
         ensure_self_coding_unsafe_paths_env,
         get_patch_promotion_policy,
+        is_self_coding_unsafe_path,
     )
 try:  # pragma: no cover - allow package/flat imports
     from .self_coding_divergence_detector import (
@@ -62,6 +64,7 @@ import uuid
 import os
 import importlib
 import shlex
+from datetime import datetime, timezone
 from dataclasses import asdict, dataclass
 from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
 
@@ -1192,6 +1195,18 @@ def _get_target_region_cls() -> type[_TargetRegion]:
     return _TARGET_REGION_CLS
 
 
+class ObjectiveAdjacentPathClassifier:
+    """Classify patch targets using the shared objective-surface manifest."""
+
+    def __init__(self, *, repo_root: Path | None = None) -> None:
+        self.repo_root = (repo_root or Path.cwd()).resolve()
+
+    def classify(self, path: Path) -> str:
+        if is_self_coding_unsafe_path(path, repo_root=self.repo_root):
+            return "objective_adjacent"
+        return "standard"
+
+
 class PatchApprovalPolicy:
     """Run formal verification and tests before patching.
 
@@ -1212,6 +1227,7 @@ class PatchApprovalPolicy:
         bot_name: str = "menace",
         test_command: list[str] | None = None,
         threshold_service: ThresholdService | None = None,
+        path_classifier: ObjectiveAdjacentPathClassifier | None = None,
     ) -> None:
         self.verifier = verifier or FormalVerifier()
         self.rollback_mgr = rollback_mgr
@@ -1232,11 +1248,17 @@ class PatchApprovalPolicy:
                 except Exception:  # pragma: no cover - settings issues
                     test_command = None
         self.test_command = list(test_command) if test_command else ["pytest", "-q"]
+        self._path_classifier = path_classifier or ObjectiveAdjacentPathClassifier(
+            repo_root=Path.cwd().resolve()
+        )
         self.last_decision: dict[str, Any] = {
             "approved": False,
             "reason_codes": (),
             "target_classification": "standard",
             "approval_source": None,
+            "approval_actor": None,
+            "approval_timestamp": None,
+            "approval_rationale": None,
         }
 
     # ------------------------------------------------------------------
@@ -1246,11 +1268,44 @@ class PatchApprovalPolicy:
 
     def classify_target(self, path: Path) -> str:
         """Classify *path* for approval handling."""
+        return self._path_classifier.classify(path)
 
-        policy = get_patch_promotion_policy(repo_root=Path.cwd().resolve())
-        if policy.is_safe_target(path):
-            return "standard"
-        return "objective_adjacent"
+    def _record_decision(
+        self,
+        *,
+        approved: bool,
+        path: Path,
+        classification: str,
+        approval_source: str | None,
+        reason_codes: list[str],
+    ) -> None:
+        rationale = "checks_passed" if approved else ",".join(reason_codes) or "approval_denied"
+        actor = os.getenv("MENACE_APPROVAL_ACTOR", "automation")
+        if approval_source is not None:
+            actor = f"{actor}:{approval_source}"
+        timestamp = datetime.now(timezone.utc).isoformat()
+        self.last_decision = {
+            "approved": approved,
+            "reason_codes": tuple(reason_codes),
+            "target_classification": classification,
+            "approval_source": approval_source,
+            "approval_actor": actor,
+            "approval_timestamp": timestamp,
+            "approval_rationale": rationale,
+        }
+        level = logging.INFO if approved else logging.WARNING
+        self.logger.log(
+            level,
+            "patch approval decision for %s",
+            path_for_prompt(path),
+            extra={
+                "event": "self_coding_approval_decision",
+                "actor": actor,
+                "timestamp": timestamp,
+                "file": path_for_prompt(path),
+                "rationale": rationale,
+            },
+        )
 
     @staticmethod
     def _path_matches_rule(path: Path, rule: str) -> bool:
@@ -1320,12 +1375,13 @@ class PatchApprovalPolicy:
             )
             if approval_source is None:
                 reason_codes.append(self.REASON_MANUAL_APPROVAL_MISSING)
-                self.last_decision = {
-                    "approved": False,
-                    "reason_codes": tuple(reason_codes),
-                    "target_classification": classification,
-                    "approval_source": None,
-                }
+                self._record_decision(
+                    approved=False,
+                    path=path,
+                    classification=classification,
+                    approval_source=None,
+                    reason_codes=reason_codes,
+                )
                 self.logger.warning(
                     "manual approval required for objective-adjacent target: %s",
                     path_for_prompt(path),
@@ -1370,12 +1426,13 @@ class PatchApprovalPolicy:
                     "approval_source": approval_source,
                 },
             )
-        self.last_decision = {
-            "approved": ok,
-            "reason_codes": tuple(reason_codes),
-            "target_classification": classification,
-            "approval_source": approval_source,
-        }
+        self._record_decision(
+            approved=ok,
+            path=path,
+            classification=classification,
+            approval_source=approval_source,
+            reason_codes=reason_codes,
+        )
         return ok
 
 
@@ -1387,6 +1444,7 @@ class ObjectiveApprovalPolicy:
     def __init__(self, *, repo_root: Path | None = None) -> None:
         self.repo_root = (repo_root or Path.cwd()).resolve()
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._path_classifier = ObjectiveAdjacentPathClassifier(repo_root=self.repo_root)
         self.last_decision: dict[str, Any] = {
             "approved": False,
             "reason_codes": (),
@@ -1395,10 +1453,7 @@ class ObjectiveApprovalPolicy:
         }
 
     def classify_target(self, path: Path) -> str:
-        policy = get_patch_promotion_policy(repo_root=self.repo_root)
-        if policy.is_safe_target(path):
-            return "standard"
-        return "objective_adjacent"
+        return self._path_classifier.classify(path)
 
     def approve(self, path: Path, *, manual_approval_token: str | None = None) -> bool:
         classification = self.classify_target(path)
@@ -4217,6 +4272,8 @@ class SelfCodingManager:
                 if self.event_bus:
                     try:
                         self.event_bus.publish("self_coding:approval_denied", deny_payload)
+                        if primary_reason == PatchApprovalPolicy.REASON_MANUAL_APPROVAL_MISSING:
+                            self.event_bus.publish("self_coding:manual_approval_required", deny_payload)
                     except Exception:
                         self.logger.exception("failed to publish approval_denied event")
                 raise RuntimeError("patch approval failed")
