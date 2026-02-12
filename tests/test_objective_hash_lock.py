@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import json
 
 import pytest
 
@@ -192,3 +193,101 @@ def test_verify_objective_hash_lock_uses_manifest_directory_specs_without_env_ov
 
     assert report["files"] == ["finance_logs/payout_log.json"]
     assert report["configured_hash_specs"] == ["finance_logs/"]
+
+
+def test_manifest_cli_approve_change_alias_rotates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_SELF_CODING_OBJECTIVE_HASH_PATHS", "reward_dispatcher.py")
+    monkeypatch.setenv("MENACE_SELF_CODING_PROTECTED_PATHS", "reward_dispatcher.py")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "objective_guard_manifest_cli.py",
+            "--operator",
+            "alice",
+            "--reason",
+            "bootstrap",
+            "refresh",
+        ],
+    )
+    assert objective_guard_manifest_cli.main() == 0
+
+    reward.write_text("CHANGED\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "objective_guard_manifest_cli.py",
+            "--operator",
+            "bob",
+            "--reason",
+            "intentional objective update",
+            "approve-change",
+        ],
+    )
+    assert objective_guard_manifest_cli.main() == 0
+    out = capsys.readouterr().out
+    assert "updated manifest" in out
+
+
+def test_manifest_cli_reset_lock_requires_rotated_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+    guard.write_manifest(operator="alice", reason="approved bootstrap", command_source="tools/objective_guard_manifest_cli.py")
+
+    manifest = json.loads((tmp_path / "config" / "objective_hash_lock.json").read_text(encoding="utf-8"))
+    lock_path = tmp_path / "config" / "objective_integrity_lock.json"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "locked": True,
+                "manifest_sha_at_breach": manifest["manifest_sha256"],
+                "requires_manifest_refresh": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "objective_guard_manifest_cli.py",
+            "--operator",
+            "ops",
+            "--reason",
+            "try reset",
+            "reset-lock",
+        ],
+    )
+    assert objective_guard_manifest_cli.main() == 1
+    assert "rotate objective hash baseline first" in capsys.readouterr().out
+
+    reward.write_text("ROTATED\n", encoding="utf-8")
+    guard.write_manifest(operator="bob", reason="approved objective update", rotation=True, command_source="tools/objective_guard_manifest_cli.py")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "objective_guard_manifest_cli.py",
+            "--operator",
+            "ops",
+            "--reason",
+            "baseline rotated",
+            "reset-lock",
+        ],
+    )
+    assert objective_guard_manifest_cli.main() == 0
+    assert lock_path.exists() is False

@@ -479,6 +479,39 @@ def test_objective_integrity_breach_partial_rollback_emits_critical(monkeypatch)
     )
 
 
+
+
+def test_objective_integrity_lock_blocks_until_reset_and_manifest_rotation(monkeypatch):
+    mgr = object.__new__(scm.SelfCodingManager)
+    mgr.bot_name = "bot"
+    mgr.logger = types.SimpleNamespace(exception=lambda *a, **k: None)
+    mgr.objective_guard = types.SimpleNamespace()
+    mgr._objective_breach_lock = scm.threading.Lock()
+    mgr._objective_breach_handled = True
+    mgr._self_coding_paused = True
+    mgr._self_coding_disabled_reason = "objective_integrity_breach"
+    mgr._objective_lock_requires_manifest_refresh = True
+    mgr._objective_lock_manifest_sha_at_breach = "sha-before"
+    mgr.bot_registry = types.SimpleNamespace(graph=types.SimpleNamespace(nodes={"bot": {}}))
+    mgr._persist_registry_state = lambda: None
+    mgr._record_audit_event = lambda payload: None
+    mgr._clear_objective_integrity_lock = lambda: None
+
+    with pytest.raises(RuntimeError, match=r"operator reset \+ objective hash baseline refresh required"):
+        mgr._ensure_self_coding_active()
+
+    monkeypatch.setattr(scm, "verify_objective_hash_lock", lambda guard: {"ok": True})
+    monkeypatch.setattr(mgr, "_read_manifest_sha", lambda: "sha-before")
+
+    with pytest.raises(RuntimeError, match="refresh objective hash baseline"):
+        mgr.reset_objective_integrity_lock(operator_id="ops", reason="try too early")
+
+    monkeypatch.setattr(mgr, "_read_manifest_sha", lambda: "sha-after")
+    mgr.reset_objective_integrity_lock(operator_id="ops", reason="manifest rotated")
+
+    assert mgr._self_coding_paused is False
+    assert mgr._objective_lock_requires_manifest_refresh is False
+
 def test_auto_run_patch_breach_rolls_back_by_patch_id(monkeypatch, tmp_path):
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
 

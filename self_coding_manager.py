@@ -145,6 +145,7 @@ try:
 except ValueError:
     _BOTPLANNINGBOT_MANAGER_CONSTRUCTION_TIMEOUT_FALLBACK_SECONDS = 105.0
 _HEAVY_MANAGER_TIMEOUT_BOT_KEYS = {"BOTPLANNINGBOT"}
+_OBJECTIVE_INTEGRITY_LOCK_PATH = Path("config/objective_integrity_lock.json")
 _RAW_HEAVY_MANAGER_TIMEOUT_MIN_SECONDS = os.getenv(
     "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_MIN_SECONDS_HEAVY_BOTS", "90"
 ).strip()
@@ -1592,6 +1593,8 @@ class SelfCodingManager:
         self._objective_breach_lock = threading.Lock()
         self._objective_breach_handled = False
         self._active_objective_checkpoint: Dict[str, Any] | None = None
+        self._objective_lock_manifest_sha_at_breach: str | None = None
+        self._objective_lock_requires_manifest_refresh = False
         self._self_coding_paused = False
         self._self_coding_disabled_reason: str | None = None
         self._self_coding_pause_source: str | None = None
@@ -3408,9 +3411,61 @@ class SelfCodingManager:
 
     def _ensure_self_coding_active(self) -> None:
         if getattr(self, "_self_coding_paused", False):
+            if getattr(self, "_objective_lock_requires_manifest_refresh", False):
+                raise RuntimeError(
+                    "self-coding paused: objective_integrity_breach "
+                    "(operator reset + objective hash baseline refresh required)"
+                )
             raise RuntimeError(
                 f"self-coding paused: {getattr(self, '_self_coding_disabled_reason', 'paused')}"
             )
+
+    def _objective_integrity_lock_path(self) -> Path:
+        guard = getattr(self, "objective_guard", None)
+        repo_root = Path.cwd().resolve() if guard is None else guard.repo_root
+        return (repo_root / _OBJECTIVE_INTEGRITY_LOCK_PATH).resolve()
+
+    def _read_manifest_sha(self) -> str | None:
+        guard = getattr(self, "objective_guard", None)
+        manifest_path = (
+            Path("config/objective_hash_lock.json").resolve()
+            if guard is None
+            else guard.manifest_path.resolve()
+        )
+        if not manifest_path.exists():
+            return None
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if isinstance(payload, dict):
+            manifest_sha = payload.get("manifest_sha256")
+            if isinstance(manifest_sha, str) and manifest_sha.strip():
+                return manifest_sha.strip()
+        return None
+
+    def _persist_objective_integrity_lock(self, details: Dict[str, Any]) -> None:
+        target = self._objective_integrity_lock_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "bot": self.bot_name,
+            "locked": True,
+            "reason": "objective_integrity_breach",
+            "requires_operator_reset": True,
+            "requires_manifest_refresh": True,
+            "manifest_sha_at_breach": self._objective_lock_manifest_sha_at_breach,
+            "details": details,
+            "locked_at": datetime.now(timezone.utc).isoformat(),
+        }
+        target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def _clear_objective_integrity_lock(self) -> None:
+        target = self._objective_integrity_lock_path()
+        if target.exists():
+            try:
+                target.unlink()
+            except Exception:
+                self.logger.exception("failed to clear objective integrity lock file")
 
     def _record_audit_event(self, payload: Dict[str, Any]) -> None:
         engine = getattr(self, "engine", None)
@@ -3447,9 +3502,33 @@ class SelfCodingManager:
             return
         reason = disabled_state.get("reason")
         if not reason:
+            reason = None
+        lock_path = self._objective_integrity_lock_path()
+        lock_payload: Dict[str, Any] | None = None
+        if lock_path.exists():
+            try:
+                raw = json.loads(lock_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    lock_payload = raw
+            except Exception:
+                self.logger.exception("failed to read objective integrity lock file")
+        if reason is None and lock_payload is None:
+            return
+        if isinstance(lock_payload, dict):
+            self._objective_lock_manifest_sha_at_breach = (
+                str(lock_payload.get("manifest_sha_at_breach"))
+                if lock_payload.get("manifest_sha_at_breach")
+                else None
+            )
+            self._objective_lock_requires_manifest_refresh = bool(
+                lock_payload.get("requires_manifest_refresh", False)
+            )
+        elif str(reason) == "objective_integrity_breach":
+            # If no explicit integrity lock file exists, treat the breach as
+            # operator-cleared so autonomy can resume after restart.
             return
         self._self_coding_paused = True
-        self._self_coding_disabled_reason = str(reason)
+        self._self_coding_disabled_reason = str(reason or "objective_integrity_breach")
 
     @staticmethod
     def _metric_from_context(context_meta: Dict[str, Any] | None, *keys: str) -> float | None:
@@ -4126,6 +4205,10 @@ class SelfCodingManager:
 
         self._self_coding_paused = True
         self._self_coding_disabled_reason = reason
+        if reason == "objective_integrity_breach":
+            self._objective_lock_requires_manifest_refresh = True
+            self._objective_lock_manifest_sha_at_breach = self._read_manifest_sha()
+            self._persist_objective_integrity_lock(details)
         registry = getattr(self, "bot_registry", None)
         graph = getattr(registry, "graph", None)
         nodes = getattr(graph, "nodes", None)
@@ -4136,16 +4219,35 @@ class SelfCodingManager:
                     "source": "objective_integrity_breach",
                     "reason": reason,
                     "details": details,
+                    "requires_manifest_refresh": self._objective_lock_requires_manifest_refresh,
+                    "manifest_sha_at_breach": self._objective_lock_manifest_sha_at_breach,
                 }
         self._persist_registry_state()
 
-    def reset_objective_integrity_lock(self) -> None:
+    def reset_objective_integrity_lock(self, *, operator_id: str, reason: str) -> None:
         """Allow operators to explicitly resume self-coding after an objective breach."""
+
+        if not operator_id.strip():
+            raise ValueError("operator_id is required")
+        if not reason.strip():
+            raise ValueError("reason is required")
+        verify_objective_hash_lock(guard=self.objective_guard)
+        current_manifest_sha = self._read_manifest_sha()
+        if (
+            self._objective_lock_requires_manifest_refresh
+            and self._objective_lock_manifest_sha_at_breach
+            and current_manifest_sha == self._objective_lock_manifest_sha_at_breach
+        ):
+            raise RuntimeError(
+                "objective integrity lock reset denied: refresh objective hash baseline first"
+            )
 
         with self._objective_breach_lock:
             self._objective_breach_handled = False
             self._self_coding_paused = False
             self._self_coding_disabled_reason = None
+            self._objective_lock_requires_manifest_refresh = False
+            self._objective_lock_manifest_sha_at_breach = None
         registry = getattr(self, "bot_registry", None)
         graph = getattr(registry, "graph", None)
         nodes = getattr(graph, "nodes", None)
@@ -4153,6 +4255,17 @@ class SelfCodingManager:
             node_state = nodes.setdefault(self.bot_name, {})
             if isinstance(node_state, dict):
                 node_state.pop("self_coding_disabled", None)
+        self._record_audit_event(
+            {
+                "event": "objective_integrity_lock_reset",
+                "severity": "high",
+                "bot": self.bot_name,
+                "operator_id": operator_id,
+                "reason": reason,
+                "manifest_refreshed": True,
+            }
+        )
+        self._clear_objective_integrity_lock()
         self._persist_registry_state()
 
     def _run_integrity_check_hook(self, *, stage: str, path: Path) -> None:
@@ -4330,7 +4443,7 @@ class SelfCodingManager:
         if changed_files:
             restore_ok, restore_method, restore_errors = self._restore_objective_files(
                 changed_files=changed_files,
-                checkpoint=(objective_checkpoint or self._active_objective_checkpoint),
+                checkpoint=(objective_checkpoint or getattr(self, "_active_objective_checkpoint", None)),
             )
 
         telemetry_payload.update(
