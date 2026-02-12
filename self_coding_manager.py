@@ -3437,7 +3437,7 @@ class SelfCodingManager:
         ]
         telemetry_payload: Dict[str, Any] = {
             "severity": "high",
-            "event": "self_coding_divergence_alert",
+            "event": "self_coding_divergence_kill_switch",
             "bot": self.bot_name,
             "reason": reason,
             "window": self._divergence_window,
@@ -3448,6 +3448,8 @@ class SelfCodingManager:
             "detected_metric": detection.metric_name,
             "reward_delta": detection.reward_delta,
             "real_metric_delta": detection.real_metric_delta,
+            "reward_trend": detection.reward_trend,
+            "real_metric_trend": detection.real_metric_trend,
             "context_meta": dict(context_meta or {}),
         }
         self._self_coding_paused = True
@@ -3464,6 +3466,7 @@ class SelfCodingManager:
         )
         if self.event_bus:
             try:
+                self.event_bus.publish("self_coding:divergence_kill_switch", telemetry_payload)
                 self.event_bus.publish("self_coding:critical_divergence", telemetry_payload)
                 self.event_bus.publish("self_coding:high_severity_alert", telemetry_payload)
             except Exception:

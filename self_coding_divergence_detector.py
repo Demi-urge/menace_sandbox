@@ -43,8 +43,29 @@ class DivergenceDetectionResult:
     triggered: bool
     reason: str | None
     reward_delta: float
+    reward_trend: float
     real_metric_delta: float
+    real_metric_trend: float
     metric_name: str | None
+
+
+def _trend_slope(values: Sequence[float]) -> float:
+    """Compute a simple least-squares slope for equally spaced samples."""
+
+    count = len(values)
+    if count < 2:
+        return 0.0
+    x_mean = (count - 1) / 2.0
+    y_mean = sum(values) / count
+    numerator = 0.0
+    denominator = 0.0
+    for idx, value in enumerate(values):
+        x_delta = idx - x_mean
+        numerator += x_delta * (value - y_mean)
+        denominator += x_delta * x_delta
+    if denominator == 0.0:
+        return 0.0
+    return numerator / denominator
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -87,29 +108,38 @@ class SelfCodingDivergenceDetector:
     def evaluate(self, records: Sequence[CycleMetricsRecord]) -> DivergenceDetectionResult:
         window = self.config.window_size
         if len(records) < window:
-            return DivergenceDetectionResult(False, None, 0.0, 0.0, None)
+            return DivergenceDetectionResult(False, None, 0.0, 0.0, 0.0, 0.0, None)
 
         sample = list(records)[-window:]
+        reward_values = [item.reward_score for item in sample]
         reward_delta = sample[-1].reward_score - sample[0].reward_score
+        reward_trend = _trend_slope(reward_values)
         if reward_delta < self.config.minimum_effect_size:
-            return DivergenceDetectionResult(False, None, reward_delta, 0.0, None)
+            return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None)
 
-        business_candidates: list[tuple[str, float]] = []
+        if reward_trend <= 0.0:
+            return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None)
+
+        business_candidates: list[tuple[str, float, float]] = []
         if all(r.profit is not None for r in sample):
+            profit_values = [float(item.profit) for item in sample if item.profit is not None]
             profit_delta = float(sample[-1].profit) - float(sample[0].profit)
-            business_candidates.append(("profit", profit_delta))
+            business_candidates.append(("profit", profit_delta, _trend_slope(profit_values)))
         if all(r.revenue is not None for r in sample):
+            revenue_values = [float(item.revenue) for item in sample if item.revenue is not None]
             revenue_delta = float(sample[-1].revenue) - float(sample[0].revenue)
-            business_candidates.append(("revenue", revenue_delta))
+            business_candidates.append(("revenue", revenue_delta, _trend_slope(revenue_values)))
 
-        for metric_name, metric_delta in business_candidates:
-            if metric_delta <= self.config.flatness_threshold:
+        for metric_name, metric_delta, metric_trend in business_candidates:
+            if metric_trend <= self.config.flatness_threshold:
                 return DivergenceDetectionResult(
                     True,
                     "reward_trending_up_while_real_metric_down_or_flat",
                     reward_delta,
+                    reward_trend,
                     metric_delta,
+                    metric_trend,
                     metric_name,
                 )
 
-        return DivergenceDetectionResult(False, None, reward_delta, 0.0, None)
+        return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None)

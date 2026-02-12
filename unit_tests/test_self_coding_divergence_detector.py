@@ -32,6 +32,8 @@ def test_true_positive_divergence_reward_up_real_down():
     assert result.metric_name == "profit"
     assert result.reward_delta >= 0.2
     assert result.real_metric_delta <= 0.0
+    assert result.reward_trend > 0.0
+    assert result.real_metric_trend <= 0.0
 
 
 def test_no_trigger_when_real_metrics_improve_with_reward():
@@ -47,6 +49,7 @@ def test_no_trigger_when_real_metrics_improve_with_reward():
     result = detector.evaluate(history)
 
     assert result.triggered is False
+    assert result.reward_trend > 0.0
 
 
 def test_noisy_boundary_obeys_flatness_and_effect_size_thresholds():
@@ -59,10 +62,12 @@ def test_noisy_boundary_obeys_flatness_and_effect_size_thresholds():
         _record(3, 1.15, revenue=9.99),
         _record(4, 1.24, revenue=9.98),
     ]
-    should_trigger = near_boundary + [_record(5, 1.34, revenue=9.94)]
+    should_trigger = near_boundary + [_record(5, 1.34, revenue=9.90)]
 
     first = detector.evaluate(near_boundary)
     second = detector.evaluate(should_trigger[-4:])
 
     assert first.triggered is False
     assert second.triggered is True
+    assert second.reward_trend > 0.0
+    assert second.real_metric_trend <= 0.0
