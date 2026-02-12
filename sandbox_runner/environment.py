@@ -135,13 +135,38 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
         "self_debugger_sandbox",
     ]
     attempt_details: list[tuple[str, str, str]] = []
+    all_attempts_candidate_missing = True
     last_exc: Exception | None = None
 
     for module_name in candidates:
         try:
             module = importlib.import_module(module_name)
-        except (ModuleNotFoundError, ImportError) as exc:
+        except ModuleNotFoundError as exc:
             last_exc = exc
+            missing_module = module_name_from_module_not_found(exc)
+            candidate_missing = missing_module == module_name
+            if candidate_missing:
+                attempt_details.append(
+                    (
+                        module_name,
+                        type(exc).__name__,
+                        f"candidate missing ({missing_module!r}): {exc}",
+                    )
+                )
+            else:
+                all_attempts_candidate_missing = False
+                attempt_details.append(
+                    (
+                        module_name,
+                        "ImportError",
+                        "dependency import failure "
+                        f"(candidate={module_name!r}, missing={missing_module!r}): {exc}",
+                    )
+                )
+            continue
+        except ImportError as exc:
+            last_exc = exc
+            all_attempts_candidate_missing = False
             attempt_details.append((module_name, type(exc).__name__, str(exc)))
             continue
 
@@ -150,6 +175,7 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
                 f"module '{module_name}' has no attribute 'SelfDebuggerSandbox'"
             )
             last_exc = attr_exc
+            all_attempts_candidate_missing = False
             attempt_details.append((module_name, type(attr_exc).__name__, str(attr_exc)))
             continue
 
@@ -160,7 +186,7 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
         for module, exc_type, message in attempt_details
     )
     error_cls: type[ImportError]
-    if attempt_details and all(exc_type == "ModuleNotFoundError" for _, exc_type, _ in attempt_details):
+    if attempt_details and all_attempts_candidate_missing:
         error_cls = ModuleNotFoundError
     else:
         error_cls = ImportError
