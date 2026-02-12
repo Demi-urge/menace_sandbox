@@ -16,15 +16,10 @@ import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from self_coding_objective_paths import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
 
 
-_DEFAULT_PROTECTED_SPECS: tuple[str, ...] = (
-    *OBJECTIVE_ADJACENT_UNSAFE_PATHS,
-    "startup_health_check.py",
-    "neurosales/neurosales/hierarchical_reward.py",
-    "neurosales/neurosales/reward_ledger.py",
-)
+_DEFAULT_PROTECTED_SPECS: tuple[str, ...] = OBJECTIVE_ADJACENT_UNSAFE_PATHS
 
 DEFAULT_OBJECTIVE_HASH_MANIFEST = "config/objective_hash_lock.json"
 

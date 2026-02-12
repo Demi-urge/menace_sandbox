@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
-from self_coding_objective_paths import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
 
 
 def test_objective_guard_blocks_protected_target(tmp_path: Path) -> None:
@@ -129,8 +129,42 @@ def test_objective_guard_defaults_include_shared_objective_paths(tmp_path: Path)
     guard = ObjectiveGuard(repo_root=tmp_path)
 
     protected = {spec.normalized for spec in guard.protected_specs}
-    assert set(OBJECTIVE_ADJACENT_UNSAFE_PATHS).issubset(protected)
+    expected = {path.rstrip("/") for path in OBJECTIVE_ADJACENT_UNSAFE_PATHS}
+    assert expected.issubset(protected)
 
+
+
+def test_objective_guard_blocks_directory_protected_target(tmp_path: Path) -> None:
+    payout_file = tmp_path / "finance_logs" / "payout_log.json"
+    payout_file.parent.mkdir(parents=True, exist_ok=True)
+    payout_file.write_text("[]\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["finance_logs/"],
+        hash_specs=[],
+    )
+
+    with pytest.raises(ObjectiveGuardViolation) as exc:
+        guard.assert_patch_target_safe(payout_file)
+
+    assert exc.value.reason == "protected_target"
+
+
+def test_objective_guard_defaults_apply_without_env_vars(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("MENACE_SELF_CODING_PROTECTED_PATHS", raising=False)
+    monkeypatch.delenv("MENACE_SELF_CODING_OBJECTIVE_HASH_PATHS", raising=False)
+
+    payout_file = tmp_path / "finance_logs" / "payout_log.json"
+    payout_file.parent.mkdir(parents=True, exist_ok=True)
+    payout_file.write_text("[]\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(repo_root=tmp_path)
+
+    with pytest.raises(ObjectiveGuardViolation) as exc:
+        guard.assert_patch_target_safe(payout_file)
+
+    assert exc.value.reason == "protected_target"
 
 
 def test_objective_guard_manifest_hash_mismatch_exposes_changed_files(tmp_path: Path) -> None:

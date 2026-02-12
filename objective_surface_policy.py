@@ -17,7 +17,7 @@ OBJECTIVE_ADJACENT_UNSAFE_PATHS: tuple[str, ...] = (
     "billing/stripe_ledger.py",
     "stripe_billing_router.py",
     "finance_router_bot.py",
+    "finance_logs/",
 )
 
 __all__ = ["OBJECTIVE_ADJACENT_UNSAFE_PATHS"]
-
