@@ -1,0 +1,4 @@
+self_coding_divergence_guard:
+  window_size: 3
+  flatness_threshold: 0.0
+  minimum_effect_size: 0.1
