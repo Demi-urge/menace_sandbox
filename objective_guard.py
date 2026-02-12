@@ -10,6 +10,7 @@ The guard enforces two protections:
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -159,18 +160,70 @@ class ObjectiveGuard:
             return {}
         return self._hash_targets(self.hash_specs)
 
-    def write_manifest(self) -> dict[str, str]:
+    def _read_existing_manifest(self) -> dict[str, object]:
+        manifest = self.manifest_path
+        if not manifest.exists():
+            return {}
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if isinstance(payload, dict):
+            return payload
+        return {}
+
+    def write_manifest(
+        self,
+        *,
+        operator: str | None = None,
+        reason: str | None = None,
+        rotation: bool | None = None,
+    ) -> dict[str, str]:
         """Persist hashes for protected objective files.
 
         This method is intended for explicit operator workflows.
         """
 
         hashes = self.snapshot_hashes()
+        existing_payload = self._read_existing_manifest()
+        now = datetime.now(timezone.utc).isoformat()
+        resolved_operator = (operator or os.getenv("USER") or "unknown").strip() or "unknown"
+        resolved_reason = (reason or "baseline_bootstrap").strip() or "baseline_bootstrap"
+        is_rotation = bool(rotation) if rotation is not None else bool(existing_payload)
+        previous_digest = (
+            existing_payload.get("manifest_sha256") if isinstance(existing_payload, dict) else None
+        )
+
+        audit_entries: list[dict[str, object]] = []
+        if isinstance(existing_payload.get("audit"), list):
+            audit_entries = [
+                dict(entry) for entry in existing_payload["audit"] if isinstance(entry, dict)
+            ]
+        audit_entries.append(
+            {
+                "action": "rotate" if is_rotation else "bootstrap",
+                "who": resolved_operator,
+                "when": now,
+                "why": resolved_reason,
+                "files": sorted(hashes),
+            }
+        )
+
         payload = {
             "version": 1,
             "algorithm": "sha256",
             "files": hashes,
+            "trusted_baseline": {
+                "mode": "rotate" if is_rotation else "bootstrap",
+                "who": resolved_operator,
+                "when": now,
+                "why": resolved_reason,
+                "previous_manifest_sha256": previous_digest,
+            },
+            "audit": audit_entries,
         }
+        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        payload["manifest_sha256"] = hashlib.sha256(payload_bytes).hexdigest()
         self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
         self.manifest_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",

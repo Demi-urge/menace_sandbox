@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -186,3 +187,52 @@ def test_objective_guard_manifest_hash_mismatch_exposes_changed_files(tmp_path: 
 
     assert exc.value.reason == "manifest_hash_mismatch"
     assert "reward_dispatcher.py" in (exc.value.details.get("changed_files") or [])
+
+
+def test_objective_guard_manifest_bootstrap_records_audit_metadata(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+
+    manifest_path = tmp_path / "config" / "objective_hash_lock.json"
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=manifest_path,
+    )
+
+    guard.write_manifest(operator="alice", reason="initial trust bootstrap")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    baseline = payload.get("trusted_baseline", {})
+    assert baseline.get("mode") == "bootstrap"
+    assert baseline.get("who") == "alice"
+    assert baseline.get("why") == "initial trust bootstrap"
+    assert isinstance(payload.get("manifest_sha256"), str)
+    assert payload.get("audit", [{}])[-1].get("action") == "bootstrap"
+
+
+def test_objective_guard_manifest_rotate_preserves_audit_history(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+
+    manifest_path = tmp_path / "config" / "objective_hash_lock.json"
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=manifest_path,
+    )
+
+    guard.write_manifest(operator="alice", reason="bootstrap baseline")
+    first_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    reward.write_text("ROTATED\n", encoding="utf-8")
+    guard.write_manifest(operator="bob", reason="approved objective update", rotation=True)
+    second_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert second_payload["trusted_baseline"]["mode"] == "rotate"
+    assert second_payload["trusted_baseline"]["who"] == "bob"
+    assert second_payload["trusted_baseline"]["why"] == "approved objective update"
+    assert second_payload["trusted_baseline"]["previous_manifest_sha256"] == first_payload.get("manifest_sha256")
+    actions = [entry.get("action") for entry in second_payload.get("audit", [])]
+    assert actions == ["bootstrap", "rotate"]

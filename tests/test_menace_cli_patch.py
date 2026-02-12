@@ -150,3 +150,41 @@ def test_patch_description_and_context(monkeypatch, tmp_path):
     assert captured["description_apply"] == "something"
     assert captured["context"]["foo"] == "bar"
     assert captured["context"]["target_module"] == str(module)
+
+
+def test_objective_hash_lock_bootstrap_and_rotate(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+
+    monkeypatch.setenv("MENACE_SELF_CODING_OBJECTIVE_HASH_PATHS", "reward_dispatcher.py")
+    monkeypatch.setenv("MENACE_SELF_CODING_PROTECTED_PATHS", "reward_dispatcher.py")
+
+    rc = menace_cli.main([
+        "objective-hash-lock",
+        "bootstrap",
+        "--operator",
+        "alice",
+        "--reason",
+        "initial trust",
+    ])
+    assert rc == 0
+    first = json.loads(capsys.readouterr().out.strip())
+    assert first["action"] == "bootstrap"
+
+    reward.write_text("MUTATED\n", encoding="utf-8")
+    rc = menace_cli.main([
+        "objective-hash-lock",
+        "rotate",
+        "--operator",
+        "bob",
+        "--reason",
+        "approved change",
+    ])
+    assert rc == 0
+    second = json.loads(capsys.readouterr().out.strip())
+    assert second["action"] == "rotate"
+
+    manifest = json.loads((tmp_path / "config" / "objective_hash_lock.json").read_text(encoding="utf-8"))
+    assert manifest["trusted_baseline"]["who"] == "bob"
+    assert manifest["audit"][-1]["action"] == "rotate"
