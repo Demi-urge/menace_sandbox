@@ -3060,6 +3060,106 @@ def test_run_post_patch_cycle_circuit_breaker_blocks_followup_patches(monkeypatc
     assert mgr2._self_coding_paused is True
     assert mgr2._self_coding_disabled_reason == "objective_integrity_breach"
 
+def test_run_patch_precommit_objective_mutation_trips_and_restores(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+            self.patch_db = None
+
+    class DummyQuickFix:
+        def __init__(self, objective_file: Path):
+            self.context_builder = None
+            self._objective_file = objective_file
+
+        def validate_patch(self, *_a, **_k):
+            return True, []
+
+        def apply_validated_patch(self, module_name, *_a, **_k):
+            Path(module_name).write_text("value = 2\n", encoding="utf-8")
+            self._objective_file.write_text("MUTATED\n", encoding="utf-8")
+            return True, 314, []
+
+    class DummyRollbackManager:
+        attempts: list[tuple[str, str | None]] = []
+
+        def rollback(self, commit, requesting_bot=None):
+            self.attempts.append((str(commit), requesting_bot))
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, dict(payload)))
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text("value = 1\n", encoding="utf-8")
+    protected_file = tmp_path / "reward_dispatcher.py"
+    protected_file.write_text("SAFE\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(module_path, dst / module_path.name)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["git", "config", "user.email"] or cmd[:3] == ["git", "config", "user.name"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["git", "checkout", "-b"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["git", "add"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["git", "commit"]:
+            raise AssertionError("commit should not run after objective mutation")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda *_a, **_k: types.SimpleNamespace(
+            success=True, failure=None, stdout="1 passed", stderr="", duration=0.01
+        ),
+    )
+    monkeypatch.setattr(scm, "create_context_builder", lambda: types.SimpleNamespace(refresh_db_weights=lambda: None))
+    monkeypatch.setattr(scm, "ensure_fresh_weights", lambda _builder: None)
+    monkeypatch.setattr(scm, "RollbackManager", DummyRollbackManager)
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=DummyQuickFix(protected_file),
+        event_bus=event_bus,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+    monkeypatch.setattr(mgr, "_objective_checkpoint_paths", lambda: [protected_file.name])
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        mgr.run_patch(module_path, "mutate objective", provenance_token="token")
+
+    assert mgr._self_coding_paused is True
+    assert mgr._self_coding_disabled_reason == "objective_integrity_breach"
+    assert protected_file.read_text(encoding="utf-8") == "SAFE\n"
+    assert ("314", "bot") in DummyRollbackManager.attempts
+    restoration_events = [
+        payload
+        for topic, payload in events
+        if topic == "self_coding:objective_file_mutation_restoration"
+    ]
+    assert restoration_events
+    assert restoration_events[0]["changed_objective_files"] == [protected_file.name]
+    assert restoration_events[0]["restoration_ok"] is True
+    assert restoration_events[0]["restoration_method"] in {
+        "baseline_snapshot",
+        "baseline_snapshot+git_checkout",
+    }
+
 
 def test_handle_objective_integrity_breach_emits_trip_event_and_rolls_back(monkeypatch, tmp_path):
     class Engine:

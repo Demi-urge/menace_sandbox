@@ -64,6 +64,7 @@ import uuid
 import os
 import importlib
 import shlex
+import hashlib
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass
 from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
@@ -1590,6 +1591,7 @@ class SelfCodingManager:
         self._last_validation_summary: Dict[str, Any] | None = None
         self._objective_breach_lock = threading.Lock()
         self._objective_breach_handled = False
+        self._active_objective_checkpoint: Dict[str, Any] | None = None
         self._self_coding_paused = False
         self._self_coding_disabled_reason: str | None = None
         self._self_coding_pause_source: str | None = None
@@ -4007,6 +4009,7 @@ class SelfCodingManager:
                     violation=exc,
                     path=path,
                     stage="auto_run_patch",
+                    objective_checkpoint=getattr(self, "_active_objective_checkpoint", None),
                 )
             raise
         commit = getattr(self, "_last_commit_hash", None)
@@ -4213,6 +4216,7 @@ class SelfCodingManager:
                 self.event_bus.publish("self_coding:circuit_breaker_triggered", payload)
             except Exception:
                 self.logger.exception("failed to publish circuit breaker event")
+        self._active_objective_checkpoint = None
         raise RuntimeError("objective integrity circuit breaker triggered")
 
     def _resolve_current_or_last_patch_commit(self) -> tuple[str | None, Dict[str, Any]]:
@@ -4236,6 +4240,7 @@ class SelfCodingManager:
         violation: ObjectiveGuardViolation,
         path: Path,
         stage: str,
+        objective_checkpoint: Dict[str, Any] | None = None,
     ) -> None:
         """Roll back latest patch state and halt self-coding after objective drift."""
 
@@ -4319,11 +4324,24 @@ class SelfCodingManager:
         else:
             rollback_error = "no_patch_available"
 
+        restore_ok = True
+        restore_method = "not_required"
+        restore_errors: list[str] = []
+        if changed_files:
+            restore_ok, restore_method, restore_errors = self._restore_objective_files(
+                changed_files=changed_files,
+                checkpoint=(objective_checkpoint or self._active_objective_checkpoint),
+            )
+
         telemetry_payload.update(
             {
                 "rollback_attempted": rollback_attempted,
                 "rollback_ok": rollback_ok,
                 "rollback_error": rollback_error,
+                "restoration_attempted": bool(changed_files),
+                "restoration_ok": restore_ok,
+                "restoration_method": restore_method,
+                "restoration_errors": restore_errors,
             }
         )
         self._set_self_coding_disabled_state("objective_integrity_breach", details=details)
@@ -4341,6 +4359,10 @@ class SelfCodingManager:
                     "self_coding:objective_circuit_breaker_trip",
                     telemetry_payload,
                 )
+                self.event_bus.publish(
+                    "self_coding:objective_file_mutation_restoration",
+                    telemetry_payload,
+                )
             except Exception:
                 self.logger.exception("failed to publish objective integrity breach event")
         if rollback_attempted and not rollback_ok and self.event_bus:
@@ -4353,7 +4375,142 @@ class SelfCodingManager:
                 self.logger.exception(
                     "failed to publish objective integrity rollback failure telemetry"
                 )
+        self._active_objective_checkpoint = None
         raise RuntimeError("objective integrity breach triggered self-coding halt")
+
+    def _objective_checkpoint_paths(self) -> list[str]:
+        guard = getattr(self, "objective_guard", None)
+        if guard is None or not getattr(guard, "enabled", True):
+            return []
+        paths: list[str] = []
+        for spec in getattr(guard, "hash_specs", ()):
+            if getattr(spec, "prefix", False):
+                continue
+            normalized = str(getattr(spec, "normalized", "")).strip()
+            if normalized:
+                paths.append(normalized)
+        return sorted(set(paths))
+
+    def _capture_objective_checkpoint(self, *, stage: str) -> Dict[str, Any]:
+        guard = getattr(self, "objective_guard", None)
+        repo_root = Path.cwd().resolve() if guard is None else guard.repo_root
+        files: Dict[str, Dict[str, Any]] = {}
+        tracked_paths = self._objective_checkpoint_paths()
+        for rel in tracked_paths:
+            target = (repo_root / rel).resolve()
+            exists = target.exists() and target.is_file()
+            content: bytes | None = None
+            sha256: str | None = None
+            if exists:
+                content = target.read_bytes()
+                sha256 = hashlib.sha256(content).hexdigest()
+            files[rel] = {
+                "exists": exists,
+                "sha256": sha256,
+                "content": content,
+            }
+        git_index_state: Dict[str, str] = {}
+        if tracked_paths:
+            try:
+                output = subprocess.check_output(
+                    ["git", "-C", str(repo_root), "ls-files", "-s", "--", *tracked_paths],
+                    text=True,
+                )
+                for line in output.splitlines():
+                    if not line.strip() or "\t" not in line:
+                        continue
+                    meta, rel = line.split("\t", 1)
+                    git_index_state[rel.strip()] = meta.strip()
+            except Exception:
+                pass
+        return {
+            "stage": stage,
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "files": files,
+            "git_index_state": git_index_state,
+        }
+
+    def _changed_objective_files_from_checkpoint(
+        self,
+        *,
+        before: Dict[str, Any],
+        after: Dict[str, Any],
+    ) -> list[str]:
+        changed: list[str] = []
+        before_files = before.get("files", {}) if isinstance(before, dict) else {}
+        after_files = after.get("files", {}) if isinstance(after, dict) else {}
+        candidate_paths = sorted(set(before_files) | set(after_files))
+        before_index = before.get("git_index_state", {}) if isinstance(before, dict) else {}
+        after_index = after.get("git_index_state", {}) if isinstance(after, dict) else {}
+        for rel in candidate_paths:
+            pre = before_files.get(rel, {})
+            post = after_files.get(rel, {})
+            if pre.get("exists") != post.get("exists") or pre.get("sha256") != post.get("sha256"):
+                changed.append(rel)
+                continue
+            if before_index.get(rel) != after_index.get(rel):
+                changed.append(rel)
+        return changed
+
+    def _restore_objective_files(
+        self,
+        *,
+        changed_files: list[str],
+        checkpoint: Dict[str, Any] | None,
+    ) -> tuple[bool, str, list[str]]:
+        if not changed_files:
+            return True, "not_required", []
+        repo_root = getattr(getattr(self, "objective_guard", None), "repo_root", Path.cwd().resolve())
+        errors: list[str] = []
+        used_baseline_snapshot = False
+        used_git_checkout = False
+        files_snapshot = checkpoint.get("files", {}) if isinstance(checkpoint, dict) else {}
+        for rel in changed_files:
+            restored = False
+            snap = files_snapshot.get(rel, {}) if isinstance(files_snapshot, dict) else {}
+            target = (repo_root / rel).resolve()
+            try:
+                if snap:
+                    used_baseline_snapshot = True
+                    if snap.get("exists") and isinstance(snap.get("content"), (bytes, bytearray)):
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(bytes(snap["content"]))
+                        restored = True
+                    elif not snap.get("exists"):
+                        if target.exists():
+                            target.unlink()
+                        restored = True
+            except Exception as exc:
+                errors.append(f"{rel}:baseline_restore_failed:{exc}")
+            if restored:
+                continue
+            try:
+                subprocess.run(
+                    ["git", "-C", str(repo_root), "checkout", "--", rel],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                used_git_checkout = True
+                restored = True
+            except Exception as exc:
+                errors.append(f"{rel}:git_checkout_failed:{exc}")
+            if not restored:
+                continue
+        if errors:
+            method = "baseline_snapshot+git_checkout" if used_baseline_snapshot and used_git_checkout else (
+                "baseline_snapshot" if used_baseline_snapshot else "git_checkout"
+            )
+            return False, method, errors
+        if used_baseline_snapshot and used_git_checkout:
+            method = "baseline_snapshot+git_checkout"
+        elif used_baseline_snapshot:
+            method = "baseline_snapshot"
+        elif used_git_checkout:
+            method = "git_checkout"
+        else:
+            method = "none"
+        return True, method, []
 
     # ------------------------------------------------------------------
     def run_patch(
@@ -4387,6 +4544,8 @@ class SelfCodingManager:
         """
         self.validate_provenance(provenance_token)
         self._ensure_self_coding_active()
+        objective_checkpoint = self._capture_objective_checkpoint(stage="run_patch:pre_mutation")
+        self._active_objective_checkpoint = objective_checkpoint
         try:
             self._enforce_objective_guard(path)
         except ObjectiveGuardViolation as exc:
@@ -4395,6 +4554,7 @@ class SelfCodingManager:
                     violation=exc,
                     path=path,
                     stage="pre_patch_guard_check",
+                    objective_checkpoint=objective_checkpoint,
                 )
             raise
         self.refresh_quick_fix_context()
@@ -4822,6 +4982,7 @@ class SelfCodingManager:
                             violation=exc,
                             path=path,
                             stage="quick_fix_validate_patch",
+                            objective_checkpoint=objective_checkpoint,
                         )
                     raise
                 except Exception as exc:
@@ -4869,6 +5030,7 @@ class SelfCodingManager:
                             violation=exc,
                             path=path,
                             stage="quick_fix_apply_patch",
+                            objective_checkpoint=objective_checkpoint,
                         )
                     raise
                 except Exception as exc:
@@ -4892,6 +5054,21 @@ class SelfCodingManager:
                     stage="run_patch:post_apply",
                     path=path,
                 )
+                post_apply_checkpoint = self._capture_objective_checkpoint(
+                    stage="run_patch:post_mutation",
+                )
+                changed_objective_files = self._changed_objective_files_from_checkpoint(
+                    before=objective_checkpoint,
+                    after=post_apply_checkpoint,
+                )
+                if changed_objective_files:
+                    raise ObjectiveGuardViolation(
+                        "objective_integrity_breach",
+                        details={
+                            "changed_files": changed_objective_files,
+                            "checkpoint_stage": "run_patch:post_mutation",
+                        },
+                    )
                 self._last_risk_flags = flags
                 ctx_meta["risk_flags"] = flags
                 reverted = not passed
@@ -5538,6 +5715,7 @@ class SelfCodingManager:
             # Refresh thresholds post-patch so subsequent decisions use the
             # latest configuration.
             self._refresh_thresholds()
+        self._active_objective_checkpoint = None
         return result
 
     # ------------------------------------------------------------------
@@ -5589,6 +5767,7 @@ class SelfCodingManager:
                         violation=exc,
                         path=path,
                         stage="idle_cycle",
+                        objective_checkpoint=getattr(self, "_active_objective_checkpoint", None),
                     )
                 raise
             except Exception:  # pragma: no cover - best effort
