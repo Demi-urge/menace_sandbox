@@ -1554,6 +1554,7 @@ class SelfCodingManager:
                 )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
+        self._hydrate_self_coding_disabled_state()
 
         clayer = getattr(self.engine, "cognition_layer", None)
         builder = getattr(clayer, "context_builder", None)
@@ -2775,6 +2776,10 @@ class SelfCodingManager:
                                     f"valid={valid}, flags={list(flags)}"
                                 )
                         if not skip_apply:
+                            self._run_integrity_check_hook(
+                                stage="run_post_patch_cycle:pre_apply",
+                                path=module,
+                            )
                             timed_out, result, elapsed_secs = _run_step_with_timeout(
                                 "apply_validated_patch",
                                 self.quick_fix.apply_validated_patch,
@@ -2791,6 +2796,10 @@ class SelfCodingManager:
                                     "apply_validated_patch", elapsed_secs
                                 )
                             passed, _pid, apply_flags = result
+                            self._run_integrity_check_hook(
+                                stage="run_post_patch_cycle:post_apply",
+                                path=module,
+                            )
                             summary["quick_fix"].update(
                                 {
                                     "apply_flags": list(apply_flags),
@@ -2839,6 +2848,10 @@ class SelfCodingManager:
                 results: dict[str, Any] = {}
                 passed_modules: list[str] = []
                 while True:
+                    self._run_integrity_check_hook(
+                        stage="run_post_patch_cycle:pre_cycle",
+                        path=module,
+                    )
                     run_kwargs = dict(base_kwargs)
                     run_kwargs.setdefault("manager", self)
                     if current_pytest_args is None:
@@ -2949,6 +2962,10 @@ class SelfCodingManager:
                         attempt_record["next_pytest_args"] = next_pytest_args
                     try:
                         self.refresh_quick_fix_context()
+                        self._run_integrity_check_hook(
+                            stage="run_post_patch_cycle:repair_pre_apply",
+                            path=module,
+                        )
                         timed_out, result, elapsed_secs = _run_step_with_timeout(
                             "apply_validated_patch",
                             self.quick_fix.apply_validated_patch,
@@ -2977,6 +2994,10 @@ class SelfCodingManager:
                                 "apply_validated_patch", elapsed_secs
                             )
                         passed, patch_id, apply_flags = result
+                        self._run_integrity_check_hook(
+                            stage="run_post_patch_cycle:repair_post_apply",
+                            path=module,
+                        )
                     except Exception as exc:
                         attempt_record["error"] = str(exc)
                         attempt_records.append(attempt_record)
@@ -3260,6 +3281,36 @@ class SelfCodingManager:
                 audit.record(payload)
             except Exception:
                 self.logger.exception("audit trail logging failed")
+
+    def _persist_registry_state(self) -> None:
+        registry = getattr(self, "bot_registry", None)
+        target = getattr(registry, "persist_path", None)
+        save = getattr(registry, "save", None)
+        if target and callable(save):
+            try:
+                save(target)
+            except Exception:
+                self.logger.exception("failed to persist bot registry state")
+
+    def _hydrate_self_coding_disabled_state(self) -> None:
+        """Restore paused self-coding state from persisted registry metadata."""
+
+        registry = getattr(self, "bot_registry", None)
+        graph = getattr(registry, "graph", None)
+        nodes = getattr(graph, "nodes", None)
+        if not isinstance(nodes, dict):
+            return
+        node_state = nodes.get(self.bot_name)
+        if not isinstance(node_state, dict):
+            return
+        disabled_state = node_state.get("self_coding_disabled")
+        if not isinstance(disabled_state, dict):
+            return
+        reason = disabled_state.get("reason")
+        if not reason:
+            return
+        self._self_coding_paused = True
+        self._self_coding_disabled_reason = str(reason)
 
     @staticmethod
     def _metric_from_context(context_meta: Dict[str, Any] | None, *keys: str) -> float | None:
@@ -3702,12 +3753,11 @@ class SelfCodingManager:
                 "manifest_missing",
                 "manifest_invalid",
             }:
-                self._handle_objective_integrity_breach(
+                self._trigger_objective_circuit_breaker(
                     violation=exc,
                     path=target_path,
                     stage=stage,
                 )
-                raise RuntimeError("objective integrity breach triggered self-coding halt")
             raise
 
     def _enforce_objective_guard(self, path: Path) -> None:
@@ -3758,6 +3808,7 @@ class SelfCodingManager:
                     "reason": reason,
                     "details": details,
                 }
+        self._persist_registry_state()
 
     def reset_objective_integrity_lock(self) -> None:
         """Allow operators to explicitly resume self-coding after an objective breach."""
@@ -3766,6 +3817,77 @@ class SelfCodingManager:
             self._objective_breach_handled = False
             self._self_coding_paused = False
             self._self_coding_disabled_reason = None
+        registry = getattr(self, "bot_registry", None)
+        graph = getattr(registry, "graph", None)
+        nodes = getattr(graph, "nodes", None)
+        if isinstance(nodes, dict):
+            node_state = nodes.setdefault(self.bot_name, {})
+            if isinstance(node_state, dict):
+                node_state.pop("self_coding_disabled", None)
+        self._persist_registry_state()
+
+    def _run_integrity_check_hook(self, *, stage: str, path: Path) -> None:
+        guard = getattr(self, "objective_guard", None)
+        if guard is None:
+            return
+        try:
+            guard.assert_integrity()
+        except ObjectiveGuardViolation as exc:
+            self._trigger_objective_circuit_breaker(
+                violation=exc,
+                path=path,
+                stage=stage,
+            )
+
+    def _trigger_objective_circuit_breaker(
+        self,
+        *,
+        violation: ObjectiveGuardViolation,
+        path: Path,
+        stage: str,
+    ) -> None:
+        """Circuit-break on objective integrity violations during autonomous cycles."""
+
+        details = dict(getattr(violation, "details", {}) or {})
+        details.setdefault("bot", self.bot_name)
+        details.setdefault("path", path_for_prompt(path))
+        details.setdefault("stage", stage)
+        commit, commit_meta = self._resolve_current_or_last_patch_commit()
+        self._set_self_coding_disabled_state("objective_integrity_breach", details=details)
+
+        rollback_attempted = bool(commit)
+        rollback_ok = False
+        rollback_error: str | None = None
+        if commit and RollbackManager is not None:
+            try:
+                RollbackManager().rollback(commit, requesting_bot=self.bot_name)
+                rollback_ok = True
+            except Exception as exc:
+                rollback_error = str(exc)
+                self.logger.critical("circuit breaker rollback failed", exc_info=True)
+        elif commit and RollbackManager is None:
+            rollback_error = "rollback_manager_unavailable"
+        else:
+            rollback_error = "no_commit_available"
+
+        payload: Dict[str, Any] = {
+            "severity": "critical",
+            "bot": self.bot_name,
+            "reason": violation.reason,
+            "stage": stage,
+            "details": details,
+            "reverted_commit": commit,
+            "reverted_commit_metadata": commit_meta,
+            "rollback_attempted": rollback_attempted,
+            "rollback_ok": rollback_ok,
+            "rollback_error": rollback_error,
+        }
+        if self.event_bus:
+            try:
+                self.event_bus.publish("self_coding:circuit_breaker_triggered", payload)
+            except Exception:
+                self.logger.exception("failed to publish circuit breaker event")
+        raise RuntimeError("objective integrity circuit breaker triggered")
 
     def _resolve_current_or_last_patch_commit(self) -> tuple[str | None, Dict[str, Any]]:
         """Resolve the best-known patch commit and associated provenance metadata."""
@@ -3911,7 +4033,7 @@ class SelfCodingManager:
             self._enforce_objective_guard(path)
         except ObjectiveGuardViolation as exc:
             if getattr(exc, "reason", "") == "objective_integrity_breach":
-                self._handle_objective_integrity_breach(
+                self._trigger_objective_circuit_breaker(
                     violation=exc,
                     path=path,
                     stage="pre_patch_guard_check",
@@ -4072,6 +4194,10 @@ class SelfCodingManager:
 
             while attempt < max_attempts:
                 attempt += 1
+                self._run_integrity_check_hook(
+                    stage="run_patch:pre_cycle",
+                    path=path,
+                )
                 self.logger.info("patch attempt %s", attempt)
                 # Create a fresh ContextBuilder for each attempt so validation
                 # always runs on a clean context.
@@ -4385,6 +4511,10 @@ class SelfCodingManager:
                             )
                     raise RuntimeError("quick fix generation failed") from exc
                 flags = list(flags or [])
+                self._run_integrity_check_hook(
+                    stage="run_patch:post_apply",
+                    path=path,
+                )
                 self._last_risk_flags = flags
                 ctx_meta["risk_flags"] = flags
                 reverted = not passed
