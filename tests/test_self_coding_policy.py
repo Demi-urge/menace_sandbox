@@ -146,7 +146,7 @@ def test_patch_promotion_defaults_block_objective_adjacent_paths(monkeypatch, tm
         repo_root / "mvp_evaluator.py",
         repo_root / "kpi_reward_core.py",
         repo_root / "billing" / "stripe_ledger.py",
-        repo_root / "payout" / "processor.py",
+        repo_root / "finance_router_bot.py",
     ]
     allowed = repo_root / "tools" / "safe_module.py"
     for path in blocked + [allowed]:
@@ -160,7 +160,7 @@ def test_patch_promotion_defaults_block_objective_adjacent_paths(monkeypatch, tm
     assert policy.is_safe_target(allowed)
 
 
-def test_patch_promotion_env_override_allows_default_blocked_path(monkeypatch, tmp_path):
+def test_patch_promotion_env_cannot_override_canonical_blocked_path(monkeypatch, tmp_path):
     from menace_sandbox.self_coding_policy import get_patch_promotion_policy
 
     monkeypatch.delenv("MENACE_SELF_CODING_SAFE_PATHS", raising=False)
@@ -170,21 +170,40 @@ def test_patch_promotion_env_override_allows_default_blocked_path(monkeypatch, t
 
     policy = get_patch_promotion_policy(repo_root=tmp_path)
 
-    assert policy.is_safe_target(blocked_default)
+    assert not policy.is_safe_target(blocked_default)
 
 
-def test_patch_promotion_env_extend_blocks_custom_prefix(monkeypatch, tmp_path):
+def test_patch_promotion_env_extend_merges_with_canonical_paths(monkeypatch, tmp_path):
     from menace_sandbox.self_coding_policy import get_patch_promotion_policy
 
     monkeypatch.delenv("MENACE_SELF_CODING_SAFE_PATHS", raising=False)
     monkeypatch.setenv("MENACE_SELF_CODING_UNSAFE_PATHS", "custom_sensitive")
     custom_target = tmp_path / "custom_sensitive" / "worker.py"
+    canonical_target = tmp_path / "kpi_reward_core.py"
     safe_target = tmp_path / "src" / "worker.py"
-    for path in (custom_target, safe_target):
+    for path in (custom_target, canonical_target, safe_target):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("pass\n", encoding="utf-8")
 
     policy = get_patch_promotion_policy(repo_root=tmp_path)
 
     assert not policy.is_safe_target(custom_target)
+    assert not policy.is_safe_target(canonical_target)
     assert policy.is_safe_target(safe_target)
+
+
+def test_patch_policy_merges_canonical_paths_into_environment(monkeypatch, tmp_path):
+    from menace_sandbox.self_coding_policy import get_patch_promotion_policy
+
+    monkeypatch.delenv("MENACE_SELF_CODING_SAFE_PATHS", raising=False)
+    monkeypatch.setenv("MENACE_SELF_CODING_UNSAFE_PATHS", "custom_sensitive")
+
+    get_patch_promotion_policy(repo_root=tmp_path)
+
+    import os
+
+    merged = os.environ.get("MENACE_SELF_CODING_UNSAFE_PATHS")
+    assert merged is not None
+    assert "custom_sensitive" in merged
+    assert "reward_dispatcher.py" in merged
+    assert "menace/core/evaluator.py" in merged
