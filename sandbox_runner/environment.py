@@ -137,12 +137,13 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
             last_exc = exc
             missing_module = module_name_from_module_not_found(exc)
             candidate_missing = missing_module == module_name
+            failure_origin = "target module import" if candidate_missing else "nested dependency import"
             if candidate_missing:
                 attempt_details.append(
                     (
                         module_name,
                         type(exc).__name__,
-                        f"candidate missing ({missing_module!r}): {exc}",
+                        f"{failure_origin}; candidate missing ({missing_module!r}): {exc}",
                     )
                 )
             else:
@@ -152,6 +153,7 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
                         module_name,
                         "ImportError",
                         "dependency import failure "
+                        f"(origin={failure_origin}) "
                         f"(candidate={module_name!r}, missing={missing_module!r}): {exc}",
                     )
                 )
