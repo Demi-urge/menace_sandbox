@@ -283,7 +283,7 @@ def test_objective_guard_default_hash_specs_match_canonical_hash_inventory(tmp_p
     assert default_hashes == set(OBJECTIVE_ADJACENT_HASH_PATHS)
 
 
-def test_objective_guard_defaults_hash_every_non_directory_protected_path(tmp_path: Path) -> None:
+def test_objective_guard_default_hash_specs_are_canonical_subset_of_protected_files(tmp_path: Path) -> None:
     for rel in OBJECTIVE_ADJACENT_UNSAFE_PATHS:
         target = tmp_path / rel.rstrip("/")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -296,7 +296,8 @@ def test_objective_guard_defaults_hash_every_non_directory_protected_path(tmp_pa
 
     protected_files = {spec.normalized for spec in guard.protected_specs if not spec.prefix}
     hashed_files = {spec.normalized for spec in guard.hash_specs if not spec.prefix}
-    assert protected_files == hashed_files
+    assert hashed_files == set(OBJECTIVE_ADJACENT_HASH_PATHS)
+    assert hashed_files.issubset(protected_files)
 
 
 def test_objective_guard_protects_all_required_objective_adjacent_paths(tmp_path: Path) -> None:
@@ -356,3 +357,58 @@ def test_write_manifest_requires_non_default_operator_and_reason(tmp_path: Path)
             command_source="tools/objective_guard_manifest_cli.py",
         )
     assert exc_reason.value.reason == "operator_reason_required"
+
+
+def test_objective_guard_verify_manifest_reports_file_set_drift(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    kpi = tmp_path / "kpi_reward_core.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    kpi.write_text("ORIGINAL\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py", "kpi_reward_core.py"],
+        hash_specs=["reward_dispatcher.py", "kpi_reward_core.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+    guard.write_manifest(
+        operator="alice",
+        reason="approved bootstrap",
+        command_source="tools/objective_guard_manifest_cli.py",
+    )
+
+    drifted_guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py", "kpi_reward_core.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+
+    with pytest.raises(ObjectiveGuardViolation) as exc_info:
+        drifted_guard.verify_manifest()
+
+    assert exc_info.value.reason == "manifest_file_set_mismatch"
+    assert exc_info.value.details.get("missing_in_manifest") == []
+    assert exc_info.value.details.get("extra_in_manifest") == ["kpi_reward_core.py"]
+
+
+def test_objective_guard_write_manifest_persists_configured_hash_specs(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+
+    guard.write_manifest(
+        operator="alice",
+        reason="approved bootstrap",
+        command_source="tools/objective_guard_manifest_cli.py",
+    )
+    payload = json.loads((tmp_path / "config" / "objective_hash_lock.json").read_text(encoding="utf-8"))
+
+    assert payload["hash_spec_source"] == "objective_surface_policy.OBJECTIVE_ADJACENT_HASH_PATHS"
+    assert payload["configured_hash_specs"] == ["reward_dispatcher.py"]
