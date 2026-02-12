@@ -27,6 +27,14 @@ def test_resolver_prefers_menace_package_import(monkeypatch):
     assert env._resolve_self_debugger_sandbox_class() is package_cls
 
 
+def test_self_debugger_candidates_are_shared_and_ordered():
+    assert env.SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES == (
+        "menace.self_debugger_sandbox",
+        "menace_sandbox.self_debugger_sandbox",
+        "self_debugger_sandbox",
+    )
+
+
 def test_resolver_falls_back_to_menace_sandbox_package(monkeypatch):
     package_cls = type("MenaceSandboxSelfDebuggerSandbox", (), {})
 
@@ -82,6 +90,10 @@ def test_resolver_raises_module_not_found_when_all_candidates_absent(monkeypatch
     assert "candidate missing ('menace.self_debugger_sandbox')" in message
     assert "candidate missing ('menace_sandbox.self_debugger_sandbox')" in message
     assert "candidate missing ('self_debugger_sandbox')" in message
+    attempts = message.split("Attempts: ", 1)[1].split("; ")
+    assert attempts[0].startswith("menace.self_debugger_sandbox:")
+    assert attempts[1].startswith("menace_sandbox.self_debugger_sandbox:")
+    assert attempts[2].startswith("self_debugger_sandbox:")
 
 
 def test_resolver_raises_import_error_when_nested_dependency_missing(monkeypatch):
