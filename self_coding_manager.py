@@ -24,6 +24,10 @@ try:  # pragma: no cover - objective integrity guard
     from .objective_guard import ObjectiveGuard, ObjectiveGuardViolation
 except Exception:  # pragma: no cover - fallback for flat layout
     from objective_guard import ObjectiveGuard, ObjectiveGuardViolation  # type: ignore
+try:  # pragma: no cover - shared objective hash-lock verifier
+    from .objective_hash_lock import verify_objective_hash_lock
+except Exception:  # pragma: no cover - fallback for flat layout
+    from objective_hash_lock import verify_objective_hash_lock  # type: ignore
 try:  # pragma: no cover - policy import for unsafe paths
     from .self_coding_policy import (
         ensure_self_coding_unsafe_paths_env,
@@ -3814,7 +3818,7 @@ class SelfCodingManager:
             return
         target_path = path or Path("self_coding_manager.py")
         try:
-            guard.assert_integrity()
+            verify_objective_hash_lock(guard=guard)
         except ObjectiveGuardViolation as exc:
             details = dict(getattr(exc, "details", {}) or {})
             details.setdefault("bot", self.bot_name)

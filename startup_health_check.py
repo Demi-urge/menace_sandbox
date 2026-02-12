@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from bootstrap_readiness import shared_online_state
-from objective_guard import DEFAULT_OBJECTIVE_HASH_MANIFEST, ObjectiveGuard, ObjectiveGuardViolation
+from objective_guard import DEFAULT_OBJECTIVE_HASH_MANIFEST, ObjectiveGuardViolation
+from objective_hash_lock import verify_objective_hash_lock
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +59,11 @@ def verify_required_files(required_paths: list[str]) -> list[str]:
 def check_file_integrity(reference_hash_path: str) -> list[str]:
     """Return objective files that diverge from the persisted SHA-256 manifest."""
 
-    guard = ObjectiveGuard(manifest_path=Path(reference_hash_path).resolve(), repo_root=Path.cwd())
     try:
-        guard.verify_manifest()
+        verify_objective_hash_lock(
+            repo_root=Path.cwd(),
+            manifest_path=Path(reference_hash_path).resolve(),
+        )
         return []
     except ObjectiveGuardViolation as exc:
         changed = [str(item) for item in (exc.details.get("changed_files") or []) if item]
