@@ -27,7 +27,9 @@ def _load_root_self_debugger_sandbox():
 
 try:
     from menace_sandbox.self_debugger_sandbox import SelfDebuggerSandbox
-except ImportError:
+except ModuleNotFoundError as exc:
+    if exc.name not in {"menace_sandbox", "menace_sandbox.self_debugger_sandbox"}:
+        raise
     try:
         from self_debugger_sandbox import SelfDebuggerSandbox
     except ImportError:
