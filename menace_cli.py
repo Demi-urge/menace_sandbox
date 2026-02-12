@@ -761,29 +761,12 @@ def handle_branch_log(args: argparse.Namespace) -> int:
 
 
 def handle_objective_hash_lock(args: argparse.Namespace) -> int:
-    """Initialize or rotate the trusted objective hash baseline."""
-    repo_root = Path.cwd().resolve()
-    guard = ObjectiveGuard(repo_root=repo_root)
-    mode = str(getattr(args, "action", "bootstrap") or "bootstrap")
-    operator = str(getattr(args, "operator", "") or "").strip() or None
-    reason = str(getattr(args, "reason", "") or "").strip() or None
-    hashes = guard.write_manifest(
-        operator=operator,
-        reason=reason,
-        rotation=mode == "rotate",
-    )
+    """Objective hash-lock changes must use the dedicated operator CLI."""
     print(
-        json.dumps(
-            {
-                "manifest_path": str(guard.manifest_path),
-                "action": mode,
-                "operator": operator or "unknown",
-                "reason": reason or "baseline_bootstrap",
-                "files": sorted(hashes),
-            }
-        )
+        "objective hash-lock refresh is manual-only; use tools/objective_guard_manifest_cli.py",
+        file=sys.stderr,
     )
-    return 0
+    return 1
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Menace workflow helper")

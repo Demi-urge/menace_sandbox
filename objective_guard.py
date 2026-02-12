@@ -182,17 +182,39 @@ class ObjectiveGuard:
         operator: str | None = None,
         reason: str | None = None,
         rotation: bool | None = None,
+        command_source: str | None = None,
     ) -> dict[str, str]:
         """Persist hashes for protected objective files.
 
         This method is intended for explicit operator workflows.
         """
 
+        source = (command_source or "").strip()
+        if source != "tools/objective_guard_manifest_cli.py":
+            raise ObjectiveGuardViolation(
+                "manifest_refresh_manual_only",
+                details={
+                    "required_command": "tools/objective_guard_manifest_cli.py",
+                    "command_source": source or None,
+                },
+            )
+
+        resolved_operator = (operator or "").strip()
+        resolved_reason = (reason or "").strip()
+        if not resolved_operator or resolved_operator.lower() in {"unknown", "automation", "autonomous"}:
+            raise ObjectiveGuardViolation(
+                "operator_context_required",
+                details={"operator": resolved_operator or None},
+            )
+        if not resolved_reason or resolved_reason.lower() in {"baseline_bootstrap", "automatic", "autonomous_refresh"}:
+            raise ObjectiveGuardViolation(
+                "operator_reason_required",
+                details={"reason": resolved_reason or None},
+            )
+
         hashes = self.snapshot_hashes()
         existing_payload = self._read_existing_manifest()
         now = datetime.now(timezone.utc).isoformat()
-        resolved_operator = (operator or os.getenv("USER") or "unknown").strip() or "unknown"
-        resolved_reason = (reason or "baseline_bootstrap").strip() or "baseline_bootstrap"
         is_rotation = bool(rotation) if rotation is not None else bool(existing_payload)
         previous_digest = (
             existing_payload.get("manifest_sha256") if isinstance(existing_payload, dict) else None
