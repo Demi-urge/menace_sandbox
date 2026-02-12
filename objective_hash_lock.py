@@ -24,7 +24,8 @@ def verify_objective_hash_lock(
 ) -> dict[str, Any]:
     """Verify objective files against the persisted SHA-256 manifest.
 
-    Returns a report containing the current hashes and manifest metadata.
+    Returns a report containing the current hashes and manifest metadata,
+    including directory expansion rules captured at snapshot time.
     Raises :class:`ObjectiveGuardViolation` when the manifest is missing,
     malformed, or hash deltas are detected.
     """
