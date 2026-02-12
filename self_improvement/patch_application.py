@@ -18,6 +18,7 @@ import sys
 from .patch_generation import generate_patch
 from .utils import _load_callable, _call_with_retries
 from menace_sandbox.context_builder import create_context_builder
+from self_coding_policy import is_self_coding_unsafe_path
 
 try:  # pragma: no cover - prefer lightweight stub when available
     from quick_fix_engine import quick_fix  # type: ignore
@@ -180,6 +181,10 @@ def validate_patch_with_context(
         module_path = (repo_root_path / module_path).resolve()
     if not module_path.exists():
         raise FileNotFoundError(f"module path not found: {module_path}")
+    if is_self_coding_unsafe_path(module_path, repo_root=repo_root_path):
+        raise RuntimeError(
+            f"Quick-fix application blocked for objective-adjacent target: {module_path}"
+        )
 
     builder = builder or create_context_builder(repo_root=repo_root_path)
     provenance = provenance_token or getattr(builder, "provenance_token", None)

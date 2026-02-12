@@ -2268,6 +2268,15 @@ def apply_validated_patch(
             extra={"target_module": module_path},
         )
         return False, None, ["missing_context"]
+    from self_coding_policy import is_self_coding_unsafe_path
+
+    resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else Path.cwd().resolve()
+    if is_self_coding_unsafe_path(module_path, repo_root=resolved_repo_root):
+        logger.info(
+            "apply_validated_patch blocked objective-adjacent target",
+            extra={"target_module": str(module_path)},
+        )
+        return False, None, ["unsafe_target"]
     try:
         patch_id, flags = generate_patch(
             str(module_path),
@@ -3218,6 +3227,15 @@ class QuickFixEngine:
                 extra={"target_module": module_path, "flags": flags_list},
             )
             return False, None, flags_list
+        from self_coding_policy import is_self_coding_unsafe_path
+
+        resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else Path.cwd().resolve()
+        if is_self_coding_unsafe_path(module_path, repo_root=resolved_repo_root):
+            self.logger.info(
+                "apply_validated_patch blocked objective-adjacent target",
+                extra={"target_module": str(module_path)},
+            )
+            return False, None, ["unsafe_target"]
         try:
             patch_id, flags = generate_patch(
                 str(module_path),

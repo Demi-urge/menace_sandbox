@@ -147,6 +147,7 @@ def test_patch_promotion_defaults_block_objective_adjacent_paths(monkeypatch, tm
         repo_root / "kpi_reward_core.py",
         repo_root / "billing" / "stripe_ledger.py",
         repo_root / "finance_router_bot.py",
+        repo_root / "stripe_billing_router.py",
     ]
     allowed = repo_root / "tools" / "safe_module.py"
     for path in blocked + [allowed]:
@@ -207,3 +208,13 @@ def test_patch_policy_merges_canonical_paths_into_environment(monkeypatch, tmp_p
     assert "custom_sensitive" in merged
     assert "reward_dispatcher.py" in merged
     assert "menace/core/evaluator.py" in merged
+
+
+def test_is_self_coding_unsafe_path_uses_default_and_env(monkeypatch, tmp_path):
+    from menace_sandbox.self_coding_policy import is_self_coding_unsafe_path
+
+    monkeypatch.setenv("MENACE_SELF_CODING_UNSAFE_PATHS", "custom_area")
+
+    assert is_self_coding_unsafe_path("reward_dispatcher.py", repo_root=tmp_path)
+    assert is_self_coding_unsafe_path("custom_area/worker.py", repo_root=tmp_path)
+    assert not is_self_coding_unsafe_path("safe/worker.py", repo_root=tmp_path)

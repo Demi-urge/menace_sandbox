@@ -26,6 +26,7 @@ from menace_sandbox.stabilization import (
     normalize_patch_apply,
     normalize_patch_validation,
 )
+from self_coding_policy import is_self_coding_unsafe_path
 
 def _add_repo_to_syspath(repo_root: Path) -> None:
     """Ensure the repository parent is on ``sys.path`` for package imports."""
@@ -148,6 +149,10 @@ def _validate_and_apply(
     if manager is None:
         raise RuntimeError(
             "A SelfCodingManager instance is required for quick-fix validation"
+        )
+    if is_self_coding_unsafe_path(module_path, repo_root=repo_root):
+        raise RuntimeError(
+            f"Quick-fix application blocked for objective-adjacent target: {module_path}"
         )
 
     builder = builder or getattr(manager, "context_builder", None)
