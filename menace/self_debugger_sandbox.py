@@ -32,7 +32,9 @@ except ModuleNotFoundError as exc:
         raise
     try:
         from self_debugger_sandbox import SelfDebuggerSandbox
-    except ImportError:
+    except ModuleNotFoundError as fallback_exc:
+        if fallback_exc.name != "self_debugger_sandbox":
+            raise
         _root_module = _load_root_self_debugger_sandbox()
         SelfDebuggerSandbox = _root_module.SelfDebuggerSandbox
 
