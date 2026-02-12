@@ -11,6 +11,29 @@ from objective_surface_policy import (
     OBJECTIVE_ADJACENT_UNSAFE_PATHS,
 )
 
+REQUIRED_OBJECTIVE_ADJACENT_PATHS = {
+    "config/objective_hash_lock.json",
+    "objective_guard.py",
+    "objective_hash_lock.py",
+    "tools/objective_guard_manifest_cli.py",
+    "reward_dispatcher.py",
+    "kpi_reward_core.py",
+    "reward_sanity_checker.py",
+    "kpi_editing_detector.py",
+    "mvp_evaluator.py",
+    "menace/core/evaluator.py",
+    "neurosales/neurosales/hierarchical_reward.py",
+    "neurosales/neurosales/reward_ledger.py",
+    "billing/billing_ledger.py",
+    "billing/billing_logger.py",
+    "billing/stripe_ledger.py",
+    "stripe_billing_router.py",
+    "finance_router_bot.py",
+    "stripe_watchdog.py",
+    "startup_health_check.py",
+    "finance_logs/",
+}
+
 
 def test_objective_guard_blocks_protected_target(tmp_path: Path) -> None:
     reward_file = tmp_path / "reward_dispatcher.py"
@@ -267,3 +290,19 @@ def test_objective_guard_defaults_hash_every_non_directory_protected_path(tmp_pa
     protected_files = {spec.normalized for spec in guard.protected_specs if not spec.prefix}
     hashed_files = {spec.normalized for spec in guard.hash_specs if not spec.prefix}
     assert protected_files == hashed_files
+
+
+def test_objective_guard_protects_all_required_objective_adjacent_paths(tmp_path: Path) -> None:
+    assert REQUIRED_OBJECTIVE_ADJACENT_PATHS.issubset(set(OBJECTIVE_ADJACENT_UNSAFE_PATHS))
+
+    guard = ObjectiveGuard(repo_root=tmp_path)
+    for rel in REQUIRED_OBJECTIVE_ADJACENT_PATHS:
+        if rel.endswith("/"):
+            target = tmp_path / rel.rstrip("/") / "nested.py"
+        else:
+            target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x\n", encoding="utf-8")
+
+        with pytest.raises(ObjectiveGuardViolation):
+            guard.assert_patch_target_safe(target)
