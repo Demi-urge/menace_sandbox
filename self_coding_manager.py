@@ -1598,8 +1598,13 @@ class SelfCodingManager:
         self._divergence_detector = SelfCodingDivergenceDetector(divergence_config)
         self._divergence_threshold_cycles = divergence_config.divergence_threshold_cycles
         self._divergence_recovery_cycles = divergence_config.recovery_threshold_cycles
+        self._divergence_fail_closed_on_missing_metrics = (
+            divergence_config.fail_closed_on_missing_metrics
+        )
+        self._missing_metric_pause_cycles = divergence_config.missing_metric_pause_cycles
         self._divergence_streak = 0
         self._divergence_recovery_streak = 0
+        self._missing_real_metric_streak = 0
         self._cycle_metrics_window: deque[CycleMetricsRecord] = deque(
             maxlen=self._divergence_window
         )
@@ -3506,10 +3511,79 @@ class SelfCodingManager:
             profit = self._load_business_metric_from_data_bot("profitability", context_meta=context_meta)
         if revenue is None:
             revenue = self._load_business_metric_from_data_bot("revenue", context_meta=context_meta)
-        if reward is None or (profit is None and revenue is None):
+        if reward is None:
             self._divergence_streak = 0
             self._divergence_recovery_streak = 0
+            self._missing_real_metric_streak = 0
             return
+
+        if profit is None and revenue is None:
+            self._divergence_streak = 0
+            self._divergence_recovery_streak = 0
+            self._missing_real_metric_streak += 1
+            missing_payload: Dict[str, Any] = {
+                "bot": self.bot_name,
+                "window": self._divergence_window,
+                "reward": float(reward),
+                "profit": None,
+                "revenue": None,
+                "streak": self._missing_real_metric_streak,
+                "threshold": self._missing_metric_pause_cycles,
+                "policy": (
+                    "fail_closed"
+                    if self._divergence_fail_closed_on_missing_metrics
+                    else "allow"
+                ),
+                "reason": "real_metrics_unavailable",
+                "check_status": "data_unavailable",
+                "context_meta": dict(context_meta or {}),
+            }
+            self._record_audit_event(
+                {
+                    "action": "self_coding_divergence_data_unavailable",
+                    "source": "divergence_monitor",
+                    **missing_payload,
+                }
+            )
+            self.logger.warning(
+                "divergence guard skipped due to unavailable real metrics",
+                extra={"event": "self_coding_divergence_data_unavailable", **missing_payload},
+            )
+            if (
+                self._divergence_fail_closed_on_missing_metrics
+                and self._missing_real_metric_streak >= self._missing_metric_pause_cycles
+            ):
+                reason = "reward_real_metrics_unavailable"
+                telemetry_payload: Dict[str, Any] = {
+                    "severity": "high",
+                    "event": "self_coding_divergence_kill_switch",
+                    "reason": reason,
+                    **missing_payload,
+                }
+                self._self_coding_paused = True
+                self._self_coding_disabled_reason = reason
+                self._self_coding_pause_source = "divergence_monitor"
+                self._record_audit_event(
+                    {
+                        "action": "self_coding_auto_pause",
+                        "source": "divergence_monitor",
+                        **telemetry_payload,
+                    }
+                )
+                self.logger.critical(
+                    "self-coding auto-paused: reward present while real metrics remain unavailable",
+                    extra=telemetry_payload,
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish("self_coding:divergence_kill_switch", telemetry_payload)
+                        self.event_bus.publish("self_coding:critical_divergence", telemetry_payload)
+                        self.event_bus.publish("self_coding:high_severity_alert", telemetry_payload)
+                    except Exception:
+                        self.logger.exception("failed to publish missing-metrics divergence telemetry")
+            return
+
+        self._missing_real_metric_streak = 0
 
         workflow_id = self.bot_name
         if isinstance(context_meta, dict):
@@ -3551,6 +3625,7 @@ class SelfCodingManager:
             "streak": self._divergence_streak,
             "threshold": self._divergence_threshold_cycles,
             "context_meta": dict(context_meta or {}),
+            "check_status": "healthy",
         }
 
         if detection.triggered:
@@ -3639,6 +3714,7 @@ class SelfCodingManager:
         self._self_coding_pause_source = None
         self._divergence_streak = 0
         self._divergence_recovery_streak = 0
+        self._missing_real_metric_streak = 0
         details = {
             "action": "self_coding_manual_reset",
             "bot": self.bot_name,

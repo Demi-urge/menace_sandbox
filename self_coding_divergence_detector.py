@@ -39,6 +39,8 @@ class DivergenceDetectorConfig:
     minimum_confidence: float = 1.0
     divergence_threshold_cycles: int = 2
     recovery_threshold_cycles: int = 2
+    fail_closed_on_missing_metrics: bool = True
+    missing_metric_pause_cycles: int = 3
 
 
 @dataclass(frozen=True)
@@ -112,6 +114,13 @@ def load_divergence_detector_config(config_path: str | None = None) -> Divergenc
         ),
         recovery_threshold_cycles=max(
             int(_safe_float(section.get("recovery_threshold_cycles"), defaults.recovery_threshold_cycles)),
+            1,
+        ),
+        fail_closed_on_missing_metrics=bool(
+            section.get("fail_closed_on_missing_metrics", defaults.fail_closed_on_missing_metrics)
+        ),
+        missing_metric_pause_cycles=max(
+            int(_safe_float(section.get("missing_metric_pause_cycles"), defaults.missing_metric_pause_cycles)),
             1,
         ),
     )
