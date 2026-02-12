@@ -87,10 +87,17 @@ import concurrent.futures
 _qfe_log("concurrent.futures imported")
 
 try:
-    from objective_guard import ObjectiveGuardViolation
+    from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
 except Exception:  # pragma: no cover - fallback for optional dependency
+    ObjectiveGuard = None  # type: ignore[assignment]
+
     class ObjectiveGuardViolation(Exception):
         reason = ""
+
+try:
+    from objective_hash_lock import verify_objective_hash_lock
+except Exception:  # pragma: no cover - fallback for optional dependency
+    verify_objective_hash_lock = None  # type: ignore[assignment]
 
 import os
 _qfe_log("os imported")
@@ -8355,6 +8362,36 @@ class SelfImprovementEngine:
         except Exception:
             return None
 
+    def _verify_objective_hash_lock_before_cycle(self) -> None:
+        """Block autonomous mutation cycles when objective hash-lock drifts."""
+
+        if verify_objective_hash_lock is None or ObjectiveGuard is None:
+            return
+        guard = ObjectiveGuard(repo_root=Path(_repo_path()).resolve())
+        try:
+            verify_objective_hash_lock(guard=guard)
+        except ObjectiveGuardViolation as exc:
+            self._self_coding_paused = True
+            details = dict(getattr(exc, "details", {}) or {})
+            payload = {
+                "severity": "critical",
+                "reason": exc.reason,
+                "details": details,
+                "source": "objective_hash_lock",
+            }
+            self.logger.critical(
+                "objective hash-lock mismatch detected; autonomy paused",
+                extra=log_record(**payload),
+            )
+            bus = getattr(self, "event_bus", None)
+            if bus:
+                try:
+                    bus.publish("self_coding:objective_hash_lock_mismatch", payload)
+                    bus.publish("self_improvement:autonomy_paused", payload)
+                except Exception:
+                    self.logger.exception("failed to publish objective hash-lock mismatch event")
+            raise RuntimeError("objective hash-lock mismatch: patch cycle blocked") from exc
+
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:
         """Execute a self-improvement cycle.
@@ -8363,6 +8400,7 @@ class SelfImprovementEngine:
         current sandbox workflow context.
         """
         self._ensure_heartbeat()
+        self._verify_objective_hash_lock_before_cycle()
         self._cycle_running = True
         self._cycle_count += 1
         cid = f"cycle-{self._cycle_count}"

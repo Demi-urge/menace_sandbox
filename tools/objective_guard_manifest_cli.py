@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Manual operator utility for ObjectiveGuard manifests."""
+"""Manual operator utility for objective hash-lock manifests."""
 
 import argparse
 from pathlib import Path
@@ -28,7 +28,7 @@ def main() -> int:
 
     subparsers.add_parser(
         "refresh",
-        help="Manually regenerate the persisted objective hash manifest.",
+        help="Manually regenerate the persisted objective hash-lock manifest (no automatic updates).",
     )
     subparsers.add_parser(
         "update",

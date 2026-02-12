@@ -14,17 +14,17 @@ def test_check_file_integrity_uses_objective_manifest_format(tmp_path: Path, mon
         repo_root=tmp_path,
         protected_specs=["reward_dispatcher.py"],
         hash_specs=["reward_dispatcher.py"],
-        manifest_path=tmp_path / "immutable_hashes_objective.json",
+        manifest_path=tmp_path / "config/objective_hash_lock.json",
     )
     guard.write_manifest()
 
     reward_file.write_text("MODIFIED\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    assert shc.check_file_integrity("immutable_hashes_objective.json") == [
+    assert shc.check_file_integrity("config/objective_hash_lock.json") == [
         "reward_dispatcher.py"
     ]
 
 
 def test_startup_health_check_defaults_to_objective_manifest() -> None:
-    assert shc.IMMUTABLE_HASHES_PATH == "immutable_hashes_objective.json"
+    assert shc.IMMUTABLE_HASHES_PATH == "config/objective_hash_lock.json"

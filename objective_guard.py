@@ -26,7 +26,7 @@ _DEFAULT_PROTECTED_SPECS: tuple[str, ...] = (
     "neurosales/neurosales/reward_ledger.py",
 )
 
-DEFAULT_OBJECTIVE_HASH_MANIFEST = "immutable_hashes_objective.json"
+DEFAULT_OBJECTIVE_HASH_MANIFEST = "config/objective_hash_lock.json"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,20 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "billing/billing_ledger.py": "26861ddc632f28aac1b84c9f0ba7318ac5b84093e8dcaf1fe30a5cc21e086a80",
+    "billing/billing_logger.py": "e4bb17a0fdfc1480084036f9c6351157dfcdef0eeeb9454efece8ae3bd24aee8",
+    "billing/stripe_ledger.py": "3b29f75dc45260fc4a8666f9b0b7ad3afd5284fb5a49b8bfdfea38fb9d8034dc",
+    "finance_router_bot.py": "eacaee59bd6ba6825c2c0a7407166e9552ec4da750ecb8508cc85d578d151adc",
+    "kpi_editing_detector.py": "5e9dbb3bc3e7a282a5c5ef81a7fb6c1b10e09460e8eea9ee38381fa4b28cc5a3",
+    "kpi_reward_core.py": "0360a23b4535ec7b43d8ac0a7e79d5fa96162610b36ac2ad8bc2d39a2173972a",
+    "menace/core/evaluator.py": "ee0c6b172342bf8a16c6611756013f24813f8e214d7828f274b7f837b2bb23c1",
+    "mvp_evaluator.py": "a213dd091e9b1ac00c4f5a735e420681387d930a29045748dacada9c9a973ca3",
+    "neurosales/neurosales/hierarchical_reward.py": "42fb7f506098d0dd7e2d0f00cf30b9677c3c5879c867737b2ecaec41ecc3ee5a",
+    "neurosales/neurosales/reward_ledger.py": "c2c7a62404525763442260a37b24dbd0641065269b2a75ec0a803c0f149669e4",
+    "reward_dispatcher.py": "5beb39629479ece2cc3d0c83f930e87cb2f721ea2913c3968aaacbe7ef917bce",
+    "reward_sanity_checker.py": "92fcb8215dcd16e2964406071cff3813b18cff25221bde184d34c7873a6c3678",
+    "startup_health_check.py": "8989356ee14cea5ec32657159a5e416a8002dc26caca4287dc7f5a4665a38528",
+    "stripe_billing_router.py": "c1eefa61ad255befa2025575cf8fb2aad791acd4bfcbc6880c80405095d67814"
+  },
+  "version": 1
+}
