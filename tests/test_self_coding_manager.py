@@ -138,6 +138,7 @@ import subprocess
 import tempfile
 import shutil
 import logging
+import sqlite3
 
 
 class DummyEngine:
@@ -3106,3 +3107,127 @@ def test_handle_objective_integrity_breach_emits_trip_event_and_rolls_back(monke
     payload = [p for t, p in events if t == "self_coding:objective_circuit_breaker_trip"][0]
     assert payload["changed_objective_files"] == ["reward_dispatcher.py"]
     assert payload["rollback_ok"] is True
+
+
+def test_auto_run_patch_objective_breach_trips_circuit_and_rolls_back(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+            self.patch_db = None
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, dict(payload)))
+    )
+    audit_entries: list[dict[str, object]] = []
+    engine = Engine()
+    engine.audit_trail = types.SimpleNamespace(record=lambda payload: audit_entries.append(dict(payload)))
+
+    mgr = scm.SelfCodingManager(
+        engine,
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+        event_bus=event_bus,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+    mgr._last_patch_id = 42
+
+    rollbacks: list[tuple[str, str]] = []
+
+    class DummyRollbackManager:
+        def rollback(self, commit, requesting_bot=None):
+            rollbacks.append((str(commit), str(requesting_bot)))
+
+    monkeypatch.setattr(scm, "RollbackManager", DummyRollbackManager)
+
+    def raise_drift(*_a, **_k):
+        raise scm.ObjectiveGuardViolation(
+            "objective_integrity_breach",
+            details={"changed_files": ["objective_hash_lock.py"]},
+        )
+
+    monkeypatch.setattr(mgr, "run_patch", raise_drift)
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        mgr.auto_run_patch(tmp_path / "module.py", "patch")
+
+    assert mgr._self_coding_paused is True
+    assert rollbacks == [("42", "bot")]
+    assert any(topic == "self_coding:objective_integrity_trip" for topic, _ in events)
+    assert audit_entries[-1]["changed_files"] == ["objective_hash_lock.py"]
+
+
+def test_idle_cycle_objective_breach_stops_loop_and_skips_followup(monkeypatch, tmp_path):
+    class Engine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+            self.patch_db = None
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE suggestions (id INTEGER PRIMARY KEY, module TEXT, description TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO suggestions(id, module, description) VALUES (1, ?, 'first')",
+        (str(tmp_path / "first.py"),),
+    )
+    conn.execute(
+        "INSERT INTO suggestions(id, module, description) VALUES (2, ?, 'second')",
+        (str(tmp_path / "second.py"),),
+    )
+    conn.commit()
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, dict(payload)))
+    )
+    attempts: list[str] = []
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+        event_bus=event_bus,
+        suggestion_db=types.SimpleNamespace(conn=conn),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+    mgr._last_patch_id = 99
+
+    rollbacks: list[tuple[str, str]] = []
+
+    class DummyRollbackManager:
+        def rollback(self, commit, requesting_bot=None):
+            rollbacks.append((str(commit), str(requesting_bot)))
+
+    monkeypatch.setattr(scm, "RollbackManager", DummyRollbackManager)
+
+    def drifting_auto_run(path, description):
+        attempts.append(description)
+        raise scm.ObjectiveGuardViolation(
+            "objective_integrity_breach",
+            details={"changed_files": ["immutable_hashes_objective.json"]},
+        )
+
+    monkeypatch.setattr(mgr, "auto_run_patch", drifting_auto_run)
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        mgr.idle_cycle()
+
+    assert attempts == ["first"]
+    assert mgr._self_coding_paused is True
+    assert rollbacks == [("99", "bot")]
+    assert any(topic == "self_coding:objective_integrity_trip" for topic, _ in events)

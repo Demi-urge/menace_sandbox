@@ -3347,7 +3347,8 @@ class SelfCodingManager:
             )
 
     def _record_audit_event(self, payload: Dict[str, Any]) -> None:
-        audit = getattr(self.engine, "audit_trail", None)
+        engine = getattr(self, "engine", None)
+        audit = getattr(engine, "audit_trail", None)
         if audit:
             try:
                 audit.record(payload)
@@ -3768,7 +3769,16 @@ class SelfCodingManager:
 
         context_meta: Dict[str, Any] | None = kwargs.get("context_meta")
         summary: Dict[str, Any] | None = None
-        result = self.run_patch(path, description, provenance_token=token, **kwargs)
+        try:
+            result = self.run_patch(path, description, provenance_token=token, **kwargs)
+        except ObjectiveGuardViolation as exc:
+            if getattr(exc, "reason", "") == "objective_integrity_breach":
+                self._handle_objective_integrity_breach(
+                    violation=exc,
+                    path=path,
+                    stage="auto_run_patch",
+                )
+            raise
         commit = getattr(self, "_last_commit_hash", None)
         patch_id = getattr(self, "_last_patch_id", None)
         if run_post_validation and commit:
@@ -4007,8 +4017,11 @@ class SelfCodingManager:
         )
         details["changed_files"] = changed_files
         commit, commit_meta = self._resolve_current_or_last_patch_commit()
+        patch_id = getattr(self, "_last_patch_id", None)
+        rollback_target = commit if commit else (str(patch_id) if patch_id is not None else None)
         telemetry_payload: Dict[str, Any] = {
             "severity": "critical",
+            "priority": "high",
             "bot": self.bot_name,
             "reason": violation.reason,
             "stage": stage,
@@ -4031,6 +4044,10 @@ class SelfCodingManager:
                             telemetry_payload,
                         )
                         self.event_bus.publish(
+                            "self_coding:objective_integrity_trip",
+                            telemetry_payload,
+                        )
+                        self.event_bus.publish(
                             "self_coding:objective_circuit_breaker_trip",
                             telemetry_payload,
                         )
@@ -4041,12 +4058,25 @@ class SelfCodingManager:
                 return
             self._objective_breach_handled = True
 
-        rollback_attempted = bool(commit)
+        self._record_audit_event(
+            {
+                "event": "objective_integrity_breach",
+                "severity": "critical",
+                "priority": "high",
+                "bot": self.bot_name,
+                "stage": stage,
+                "reason": violation.reason,
+                "changed_files": changed_files,
+                "rollback_target": rollback_target,
+            }
+        )
+
+        rollback_attempted = bool(rollback_target)
         rollback_ok = False
         rollback_error: str | None = None
-        if commit and RollbackManager is not None:
+        if rollback_target and RollbackManager is not None:
             try:
-                RollbackManager().rollback(commit, requesting_bot=self.bot_name)
+                RollbackManager().rollback(rollback_target, requesting_bot=self.bot_name)
                 rollback_ok = True
             except Exception as exc:
                 rollback_error = str(exc)
@@ -4054,10 +4084,10 @@ class SelfCodingManager:
                     "rollback failed during objective integrity breach handling",
                     exc_info=True,
                 )
-        elif commit and RollbackManager is None:
+        elif rollback_target and RollbackManager is None:
             rollback_error = "rollback_manager_unavailable"
         else:
-            rollback_error = "no_commit_available"
+            rollback_error = "no_patch_available"
 
         telemetry_payload.update(
             {
@@ -4071,6 +4101,10 @@ class SelfCodingManager:
             try:
                 self.event_bus.publish(
                     "self_coding:objective_integrity_breach",
+                    telemetry_payload,
+                )
+                self.event_bus.publish(
+                    "self_coding:objective_integrity_trip",
                     telemetry_payload,
                 )
                 self.event_bus.publish(
@@ -4597,6 +4631,14 @@ class SelfCodingManager:
                         ctx_meta,
                         provenance_token=provenance_token,
                     )
+                except ObjectiveGuardViolation as exc:
+                    if getattr(exc, "reason", "") == "objective_integrity_breach":
+                        self._handle_objective_integrity_breach(
+                            violation=exc,
+                            path=path,
+                            stage="quick_fix_apply_patch",
+                        )
+                    raise
                 except Exception as exc:
                     if self.event_bus:
                         try:
@@ -5279,6 +5321,12 @@ class SelfCodingManager:
             self.logger.exception("failed to fetch suggestions")
             return
         for sid, module, description in rows:
+            if getattr(self, "_self_coding_paused", False):
+                self.logger.warning(
+                    "self-coding paused; halting idle cycle loop",
+                    extra={"bot": self.bot_name, "reason": self._self_coding_disabled_reason},
+                )
+                break
             path = resolve_path(module)
             prompt_module = path_for_prompt(module)
             try:
@@ -5303,10 +5351,20 @@ class SelfCodingManager:
                             "failed to record audit log for %s", prompt_module
                         )
                 self.auto_run_patch(path, description)
+            except ObjectiveGuardViolation as exc:
+                if getattr(exc, "reason", "") == "objective_integrity_breach":
+                    self._handle_objective_integrity_breach(
+                        violation=exc,
+                        path=path,
+                        stage="idle_cycle",
+                    )
+                raise
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception(
                     "failed to apply suggestion for %s", prompt_module
                 )
+                if getattr(self, "_self_coding_paused", False):
+                    break
             finally:
                 try:
                     self.suggestion_db.conn.execute(
