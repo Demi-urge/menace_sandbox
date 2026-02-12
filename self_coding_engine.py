@@ -2627,6 +2627,39 @@ class SelfCodingEngine:
         )
         return result, None
 
+    def _ensure_patch_path_approved(
+        self,
+        path: Path,
+        *,
+        manual_approval_token: str | None = None,
+    ) -> None:
+        """Require explicit human approval for objective-adjacent patch targets."""
+
+        repo_root = Path.cwd().resolve()
+        try:
+            path.resolve().relative_to(repo_root)
+        except ValueError:
+            return
+
+        manager = MANAGER_CONTEXT.get()
+        approval_policy = getattr(manager, "approval_policy", None)
+        if approval_policy is None:
+            manager_module = load_internal("self_coding_manager")
+            approval_policy = manager_module.ObjectiveApprovalPolicy(repo_root=repo_root)
+
+        token = manual_approval_token
+        if token is None:
+            token = os.getenv("MENACE_MANUAL_APPROVAL_TOKEN", "").strip() or None
+
+        approved = approval_policy.approve(path, manual_approval_token=token)
+        if not approved:
+            decision = getattr(approval_policy, "last_decision", {}) or {}
+            reason_codes = tuple(decision.get("reason_codes", ()) or ())
+            reason = reason_codes[0] if reason_codes else "approval_denied"
+            raise RuntimeError(
+                f"patch approval failed for {path}: {reason}"
+            )
+
     def patch_file(
         self,
         path: Path,
@@ -3272,6 +3305,7 @@ class SelfCodingEngine:
                     target_region=target_region,
                     lock=lock,
                 )
+        self._ensure_patch_path_approved(path)
         before_roi = 0.0
         before_err = self._current_errors()
         pred_before_roi = pred_before_err = 0.0

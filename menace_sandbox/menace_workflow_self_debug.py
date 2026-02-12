@@ -44,6 +44,10 @@ from sandbox_settings import SandboxSettings
 from task_handoff_bot import WorkflowDB
 from sandbox_results_logger import record_self_debug_metrics
 from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
+try:
+    from menace.self_coding_manager import ObjectiveApprovalPolicy
+except Exception:  # pragma: no cover - flat layout fallback
+    from self_coding_manager import ObjectiveApprovalPolicy
 from self_coding_policy import (
     ensure_self_coding_unsafe_paths_env,
     evaluate_patch_promotion,
@@ -282,6 +286,19 @@ def _apply_pipeline_patch(
             },
         )
         return False
+    approval_policy = ObjectiveApprovalPolicy(repo_root=repo_root)
+    manual_token = os.getenv("MENACE_MANUAL_APPROVAL_TOKEN", "").strip() or None
+    if not approval_policy.approve(source_path, manual_approval_token=manual_token):
+        LOGGER.info(
+            "mvp patch promotion rejected",
+            extra={
+                "source_path": str(source_path),
+                "rejection_reasons": ["manual approval missing"],
+                "classification": "objective_adjacent",
+            },
+        )
+        return False
+
     modified_source = pipeline_result.get("modified_source") or pipeline_result.get(
         "updated_source"
     )

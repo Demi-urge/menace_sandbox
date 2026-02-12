@@ -1256,8 +1256,9 @@ class PatchApprovalPolicy:
         target = str(path).replace("\\", "/").strip().strip("/")
         return target == cleaned_rule or target.startswith(f"{cleaned_rule}/")
 
-    def _manual_approval_source(
-        self,
+    @classmethod
+    def resolve_manual_approval_source(
+        cls,
         path: Path,
         *,
         manual_approval_token: str | None = None,
@@ -1276,11 +1277,11 @@ class PatchApprovalPolicy:
                 approved_paths = raw_payload.get("approved_paths", [])
                 if isinstance(approved_paths, list):
                     rel_path = path_for_prompt(path)
-                    if any(self._path_matches_rule(Path(rel_path), str(item)) for item in approved_paths):
+                    if any(cls._path_matches_rule(Path(rel_path), str(item)) for item in approved_paths):
                         return "record"
             elif isinstance(raw_payload, list):
                 rel_path = path_for_prompt(path)
-                if any(self._path_matches_rule(Path(rel_path), str(item)) for item in raw_payload):
+                if any(cls._path_matches_rule(Path(rel_path), str(item)) for item in raw_payload):
                     return "record"
         queue_file = os.getenv("MENACE_MANUAL_APPROVAL_QUEUE", "").strip()
         if queue_file:
@@ -1297,7 +1298,7 @@ class PatchApprovalPolicy:
                             continue
                         if not bool(entry.get("approved", False)):
                             continue
-                        if self._path_matches_rule(Path(rel_path), str(entry.get("path", ""))):
+                        if cls._path_matches_rule(Path(rel_path), str(entry.get("path", ""))):
                             return "queue"
                 except Exception:
                     return None
@@ -1309,7 +1310,7 @@ class PatchApprovalPolicy:
         approval_source: str | None = None
         reason_codes: list[str] = []
         if classification == "objective_adjacent":
-            approval_source = self._manual_approval_source(
+            approval_source = self.resolve_manual_approval_source(
                 path,
                 manual_approval_token=manual_approval_token,
             )
@@ -1372,6 +1373,58 @@ class PatchApprovalPolicy:
             "approval_source": approval_source,
         }
         return ok
+
+
+class ObjectiveApprovalPolicy:
+    """Enforce explicit human approval for objective-adjacent targets."""
+
+    REASON_MANUAL_APPROVAL_MISSING = PatchApprovalPolicy.REASON_MANUAL_APPROVAL_MISSING
+
+    def __init__(self, *, repo_root: Path | None = None) -> None:
+        self.repo_root = (repo_root or Path.cwd()).resolve()
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.last_decision: dict[str, Any] = {
+            "approved": False,
+            "reason_codes": (),
+            "target_classification": "standard",
+            "approval_source": None,
+        }
+
+    def classify_target(self, path: Path) -> str:
+        policy = get_patch_promotion_policy(repo_root=self.repo_root)
+        if policy.is_safe_target(path):
+            return "standard"
+        return "objective_adjacent"
+
+    def approve(self, path: Path, *, manual_approval_token: str | None = None) -> bool:
+        classification = self.classify_target(path)
+        approval_source: str | None = None
+        reason_codes: list[str] = []
+        if classification == "objective_adjacent":
+            approval_source = PatchApprovalPolicy.resolve_manual_approval_source(
+                path,
+                manual_approval_token=manual_approval_token,
+            )
+            if approval_source is None:
+                reason_codes.append(self.REASON_MANUAL_APPROVAL_MISSING)
+                self.last_decision = {
+                    "approved": False,
+                    "reason_codes": tuple(reason_codes),
+                    "target_classification": classification,
+                    "approval_source": None,
+                }
+                self.logger.warning(
+                    "manual approval required for objective-adjacent target: %s",
+                    path_for_prompt(path),
+                )
+                return False
+        self.last_decision = {
+            "approved": True,
+            "reason_codes": tuple(reason_codes),
+            "target_classification": classification,
+            "approval_source": approval_source,
+        }
+        return True
 
 
 class HelperGenerationError(RuntimeError):
