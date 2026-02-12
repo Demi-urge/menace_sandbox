@@ -1596,6 +1596,10 @@ class SelfCodingManager:
         divergence_config = load_divergence_detector_config()
         self._divergence_window = divergence_config.window_size
         self._divergence_detector = SelfCodingDivergenceDetector(divergence_config)
+        self._divergence_threshold_cycles = divergence_config.divergence_threshold_cycles
+        self._divergence_recovery_cycles = divergence_config.recovery_threshold_cycles
+        self._divergence_streak = 0
+        self._divergence_recovery_streak = 0
         self._cycle_metrics_window: deque[CycleMetricsRecord] = deque(
             maxlen=self._divergence_window
         )
@@ -3453,16 +3457,58 @@ class SelfCodingManager:
                 continue
         return None
 
+    def _load_business_metric_from_data_bot(
+        self,
+        metric: str,
+        *,
+        context_meta: Dict[str, Any] | None = None,
+    ) -> float | None:
+        data_bot = getattr(self, "data_bot", None)
+        if not data_bot:
+            return None
+        try:
+            fetch = getattr(getattr(data_bot, "db", None), "fetch", None)
+            if not callable(fetch):
+                return None
+            raw = fetch(limit=self._divergence_window)
+            rows: list[dict[str, Any]] = []
+            if isinstance(raw, list):
+                rows = [dict(item) for item in raw if isinstance(item, dict)]
+            elif hasattr(raw, "to_dict"):
+                rows = [dict(item) for item in raw.to_dict("records") if isinstance(item, dict)]
+            for row in rows:
+                row_bot = str(row.get("bot") or "")
+                if row_bot and row_bot != str(self.bot_name):
+                    continue
+                value = row.get(metric)
+                if value is None:
+                    continue
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        except Exception:
+            self.logger.exception("failed to fetch %s trend from data bot", metric)
+        return None
+
     def _evaluate_divergence_guard(self, context_meta: Dict[str, Any] | None) -> None:
         reward = self._metric_from_context(
             context_meta,
             "reward",
             "reward_score",
             "rl_reward",
+            "reward_ledger_score",
+            "reward_dispatcher_score",
         )
         profit = self._metric_from_context(context_meta, "profit", "profitability")
         revenue = self._metric_from_context(context_meta, "revenue")
+        if profit is None:
+            profit = self._load_business_metric_from_data_bot("profitability", context_meta=context_meta)
+        if revenue is None:
+            revenue = self._load_business_metric_from_data_bot("revenue", context_meta=context_meta)
         if reward is None or (profit is None and revenue is None):
+            self._divergence_streak = 0
+            self._divergence_recovery_streak = 0
             return
 
         workflow_id = self.bot_name
@@ -3479,10 +3525,6 @@ class SelfCodingManager:
         )
         self._cycle_metrics_window.append(record)
         detection = self._divergence_detector.evaluate(list(self._cycle_metrics_window))
-        if not detection.triggered:
-            return
-
-        reason = "reward_profit_revenue_divergence"
         cycle_window = list(self._cycle_metrics_window)
         reward_values = [item.reward_score for item in cycle_window]
         profit_values = [
@@ -3491,42 +3533,97 @@ class SelfCodingManager:
         revenue_values = [
             float(item.revenue) for item in cycle_window if item.revenue is not None
         ]
-        telemetry_payload: Dict[str, Any] = {
-            "severity": "high",
-            "event": "self_coding_divergence_kill_switch",
+        diagnostic_payload: Dict[str, Any] = {
             "bot": self.bot_name,
-            "reason": reason,
             "window": self._divergence_window,
             "reward_window": reward_values,
             "profit_window": profit_values,
             "revenue_window": revenue_values,
+            "cycle_ids": [item.cycle_index for item in cycle_window],
             "cycle_metrics": [asdict(item) for item in cycle_window],
             "detected_metric": detection.metric_name,
             "reward_delta": detection.reward_delta,
             "real_metric_delta": detection.real_metric_delta,
             "reward_trend": detection.reward_trend,
             "real_metric_trend": detection.real_metric_trend,
+            "min_confidence": self._divergence_detector.config.minimum_confidence,
+            "confidence": detection.confidence,
+            "streak": self._divergence_streak,
+            "threshold": self._divergence_threshold_cycles,
             "context_meta": dict(context_meta or {}),
         }
-        self._self_coding_paused = True
-        self._self_coding_disabled_reason = reason
-        self._self_coding_pause_source = "divergence_monitor"
-        self._record_audit_event({
-            "action": "self_coding_auto_pause",
+
+        if detection.triggered:
+            self._divergence_streak += 1
+            self._divergence_recovery_streak = 0
+            diagnostic_payload["streak"] = self._divergence_streak
+            self.logger.warning(
+                "divergence candidate cycle detected",
+                extra={"event": "self_coding_divergence_candidate", **diagnostic_payload},
+            )
+            if self._divergence_streak < self._divergence_threshold_cycles:
+                return
+
+            reason = "reward_profit_revenue_divergence"
+            telemetry_payload: Dict[str, Any] = {
+                "severity": "high",
+                "event": "self_coding_divergence_kill_switch",
+                "reason": reason,
+                **diagnostic_payload,
+            }
+            self._self_coding_paused = True
+            self._self_coding_disabled_reason = reason
+            self._self_coding_pause_source = "divergence_monitor"
+            self._record_audit_event({
+                "action": "self_coding_auto_pause",
+                "source": "divergence_monitor",
+                **telemetry_payload,
+            })
+            self.logger.critical(
+                "self-coding auto-paused: reward diverged from business outcomes",
+                extra=telemetry_payload,
+            )
+            if self.event_bus:
+                try:
+                    self.event_bus.publish("self_coding:divergence_kill_switch", telemetry_payload)
+                    self.event_bus.publish("self_coding:critical_divergence", telemetry_payload)
+                    self.event_bus.publish("self_coding:high_severity_alert", telemetry_payload)
+                except Exception:
+                    self.logger.exception("failed to publish divergence telemetry")
+            return
+
+        self._divergence_streak = 0
+        if self._self_coding_pause_source != "divergence_monitor" or not self._self_coding_paused:
+            self._divergence_recovery_streak = 0
+            return
+
+        self._divergence_recovery_streak += 1
+        if self._divergence_recovery_streak < self._divergence_recovery_cycles:
+            return
+
+        self._self_coding_paused = False
+        self._self_coding_disabled_reason = None
+        self._self_coding_pause_source = None
+        self._divergence_recovery_streak = 0
+        recovery_payload = {
+            "event": "self_coding_divergence_recovered",
+            "action": "self_coding_auto_resume",
             "source": "divergence_monitor",
-            **telemetry_payload,
-        })
-        self.logger.critical(
-            "self-coding auto-paused: reward diverged from business outcomes",
-            extra=telemetry_payload,
-        )
+            "bot": self.bot_name,
+            "recovery_cycles": self._divergence_recovery_cycles,
+            "window": self._divergence_window,
+            "cycle_ids": [item.cycle_index for item in cycle_window],
+            "reward_window": reward_values,
+            "profit_window": profit_values,
+            "revenue_window": revenue_values,
+        }
+        self._record_audit_event(recovery_payload)
+        self.logger.warning("self-coding auto-resumed after divergence recovery", extra=recovery_payload)
         if self.event_bus:
             try:
-                self.event_bus.publish("self_coding:divergence_kill_switch", telemetry_payload)
-                self.event_bus.publish("self_coding:critical_divergence", telemetry_payload)
-                self.event_bus.publish("self_coding:high_severity_alert", telemetry_payload)
+                self.event_bus.publish("self_coding:divergence_recovered", recovery_payload)
             except Exception:
-                self.logger.exception("failed to publish divergence telemetry")
+                self.logger.exception("failed to publish divergence recovery telemetry")
 
     def reset_self_coding_pause(self, *, operator_id: str, reason: str) -> None:
         """Operator-controlled reset for paused self-coding state."""
@@ -3540,6 +3637,8 @@ class SelfCodingManager:
         self._self_coding_paused = False
         self._self_coding_disabled_reason = None
         self._self_coding_pause_source = None
+        self._divergence_streak = 0
+        self._divergence_recovery_streak = 0
         details = {
             "action": "self_coding_manual_reset",
             "bot": self.bot_name,

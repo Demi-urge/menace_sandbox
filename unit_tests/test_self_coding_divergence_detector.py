@@ -71,3 +71,25 @@ def test_noisy_boundary_obeys_flatness_and_effect_size_thresholds():
     assert second.triggered is True
     assert second.reward_trend > 0.0
     assert second.real_metric_trend <= 0.0
+
+
+def test_requires_minimum_confidence_for_sparse_business_metrics():
+    detector = SelfCodingDivergenceDetector(
+        DivergenceDetectorConfig(
+            window_size=4,
+            flatness_threshold=0.0,
+            minimum_effect_size=0.1,
+            minimum_confidence=0.75,
+        )
+    )
+    history = [
+        _record(1, 1.0, revenue=10.0),
+        _record(2, 1.2, revenue=None),
+        _record(3, 1.5, revenue=None),
+        _record(4, 1.8, revenue=9.7),
+    ]
+
+    result = detector.evaluate(history)
+
+    assert result.triggered is False
+    assert result.confidence == 0.0

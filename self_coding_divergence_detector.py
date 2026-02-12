@@ -36,6 +36,9 @@ class DivergenceDetectorConfig:
     window_size: int = 3
     flatness_threshold: float = 0.0
     minimum_effect_size: float = 0.1
+    minimum_confidence: float = 1.0
+    divergence_threshold_cycles: int = 2
+    recovery_threshold_cycles: int = 2
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class DivergenceDetectionResult:
     real_metric_delta: float
     real_metric_trend: float
     metric_name: str | None
+    confidence: float
 
 
 def _trend_slope(values: Sequence[float]) -> float:
@@ -98,6 +102,18 @@ def load_divergence_detector_config(config_path: str | None = None) -> Divergenc
         minimum_effect_size=max(
             _safe_float(section.get("minimum_effect_size"), defaults.minimum_effect_size), 0.0
         ),
+        minimum_confidence=min(
+            max(_safe_float(section.get("minimum_confidence"), defaults.minimum_confidence), 0.0),
+            1.0,
+        ),
+        divergence_threshold_cycles=max(
+            int(_safe_float(section.get("divergence_threshold_cycles"), defaults.divergence_threshold_cycles)),
+            1,
+        ),
+        recovery_threshold_cycles=max(
+            int(_safe_float(section.get("recovery_threshold_cycles"), defaults.recovery_threshold_cycles)),
+            1,
+        ),
     )
 
 
@@ -108,29 +124,34 @@ class SelfCodingDivergenceDetector:
     def evaluate(self, records: Sequence[CycleMetricsRecord]) -> DivergenceDetectionResult:
         window = self.config.window_size
         if len(records) < window:
-            return DivergenceDetectionResult(False, None, 0.0, 0.0, 0.0, 0.0, None)
+            return DivergenceDetectionResult(False, None, 0.0, 0.0, 0.0, 0.0, None, 0.0)
 
         sample = list(records)[-window:]
         reward_values = [item.reward_score for item in sample]
         reward_delta = sample[-1].reward_score - sample[0].reward_score
         reward_trend = _trend_slope(reward_values)
         if reward_delta < self.config.minimum_effect_size:
-            return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None)
+            return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None, 0.0)
 
         if reward_trend <= 0.0:
-            return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None)
+            return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None, 0.0)
 
-        business_candidates: list[tuple[str, float, float]] = []
-        if all(r.profit is not None for r in sample):
-            profit_values = [float(item.profit) for item in sample if item.profit is not None]
-            profit_delta = float(sample[-1].profit) - float(sample[0].profit)
-            business_candidates.append(("profit", profit_delta, _trend_slope(profit_values)))
-        if all(r.revenue is not None for r in sample):
-            revenue_values = [float(item.revenue) for item in sample if item.revenue is not None]
-            revenue_delta = float(sample[-1].revenue) - float(sample[0].revenue)
-            business_candidates.append(("revenue", revenue_delta, _trend_slope(revenue_values)))
+        business_candidates: list[tuple[str, float, float, float]] = []
+        for metric_name in ("profit", "revenue"):
+            indexed_values: list[tuple[int, float]] = []
+            for idx, row in enumerate(sample):
+                raw = getattr(row, metric_name)
+                if raw is None:
+                    continue
+                indexed_values.append((idx, float(raw)))
+            confidence = len(indexed_values) / float(window)
+            if len(indexed_values) < 2 or confidence < self.config.minimum_confidence:
+                continue
+            metric_delta = indexed_values[-1][1] - indexed_values[0][1]
+            metric_trend = _trend_slope([value for _, value in indexed_values])
+            business_candidates.append((metric_name, metric_delta, metric_trend, confidence))
 
-        for metric_name, metric_delta, metric_trend in business_candidates:
+        for metric_name, metric_delta, metric_trend, confidence in business_candidates:
             if metric_trend <= self.config.flatness_threshold:
                 return DivergenceDetectionResult(
                     True,
@@ -140,6 +161,7 @@ class SelfCodingDivergenceDetector:
                     metric_delta,
                     metric_trend,
                     metric_name,
+                    confidence,
                 )
 
-        return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None)
+        return DivergenceDetectionResult(False, None, reward_delta, reward_trend, 0.0, 0.0, None, 0.0)
