@@ -410,5 +410,5 @@ def test_objective_guard_write_manifest_persists_configured_hash_specs(tmp_path:
     )
     payload = json.loads((tmp_path / "config" / "objective_hash_lock.json").read_text(encoding="utf-8"))
 
-    assert payload["hash_spec_source"] == "objective_surface_policy.OBJECTIVE_ADJACENT_HASH_PATHS"
+    assert payload["hash_spec_source"] == "objective_inventory.OBJECTIVE_ADJACENT_HASH_PATHS"
     assert payload["configured_hash_specs"] == ["reward_dispatcher.py"]

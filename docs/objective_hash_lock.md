@@ -1,6 +1,6 @@
 # Objective hash-lock operator workflow
 
-`objective_surface_policy.OBJECTIVE_ADJACENT_HASH_PATHS` is the canonical objective hash target list.
+`objective_inventory.OBJECTIVE_ADJACENT_HASH_PATHS` is the canonical objective hash target list.
 `ObjectiveGuard` defaults and `config/objective_hash_lock.json` are expected to stay in sync with that list.
 
 ## Intentional objective-surface rotation
@@ -24,4 +24,4 @@ A `manifest_file_set_mismatch` means one of:
 - objective hash specs changed without rotating the manifest, or
 - manifest was edited/rotated from a different file set.
 
-Resolution: verify the intended hash target list in `objective_surface_policy.py`, then run the refresh command above with operator context.
+Resolution: verify the intended hash target list in `objective_inventory.py`, then run the refresh command above with operator context.

@@ -3319,7 +3319,7 @@ def test_idle_cycle_objective_breach_stops_loop_and_skips_followup(monkeypatch, 
         attempts.append(description)
         raise scm.ObjectiveGuardViolation(
             "objective_integrity_breach",
-            details={"changed_files": ["immutable_hashes_objective.json"]},
+            details={"changed_files": ["config/objective_hash_lock.json"]},
         )
 
     monkeypatch.setattr(mgr, "auto_run_patch", drifting_auto_run)
