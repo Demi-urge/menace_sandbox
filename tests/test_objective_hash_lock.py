@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pytest
 
 from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
 from objective_hash_lock import verify_objective_hash_lock
+from tools import objective_guard_manifest_cli
 
 
 def test_verify_objective_hash_lock_returns_current_hashes(tmp_path: Path) -> None:
@@ -18,7 +20,7 @@ def test_verify_objective_hash_lock_returns_current_hashes(tmp_path: Path) -> No
         hash_specs=["reward_dispatcher.py"],
         manifest_path=tmp_path / "config" / "objective_hash_lock.json",
     )
-    guard.write_manifest()
+    guard.write_manifest(operator="alice", reason="approved change", command_source="tools/objective_guard_manifest_cli.py")
 
     report = verify_objective_hash_lock(guard=guard)
 
@@ -36,7 +38,7 @@ def test_verify_objective_hash_lock_exposes_current_hashes_on_mismatch(tmp_path:
         hash_specs=["reward_dispatcher.py"],
         manifest_path=tmp_path / "config" / "objective_hash_lock.json",
     )
-    guard.write_manifest()
+    guard.write_manifest(operator="alice", reason="approved change", command_source="tools/objective_guard_manifest_cli.py")
     objective.write_text("MODIFIED\n", encoding="utf-8")
 
     with pytest.raises(ObjectiveGuardViolation) as exc_info:
@@ -44,3 +46,37 @@ def test_verify_objective_hash_lock_exposes_current_hashes_on_mismatch(tmp_path:
 
     assert exc_info.value.reason == "manifest_hash_mismatch"
     assert "current_hashes" in exc_info.value.details
+
+
+def test_manifest_refresh_only_via_manual_cli_command_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_SELF_CODING_OBJECTIVE_HASH_PATHS", "reward_dispatcher.py")
+    monkeypatch.setenv("MENACE_SELF_CODING_PROTECTED_PATHS", "reward_dispatcher.py")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "objective_guard_manifest_cli.py",
+            "--operator",
+            "alice",
+            "--reason",
+            "approved update",
+            "refresh",
+        ],
+    )
+    rc = objective_guard_manifest_cli.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "updated manifest" in out
+
+    guard = ObjectiveGuard(repo_root=tmp_path)
+    with pytest.raises(ObjectiveGuardViolation) as exc_info:
+        guard.write_manifest(
+            operator="alice",
+            reason="approved update",
+            command_source="autonomous_runtime",
+        )
+    assert exc_info.value.reason == "manifest_refresh_manual_only"

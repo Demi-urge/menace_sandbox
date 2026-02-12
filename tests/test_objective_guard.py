@@ -61,7 +61,7 @@ def test_objective_guard_manifest_matches_hashes(tmp_path: Path) -> None:
         hash_specs=["reward_dispatcher.py"],
         manifest_path=tmp_path / ".security" / "state" / "objective_guard_manifest.json",
     )
-    guard.write_manifest()
+    guard.write_manifest(operator="alice", reason="approved bootstrap", command_source="tools/objective_guard_manifest_cli.py")
 
     report = guard.verify_manifest()
 
@@ -78,7 +78,7 @@ def test_objective_guard_manifest_detects_hash_mismatch(tmp_path: Path) -> None:
         hash_specs=["reward_dispatcher.py"],
         manifest_path=tmp_path / ".security" / "state" / "objective_guard_manifest.json",
     )
-    guard.write_manifest()
+    guard.write_manifest(operator="alice", reason="approved bootstrap", command_source="tools/objective_guard_manifest_cli.py")
 
     reward_file.write_text("MODIFIED\n", encoding="utf-8")
 
@@ -117,7 +117,7 @@ def test_objective_guard_detects_hash_drift(tmp_path: Path) -> None:
         hash_specs=["reward_dispatcher.py"],
         manifest_path=tmp_path / ".security" / "state" / "objective_guard_manifest.json",
     )
-    guard.write_manifest()
+    guard.write_manifest(operator="alice", reason="approved bootstrap", command_source="tools/objective_guard_manifest_cli.py")
 
     reward_file.write_text("MODIFIED\n", encoding="utf-8")
 
@@ -141,7 +141,7 @@ def test_objective_guard_allows_non_protected_target(tmp_path: Path) -> None:
         hash_specs=["reward_dispatcher.py"],
         manifest_path=tmp_path / ".security" / "state" / "objective_guard_manifest.json",
     )
-    guard.write_manifest()
+    guard.write_manifest(operator="alice", reason="approved bootstrap", command_source="tools/objective_guard_manifest_cli.py")
 
     guard.assert_integrity()
     guard.assert_patch_target_safe(safe_file)
@@ -205,7 +205,7 @@ def test_objective_guard_manifest_hash_mismatch_exposes_changed_files(tmp_path: 
         hash_specs=["reward_dispatcher.py", "reward_ledger.py"],
         manifest_path=tmp_path / ".security" / "state" / "objective_guard_manifest.json",
     )
-    guard.write_manifest()
+    guard.write_manifest(operator="alice", reason="approved bootstrap", command_source="tools/objective_guard_manifest_cli.py")
     reward.write_text("MODIFIED\n", encoding="utf-8")
 
     with pytest.raises(ObjectiveGuardViolation) as exc:
@@ -227,7 +227,7 @@ def test_objective_guard_manifest_bootstrap_records_audit_metadata(tmp_path: Pat
         manifest_path=manifest_path,
     )
 
-    guard.write_manifest(operator="alice", reason="initial trust bootstrap")
+    guard.write_manifest(operator="alice", reason="initial trust bootstrap", command_source="tools/objective_guard_manifest_cli.py")
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     baseline = payload.get("trusted_baseline", {})
@@ -250,10 +250,10 @@ def test_objective_guard_manifest_rotate_preserves_audit_history(tmp_path: Path)
         manifest_path=manifest_path,
     )
 
-    guard.write_manifest(operator="alice", reason="bootstrap baseline")
+    guard.write_manifest(operator="alice", reason="bootstrap baseline", command_source="tools/objective_guard_manifest_cli.py")
     first_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     reward.write_text("ROTATED\n", encoding="utf-8")
-    guard.write_manifest(operator="bob", reason="approved objective update", rotation=True)
+    guard.write_manifest(operator="bob", reason="approved objective update", rotation=True, command_source="tools/objective_guard_manifest_cli.py")
     second_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     assert second_payload["trusted_baseline"]["mode"] == "rotate"
@@ -306,3 +306,46 @@ def test_objective_guard_protects_all_required_objective_adjacent_paths(tmp_path
 
         with pytest.raises(ObjectiveGuardViolation):
             guard.assert_patch_target_safe(target)
+
+
+def test_write_manifest_requires_manual_cli_command_source(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+
+    with pytest.raises(ObjectiveGuardViolation) as exc:
+        guard.write_manifest(operator="alice", reason="approved", command_source="menace_cli")
+
+    assert exc.value.reason == "manifest_refresh_manual_only"
+
+
+def test_write_manifest_requires_non_default_operator_and_reason(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+
+    with pytest.raises(ObjectiveGuardViolation) as exc_operator:
+        guard.write_manifest(
+            operator="automation",
+            reason="approved",
+            command_source="tools/objective_guard_manifest_cli.py",
+        )
+    assert exc_operator.value.reason == "operator_context_required"
+
+    with pytest.raises(ObjectiveGuardViolation) as exc_reason:
+        guard.write_manifest(
+            operator="alice",
+            reason="baseline_bootstrap",
+            command_source="tools/objective_guard_manifest_cli.py",
+        )
+    assert exc_reason.value.reason == "operator_reason_required"

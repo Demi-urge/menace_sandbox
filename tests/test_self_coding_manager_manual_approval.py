@@ -292,3 +292,34 @@ def test_manual_approval_policy_blocks_all_canonical_objective_paths(monkeypatch
 
         assert policy.approve(candidate) is False, rule
         assert "manual_approval_missing" in policy.last_decision["reason_codes"]
+
+
+def test_manual_approval_policy_explicitly_blocks_hash_lock_artifacts(monkeypatch, tmp_path):
+    class DummyVerifier:
+        def verify(self, path: Path) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        scm,
+        "is_self_coding_unsafe_path",
+        lambda _path, *, repo_root=None: True,
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0),
+    )
+
+    policy = scm.PatchApprovalPolicy(verifier=DummyVerifier(), bot_name="bot")
+
+    protected_targets = [
+        tmp_path / "config" / "objective_hash_lock.json",
+        tmp_path / "objective_guard.py",
+        tmp_path / "objective_hash_lock.py",
+    ]
+    for target in protected_targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x = 1\n", encoding="utf-8")
+        assert policy.classify_target(target) == "objective_adjacent"
+        assert policy.approve(target) is False
+        assert "manual_approval_missing" in policy.last_decision["reason_codes"]

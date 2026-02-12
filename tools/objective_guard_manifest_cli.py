@@ -24,6 +24,8 @@ def main() -> int:
         default=".",
         help="Repository root used for protected objective paths.",
     )
+    parser.add_argument("--operator", help="Operator identity (who approved).")
+    parser.add_argument("--reason", help="Operator rationale (why/what changed).")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser(
@@ -44,7 +46,15 @@ def main() -> int:
     guard = _guard(repo_root)
 
     if args.command in {"refresh", "update"}:
-        hashes = guard.write_manifest()
+        try:
+            hashes = guard.write_manifest(
+                operator=args.operator,
+                reason=args.reason,
+                command_source="tools/objective_guard_manifest_cli.py",
+            )
+        except ObjectiveGuardViolation as exc:
+            print(f"manifest refresh failed: {exc.reason} details={exc.details}")
+            return 1
         print(
             f"updated manifest: {guard.manifest_path} ({len(hashes)} protected file hashes)"
         )
