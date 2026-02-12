@@ -89,6 +89,39 @@
       "when": "2026-02-12T04:04:34.729835+00:00",
       "who": "codex",
       "why": "sync canonical objective hash targets"
+    },
+    {
+      "action": "rotate",
+      "files": [
+        "billing/billing_ledger.py",
+        "billing/billing_logger.py",
+        "billing/stripe_ledger.py",
+        "central_evaluation_loop.py",
+        "evaluation_history_db.py",
+        "evaluation_manager.py",
+        "evaluation_service.py",
+        "evaluation_worker.py",
+        "finance_router_bot.py",
+        "kpi_editing_detector.py",
+        "kpi_reward_core.py",
+        "menace/core/evaluator.py",
+        "model_evaluation_service.py",
+        "mvp_evaluator.py",
+        "neurosales/neurosales/hierarchical_reward.py",
+        "neurosales/neurosales/reward_ledger.py",
+        "objective_guard.py",
+        "objective_hash_lock.py",
+        "reward_dispatcher.py",
+        "reward_sanity_checker.py",
+        "self_evaluation_service.py",
+        "startup_health_check.py",
+        "stripe_billing_router.py",
+        "stripe_watchdog.py",
+        "tools/objective_guard_manifest_cli.py"
+      ],
+      "when": "2026-02-12T04:19:31.144878+00:00",
+      "who": "codex",
+      "why": "canonical objective inventory consolidation"
     }
   ],
   "configured_hash_specs": [
@@ -135,24 +168,24 @@
     "mvp_evaluator.py": "a213dd091e9b1ac00c4f5a735e420681387d930a29045748dacada9c9a973ca3",
     "neurosales/neurosales/hierarchical_reward.py": "42fb7f506098d0dd7e2d0f00cf30b9677c3c5879c867737b2ecaec41ecc3ee5a",
     "neurosales/neurosales/reward_ledger.py": "c2c7a62404525763442260a37b24dbd0641065269b2a75ec0a803c0f149669e4",
-    "objective_guard.py": "af660a8688d981bc84b15a19b0344c26f850310f5f732fb68a65bacc68633731",
+    "objective_guard.py": "4879764273b5e4bc4a7aca5e337d22f00c41dc5c9a34648696ac63f100853c07",
     "objective_hash_lock.py": "9db34649a867375da20597e3e4ae2ac92cbae2c4fa71df6b28b830d7892bd0f8",
     "reward_dispatcher.py": "5beb39629479ece2cc3d0c83f930e87cb2f721ea2913c3968aaacbe7ef917bce",
     "reward_sanity_checker.py": "92fcb8215dcd16e2964406071cff3813b18cff25221bde184d34c7873a6c3678",
     "self_evaluation_service.py": "89df94987ed6b9c6e08cbc0b2a4937709242dcc2de55a73501bca93d747b57de",
-    "startup_health_check.py": "3e6adba0aca62416e4a5862773f472e8c8f280713d4f368ab3eefc76147a7969",
+    "startup_health_check.py": "b02baf0aa8ca8ad4757de3c6f731a88f378ee50be3d0c4876c51471917a20c39",
     "stripe_billing_router.py": "c1eefa61ad255befa2025575cf8fb2aad791acd4bfcbc6880c80405095d67814",
     "stripe_watchdog.py": "d256ae4e14a548c9dae9f3a510a6072feaa7972bfbc498b9658ed967251e98ef",
     "tools/objective_guard_manifest_cli.py": "17cf0a20e3a823af451b39f8c6b7877e98449cf015ee02da689eb4bd79b8b913"
   },
-  "hash_spec_source": "objective_surface_policy.OBJECTIVE_ADJACENT_HASH_PATHS",
-  "manifest_sha256": "434c912c158e7ffc56346e45a5b85749473301aa1bd4c8b2763248df70c936a4",
+  "hash_spec_source": "objective_inventory.OBJECTIVE_ADJACENT_HASH_PATHS",
+  "manifest_sha256": "880ecff7ac61fd37897fe3e0be54cf7ea2c6da940690b36f1ac0135fbc7d46b0",
   "trusted_baseline": {
     "mode": "rotate",
-    "previous_manifest_sha256": "10d5e76239b71dc1f23692e663f69b85611a3b837fcf14cb512676e1e5324e8d",
-    "when": "2026-02-12T04:04:34.729835+00:00",
+    "previous_manifest_sha256": "434c912c158e7ffc56346e45a5b85749473301aa1bd4c8b2763248df70c936a4",
+    "when": "2026-02-12T04:19:31.144878+00:00",
     "who": "codex",
-    "why": "sync canonical objective hash targets"
+    "why": "canonical objective inventory consolidation"
   },
   "version": 1
 }

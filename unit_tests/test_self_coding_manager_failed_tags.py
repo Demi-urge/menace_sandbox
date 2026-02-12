@@ -564,7 +564,7 @@ def test_idle_cycle_breach_halts_without_second_attempt(monkeypatch, tmp_path):
         attempts.append(desc)
         raise scm.ObjectiveGuardViolation(
             "objective_integrity_breach",
-            details={"changed_files": ["immutable_hashes_objective.json"]},
+            details={"changed_files": ["config/objective_hash_lock.json"]},
         )
 
     monkeypatch.setattr(mgr, "auto_run_patch", raise_once)

@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from objective_surface_policy import (
+from objective_inventory import (
     OBJECTIVE_ADJACENT_HASH_PATHS,
     OBJECTIVE_ADJACENT_UNSAFE_PATHS,
 )
@@ -238,7 +238,7 @@ class ObjectiveGuard:
         payload = {
             "version": 1,
             "algorithm": "sha256",
-            "hash_spec_source": "objective_surface_policy.OBJECTIVE_ADJACENT_HASH_PATHS",
+            "hash_spec_source": "objective_inventory.OBJECTIVE_ADJACENT_HASH_PATHS",
             "configured_hash_specs": [
                 spec.normalized for spec in self.hash_specs if not spec.prefix
             ],

@@ -32,8 +32,10 @@ REQUIRED_PATHS: list[str] = [
     os.path.join("logs", "audit.log"),
 ]
 
-# Reference hash file for immutable components
-IMMUTABLE_HASHES_PATH = DEFAULT_OBJECTIVE_HASH_MANIFEST
+# Canonical manifest path for objective hash-lock verification.
+OBJECTIVE_HASH_LOCK_MANIFEST_PATH = DEFAULT_OBJECTIVE_HASH_MANIFEST
+# Backward-compatible alias; prefer OBJECTIVE_HASH_LOCK_MANIFEST_PATH.
+IMMUTABLE_HASHES_PATH = OBJECTIVE_HASH_LOCK_MANIFEST_PATH
 
 # Configuration template describing expected keys and value types
 # This ensures configuration files haven't been tampered with or corrupted.
@@ -120,7 +122,7 @@ def run_startup_diagnostics() -> Dict[str, Any]:
         report["missing_files"] = missing
 
     # check immutable files against known good hashes
-    mismatched = check_file_integrity(IMMUTABLE_HASHES_PATH)
+    mismatched = check_file_integrity(OBJECTIVE_HASH_LOCK_MANIFEST_PATH)
     if mismatched:
         report["hash_integrity"] = False
         report["hash_mismatches"] = mismatched
@@ -166,6 +168,8 @@ __all__ = [
     "validate_config_structure",
     "run_startup_diagnostics",
     "halt_on_failure",
+    "OBJECTIVE_HASH_LOCK_MANIFEST_PATH",
+    "IMMUTABLE_HASHES_PATH",
 ]
 
 
