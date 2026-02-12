@@ -4,6 +4,8 @@ import sys
 
 import pytest
 
+from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+
 
 class DummyManager:
     def __init__(self, *_, **kwargs):
@@ -242,3 +244,18 @@ def test_is_self_coding_unsafe_path_uses_default_and_env(monkeypatch, tmp_path):
     assert is_self_coding_unsafe_path("reward_dispatcher.py", repo_root=tmp_path)
     assert is_self_coding_unsafe_path("custom_area/worker.py", repo_root=tmp_path)
     assert not is_self_coding_unsafe_path("safe/worker.py", repo_root=tmp_path)
+
+
+def test_is_self_coding_unsafe_path_blocks_all_canonical_objective_paths(monkeypatch, tmp_path):
+    from menace_sandbox.self_coding_policy import is_self_coding_unsafe_path
+
+    monkeypatch.delenv("MENACE_SELF_CODING_UNSAFE_PATHS", raising=False)
+
+    for rule in OBJECTIVE_ADJACENT_UNSAFE_PATHS:
+        if rule.endswith("/"):
+            candidate = tmp_path / rule.rstrip("/") / "nested.py"
+        else:
+            candidate = tmp_path / rule
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text("pass\n", encoding="utf-8")
+        assert is_self_coding_unsafe_path(candidate, repo_root=tmp_path), rule

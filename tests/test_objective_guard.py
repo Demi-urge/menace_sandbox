@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
-from objective_surface_policy import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+from objective_surface_policy import (
+    OBJECTIVE_ADJACENT_HASH_PATHS,
+    OBJECTIVE_ADJACENT_UNSAFE_PATHS,
+)
 
 
 def test_objective_guard_blocks_protected_target(tmp_path: Path) -> None:
@@ -236,3 +239,31 @@ def test_objective_guard_manifest_rotate_preserves_audit_history(tmp_path: Path)
     assert second_payload["trusted_baseline"]["previous_manifest_sha256"] == first_payload.get("manifest_sha256")
     actions = [entry.get("action") for entry in second_payload.get("audit", [])]
     assert actions == ["bootstrap", "rotate"]
+
+
+def test_objective_guard_default_hash_specs_match_canonical_hash_inventory(tmp_path: Path) -> None:
+    for rel in OBJECTIVE_ADJACENT_HASH_PATHS:
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(repo_root=tmp_path)
+
+    default_hashes = {spec.normalized for spec in guard.hash_specs if not spec.prefix}
+    assert default_hashes == set(OBJECTIVE_ADJACENT_HASH_PATHS)
+
+
+def test_objective_guard_defaults_hash_every_non_directory_protected_path(tmp_path: Path) -> None:
+    for rel in OBJECTIVE_ADJACENT_UNSAFE_PATHS:
+        target = tmp_path / rel.rstrip("/")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if rel.endswith("/"):
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.write_text("x\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(repo_root=tmp_path)
+
+    protected_files = {spec.normalized for spec in guard.protected_specs if not spec.prefix}
+    hashed_files = {spec.normalized for spec in guard.hash_specs if not spec.prefix}
+    assert protected_files == hashed_files

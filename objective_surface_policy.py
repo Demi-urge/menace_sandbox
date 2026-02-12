@@ -5,6 +5,12 @@ from __future__ import annotations
 # NOTE: Keep these paths repo-relative and architecture-oriented.
 # They describe the objective surface (rewarding/evaluation/payout/ledger logic)
 # that self-coding flows must not mutate automatically.
+#
+# Canonical model:
+# - ``OBJECTIVE_ADJACENT_UNSAFE_PATHS`` is the canonical inventory for
+#   pre-mutation blocking/manual approval.
+# - hash-lock coverage defaults are derived from the same canonical inventory,
+#   filtered to concrete files (directory prefixes are never hashed).
 OBJECTIVE_ADJACENT_UNSAFE_PATHS: tuple[str, ...] = (
     "reward_dispatcher.py",
     "kpi_reward_core.py",
@@ -12,12 +18,19 @@ OBJECTIVE_ADJACENT_UNSAFE_PATHS: tuple[str, ...] = (
     "kpi_editing_detector.py",
     "mvp_evaluator.py",
     "menace/core/evaluator.py",
+    "neurosales/neurosales/hierarchical_reward.py",
+    "neurosales/neurosales/reward_ledger.py",
     "billing/billing_ledger.py",
     "billing/billing_logger.py",
     "billing/stripe_ledger.py",
     "stripe_billing_router.py",
     "finance_router_bot.py",
+    "startup_health_check.py",
     "finance_logs/",
 )
 
-__all__ = ["OBJECTIVE_ADJACENT_UNSAFE_PATHS"]
+OBJECTIVE_ADJACENT_HASH_PATHS: tuple[str, ...] = tuple(
+    path for path in OBJECTIVE_ADJACENT_UNSAFE_PATHS if not path.endswith("/")
+)
+
+__all__ = ["OBJECTIVE_ADJACENT_HASH_PATHS", "OBJECTIVE_ADJACENT_UNSAFE_PATHS"]
