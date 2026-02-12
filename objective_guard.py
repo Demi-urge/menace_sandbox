@@ -16,11 +16,11 @@ import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from self_coding_objective_paths import OBJECTIVE_ADJACENT_UNSAFE_PATHS
+
 
 _DEFAULT_PROTECTED_SPECS: tuple[str, ...] = (
-    "reward_dispatcher.py",
-    "reward_sanity_checker.py",
-    "kpi_reward_core.py",
+    *OBJECTIVE_ADJACENT_UNSAFE_PATHS,
     "startup_health_check.py",
     "neurosales/neurosales/hierarchical_reward.py",
     "neurosales/neurosales/reward_ledger.py",

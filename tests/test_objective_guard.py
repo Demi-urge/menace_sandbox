@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
+from self_coding_objective_paths import OBJECTIVE_ADJACENT_UNSAFE_PATHS
 
 
 def test_objective_guard_blocks_protected_target(tmp_path: Path) -> None:
@@ -117,3 +118,15 @@ def test_objective_guard_allows_non_protected_target(tmp_path: Path) -> None:
 
     guard.assert_integrity()
     guard.assert_patch_target_safe(safe_file)
+
+
+def test_objective_guard_defaults_include_shared_objective_paths(tmp_path: Path) -> None:
+    for rel in OBJECTIVE_ADJACENT_UNSAFE_PATHS:
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(repo_root=tmp_path)
+
+    protected = {spec.normalized for spec in guard.protected_specs}
+    assert set(OBJECTIVE_ADJACENT_UNSAFE_PATHS).issubset(protected)

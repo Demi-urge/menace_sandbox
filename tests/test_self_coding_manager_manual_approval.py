@@ -1,3 +1,4 @@
+import json
 import logging
 import subprocess
 import sys
@@ -175,3 +176,75 @@ def test_run_patch_emits_required_and_denied_events():
 
     assert any(topic == "self_coding:approval_required" for topic, _ in events)
     assert any(topic == "self_coding:approval_denied" for topic, _ in events)
+
+
+def test_objective_adjacent_target_allows_manual_approval_artifact(monkeypatch, tmp_path):
+    class DummyVerifier:
+        def verify(self, path: Path) -> bool:
+            return True
+
+    class _UnsafePolicy:
+        def is_safe_target(self, _path: Path) -> bool:
+            return False
+
+    monkeypatch.setattr(scm, "get_patch_promotion_policy", lambda repo_root=None: _UnsafePolicy())
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0),
+    )
+
+    policy = scm.PatchApprovalPolicy(verifier=DummyVerifier(), bot_name="bot")
+    file_path = tmp_path / "billing" / "stripe_ledger.py"
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text("x = 1\n", encoding="utf-8")
+
+    artifact = tmp_path / "manual_approval.json"
+    artifact.write_text(
+        json.dumps({"approved_paths": [str(file_path)]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MENACE_MANUAL_APPROVAL_FILE", str(artifact))
+
+    assert policy.approve(file_path) is True
+
+
+def test_run_patch_denied_includes_reason_code():
+    events: list[tuple[str, dict[str, object]]] = []
+
+    class DummyApproval:
+        last_decision = {
+            "approved": False,
+            "reason_codes": ("manual_approval_missing",),
+            "approval_source": None,
+        }
+
+        def classify_target(self, _path: Path) -> str:
+            return "objective_adjacent"
+
+        def approve(self, _path: Path, *, manual_approval_token: str | None = None) -> bool:
+            return False
+
+    mgr = object.__new__(scm.SelfCodingManager)
+    mgr.bot_name = "bot"
+    mgr.logger = logging.getLogger("manual-approval-reason-test")
+    mgr.event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, payload))
+    )
+    mgr.approval_policy = DummyApproval()
+    mgr.validate_provenance = lambda _token: None
+    mgr._ensure_self_coding_active = lambda: None
+    mgr._enforce_objective_guard = lambda _path: None
+    mgr.refresh_quick_fix_context = lambda: None
+
+    with pytest.raises(RuntimeError, match="patch approval failed"):
+        mgr.run_patch(
+            Path("billing/stripe_ledger.py"),
+            "desc",
+            provenance_token="token",
+        )
+
+    denied = [payload for topic, payload in events if topic == "self_coding:approval_denied"]
+    assert denied
+    assert denied[0]["reason_code"] == "manual_approval_missing"
+    assert denied[0]["reason_codes"] == ("manual_approval_missing",)
