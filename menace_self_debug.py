@@ -34,6 +34,7 @@ from self_coding_policy import (
     is_self_coding_unsafe_path,
 )
 from self_improvement.workflow_discovery import discover_workflow_specs
+from objective_guard import ObjectiveGuard, ObjectiveGuardViolation
 from task_handoff_bot import WorkflowDB
 from workflow_evolution_manager import _build_callable
 from menace_sandbox.menace_self_debug_snapshot import (
@@ -44,6 +45,8 @@ from menace_sandbox.menace_self_debug_snapshot import (
 LOGGER = logging.getLogger(__name__)
 
 ensure_self_coding_unsafe_paths_env()
+
+_SELF_DEBUG_PAUSED = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,9 @@ def _apply_pipeline_patch(
     allow_new_files: bool = False,
     allow_deletes: bool = False,
 ) -> bool:
+    global _SELF_DEBUG_PAUSED
+    if _SELF_DEBUG_PAUSED:
+        return False
     validation = pipeline_result.get("validation")
     if not isinstance(validation, Mapping) or not validation.get("valid"):
         return False
@@ -201,6 +207,24 @@ def _apply_pipeline_patch(
     )
     if not isinstance(modified_source, str) or not modified_source:
         return False
+
+    try:
+        ObjectiveGuard(repo_root=repo_root).assert_integrity()
+    except ObjectiveGuardViolation as exc:
+        if getattr(exc, "reason", "") in {"objective_integrity_breach", "manifest_hash_mismatch"}:
+            _SELF_DEBUG_PAUSED = True
+            LOGGER.critical(
+                "self-debug objective circuit breaker tripped",
+                extra={
+                    "event": "self_coding:objective_circuit_breaker_trip",
+                    "severity": "critical",
+                    "reason": getattr(exc, "reason", "objective_integrity_breach"),
+                    "changed_files": list((getattr(exc, "details", {}) or {}).get("changed_files", [])),
+                    "rollback_ok": False,
+                },
+            )
+            return False
+        raise
 
     original_source = source_path.read_text(encoding="utf-8")
     try:
@@ -597,6 +621,9 @@ def _run_self_debug(
 
     failures = 0
     for index, candidate in enumerate(candidates, start=1):
+        if _SELF_DEBUG_PAUSED:
+            LOGGER.critical("self-debug paused after objective circuit breaker")
+            return 1
         if index > max_workflows:
             LOGGER.info("stop condition reached: max workflows")
             return 0

@@ -772,3 +772,45 @@ def test_generate_helper_requires_manager_token(tmp_path):
         context_builder=engine.context_builder,
     )
     assert "def" in code
+
+
+def test_objective_circuit_breaker_pauses_and_rolls_back():
+    import menace.self_coding_engine as sce
+
+    events: list[tuple[str, dict[str, object]]] = []
+
+    engine = sce.SelfCodingEngine.__new__(sce.SelfCodingEngine)
+    engine.bot_name = "bot"
+    engine.event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, dict(payload)))
+    )
+    engine.logger = types.SimpleNamespace(exception=lambda *a, **k: None)
+    engine._last_patch_id = 11
+    engine._last_commit_hash = "deadbeef"
+    engine._self_coding_paused = False
+
+    class DummyRollback:
+        def __init__(self):
+            self.calls = []
+
+        def rollback(self, patch, requesting_bot=None):
+            self.calls.append((patch, requesting_bot))
+
+    rollback = DummyRollback()
+    engine.rollback_mgr = rollback
+
+    with pytest.raises(RuntimeError, match="objective integrity breach"):
+        engine._handle_objective_circuit_breaker(
+            violation=sce.ObjectiveGuardViolation(
+                "objective_integrity_breach",
+                details={"changed_files": ["reward_dispatcher.py"]},
+            ),
+            path=Path("auto_helpers.py"),
+            stage="unit_test",
+        )
+
+    assert engine._self_coding_paused is True
+    assert rollback.calls == [("11", "bot")]
+    payload = [p for t, p in events if t == "self_coding:objective_circuit_breaker_trip"][0]
+    assert payload["changed_objective_files"] == ["reward_dispatcher.py"]
+    assert payload["rollback_ok"] is True
