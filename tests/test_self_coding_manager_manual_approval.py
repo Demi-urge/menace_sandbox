@@ -102,11 +102,11 @@ def test_objective_adjacent_target_blocked_without_manual_approval(monkeypatch, 
         def verify(self, path: Path) -> bool:
             return True
 
-    class _UnsafePolicy:
-        def is_safe_target(self, _path: Path) -> bool:
-            return False
-
-    monkeypatch.setattr(scm, "get_patch_promotion_policy", lambda repo_root=None: _UnsafePolicy())
+    monkeypatch.setattr(
+        scm,
+        "is_self_coding_unsafe_path",
+        lambda _path, *, repo_root=None: True,
+    )
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -119,6 +119,9 @@ def test_objective_adjacent_target_blocked_without_manual_approval(monkeypatch, 
     file_path.write_text("x = 1\n", encoding="utf-8")
 
     assert policy.approve(file_path) is False
+    assert policy.last_decision["approval_actor"].startswith("automation")
+    assert policy.last_decision["approval_timestamp"]
+    assert policy.last_decision["approval_rationale"] == "manual_approval_missing"
 
 
 def test_non_objective_target_uses_automated_approval(monkeypatch, tmp_path):
@@ -126,11 +129,11 @@ def test_non_objective_target_uses_automated_approval(monkeypatch, tmp_path):
         def verify(self, path: Path) -> bool:
             return True
 
-    class _SafePolicy:
-        def is_safe_target(self, _path: Path) -> bool:
-            return True
-
-    monkeypatch.setattr(scm, "get_patch_promotion_policy", lambda repo_root=None: _SafePolicy())
+    monkeypatch.setattr(
+        scm,
+        "is_self_coding_unsafe_path",
+        lambda _path, *, repo_root=None: False,
+    )
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -149,6 +152,12 @@ def test_run_patch_emits_required_and_denied_events():
     events: list[tuple[str, dict[str, object]]] = []
 
     class DummyApproval:
+        last_decision = {
+            "approved": False,
+            "reason_codes": ("manual_approval_missing",),
+            "approval_source": None,
+        }
+
         def classify_target(self, _path: Path) -> str:
             return "objective_adjacent"
 
@@ -176,6 +185,7 @@ def test_run_patch_emits_required_and_denied_events():
 
     assert any(topic == "self_coding:approval_required" for topic, _ in events)
     assert any(topic == "self_coding:approval_denied" for topic, _ in events)
+    assert any(topic == "self_coding:manual_approval_required" for topic, _ in events)
 
 
 def test_objective_adjacent_target_allows_manual_approval_artifact(monkeypatch, tmp_path):
@@ -183,11 +193,11 @@ def test_objective_adjacent_target_allows_manual_approval_artifact(monkeypatch, 
         def verify(self, path: Path) -> bool:
             return True
 
-    class _UnsafePolicy:
-        def is_safe_target(self, _path: Path) -> bool:
-            return False
-
-    monkeypatch.setattr(scm, "get_patch_promotion_policy", lambda repo_root=None: _UnsafePolicy())
+    monkeypatch.setattr(
+        scm,
+        "is_self_coding_unsafe_path",
+        lambda _path, *, repo_root=None: True,
+    )
     monkeypatch.setattr(
         subprocess,
         "run",
