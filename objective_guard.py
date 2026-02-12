@@ -238,6 +238,10 @@ class ObjectiveGuard:
         payload = {
             "version": 1,
             "algorithm": "sha256",
+            "hash_spec_source": "objective_surface_policy.OBJECTIVE_ADJACENT_HASH_PATHS",
+            "configured_hash_specs": [
+                spec.normalized for spec in self.hash_specs if not spec.prefix
+            ],
             "files": hashes,
             "trusted_baseline": {
                 "mode": "rotate" if is_rotation else "bootstrap",
@@ -294,6 +298,26 @@ class ObjectiveGuard:
             if isinstance(path, str) and isinstance(digest, str)
         }
         current_hashes = self.snapshot_hashes()
+        expected_file_set = set(current_hashes)
+        manifest_file_set = set(expected_hashes)
+        if expected_file_set != manifest_file_set:
+            missing_in_manifest = sorted(expected_file_set - manifest_file_set)
+            extra_in_manifest = sorted(manifest_file_set - expected_file_set)
+            raise ObjectiveGuardViolation(
+                "manifest_file_set_mismatch",
+                details={
+                    "manifest_path": self._as_repo_rel(manifest),
+                    "reason": (
+                        "objective hash-lock manifest covers a different file set than the "
+                        "configured objective hash specs; run tools/objective_guard_manifest_cli.py "
+                        "refresh after intentional objective-surface updates"
+                    ),
+                    "expected_files_from_config": sorted(expected_file_set),
+                    "manifest_files": sorted(manifest_file_set),
+                    "missing_in_manifest": missing_in_manifest,
+                    "extra_in_manifest": extra_in_manifest,
+                },
+            )
         deltas: list[dict[str, object]] = []
         for path in sorted(set(expected_hashes) | set(current_hashes)):
             expected_digest = expected_hashes.get(path)

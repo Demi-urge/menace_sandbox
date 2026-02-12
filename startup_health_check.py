@@ -71,6 +71,17 @@ def check_file_integrity(reference_hash_path: str) -> list[str]:
             for file_path in changed:
                 logger.error("Hash mismatch for %s", file_path)
             return changed
+
+        missing = [str(item) for item in (exc.details.get("missing_in_manifest") or []) if item]
+        extra = [str(item) for item in (exc.details.get("extra_in_manifest") or []) if item]
+        if missing or extra:
+            logger.error(
+                "Objective hash-lock file-set drift: missing_in_manifest=%s extra_in_manifest=%s",
+                missing,
+                extra,
+            )
+            return missing + extra
+
         logger.error("Failed objective manifest verification: %s (%s)", exc.reason, exc.details)
         return [reference_hash_path]
 

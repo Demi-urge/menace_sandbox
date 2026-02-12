@@ -80,3 +80,86 @@ def test_manifest_refresh_only_via_manual_cli_command_path(tmp_path: Path, monke
             command_source="autonomous_runtime",
         )
     assert exc_info.value.reason == "manifest_refresh_manual_only"
+
+
+def test_verify_objective_hash_lock_aligned_baseline(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+    guard.write_manifest(
+        operator="alice",
+        reason="approved bootstrap",
+        command_source="tools/objective_guard_manifest_cli.py",
+    )
+
+    report = verify_objective_hash_lock(guard=guard)
+    assert report["files"] == ["reward_dispatcher.py"]
+
+
+def test_verify_objective_hash_lock_detects_file_set_drift(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    kpi = tmp_path / "kpi_reward_core.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+    kpi.write_text("ORIGINAL\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py", "kpi_reward_core.py"],
+        hash_specs=["reward_dispatcher.py", "kpi_reward_core.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+    guard.write_manifest(
+        operator="alice",
+        reason="approved bootstrap",
+        command_source="tools/objective_guard_manifest_cli.py",
+    )
+
+    drifted_guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py", "kpi_reward_core.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+
+    with pytest.raises(ObjectiveGuardViolation) as exc_info:
+        verify_objective_hash_lock(guard=drifted_guard)
+
+    assert exc_info.value.reason == "manifest_file_set_mismatch"
+    assert exc_info.value.details["extra_in_manifest"] == ["kpi_reward_core.py"]
+
+
+def test_verify_objective_hash_lock_allows_legitimate_rotation(tmp_path: Path) -> None:
+    reward = tmp_path / "reward_dispatcher.py"
+    reward.write_text("ORIGINAL\n", encoding="utf-8")
+
+    guard = ObjectiveGuard(
+        repo_root=tmp_path,
+        protected_specs=["reward_dispatcher.py"],
+        hash_specs=["reward_dispatcher.py"],
+        manifest_path=tmp_path / "config" / "objective_hash_lock.json",
+    )
+    guard.write_manifest(
+        operator="alice",
+        reason="approved bootstrap",
+        command_source="tools/objective_guard_manifest_cli.py",
+    )
+
+    reward.write_text("ROTATED\n", encoding="utf-8")
+    with pytest.raises(ObjectiveGuardViolation):
+        verify_objective_hash_lock(guard=guard)
+
+    guard.write_manifest(
+        operator="bob",
+        reason="approved objective update",
+        rotation=True,
+        command_source="tools/objective_guard_manifest_cli.py",
+    )
+
+    report = verify_objective_hash_lock(guard=guard)
+    assert report["files"] == ["reward_dispatcher.py"]
