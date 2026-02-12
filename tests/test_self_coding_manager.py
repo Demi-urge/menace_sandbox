@@ -2902,3 +2902,158 @@ def test_reset_objective_integrity_lock_allows_cycles(monkeypatch, tmp_path):
     assert mgr._self_coding_disabled_reason is None
     assert patch_id is None
     assert isinstance(commit, str) or commit is None
+
+
+def test_run_post_patch_cycle_circuit_breaker_blocks_followup_patches(monkeypatch, tmp_path):
+    class DummySelfTestService:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run_once(self):
+            return (
+                {
+                    "passed": 0,
+                    "failed": 1,
+                    "coverage": 0.0,
+                    "runtime": 1.0,
+                    "stdout": "FAILED tests/test_mod.py::test_feature - AssertionError\n",
+                    "module_metrics": {"tests/test_mod.py": {"categories": ["failed"]}},
+                },
+                [],
+            )
+
+    stub_module = types.ModuleType("menace.self_test_service")
+    stub_module.SelfTestService = DummySelfTestService
+    monkeypatch.setitem(sys.modules, "menace.self_test_service", stub_module)
+    monkeypatch.setitem(sys.modules, "self_test_service", stub_module)
+
+    class DummyQuickFix:
+        def __init__(self):
+            self.context_builder = None
+            self.apply_calls = 0
+
+        def validate_patch(self, *_a, **_k):
+            return True, []
+
+        def apply_validated_patch(self, *_a, **_k):
+            self.apply_calls += 1
+            return True, 111, []
+
+    class PersistingRegistry(DummyRegistry):
+        def __init__(self, persist_path: Path):
+            super().__init__()
+            self.persist_path = persist_path
+            self.saved = 0
+
+        def save(self, path):
+            self.saved += 1
+            Path(path).write_text(json.dumps(self.graph.nodes), encoding="utf-8")
+
+    class Engine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(
+                context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None)
+            )
+            self.patch_db = None
+
+    class Pipeline:
+        workflow_test_args = ["tests/test_mod.py"]
+
+    events: list[tuple[str, dict[str, object]]] = []
+    event_bus = types.SimpleNamespace(
+        publish=lambda topic, payload: events.append((topic, dict(payload)))
+    )
+    quick_fix = DummyQuickFix()
+    persist_file = tmp_path / "registry_state.json"
+    registry = PersistingRegistry(persist_file)
+
+    monkeypatch.setattr(
+        scm,
+        "SandboxSettings",
+        lambda: types.SimpleNamespace(
+            baseline_window=5,
+            self_test_repair_retries=1,
+            post_patch_repair_attempts=1,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scm,
+        "create_context_builder",
+        lambda: types.SimpleNamespace(refresh_db_weights=lambda: None, session_id=None),
+    )
+    monkeypatch.setattr(scm, "ensure_fresh_weights", lambda builder: None)
+
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        Pipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=registry,
+        quick_fix=quick_fix,
+        event_bus=event_bus,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(module_path, dst / module_path.name)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    rollbacks: list[tuple[str, str]] = []
+
+    class DummyRollbackManager:
+        def rollback(self, commit, requesting_bot=None):
+            rollbacks.append((str(commit), str(requesting_bot)))
+
+    monkeypatch.setattr(scm, "RollbackManager", DummyRollbackManager)
+    mgr._last_commit_hash = "deadbeef"
+
+    checks = {"count": 0}
+
+    def integrity_side_effect():
+        checks["count"] += 1
+        if checks["count"] >= 4:
+            raise scm.ObjectiveGuardViolation(
+                "objective_integrity_breach",
+                details={"changed_files": ["objective_guard_manifest.json"]},
+            )
+
+    monkeypatch.setattr(mgr.objective_guard, "assert_integrity", integrity_side_effect)
+
+    with pytest.raises(RuntimeError, match="circuit breaker triggered"):
+        mgr.run_post_patch_cycle(module_path, "initial change", provenance_token="token")
+
+    assert mgr._self_coding_paused is True
+    assert mgr._self_coding_disabled_reason == "objective_integrity_breach"
+    assert rollbacks == [("deadbeef", "bot")]
+    assert quick_fix.apply_calls == 1
+    assert any(topic == "self_coding:circuit_breaker_triggered" for topic, _ in events)
+    assert registry.saved > 0
+    assert json.loads(persist_file.read_text(encoding="utf-8"))["bot"][
+        "self_coding_disabled"
+    ]["reason"] == "objective_integrity_breach"
+
+    mgr2 = scm.SelfCodingManager(
+        Engine(),
+        Pipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=registry,
+        quick_fix=quick_fix,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
+    )
+    assert mgr2._self_coding_paused is True
+    assert mgr2._self_coding_disabled_reason == "objective_integrity_breach"
