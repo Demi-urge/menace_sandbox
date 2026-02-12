@@ -88,10 +88,13 @@ def test_divergence_trigger_pauses_and_emits_critical_telemetry():
     assert mgr._self_coding_paused is True
     assert mgr._self_coding_disabled_reason == "reward_profit_revenue_divergence"
     event_name, payload = event_bus.events[-1]
-    assert event_name == "self_coding:critical_divergence"
-    assert payload["severity"] == "critical"
+    assert event_bus.events[-2][0] == "self_coding:critical_divergence"
+    assert event_name == "self_coding:high_severity_alert"
+    assert payload["severity"] == "high"
     assert payload["reward_window"] == [1.0, 2.0, 3.0]
     assert payload["revenue_window"] == [10.0, 9.0, 9.0]
+    assert payload["cycle_metrics"][-1]["cycle_index"] >= 1
+    assert payload["cycle_metrics"][-1]["bot_id"] == "alpha"
 
 
 def test_no_trigger_when_reward_and_business_metrics_align():
