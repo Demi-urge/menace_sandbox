@@ -27,7 +27,11 @@ from menace_sandbox.stabilization.patch_validator import (
 )
 from menace_sandbox.stabilization.roi import extract_roi_delta_total
 from sandbox_results_logger import record_self_debug_metrics
-from self_coding_policy import evaluate_patch_promotion, get_patch_promotion_policy
+from self_coding_policy import (
+    ensure_self_coding_unsafe_paths_env,
+    evaluate_patch_promotion,
+    get_patch_promotion_policy,
+)
 from self_improvement.workflow_discovery import discover_workflow_specs
 from task_handoff_bot import WorkflowDB
 from workflow_evolution_manager import _build_callable
@@ -37,6 +41,8 @@ from menace_sandbox.menace_self_debug_snapshot import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+ensure_self_coding_unsafe_paths_env()
 
 
 @dataclass(frozen=True)

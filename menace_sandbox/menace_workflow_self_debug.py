@@ -43,10 +43,16 @@ from sandbox_runner.environment import is_self_debugger_sandbox_import_failure, 
 from sandbox_settings import SandboxSettings
 from task_handoff_bot import WorkflowDB
 from sandbox_results_logger import record_self_debug_metrics
-from self_coding_policy import evaluate_patch_promotion, get_patch_promotion_policy
+from self_coding_policy import (
+    ensure_self_coding_unsafe_paths_env,
+    evaluate_patch_promotion,
+    get_patch_promotion_policy,
+)
 from dynamic_path_router import resolve_path
 
 LOGGER = logging.getLogger(__name__)
+
+ensure_self_coding_unsafe_paths_env()
 DEFAULT_METRICS_SOURCE = "menace_workflow_self_debug"
 _CERTIFICATION_PATH = Path(resolve_path("sandbox_data")) / "self_improvement_certification.json"
 

@@ -25,9 +25,15 @@ try:  # pragma: no cover - objective integrity guard
 except Exception:  # pragma: no cover - fallback for flat layout
     from objective_guard import ObjectiveGuard, ObjectiveGuardViolation  # type: ignore
 try:  # pragma: no cover - policy import for unsafe paths
-    from .self_coding_policy import get_patch_promotion_policy
+    from .self_coding_policy import (
+        ensure_self_coding_unsafe_paths_env,
+        get_patch_promotion_policy,
+    )
 except Exception:  # pragma: no cover - fallback for flat layout
-    from self_coding_policy import get_patch_promotion_policy  # type: ignore
+    from self_coding_policy import (  # type: ignore
+        ensure_self_coding_unsafe_paths_env,
+        get_patch_promotion_policy,
+    )
 import logging
 import subprocess
 import tempfile
@@ -43,6 +49,7 @@ import shlex
 from dataclasses import asdict, dataclass
 from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
 
+ensure_self_coding_unsafe_paths_env()
 
 # Delay between successive internalisation attempts to avoid overwhelming the
 # manager bootstrap logic when multiple bots start simultaneously.
@@ -157,6 +164,7 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
     """Resolve manager construction timeout with optional per-bot overrides."""
 
     logger = logging.getLogger(__name__)
+
     bot_key = _normalize_env_bot_name(bot_name)
     candidate_vars: list[str] = []
     if bot_key == "BOTPLANNINGBOT":
@@ -752,6 +760,7 @@ def _start_internalize_monitor(bot_registry: Any) -> None:
 
         def _monitor() -> None:
             logger = logging.getLogger(__name__)
+
             while True:
                 now = time.monotonic()
                 with _INTERNALIZE_IN_FLIGHT_LOCK:

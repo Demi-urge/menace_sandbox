@@ -11,23 +11,34 @@ import logging
 import os
 
 from menace_sandbox.stabilization.roi import evaluate_roi_delta_policy
+from self_coding_objective_paths import OBJECTIVE_ADJACENT_UNSAFE_PATHS
 
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_SELF_CODING_UNSAFE_PATHS: Tuple[str, ...] = (
-    "reward_dispatcher.py",
-    "reward_sanity_checker.py",
-    "kpi_reward_core.py",
-    "mvp_evaluator.py",
-    "kpi_editing_detector.py",
-    "menace/core/evaluator.py",
-    "billing/billing_ledger.py",
-    "billing/stripe_ledger.py",
-    "payout",
-    "payouts",
-    "ledger",
-)
+def _normalise_path_rules(values: Iterable[str]) -> Tuple[str, ...]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = value.strip()
+        if not item or item in seen:
+            continue
+        unique.append(item)
+        seen.add(item)
+    return tuple(unique)
+
+
+def _merge_unsafe_path_rules(raw: str | None) -> Tuple[str, ...]:
+    env_values = [item.strip() for item in (raw or "").split(",") if item.strip()]
+    return _normalise_path_rules((*OBJECTIVE_ADJACENT_UNSAFE_PATHS, *env_values))
+
+
+def ensure_self_coding_unsafe_paths_env() -> Tuple[str, ...]:
+    """Merge canonical objective paths into ``MENACE_SELF_CODING_UNSAFE_PATHS``."""
+
+    merged = _merge_unsafe_path_rules(os.environ.get("MENACE_SELF_CODING_UNSAFE_PATHS"))
+    os.environ["MENACE_SELF_CODING_UNSAFE_PATHS"] = ",".join(merged)
+    return merged
 
 
 def _parse_names(raw: str | None) -> FrozenSet[str]:
@@ -233,11 +244,7 @@ def get_patch_promotion_policy(repo_root: Path | None = None) -> PatchPromotionP
         os.environ.get("MENACE_SELF_CODING_MIN_ROI_DELTA"), Decimal("0")
     )
     safe_roots = _parse_paths(os.environ.get("MENACE_SELF_CODING_SAFE_PATHS"))
-    unsafe_raw = os.environ.get("MENACE_SELF_CODING_UNSAFE_PATHS")
-    if unsafe_raw is None:
-        deny_roots = tuple(Path(path) for path in _DEFAULT_SELF_CODING_UNSAFE_PATHS)
-    else:
-        deny_roots = _parse_paths(unsafe_raw)
+    deny_roots = tuple(Path(path) for path in ensure_self_coding_unsafe_paths_env())
     resolved_repo_root = repo_root.resolve() if repo_root is not None else None
     if not safe_roots and resolved_repo_root is not None:
         safe_roots = (resolved_repo_root,)
@@ -247,6 +254,9 @@ def get_patch_promotion_policy(repo_root: Path | None = None) -> PatchPromotionP
         deny_roots=deny_roots,
         repo_root=resolved_repo_root,
     )
+
+
+ensure_self_coding_unsafe_paths_env()
 
 
 def evaluate_patch_promotion(
