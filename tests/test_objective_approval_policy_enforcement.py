@@ -5,6 +5,8 @@ import types
 
 import sys
 
+import pytest
+
 sandbox_runner_stub = types.ModuleType("sandbox_runner")
 sandbox_runner_stub.run_workflow_simulations = lambda *a, **k: {}
 sys.modules["sandbox_runner"] = sandbox_runner_stub
@@ -143,3 +145,49 @@ def test_self_coding_engine_allows_with_manual_approval(monkeypatch):
 
     path = Path.cwd() / "self_coding_manager.py"
     engine._ensure_patch_path_approved(path)
+
+
+def test_self_coding_engine_requires_manual_approval_for_canonical_objective_surface_paths(monkeypatch):
+    engine = object.__new__(sce.SelfCodingEngine)
+
+    class _Policy:
+        def __init__(self, *a, **k):
+            self.last_decision = {"reason_codes": ("manual_approval_missing",)}
+
+        def approve(self, *_a, **_k):
+            return False
+
+    monkeypatch.setattr(
+        sce,
+        "load_internal",
+        lambda name: types.SimpleNamespace(ObjectiveApprovalPolicy=_Policy),
+        raising=False,
+    )
+
+    objective_paths = [
+        "reward_dispatcher.py",
+        "kpi_reward_core.py",
+        "reward_sanity_checker.py",
+        "kpi_editing_detector.py",
+        "mvp_evaluator.py",
+        "evaluation_worker.py",
+        "evaluation_manager.py",
+        "evaluation_service.py",
+        "self_evaluation_service.py",
+        "model_evaluation_service.py",
+        "evaluation_history_db.py",
+        "central_evaluation_loop.py",
+        "menace/core/evaluator.py",
+        "neurosales/neurosales/hierarchical_reward.py",
+        "neurosales/neurosales/reward_ledger.py",
+        "billing/billing_ledger.py",
+        "billing/billing_logger.py",
+        "billing/stripe_ledger.py",
+        "stripe_billing_router.py",
+        "finance_router_bot.py",
+        "stripe_watchdog.py",
+    ]
+
+    for rel in objective_paths:
+        with pytest.raises(RuntimeError, match="manual_approval_missing"):
+            engine._ensure_patch_path_approved(Path.cwd() / rel)
