@@ -33,6 +33,7 @@ _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
 from dynamic_path_router import resolve_path
 from db_router import init_db_router
 from context_builder_util import create_context_builder
+from objective_guard import ObjectiveGuard
 
 # Expose a DBRouter for CLI operations early so imported modules can rely on
 # ``GLOBAL_ROUTER``.
@@ -758,6 +759,32 @@ def handle_branch_log(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def handle_objective_hash_lock(args: argparse.Namespace) -> int:
+    """Initialize or rotate the trusted objective hash baseline."""
+    repo_root = Path.cwd().resolve()
+    guard = ObjectiveGuard(repo_root=repo_root)
+    mode = str(getattr(args, "action", "bootstrap") or "bootstrap")
+    operator = str(getattr(args, "operator", "") or "").strip() or None
+    reason = str(getattr(args, "reason", "") or "").strip() or None
+    hashes = guard.write_manifest(
+        operator=operator,
+        reason=reason,
+        rotation=mode == "rotate",
+    )
+    print(
+        json.dumps(
+            {
+                "manifest_path": str(guard.manifest_path),
+                "action": mode,
+                "operator": operator or "unknown",
+                "reason": reason or "baseline_bootstrap",
+                "files": sorted(hashes),
+            }
+        )
+    )
+    return 0
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Menace workflow helper")
     parser.add_argument("--bots-db", default="bots.db", help="Path to bots DB")
@@ -843,6 +870,21 @@ def main(argv: list[str] | None = None) -> int:
     cache_sub.add_parser("stats", help="Display cache statistics").set_defaults(
         func=handle_cache_stats
     )
+
+    p_obj_lock = sub.add_parser(
+        "objective-hash-lock",
+        help="Initialize or rotate trusted objective hash baselines",
+    )
+    p_obj_lock.add_argument(
+        "action",
+        nargs="?",
+        default="bootstrap",
+        choices=("bootstrap", "rotate"),
+        help="Baseline action (bootstrap or rotate)",
+    )
+    p_obj_lock.add_argument("--operator", help="Operator identity for audit metadata")
+    p_obj_lock.add_argument("--reason", help="Audit reason for baseline change")
+    p_obj_lock.set_defaults(func=handle_objective_hash_lock)
 
     p_retrieve = sub.add_parser(
         "retrieve", help="Semantic code retrieval (text table by default)"
