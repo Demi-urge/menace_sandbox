@@ -99,6 +99,7 @@ T = TypeVar("T")
 _SELF_DEBUGGER_SANDBOX_MODULE_NAMES = frozenset(
     {
         "menace.self_debugger_sandbox",
+        "menace_sandbox.self_debugger_sandbox",
         "self_debugger_sandbox",
     }
 )
@@ -132,6 +133,7 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
     """Import ``SelfDebuggerSandbox`` from supported module layouts."""
     candidates = [
         "menace.self_debugger_sandbox",
+        "menace_sandbox.self_debugger_sandbox",
         "self_debugger_sandbox",
     ]
     attempt_details: list[tuple[str, str, str]] = []
