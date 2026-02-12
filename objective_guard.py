@@ -26,6 +26,8 @@ _DEFAULT_PROTECTED_SPECS: tuple[str, ...] = (
     "neurosales/neurosales/reward_ledger.py",
 )
 
+DEFAULT_OBJECTIVE_HASH_MANIFEST = "immutable_hashes_objective.json"
+
 
 @dataclass(frozen=True)
 class GuardSpec:
@@ -71,11 +73,10 @@ class ObjectiveGuard:
             default=tuple(spec.raw for spec in self.protected_specs if not spec.prefix),
         )
         self.hash_specs = tuple(self._build_spec(spec) for spec in resolved_hash_specs)
-        self._baseline_hashes = self.snapshot_hashes()
         self.manifest_path = (
             manifest_path
             if manifest_path is not None
-            else self.repo_root / ".security" / "state" / "objective_guard_manifest.json"
+            else self.repo_root / DEFAULT_OBJECTIVE_HASH_MANIFEST
         )
 
     @staticmethod
@@ -256,19 +257,13 @@ class ObjectiveGuard:
         if not self.enabled:
             return
         # Persisted manifest verification is the primary integrity gate.
+        # This check intentionally uses the on-disk manifest on every cycle
+        # rather than process-start snapshots so operator refreshes are honored.
         self.verify_manifest()
-        current = self.snapshot_hashes()
-        if current == self._baseline_hashes:
-            return
-        changed: list[str] = []
-        keys = sorted(set(current) | set(self._baseline_hashes))
-        for key in keys:
-            if current.get(key) != self._baseline_hashes.get(key):
-                changed.append(key)
-        raise ObjectiveGuardViolation(
-            "objective_integrity_breach",
-            details={"changed_files": changed},
-        )
 
 
-__all__ = ["ObjectiveGuard", "ObjectiveGuardViolation"]
+__all__ = [
+    "DEFAULT_OBJECTIVE_HASH_MANIFEST",
+    "ObjectiveGuard",
+    "ObjectiveGuardViolation",
+]

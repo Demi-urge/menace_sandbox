@@ -27,8 +27,12 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser(
-        "update",
+        "refresh",
         help="Manually regenerate the persisted objective hash manifest.",
+    )
+    subparsers.add_parser(
+        "update",
+        help="Deprecated alias for refresh.",
     )
     subparsers.add_parser(
         "verify",
@@ -39,7 +43,7 @@ def main() -> int:
     repo_root = Path(args.repo_root).resolve()
     guard = _guard(repo_root)
 
-    if args.command == "update":
+    if args.command in {"refresh", "update"}:
         hashes = guard.write_manifest()
         print(
             f"updated manifest: {guard.manifest_path} ({len(hashes)} protected file hashes)"

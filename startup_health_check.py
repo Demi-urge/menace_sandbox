@@ -12,12 +12,13 @@ system is halted and a detailed failure report is written to
 
 import json
 import os
-import hashlib
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
 from bootstrap_readiness import shared_online_state
+from objective_guard import DEFAULT_OBJECTIVE_HASH_MANIFEST, ObjectiveGuard, ObjectiveGuardViolation
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ REQUIRED_PATHS: list[str] = [
 ]
 
 # Reference hash file for immutable components
-IMMUTABLE_HASHES_PATH = "immutable_hashes.json"
+IMMUTABLE_HASHES_PATH = DEFAULT_OBJECTIVE_HASH_MANIFEST
 
 # Configuration template describing expected keys and value types
 # This ensures configuration files haven't been tampered with or corrupted.
@@ -55,26 +56,20 @@ def verify_required_files(required_paths: list[str]) -> list[str]:
 
 
 def check_file_integrity(reference_hash_path: str) -> list[str]:
-    """Return list of files whose hashes do not match the reference."""
-    mismatched: list[str] = []
-    try:
-        with open(reference_hash_path, "r", encoding="utf-8") as fh:
-            reference = json.load(fh)
-    except Exception as exc:
-        logger.error("Failed to load reference hashes: %s", exc)
-        return [reference_hash_path]
+    """Return objective files that diverge from the persisted SHA-256 manifest."""
 
-    for file_path, expected_hash in reference.items():
-        try:
-            with open(file_path, "rb") as f:
-                digest = hashlib.sha256(f.read()).hexdigest()
-            if digest != expected_hash:
-                mismatched.append(file_path)
+    guard = ObjectiveGuard(manifest_path=Path(reference_hash_path).resolve(), repo_root=Path.cwd())
+    try:
+        guard.verify_manifest()
+        return []
+    except ObjectiveGuardViolation as exc:
+        changed = [str(item) for item in (exc.details.get("changed_files") or []) if item]
+        if changed:
+            for file_path in changed:
                 logger.error("Hash mismatch for %s", file_path)
-        except Exception:
-            mismatched.append(file_path)
-            logger.error("Failed to read file for hashing: %s", file_path)
-    return mismatched
+            return changed
+        logger.error("Failed objective manifest verification: %s (%s)", exc.reason, exc.details)
+        return [reference_hash_path]
 
 
 def validate_config_structure(config_path: str) -> bool:
