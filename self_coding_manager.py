@@ -1184,6 +1184,10 @@ class PatchApprovalPolicy:
     per-bot configuration.
     """
 
+    REASON_MANUAL_APPROVAL_MISSING = "manual_approval_missing"
+    REASON_VERIFICATION_FAILED = "verification_failed"
+    REASON_TESTS_FAILED = "tests_failed"
+
     def __init__(
         self,
         *,
@@ -1212,6 +1216,12 @@ class PatchApprovalPolicy:
                 except Exception:  # pragma: no cover - settings issues
                     test_command = None
         self.test_command = list(test_command) if test_command else ["pytest", "-q"]
+        self.last_decision: dict[str, Any] = {
+            "approved": False,
+            "reason_codes": (),
+            "target_classification": "standard",
+            "approval_source": None,
+        }
 
     # ------------------------------------------------------------------
     def update_test_command(self, new_cmd: list[str]) -> None:
@@ -1285,12 +1295,20 @@ class PatchApprovalPolicy:
         ok = True
         classification = self.classify_target(path)
         approval_source: str | None = None
+        reason_codes: list[str] = []
         if classification == "objective_adjacent":
             approval_source = self._manual_approval_source(
                 path,
                 manual_approval_token=manual_approval_token,
             )
             if approval_source is None:
+                reason_codes.append(self.REASON_MANUAL_APPROVAL_MISSING)
+                self.last_decision = {
+                    "approved": False,
+                    "reason_codes": tuple(reason_codes),
+                    "target_classification": classification,
+                    "approval_source": None,
+                }
                 self.logger.warning(
                     "manual approval required for objective-adjacent target: %s",
                     path_for_prompt(path),
@@ -1299,20 +1317,24 @@ class PatchApprovalPolicy:
                         "target_classification": classification,
                         "approval_required": True,
                         "approval_source": None,
+                        "reason_codes": tuple(reason_codes),
                     },
                 )
                 return False
         try:
             if self.verifier and not self.verifier.verify(path):
                 ok = False
+                reason_codes.append(self.REASON_VERIFICATION_FAILED)
         except Exception as exc:  # pragma: no cover - verification issues
             self.logger.error("verification failed: %s", exc)
             ok = False
+            reason_codes.append(self.REASON_VERIFICATION_FAILED)
         try:
             subprocess.run(self.test_command, check=True)
         except Exception as exc:  # pragma: no cover - test runner issues
             self.logger.error("self tests failed: %s", exc)
             ok = False
+            reason_codes.append(self.REASON_TESTS_FAILED)
         if ok and self.rollback_mgr:
             try:
                 self.rollback_mgr.log_healing_action(
@@ -1331,6 +1353,12 @@ class PatchApprovalPolicy:
                     "approval_source": approval_source,
                 },
             )
+        self.last_decision = {
+            "approved": ok,
+            "reason_codes": tuple(reason_codes),
+            "target_classification": classification,
+            "approval_source": approval_source,
+        }
         return ok
 
 
@@ -4071,7 +4099,16 @@ class SelfCodingManager:
                 manual_approval_token=manual_approval_token,
             )
             if not approved:
-                deny_payload = {**approval_event, "outcome": "denied"}
+                decision = getattr(self.approval_policy, "last_decision", {}) or {}
+                reason_codes = tuple(decision.get("reason_codes", ()) or ())
+                primary_reason = reason_codes[0] if reason_codes else "approval_denied"
+                deny_payload = {
+                    **approval_event,
+                    "outcome": "denied",
+                    "reason_codes": reason_codes,
+                    "reason_code": primary_reason,
+                    "approval_source": decision.get("approval_source"),
+                }
                 self.logger.warning(
                     "patch approval denied for %s",
                     path_for_prompt(path),
