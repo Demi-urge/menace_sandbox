@@ -33,6 +33,51 @@ def test_self_debugger_candidates_are_packaged_only():
     )
 
 
+def test_resolver_does_not_fallback_to_legacy_flat_by_default(monkeypatch):
+    import_attempts = []
+
+    def fake_import_module(name):
+        import_attempts.append(name)
+        if name == "menace.self_debugger_sandbox":
+            raise ModuleNotFoundError(
+                "No module named 'menace.self_debugger_sandbox'",
+                name="menace.self_debugger_sandbox",
+            )
+        if name == "self_debugger_sandbox":
+            raise AssertionError("legacy fallback should not be attempted")
+        raise AssertionError(f"unexpected import: {name}")
+
+    monkeypatch.delenv("MENACE_ENABLE_LEGACY_SELF_DEBUGGER_IMPORT", raising=False)
+    monkeypatch.setattr(env.importlib, "import_module", fake_import_module)
+
+    with pytest.raises(ModuleNotFoundError):
+        env._resolve_self_debugger_sandbox_class()
+
+    assert import_attempts == ["menace.self_debugger_sandbox"]
+
+
+def test_resolver_falls_back_to_legacy_flat_when_explicitly_enabled(monkeypatch):
+    legacy_cls = type("LegacySelfDebuggerSandbox", (), {})
+    import_attempts = []
+
+    def fake_import_module(name):
+        import_attempts.append(name)
+        if name == "menace.self_debugger_sandbox":
+            raise ModuleNotFoundError(
+                "No module named 'menace.self_debugger_sandbox'",
+                name="menace.self_debugger_sandbox",
+            )
+        if name == "self_debugger_sandbox":
+            return types.SimpleNamespace(SelfDebuggerSandbox=legacy_cls)
+        raise AssertionError(f"unexpected import: {name}")
+
+    monkeypatch.setenv("MENACE_ENABLE_LEGACY_SELF_DEBUGGER_IMPORT", "1")
+    monkeypatch.setattr(env.importlib, "import_module", fake_import_module)
+
+    assert env._resolve_self_debugger_sandbox_class() is legacy_cls
+    assert import_attempts == ["menace.self_debugger_sandbox", "self_debugger_sandbox"]
+
+
 def test_resolver_raises_module_not_found_when_packaged_module_missing(monkeypatch):
     def fake_import_module(name):
         if name == "menace.self_debugger_sandbox":
@@ -42,13 +87,15 @@ def test_resolver_raises_module_not_found_when_packaged_module_missing(monkeypat
             )
         raise AssertionError(f"unexpected import: {name}")
 
+    monkeypatch.delenv("MENACE_ENABLE_LEGACY_SELF_DEBUGGER_IMPORT", raising=False)
     monkeypatch.setattr(env.importlib, "import_module", fake_import_module)
 
     with pytest.raises(ModuleNotFoundError) as exc_info:
         env._resolve_self_debugger_sandbox_class()
 
     message = str(exc_info.value)
-    assert "menace.self_debugger_sandbox" in message
+    assert "Candidate modules:" in message
+    assert "'menace.self_debugger_sandbox'" in message
     assert "target module import; candidate missing ('menace.self_debugger_sandbox')" in message
 
 
@@ -66,6 +113,7 @@ def test_resolver_raises_import_error_when_nested_dependency_missing(monkeypatch
         env._resolve_self_debugger_sandbox_class()
 
     message = str(exc_info.value)
+    assert "Candidate modules:" in message
     assert "dependency import failure" in message
     assert "origin=nested dependency import" in message
     assert "missing_dependency" in message
