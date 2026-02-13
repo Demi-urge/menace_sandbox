@@ -265,7 +265,7 @@ def debug_and_deploy(
             logging.getLogger(__name__).critical(
                 "MENACE_ALLOW_DEBUGGER_STUB=1 enabled. Running in DEGRADED mode with "
                 "a no-op SelfDebuggerSandbox stub. Operator action required: restore "
-                "menace.self_debugger_sandbox (or self_debugger_sandbox) and remove "
+                "menace.self_debugger_sandbox and remove "
                 "this override. Import error chain: %s",
                 exc,
             )

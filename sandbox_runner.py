@@ -132,23 +132,46 @@ from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
 from dependency_hints import format_system_package_instructions
+from sandbox_runner.import_candidates import SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES
 
 
 shutdown_event = threading.Event()
 
 
 def _resolve_self_debugger_sandbox_class() -> type[Any]:
-    """Import ``SelfDebuggerSandbox`` from the packaged runtime module."""
-    try:
-        from menace.self_debugger_sandbox import SelfDebuggerSandbox
+    """Import ``SelfDebuggerSandbox`` from packaged runtime module candidates."""
 
-        return SelfDebuggerSandbox
-    except ModuleNotFoundError as package_exc:
-        raise ModuleNotFoundError(
-            "Unable to import SelfDebuggerSandbox from "
-            "'menace.self_debugger_sandbox'. "
-            f"Package error: {package_exc!r}."
-        ) from package_exc
+    attempt_details: list[tuple[str, str, str]] = []
+    last_exc: Exception | None = None
+
+    for module_name in SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES:
+        try:
+            module = importlib.import_module(module_name)
+        except (ModuleNotFoundError, ImportError) as exc:
+            last_exc = exc
+            attempt_details.append((module_name, type(exc).__name__, str(exc)))
+            continue
+
+        if not hasattr(module, "SelfDebuggerSandbox"):
+            attr_exc = AttributeError(
+                f"module '{module_name}' has no attribute 'SelfDebuggerSandbox'"
+            )
+            last_exc = attr_exc
+            attempt_details.append((module_name, type(attr_exc).__name__, str(attr_exc)))
+            continue
+
+        return module.SelfDebuggerSandbox
+
+    details = "; ".join(
+        f"{module}: {exc_type}: {message}"
+        for module, exc_type, message in attempt_details
+    )
+    raise ModuleNotFoundError(
+        "Unable to import SelfDebuggerSandbox. "
+        "Tried packaged layouts: "
+        f"{', '.join(SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES)}. "
+        f"Failure chain: {details}"
+    ) from last_exc
 
 
 def kill_handler(sig, frame):
