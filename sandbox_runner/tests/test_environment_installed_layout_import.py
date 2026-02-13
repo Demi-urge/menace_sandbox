@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import shutil
 import sys
 import types
 from pathlib import Path
+
+import pytest
 
 
 def test_resolve_self_debugger_sandbox_class_in_installed_like_layout(monkeypatch, tmp_path):
@@ -126,3 +129,11 @@ def test_resolve_self_debugger_sandbox_class_in_installed_like_layout(monkeypatc
 
     assert resolved.__name__ == "SelfDebuggerSandbox"
     assert resolved.__module__ == "menace.self_debugger_sandbox"
+
+    monkeypatch.chdir(tmp_path)
+    sys.path[:] = [p for p in sys.path if Path(p or ".").resolve() != repo_root.resolve()]
+    importlib.invalidate_caches()
+    sys.modules.pop("self_debugger_sandbox", None)
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("self_debugger_sandbox")
