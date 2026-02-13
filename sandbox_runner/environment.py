@@ -98,6 +98,26 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
 T = TypeVar("T")
 
 _SELF_DEBUGGER_SANDBOX_MODULE_NAMES = frozenset(SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES)
+_LEGACY_SELF_DEBUGGER_SANDBOX_MODULE = "self_debugger_sandbox"
+
+
+def _legacy_self_debugger_import_enabled() -> bool:
+    """Return whether legacy flat self-debugger imports are allowed."""
+
+    return os.getenv("MENACE_ENABLE_LEGACY_SELF_DEBUGGER_IMPORT", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _self_debugger_sandbox_module_candidates() -> tuple[str, ...]:
+    """Return module candidates in the resolver's import order."""
+
+    if not _legacy_self_debugger_import_enabled():
+        return SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES
+    return (*SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES, _LEGACY_SELF_DEBUGGER_SANDBOX_MODULE)
 
 
 def module_name_from_module_not_found(exc: ModuleNotFoundError) -> str | None:
@@ -126,11 +146,12 @@ def is_self_debugger_sandbox_import_failure(exc: BaseException) -> bool:
 
 def _resolve_self_debugger_sandbox_class() -> type[Any]:
     """Import ``SelfDebuggerSandbox`` from supported module layouts."""
+    candidates = _self_debugger_sandbox_module_candidates()
     attempt_details: list[tuple[str, str, str]] = []
     all_attempts_candidate_missing = True
     last_exc: Exception | None = None
 
-    for module_name in SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES:
+    for module_name in candidates:
         try:
             module = importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
@@ -186,6 +207,7 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
         error_cls = ImportError
     raise error_cls(
         "Unable to import SelfDebuggerSandbox after trying all supported module paths. "
+        f"Candidate modules: {', '.join(repr(candidate) for candidate in candidates)}. "
         f"Attempts: {details}"
     ) from last_exc
 
