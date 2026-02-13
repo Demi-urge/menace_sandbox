@@ -119,6 +119,34 @@ def test_resolver_raises_import_error_when_nested_dependency_missing(monkeypatch
     assert "missing_dependency" in message
 
 
+def test_resolver_raises_actionable_import_error_for_nested_flat_fallback(monkeypatch):
+    import_attempts = []
+
+    def fake_import_module(name):
+        import_attempts.append(name)
+        if name == "menace.self_debugger_sandbox":
+            raise ModuleNotFoundError(
+                "No module named 'self_debugger_sandbox'", name="self_debugger_sandbox"
+            )
+        raise AssertionError(f"unexpected import: {name}")
+
+    monkeypatch.setattr(env.importlib, "import_module", fake_import_module)
+    monkeypatch.setattr(
+        env.importlib.util,
+        "find_spec",
+        lambda name: types.SimpleNamespace(origin="/pkg/menace/self_debugger_sandbox.py"),
+    )
+
+    with pytest.raises(ImportError) as exc_info:
+        env._resolve_self_debugger_sandbox_class()
+
+    message = str(exc_info.value)
+    assert "packaged candidate 'menace.self_debugger_sandbox'" in message
+    assert "nested module is missing ('self_debugger_sandbox')" in message
+    assert "Remove or guard flat fallback imports" in message
+    assert import_attempts == ["menace.self_debugger_sandbox", "menace.self_debugger_sandbox"]
+
+
 def test_is_self_debugger_sandbox_import_failure_supports_packaged_candidate():
     for module_name in env.SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES:
         exc = ModuleNotFoundError(f"missing {module_name}", name=module_name)
