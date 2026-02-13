@@ -2,13 +2,26 @@ from __future__ import annotations
 
 """Self-debugging workflow with sandboxed patch testing."""
 
+_IS_PACKAGED_CONTEXT = bool(__package__) or __name__.startswith("menace.")
+
+
+def _raise_packaged_import_error(module_name: str, exc: BaseException) -> None:
+    raise ImportError(
+        f"Failed to import internal module '{module_name}' while running in packaged "
+        "context; this indicates a broken package/internal import layout."
+    ) from exc
+
 try:
     from .logging_utils import log_record
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.logging_utils", exc)
     from logging_utils import log_record
 try:
     from .retry_utils import with_retry
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.retry_utils", exc)
     from retry_utils import with_retry
 import os
 import shutil
@@ -48,43 +61,63 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
             return 0.0
 try:
     from .error_logger import ErrorLogger, TelemetryEvent
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.error_logger", exc)
     from error_logger import ErrorLogger, TelemetryEvent
 try:
     from menace.target_region import TargetRegion, extract_target_region
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.target_region", exc)
     from target_region import TargetRegion, extract_target_region
 try:
     from .knowledge_graph import KnowledgeGraph
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.knowledge_graph", exc)
     from knowledge_graph import KnowledgeGraph
 try:
     from .human_alignment_agent import HumanAlignmentAgent
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.human_alignment_agent", exc)
     from human_alignment_agent import HumanAlignmentAgent
 try:
     from .human_alignment_flagger import _collect_diff_data
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.human_alignment_flagger", exc)
     from human_alignment_flagger import _collect_diff_data
 try:
     from .violation_logger import log_violation
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.violation_logger", exc)
     from violation_logger import log_violation
 try:
     from .sandbox_runner.scoring import record_run
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.sandbox_runner.scoring", exc)
     from sandbox_runner.scoring import record_run
 try:
     from menace.db_router import GLOBAL_ROUTER, init_db_router
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.db_router", exc)
     from db_router import GLOBAL_ROUTER, init_db_router
 try:
     from .automated_debugger import AutomatedDebugger
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.automated_debugger", exc)
     from automated_debugger import AutomatedDebugger
 try:
     from .self_coding_engine import SelfCodingEngine
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.self_coding_engine", exc)
     from self_coding_engine import SelfCodingEngine
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager
@@ -92,26 +125,36 @@ except ImportError:  # pragma: no cover - self-coding unavailable
     SelfCodingManager = Any  # type: ignore
 try:
     from .audit_trail import AuditTrail
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.audit_trail", exc)
     from audit_trail import AuditTrail
 try:
     from menace.patch_attempt_tracker import PatchAttemptTracker
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.patch_attempt_tracker", exc)
     from patch_attempt_tracker import PatchAttemptTracker
 try:
     from .code_database import PatchHistoryDB, _hash_code
-except Exception:  # pragma: no cover - test fallback
+except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - test fallback
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.code_database", exc)
     from code_database import PatchHistoryDB  # type: ignore
 
     def _hash_code(data: bytes) -> str:
         return "x"
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
-except Exception:  # pragma: no cover - fallback for flat layout
+except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.dynamic_path_router", exc)
     from dynamic_path_router import resolve_path  # type: ignore
 try:
     from .self_improvement_policy import SelfImprovementPolicy
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.self_improvement_policy", exc)
     from self_improvement_policy import SelfImprovementPolicy
 try:
     from .roi_tracker import ROITracker
@@ -126,15 +169,19 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
             return None
 try:
     from .error_cluster_predictor import ErrorClusterPredictor
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.error_cluster_predictor", exc)
     from error_cluster_predictor import ErrorClusterPredictor
 try:
     from .error_parser import ErrorReport, FailureCache, parse_failure
-except ImportError:
+except ImportError as exc:
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.error_parser", exc)
     from error_parser import ErrorReport, FailureCache, parse_failure
 try:
     from menace.self_improvement.baseline_tracker import BaselineTracker
-except Exception:  # pragma: no cover - test fallback
+except (ModuleNotFoundError, ImportError, AttributeError):  # pragma: no cover - test fallback
     class BaselineTracker:
         def __init__(self, window: int) -> None:
             self.window = int(window)
@@ -158,7 +205,7 @@ try:
         compute_entropy_metrics,
         compute_entropy_delta,
     )
-except Exception:  # pragma: no cover - test fallback
+except (ModuleNotFoundError, ImportError, AttributeError):  # pragma: no cover - test fallback
     def compute_entropy_metrics(files):
         return 0.0, 0.0, 0.0
 
@@ -166,7 +213,7 @@ except Exception:  # pragma: no cover - test fallback
         return 0.0, 0.0
 try:
     from menace.sandbox_runner.environment import create_ephemeral_env, generate_edge_cases
-except Exception:  # pragma: no cover - test fallback
+except (ModuleNotFoundError, ImportError, AttributeError):  # pragma: no cover - test fallback
     @contextmanager
     def create_ephemeral_env(workdir: Path, *, context_builder: ContextBuilder):
         raise RuntimeError("sandbox_runner unavailable")
@@ -175,16 +222,20 @@ except Exception:  # pragma: no cover - test fallback
         return {}
 try:
     from .sandbox_settings import SandboxSettings
-except Exception:  # pragma: no cover - fallback for flat layout
+except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.sandbox_settings", exc)
     from sandbox_settings import SandboxSettings  # type: ignore
 try:
     from .sandbox_runner import post_round_orphan_scan
-except Exception:  # pragma: no cover - fallback for flat layout
+except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.sandbox_runner", exc)
     from sandbox_runner import post_round_orphan_scan  # type: ignore
 try:
     from menace.vector_service.context_builder import ContextBuilder
     from menace.vector_service.context_builder import record_failed_tags
-except Exception:  # pragma: no cover - optional dependency
+except (ModuleNotFoundError, ImportError, AttributeError):  # pragma: no cover - optional dependency
     ContextBuilder = None  # type: ignore
 
     def record_failed_tags(_tags):  # type: ignore
@@ -193,7 +244,7 @@ try:  # pragma: no cover - MVP pipeline helpers
     from menace_sandbox.mvp_brain import run_mvp_pipeline
     from menace_sandbox.sandbox_rule_builder import build_rules
     from menace_sandbox import patch_generator
-except Exception:  # pragma: no cover - optional dependency
+except (ModuleNotFoundError, ImportError, AttributeError):  # pragma: no cover - optional dependency
     run_mvp_pipeline = None  # type: ignore
     build_rules = None  # type: ignore
     patch_generator = None  # type: ignore
