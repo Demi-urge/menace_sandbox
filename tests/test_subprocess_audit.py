@@ -18,7 +18,7 @@ sys.modules.setdefault("run_autonomous", run_auto)
 sys.modules.setdefault("menace_sandbox.run_autonomous", run_auto)
 
 try:
-    from menace_sandbox.self_debugger_sandbox import SelfDebuggerSandbox
+    from menace.self_debugger_sandbox import SelfDebuggerSandbox
 except BaseException:  # pragma: no cover - import may fail due to heavy deps
     SelfDebuggerSandbox = None
 try:
