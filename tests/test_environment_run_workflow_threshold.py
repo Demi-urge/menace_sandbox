@@ -182,6 +182,34 @@ def test_environment_self_debugger_import_error_includes_detailed_diagnostics(mo
     assert "missing_nested_dep" in msg
 
 
+def test_environment_self_debugger_nested_dependency_module_not_found_raises_import_error(monkeypatch):
+    env = _load_env()
+
+    monkeypatch.delitem(sys.modules, "menace.self_debugger_sandbox", raising=False)
+
+    def fake_import_module(name):
+        if name == "menace.self_debugger_sandbox":
+            raise ModuleNotFoundError(
+                "No module named 'self_debugger_sandbox'", name="self_debugger_sandbox"
+            )
+        raise AssertionError(f"unexpected module import: {name}")
+
+    monkeypatch.setattr(env.importlib, "import_module", fake_import_module)
+
+    with pytest.raises(ImportError) as exc_info:
+        env._resolve_self_debugger_sandbox_class()
+
+    msg = str(exc_info.value)
+    assert "menace.self_debugger_sandbox" in msg
+    assert "nested dependency import" in msg
+    assert "self_debugger_sandbox" in msg
+
+    candidate_missing_exc = ModuleNotFoundError(
+        "No module named 'menace.self_debugger_sandbox'", name="menace.self_debugger_sandbox"
+    )
+    assert env.is_self_debugger_sandbox_import_failure(candidate_missing_exc)
+
+
 def test_environment_self_debugger_import_error_is_module_not_found_when_all_candidates_missing(
     monkeypatch,
 ):
