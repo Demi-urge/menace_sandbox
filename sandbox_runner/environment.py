@@ -159,6 +159,46 @@ def _resolve_self_debugger_sandbox_class() -> type[Any]:
             missing_module = module_name_from_module_not_found(exc)
             candidate_missing = missing_module == module_name
             failure_origin = "target module import" if candidate_missing else "nested dependency import"
+            if (
+                module_name == "menace.self_debugger_sandbox"
+                and missing_module == _LEGACY_SELF_DEBUGGER_SANDBOX_MODULE
+            ):
+                packaged_spec = importlib.util.find_spec(module_name)
+                if packaged_spec is not None:
+                    try:
+                        importlib.import_module(module_name)
+                    except ModuleNotFoundError as retry_exc:
+                        retry_missing_module = module_name_from_module_not_found(retry_exc)
+                        if retry_missing_module == _LEGACY_SELF_DEBUGGER_SANDBOX_MODULE:
+                            raise ImportError(
+                                "Unable to import SelfDebuggerSandbox from packaged candidate "
+                                f"{module_name!r}. The module spec resolves "
+                                f"({packaged_spec.origin!r}), but importing it fails because a nested "
+                                f"module is missing ({retry_missing_module!r}). "
+                                "This usually means the packaged module still performs a flat fallback "
+                                "import. Remove or guard flat fallback imports in the packaged path."
+                            ) from retry_exc
+                        last_exc = retry_exc
+                        missing_module = retry_missing_module
+                        candidate_missing = retry_missing_module == module_name
+                        failure_origin = (
+                            "target module import"
+                            if candidate_missing
+                            else "nested dependency import"
+                        )
+                    except ImportError as retry_exc:
+                        last_exc = retry_exc
+                        all_attempts_candidate_missing = False
+                        attempt_details.append(
+                            (
+                                module_name,
+                                type(retry_exc).__name__,
+                                "packaged spec resolved but import failed "
+                                f"(candidate={module_name!r}, spec_origin={packaged_spec.origin!r}): "
+                                f"{retry_exc}",
+                            )
+                        )
+                        continue
             if candidate_missing:
                 attempt_details.append(
                     (
