@@ -2,27 +2,48 @@ from __future__ import annotations
 
 """Self-debugging workflow with sandboxed patch testing."""
 
+import importlib
+
 _IS_PACKAGED_CONTEXT = bool(__package__) or __name__.startswith("menace.")
+
+# Fallback imports are only allowed when the packaged module cannot be resolved
+# (e.g., source/flat-layout execution where ``menace.<module>`` does not exist).
+# If a packaged spec exists, this module treats import failures as broken packaged
+# wiring for required internal modules and fails fast.
+
+
+def _resolve_required_internal_import(module_name: str, *symbols: str) -> tuple[Any, ...]:
+    packaged_module_name = f"menace.{module_name}"
+    try:
+        packaged_spec_exists = importlib.util.find_spec(packaged_module_name) is not None
+    except ModuleNotFoundError:
+        packaged_spec_exists = False
+
+    try:
+        module = importlib.import_module(f".{module_name}", package=__package__ or "menace")
+    except ImportError as exc:
+        if _IS_PACKAGED_CONTEXT and packaged_spec_exists:
+            _raise_packaged_import_error(packaged_module_name, exc)
+        module = importlib.import_module(module_name)
+
+    return tuple(getattr(module, symbol) for symbol in symbols)
 
 
 def _raise_packaged_import_error(module_name: str, exc: BaseException) -> None:
+    missing_nested_dependency = "unknown"
+    if isinstance(exc, ModuleNotFoundError):
+        missing_nested_dependency = exc.name or "unknown"
+    elif isinstance(exc, ImportError) and getattr(exc, "name", None):
+        missing_nested_dependency = str(exc.name)
+
     raise ImportError(
         f"Failed to import internal module '{module_name}' while running in packaged "
-        "context; this indicates a broken package/internal import layout."
+        "context; this indicates a broken package/internal import layout. "
+        f"Missing nested dependency/import target: '{missing_nested_dependency}'."
     ) from exc
 
-try:
-    from .logging_utils import log_record
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.logging_utils", exc)
-    from logging_utils import log_record
-try:
-    from .retry_utils import with_retry
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.retry_utils", exc)
-    from retry_utils import with_retry
+log_record, = _resolve_required_internal_import("logging_utils", "log_record")
+with_retry, = _resolve_required_internal_import("retry_utils", "with_retry")
 import os
 import shutil
 import subprocess
@@ -39,7 +60,6 @@ import math
 from statistics import pstdev
 import sqlite3
 import threading
-import importlib
 from types import SimpleNamespace
 from contextlib import contextmanager
 from typing import Callable, Mapping, Any
@@ -59,82 +79,22 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
         def report(self, *args: Any, **kwargs: Any) -> float:
             return 0.0
-try:
-    from .error_logger import ErrorLogger, TelemetryEvent
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.error_logger", exc)
-    from error_logger import ErrorLogger, TelemetryEvent
-try:
-    from menace.target_region import TargetRegion, extract_target_region
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.target_region", exc)
-    from target_region import TargetRegion, extract_target_region
-try:
-    from .knowledge_graph import KnowledgeGraph
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.knowledge_graph", exc)
-    from knowledge_graph import KnowledgeGraph
-try:
-    from .human_alignment_agent import HumanAlignmentAgent
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.human_alignment_agent", exc)
-    from human_alignment_agent import HumanAlignmentAgent
-try:
-    from .human_alignment_flagger import _collect_diff_data
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.human_alignment_flagger", exc)
-    from human_alignment_flagger import _collect_diff_data
-try:
-    from .violation_logger import log_violation
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.violation_logger", exc)
-    from violation_logger import log_violation
-try:
-    from .sandbox_runner.scoring import record_run
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.sandbox_runner.scoring", exc)
-    from sandbox_runner.scoring import record_run
-try:
-    from menace.db_router import GLOBAL_ROUTER, init_db_router
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.db_router", exc)
-    from db_router import GLOBAL_ROUTER, init_db_router
-try:
-    from .automated_debugger import AutomatedDebugger
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.automated_debugger", exc)
-    from automated_debugger import AutomatedDebugger
-try:
-    from .self_coding_engine import SelfCodingEngine
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.self_coding_engine", exc)
-    from self_coding_engine import SelfCodingEngine
+ErrorLogger, TelemetryEvent = _resolve_required_internal_import("error_logger", "ErrorLogger", "TelemetryEvent")
+TargetRegion, extract_target_region = _resolve_required_internal_import("target_region", "TargetRegion", "extract_target_region")
+KnowledgeGraph, = _resolve_required_internal_import("knowledge_graph", "KnowledgeGraph")
+HumanAlignmentAgent, = _resolve_required_internal_import("human_alignment_agent", "HumanAlignmentAgent")
+_collect_diff_data, = _resolve_required_internal_import("human_alignment_flagger", "_collect_diff_data")
+log_violation, = _resolve_required_internal_import("violation_logger", "log_violation")
+record_run, = _resolve_required_internal_import("sandbox_runner.scoring", "record_run")
+GLOBAL_ROUTER, init_db_router = _resolve_required_internal_import("db_router", "GLOBAL_ROUTER", "init_db_router")
+AutomatedDebugger, = _resolve_required_internal_import("automated_debugger", "AutomatedDebugger")
+SelfCodingEngine, = _resolve_required_internal_import("self_coding_engine", "SelfCodingEngine")
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager
 except ImportError:  # pragma: no cover - self-coding unavailable
     SelfCodingManager = Any  # type: ignore
-try:
-    from .audit_trail import AuditTrail
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.audit_trail", exc)
-    from audit_trail import AuditTrail
-try:
-    from menace.patch_attempt_tracker import PatchAttemptTracker
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.patch_attempt_tracker", exc)
-    from patch_attempt_tracker import PatchAttemptTracker
+AuditTrail, = _resolve_required_internal_import("audit_trail", "AuditTrail")
+PatchAttemptTracker, = _resolve_required_internal_import("patch_attempt_tracker", "PatchAttemptTracker")
 try:
     from .code_database import PatchHistoryDB, _hash_code
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - test fallback
@@ -150,12 +110,7 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
     if _IS_PACKAGED_CONTEXT:
         _raise_packaged_import_error("menace.dynamic_path_router", exc)
     from dynamic_path_router import resolve_path  # type: ignore
-try:
-    from .self_improvement_policy import SelfImprovementPolicy
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.self_improvement_policy", exc)
-    from self_improvement_policy import SelfImprovementPolicy
+SelfImprovementPolicy, = _resolve_required_internal_import("self_improvement_policy", "SelfImprovementPolicy")
 try:
     from .roi_tracker import ROITracker
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
@@ -167,18 +122,13 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
         def update(self, *_args: Any, **_kwargs: Any) -> None:
             return None
-try:
-    from .error_cluster_predictor import ErrorClusterPredictor
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.error_cluster_predictor", exc)
-    from error_cluster_predictor import ErrorClusterPredictor
-try:
-    from .error_parser import ErrorReport, FailureCache, parse_failure
-except ImportError as exc:
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.error_parser", exc)
-    from error_parser import ErrorReport, FailureCache, parse_failure
+ErrorClusterPredictor, = _resolve_required_internal_import("error_cluster_predictor", "ErrorClusterPredictor")
+ErrorReport, FailureCache, parse_failure = _resolve_required_internal_import(
+    "error_parser",
+    "ErrorReport",
+    "FailureCache",
+    "parse_failure",
+)
 try:
     from menace.self_improvement.baseline_tracker import BaselineTracker
 except (ModuleNotFoundError, ImportError, AttributeError):  # pragma: no cover - test fallback
