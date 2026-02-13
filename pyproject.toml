@@ -119,7 +119,19 @@ py-modules = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["*", "tools", "tools.*", "tools.windows_sandbox_launcher_gui"]
+include = [
+    "menace",
+    "menace.*",
+    "sandbox_runner",
+    "sandbox_runner.*",
+    "menace_sandbox",
+    "menace_sandbox.*",
+    "vector_service",
+    "vector_service.*",
+    "tools",
+    "tools.*",
+    "tools.windows_sandbox_launcher_gui",
+]
 
 [tool.setuptools.package-dir]
 tools = "tools"

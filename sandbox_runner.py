@@ -138,26 +138,17 @@ shutdown_event = threading.Event()
 
 
 def _resolve_self_debugger_sandbox_class() -> type[Any]:
-    """Import ``SelfDebuggerSandbox`` from supported module layouts."""
-    package_exc: ModuleNotFoundError | None = None
+    """Import ``SelfDebuggerSandbox`` from the packaged runtime module."""
     try:
         from menace.self_debugger_sandbox import SelfDebuggerSandbox
 
         return SelfDebuggerSandbox
-    except ModuleNotFoundError as exc:
-        package_exc = exc
-
-    try:
-        from self_debugger_sandbox import SelfDebuggerSandbox
-
-        return SelfDebuggerSandbox
-    except ModuleNotFoundError as flat_exc:
+    except ModuleNotFoundError as package_exc:
         raise ModuleNotFoundError(
-            "Unable to import SelfDebuggerSandbox. "
-            "Tried 'menace.self_debugger_sandbox' and "
-            "'self_debugger_sandbox'. "
-            f"Package error: {package_exc!r}. Flat-module error: {flat_exc!r}."
-        ) from flat_exc
+            "Unable to import SelfDebuggerSandbox from "
+            "'menace.self_debugger_sandbox'. "
+            f"Package error: {package_exc!r}."
+        ) from package_exc
 
 
 def kill_handler(sig, frame):
