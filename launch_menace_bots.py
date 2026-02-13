@@ -73,7 +73,7 @@ def _create_tester() -> "BotTestingBot":
 
 
 def _resolve_self_debugger_sandbox_class() -> type[object]:
-    """Import ``SelfDebuggerSandbox`` from supported package and flat layouts."""
+    """Import ``SelfDebuggerSandbox`` from packaged runtime module candidates."""
 
     logger = logging.getLogger(__name__)
     attempt_details: list[tuple[str, str, str]] = []
@@ -113,7 +113,7 @@ def _resolve_self_debugger_sandbox_class() -> type[object]:
     )
     raise ModuleNotFoundError(
         "Unable to import SelfDebuggerSandbox. "
-        "Tried package and flat layouts: "
+        "Tried packaged layouts: "
         f"{', '.join(SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES)}. "
         f"Failure chain: {details}"
     ) from last_exc
