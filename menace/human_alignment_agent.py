@@ -10,19 +10,13 @@ by the flagger are written to the violation log using
 
 from typing import Any, Dict, List
 
-try:
+if __package__:
     from .sandbox_settings import SandboxSettings
-except ImportError:  # pragma: no cover - fallback for flat layout
-    from sandbox_settings import SandboxSettings
-
-try:
     from .human_alignment_flagger import flag_improvement
-except ImportError:  # pragma: no cover - fallback for flat layout
-    from human_alignment_flagger import flag_improvement
-
-try:
     from .violation_logger import log_violation
-except ImportError:  # pragma: no cover - fallback for flat layout
+else:  # pragma: no cover - fallback for flat layout/direct execution
+    from sandbox_settings import SandboxSettings
+    from human_alignment_flagger import flag_improvement
     from violation_logger import log_violation
 
 
