@@ -12,19 +12,33 @@ _IS_PACKAGED_CONTEXT = bool(__package__) or __name__.startswith("menace.")
 # wiring for required internal modules and fails fast.
 
 
-def _resolve_required_internal_import(module_name: str, *symbols: str) -> tuple[Any, ...]:
+def _import_internal_module(module_name: str):
     packaged_module_name = f"menace.{module_name}"
-    try:
-        packaged_spec_exists = importlib.util.find_spec(packaged_module_name) is not None
-    except ModuleNotFoundError:
-        packaged_spec_exists = False
+    package_relative_name = f"{__package__}.{module_name}" if __package__ else packaged_module_name
 
     try:
-        module = importlib.import_module(f".{module_name}", package=__package__ or "menace")
-    except ImportError as exc:
-        if _IS_PACKAGED_CONTEXT and packaged_spec_exists:
+        return importlib.import_module(f".{module_name}", package=__package__ or "menace")
+    except ModuleNotFoundError as exc:
+        if not _is_missing_module_at_import_path(
+            exc,
+            packaged_module_name,
+            package_relative_name,
+        ):
             _raise_packaged_import_error(packaged_module_name, exc)
-        module = importlib.import_module(module_name)
+        try:
+            return importlib.import_module(module_name)
+        except (ModuleNotFoundError, ImportError, AttributeError) as fallback_exc:
+            if _IS_PACKAGED_CONTEXT:
+                _raise_packaged_import_error(packaged_module_name, fallback_exc)
+            raise
+    except (ImportError, AttributeError) as exc:
+        if _IS_PACKAGED_CONTEXT:
+            _raise_packaged_import_error(packaged_module_name, exc)
+        raise
+
+
+def _resolve_required_internal_import(module_name: str, *symbols: str) -> tuple[Any, ...]:
+    module = _import_internal_module(module_name)
 
     return tuple(getattr(module, symbol) for symbol in symbols)
 
@@ -90,31 +104,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 ErrorLogger, TelemetryEvent = _resolve_required_internal_import("error_logger", "ErrorLogger", "TelemetryEvent")
 TargetRegion, extract_target_region = _resolve_required_internal_import("target_region", "TargetRegion", "extract_target_region")
 KnowledgeGraph, = _resolve_required_internal_import("knowledge_graph", "KnowledgeGraph")
-try:
-    from .human_alignment_agent import HumanAlignmentAgent
-except ModuleNotFoundError as exc:  # pragma: no cover - fallback for flat layout
-    packaged_human_alignment_module = "menace.human_alignment_agent"
-    package_relative_name = f"{__package__}.human_alignment_agent" if __package__ else packaged_human_alignment_module
-
-    if not _is_missing_module_at_import_path(
-        exc,
-        packaged_human_alignment_module,
-        package_relative_name,
-    ):
-        if _IS_PACKAGED_CONTEXT:
-            _raise_packaged_import_error(packaged_human_alignment_module, exc)
-        raise
-
-    try:
-        from human_alignment_agent import HumanAlignmentAgent  # type: ignore
-    except (ModuleNotFoundError, ImportError, AttributeError) as fallback_exc:
-        if _IS_PACKAGED_CONTEXT:
-            _raise_packaged_import_error(packaged_human_alignment_module, fallback_exc)
-        raise
-except (ImportError, AttributeError) as exc:  # pragma: no cover - strict failure for internal import errors
-    if _IS_PACKAGED_CONTEXT:
-        _raise_packaged_import_error("menace.human_alignment_agent", exc)
-    raise
+HumanAlignmentAgent, = _resolve_required_internal_import("human_alignment_agent", "HumanAlignmentAgent")
 _collect_diff_data, = _resolve_required_internal_import("human_alignment_flagger", "_collect_diff_data")
 log_violation, = _resolve_required_internal_import("violation_logger", "log_violation")
 record_run, = _resolve_required_internal_import("sandbox_runner.scoring", "record_run")
@@ -130,7 +120,11 @@ PatchAttemptTracker, = _resolve_required_internal_import("patch_attempt_tracker"
 try:
     from .code_database import PatchHistoryDB, _hash_code
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - test fallback
-    if _IS_PACKAGED_CONTEXT:
+    if _IS_PACKAGED_CONTEXT and not _is_missing_module_at_import_path(
+        exc,
+        "menace.code_database",
+        f"{__package__}.code_database" if __package__ else "menace.code_database",
+    ):
         _raise_packaged_import_error("menace.code_database", exc)
     from code_database import PatchHistoryDB  # type: ignore
 
@@ -139,7 +133,11 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
-    if _IS_PACKAGED_CONTEXT:
+    if _IS_PACKAGED_CONTEXT and not _is_missing_module_at_import_path(
+        exc,
+        "menace.dynamic_path_router",
+        f"{__package__}.dynamic_path_router" if __package__ else "menace.dynamic_path_router",
+    ):
         _raise_packaged_import_error("menace.dynamic_path_router", exc)
     from dynamic_path_router import resolve_path  # type: ignore
 SelfImprovementPolicy, = _resolve_required_internal_import("self_improvement_policy", "SelfImprovementPolicy")
@@ -205,13 +203,21 @@ except (ModuleNotFoundError, ImportError, AttributeError):  # pragma: no cover -
 try:
     from .sandbox_settings import SandboxSettings
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
-    if _IS_PACKAGED_CONTEXT:
+    if _IS_PACKAGED_CONTEXT and not _is_missing_module_at_import_path(
+        exc,
+        "menace.sandbox_settings",
+        f"{__package__}.sandbox_settings" if __package__ else "menace.sandbox_settings",
+    ):
         _raise_packaged_import_error("menace.sandbox_settings", exc)
     from sandbox_settings import SandboxSettings  # type: ignore
 try:
     from .sandbox_runner import post_round_orphan_scan
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
-    if _IS_PACKAGED_CONTEXT:
+    if _IS_PACKAGED_CONTEXT and not _is_missing_module_at_import_path(
+        exc,
+        "menace.sandbox_runner",
+        f"{__package__}.sandbox_runner" if __package__ else "menace.sandbox_runner",
+    ):
         _raise_packaged_import_error("menace.sandbox_runner", exc)
     from sandbox_runner import post_round_orphan_scan  # type: ignore
 try:
