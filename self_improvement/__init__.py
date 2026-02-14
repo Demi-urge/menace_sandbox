@@ -109,7 +109,16 @@ def _load_state_snapshot_module():
     return module
 
 
+def _load_human_alignment_agent():
+    module = _importlib.import_module("menace_sandbox.human_alignment_agent")
+    return getattr(module, "HumanAlignmentAgent")
+
+
 def __getattr__(name: str) -> _Any:
+    if name == "HumanAlignmentAgent":
+        attr = _load_human_alignment_agent()
+        globals()["HumanAlignmentAgent"] = attr
+        return attr
     if name in _API_EXPORTS:
         return _ensure_api_exports(name)
     if name == "state_snapshot":

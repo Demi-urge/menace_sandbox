@@ -111,3 +111,30 @@ def test_human_alignment_agent_evaluate_changes_logs_when_threshold_met(
 
     assert set(warnings.keys()) == {"ethics", "risk_reward", "maintainability"}
     assert log_calls, "Expected at least one violation log when threshold conditions are met"
+
+
+def test_human_alignment_agent_reward_override_keyword_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from menace.human_alignment_agent import HumanAlignmentAgent
+
+    log_calls: list[tuple[tuple, dict]] = []
+
+    def capture_log_violation(*args, **kwargs):
+        log_calls.append((args, kwargs))
+
+    import menace.human_alignment_agent as haa
+
+    monkeypatch.setattr(haa, "log_violation", capture_log_violation)
+
+    agent = HumanAlignmentAgent(settings=SandboxSettings(improvement_warning_threshold=0))
+    warnings = agent.evaluate_changes(
+        actions=[{"file": "module.py", "code": "print('hello')\n"}],
+        metrics={},
+        logs=[],
+        reward_override=True,
+    )
+
+    assert "ethics" in warnings
+    assert set(warnings.keys()) == {"ethics", "risk_reward", "maintainability"}
+    assert log_calls
