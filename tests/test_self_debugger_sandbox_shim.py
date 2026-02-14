@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import importlib
 from pathlib import Path
 from types import ModuleType
 
@@ -70,3 +71,15 @@ def test_nested_dependency_missing_is_not_masked_by_flat_fallback() -> None:
         _exec_shim(_import)
 
     assert exc_info.value.name == "missing_dep"
+
+
+def test_human_alignment_flagger_shim_exports_collect_diff_data() -> None:
+    module = importlib.import_module("menace.human_alignment_flagger")
+
+    assert hasattr(
+        module,
+        "_collect_diff_data",
+    ), "menace.self_debugger_sandbox_impl depends on menace.human_alignment_flagger._collect_diff_data remaining available."
+    assert callable(
+        module._collect_diff_data
+    ), "menace.self_debugger_sandbox_impl expects menace.human_alignment_flagger._collect_diff_data to be callable."
