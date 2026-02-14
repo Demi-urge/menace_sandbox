@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 import time
-import types
 from pathlib import Path
 
 # Ensure package root importable
@@ -45,12 +44,6 @@ def test_alignment_review_integration(tmp_path, monkeypatch):
 
     assert logged, "HumanAlignmentAgent did not log a warning"
     entry_id = logged[0][0][0]
-
-    engine = types.SimpleNamespace(
-        warning_summary=[],
-        logger=types.SimpleNamespace(warning=lambda *a, **k: None),
-    )
-    sie.SelfImprovementEngine._record_warning_summary(engine, 0.1, warnings)
 
     persisted = violation_logger.load_persisted_alignment_warnings()
     assert any(rec["entry_id"] == entry_id for rec in persisted)
