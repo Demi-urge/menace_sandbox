@@ -74,15 +74,50 @@ def test_self_improvement_api_import_succeeds(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_menace_sandbox_human_alignment_agent_import() -> None:
-    from menace_sandbox.human_alignment_agent import HumanAlignmentAgent
+    import menace_sandbox.human_alignment_agent as haa
 
-    assert HumanAlignmentAgent is not None
+    assert hasattr(haa, "HumanAlignmentAgent")
 
 
 def test_menace_human_alignment_agent_compatibility() -> None:
-    import menace.human_alignment_agent as haa
+    import menace.human_alignment_agent as legacy
 
-    assert hasattr(haa, "HumanAlignmentAgent")
+    assert hasattr(legacy, "HumanAlignmentAgent")
+
+
+def test_self_improvement_engine_import_isolated_from_human_alignment_agent_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+
+    filelock_stub = ModuleType("filelock")
+
+    class DummyLock:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    filelock_stub.FileLock = DummyLock
+    filelock_stub.Timeout = type("Timeout", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "filelock", filelock_stub)
+
+    for module_name in list(sys.modules):
+        if module_name == "self_improvement.engine" or module_name.startswith("self_improvement"):
+            sys.modules.pop(module_name, None)
+
+    imported_engine = importlib.import_module("self_improvement.engine")
+
+    assert imported_engine is not None
+    agent = imported_engine.HumanAlignmentAgent(
+        settings=SandboxSettings(improvement_warning_threshold=1),
+    )
+    warnings = agent.evaluate_changes(
+        workflow_changes=[{"file": "engine_module.py", "code": "print('hello')\n"}],
+        metrics={},
+        logs=[],
+    )
+
+    assert set(warnings.keys()) == {"ethics", "risk_reward", "maintainability"}
 
 
 def test_human_alignment_agent_evaluate_changes_logs_when_threshold_met(
