@@ -836,3 +836,10 @@ def test_rule_callable_param(todo_patch):
     flagger = haf.HumanAlignmentFlagger(rules=[direct_rule])
     report = flagger.flag_patch(todo_patch, {})
     assert any("direct rule" in issue["message"] for issue in report["issues"])
+
+
+def test_shim_reexports_collect_diff_data():
+    assert hasattr(haf, "_collect_diff_data")
+    from menace.human_alignment_flagger import _collect_diff_data
+
+    assert _collect_diff_data is haf._collect_diff_data
