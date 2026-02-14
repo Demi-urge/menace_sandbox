@@ -173,3 +173,24 @@ def test_human_alignment_agent_reward_override_keyword_is_accepted(
     assert "ethics" in warnings
     assert set(warnings.keys()) == {"ethics", "risk_reward", "maintainability"}
     assert log_calls
+
+
+def test_human_alignment_agent_evaluate_changes_returns_empty_warnings_on_internal_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from menace_sandbox.human_alignment_agent import HumanAlignmentAgent
+
+    agent = HumanAlignmentAgent(settings=SandboxSettings())
+    monkeypatch.setattr(
+        agent,
+        "_flag_improvement",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    warnings = agent.evaluate_changes(
+        actions=[{"file": "module.py", "code": "print('hello')\n"}],
+        metrics={},
+        logs=[],
+    )
+
+    assert warnings == {"ethics": [], "risk_reward": [], "maintainability": []}
