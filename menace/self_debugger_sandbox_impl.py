@@ -82,7 +82,15 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 ErrorLogger, TelemetryEvent = _resolve_required_internal_import("error_logger", "ErrorLogger", "TelemetryEvent")
 TargetRegion, extract_target_region = _resolve_required_internal_import("target_region", "TargetRegion", "extract_target_region")
 KnowledgeGraph, = _resolve_required_internal_import("knowledge_graph", "KnowledgeGraph")
-HumanAlignmentAgent, = _resolve_required_internal_import("human_alignment_agent", "HumanAlignmentAgent")
+try:
+    from .human_alignment_agent import HumanAlignmentAgent
+except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
+    try:
+        from human_alignment_agent import HumanAlignmentAgent  # type: ignore
+    except (ModuleNotFoundError, ImportError, AttributeError) as fallback_exc:
+        if _IS_PACKAGED_CONTEXT:
+            _raise_packaged_import_error("menace.human_alignment_agent", fallback_exc)
+        raise
 _collect_diff_data, = _resolve_required_internal_import("human_alignment_flagger", "_collect_diff_data")
 log_violation, = _resolve_required_internal_import("violation_logger", "log_violation")
 record_run, = _resolve_required_internal_import("sandbox_runner.scoring", "record_run")
