@@ -374,3 +374,46 @@ def test_resolver_preserves_real_internal_import_errors(monkeypatch, tmp_path):
     assert "Unable to import SelfDebuggerSandbox after trying all supported module paths." in message
     assert "Candidate modules: 'menace.self_debugger_sandbox'" in message
     assert "boom from self_debugger_sandbox_impl" in message
+
+
+def test_self_debugger_impl_import_keeps_human_alignment_flagger_collect_diff_data(
+    monkeypatch,
+    tmp_path,
+):
+    failure_signature = (
+        "module 'menace.human_alignment_flagger' has no attribute '_collect_diff_data'"
+    )
+    env = _load_installed_environment_module(
+        monkeypatch,
+        tmp_path,
+        {
+            "self_debugger_sandbox.py": (
+                "from menace.self_debugger_sandbox_impl import SelfDebuggerSandbox\n"
+            ),
+            "self_debugger_sandbox_impl.py": (
+                "from menace.human_alignment_flagger import _collect_diff_data\n\n"
+                "class SelfDebuggerSandbox:\n"
+                "    collector = staticmethod(_collect_diff_data)\n"
+            ),
+            "human_alignment_flagger.py": (
+                "def _collect_diff_data(*_args, **_kwargs):\n"
+                "    return {'status': 'ok'}\n"
+            ),
+        },
+    )
+
+    flagger = importlib.import_module("menace.human_alignment_flagger")
+    assert hasattr(
+        flagger,
+        "_collect_diff_data",
+    ), f"Regression guard for prior failure signature: \"{failure_signature}\""
+
+    try:
+        sandbox_impl = importlib.import_module("menace.self_debugger_sandbox_impl")
+    except AttributeError as exc:
+        pytest.fail(
+            f"Regression guard for prior failure signature: \"{failure_signature}\"; got {exc!r}",
+        )
+
+    assert hasattr(sandbox_impl, "SelfDebuggerSandbox")
+    assert sandbox_impl.SelfDebuggerSandbox.__module__ == "menace.self_debugger_sandbox_impl"
