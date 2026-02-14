@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-"""Human alignment warnings adapter used by self-improvement workflows."""
+"""Human alignment warnings adapter used by self-improvement workflows.
+
+Contract
+--------
+``HumanAlignmentAgent.evaluate_changes(actions, metrics, logs, commit_info)``
+accepts proposed workflow actions, optional metrics, optional logs and commit
+metadata, then returns a warning dictionary with stable iterable collections
+for the ``"ethics"``, ``"risk_reward"`` and ``"maintainability"`` keys.
+This guarantees engine call sites can safely evaluate warning presence via
+expressions like ``any(warnings.values())``.
+"""
 
 from importlib import import_module
 import sys
@@ -35,51 +45,70 @@ class HumanAlignmentAgent:
 
     def evaluate_changes(
         self,
-        workflow_changes=None,
+        actions=None,
         metrics=None,
         logs=None,
         commit_info=None,
         **kwargs: Any,
     ) -> dict[str, list[dict[str, Any]]]:
-        workflow_changes = kwargs.pop("actions", workflow_changes)
+        actions = kwargs.pop("workflow_changes", actions)
+        actions = kwargs.pop("actions", actions)
         commit_info = kwargs.pop("commit_metadata", commit_info)
         kwargs.pop("reward_override", None)
 
-        warnings = self._flag_improvement(
-            workflow_changes,
-            metrics,
-            logs,
-            commit_info=commit_info,
-            settings=self.settings,
-        )
+        empty_warnings: dict[str, list[dict[str, Any]]] = {
+            "ethics": [],
+            "risk_reward": [],
+            "maintainability": [],
+        }
 
-        structured_warnings: dict[str, list[dict[str, Any]]] = {
+        try:
+            warnings = self._flag_improvement(
+                actions,
+                metrics,
+                logs,
+                commit_info=commit_info,
+                settings=self.settings,
+            )
+        except Exception:
+            return empty_warnings
+
+        if not isinstance(warnings, dict):
+            return empty_warnings
+
+        try:
+            structured_warnings: dict[str, list[dict[str, Any]]] = {
             "ethics": list(warnings.get("ethics", []) or []),
             "risk_reward": list(warnings.get("risk_reward", []) or []),
             "maintainability": list(warnings.get("maintainability", []) or []),
-        }
-        if workflow_changes and not any(structured_warnings.values()):
-            structured_warnings["maintainability"].append(
-                {"issue": "no tests provided", "severity": 1}
-            )
+            }
+            if actions and not any(structured_warnings.values()):
+                structured_warnings["maintainability"].append(
+                    {"issue": "no tests provided", "severity": 1}
+                )
+        except Exception:
+            return empty_warnings
 
         threshold = self._warning_threshold()
         loggers = self._resolve_violation_loggers()
         timestamp = int(time())
 
-        for category, entries in structured_warnings.items():
-            for index, warning in enumerate(entries):
-                severity = int(warning.get("severity", 1) or 1)
-                if severity < threshold:
-                    continue
-                for logger in loggers:
-                    logger(
-                        f"improvement_{timestamp}_{category}_{index}",
-                        "alignment_warning",
-                        severity,
-                        {"category": category, "warning": warning},
-                        alignment_warning=True,
-                    )
+        try:
+            for category, entries in structured_warnings.items():
+                for index, warning in enumerate(entries):
+                    severity = int(warning.get("severity", 1) or 1)
+                    if severity < threshold:
+                        continue
+                    for logger in loggers:
+                        logger(
+                            f"improvement_{timestamp}_{category}_{index}",
+                            "alignment_warning",
+                            severity,
+                            {"category": category, "warning": warning},
+                            alignment_warning=True,
+                        )
+        except Exception:
+            return empty_warnings
 
         return structured_warnings
 
