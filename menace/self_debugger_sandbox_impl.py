@@ -39,8 +39,28 @@ def _import_internal_module(module_name: str):
 
 def _resolve_required_internal_import(module_name: str, *symbols: str) -> tuple[Any, ...]:
     module = _import_internal_module(module_name)
+    resolved_symbols: list[Any] = []
+    packaged_module_name = module_name if module_name.startswith("menace.") else f"menace.{module_name}"
 
-    return tuple(getattr(module, symbol) for symbol in symbols)
+    for symbol in symbols:
+        try:
+            resolved_symbols.append(getattr(module, symbol))
+        except AttributeError as exc:
+            symbol_exc = ImportError(
+                "Unable to resolve required symbol "
+                f"'{symbol}' from internal module '{module_name}' "
+                f"(packaged_context={_IS_PACKAGED_CONTEXT})."
+            )
+            symbol_exc.name = packaged_module_name  # type: ignore[attr-defined]
+            if _IS_PACKAGED_CONTEXT:
+                _raise_packaged_import_error(
+                    packaged_module_name,
+                    symbol_exc,
+                    missing_symbol=symbol,
+                )
+            raise symbol_exc from exc
+
+    return tuple(resolved_symbols)
 
 
 def _resolve_collect_diff_data_import() -> Callable[..., Any]:
@@ -76,17 +96,27 @@ def _resolve_collect_diff_data_import() -> Callable[..., Any]:
         ) from fallback_exc
 
 
-def _raise_packaged_import_error(module_name: str, exc: BaseException) -> None:
+def _raise_packaged_import_error(
+    module_name: str,
+    exc: BaseException,
+    *,
+    missing_symbol: str | None = None,
+) -> None:
     missing_nested_dependency = "unknown"
     if isinstance(exc, ModuleNotFoundError):
         missing_nested_dependency = exc.name or "unknown"
     elif isinstance(exc, ImportError) and getattr(exc, "name", None):
         missing_nested_dependency = str(exc.name)
 
+    symbol_context = ""
+    if missing_symbol:
+        symbol_context = f" Missing required symbol export: '{missing_symbol}'."
+
     raise ImportError(
         f"Failed to import internal module '{module_name}' while running in packaged "
         "context; this indicates a broken package/internal import layout. "
         f"Missing nested dependency/import target: '{missing_nested_dependency}'."
+        f"{symbol_context}"
     ) from exc
 
 

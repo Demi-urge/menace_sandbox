@@ -417,3 +417,63 @@ def test_self_debugger_impl_import_keeps_human_alignment_flagger_collect_diff_da
 
     assert hasattr(sandbox_impl, "SelfDebuggerSandbox")
     assert sandbox_impl.SelfDebuggerSandbox.__module__ == "menace.self_debugger_sandbox_impl"
+
+def test_resolver_reports_packaged_missing_symbol_export_in_installed_layout(monkeypatch, tmp_path):
+    env = _load_installed_environment_module(
+        monkeypatch,
+        tmp_path,
+        {
+            "self_debugger_sandbox.py": (
+                "from menace.self_debugger_sandbox_impl import SelfDebuggerSandbox\n"
+            ),
+            "self_debugger_sandbox_impl.py": (
+                "from __future__ import annotations\n"
+                "import importlib\n"
+                "from typing import Any\n"
+                "\n"
+                "_IS_PACKAGED_CONTEXT = True\n"
+                "\n"
+                "def _import_internal_module(module_name: str):\n"
+                "    return importlib.import_module(f'menace.{module_name}')\n"
+                "\n"
+                "def _raise_packaged_import_error(module_name: str, exc: BaseException, *, missing_symbol: str | None = None) -> None:\n"
+                "    missing_nested_dependency = getattr(exc, 'name', None) or 'unknown'\n"
+                "    symbol_context = f\" Missing required symbol export: '{missing_symbol}'.\" if missing_symbol else ''\n"
+                "    raise ImportError(\n"
+                "        f\"Failed to import internal module '{module_name}' while running in packaged context; \"\n"
+                "        \"this indicates a broken package/internal import layout. \"\n"
+                "        f\"Missing nested dependency/import target: '{missing_nested_dependency}'.\"\n"
+                "        f\"{symbol_context}\"\n"
+                "    ) from exc\n"
+                "\n"
+                "def _resolve_required_internal_import(module_name: str, *symbols: str) -> tuple[Any, ...]:\n"
+                "    module = _import_internal_module(module_name)\n"
+                "    resolved_symbols: list[Any] = []\n"
+                "    packaged_module_name = f'menace.{module_name}'\n"
+                "    for symbol in symbols:\n"
+                "        try:\n"
+                "            resolved_symbols.append(getattr(module, symbol))\n"
+                "        except AttributeError as exc:\n"
+                "            symbol_exc = ImportError(\n"
+                "                f\"Unable to resolve required symbol '{symbol}' from internal module '{module_name}' (packaged_context={_IS_PACKAGED_CONTEXT}).\"\n"
+                "            )\n"
+                "            symbol_exc.name = packaged_module_name\n"
+                "            _raise_packaged_import_error(packaged_module_name, symbol_exc, missing_symbol=symbol)\n"
+                "    return tuple(resolved_symbols)\n"
+                "\n"
+                "_collect_diff_data, = _resolve_required_internal_import('human_alignment_flagger', '_collect_diff_data')\n"
+                "\n"
+                "class SelfDebuggerSandbox:\n"
+                "    collector = staticmethod(_collect_diff_data)\n"
+            ),
+            "human_alignment_flagger.py": "def not_collect_diff_data(*_args, **_kwargs):\n    return {'status': 'ok'}\n",
+        },
+    )
+
+    with pytest.raises(ImportError) as exc_info:
+        env._resolve_self_debugger_sandbox_class()
+
+    message = str(exc_info.value)
+    assert "Failed to import internal module 'menace.human_alignment_flagger'" in message
+    assert "Missing required symbol export: '_collect_diff_data'." in message
+    assert "Candidate modules: 'menace.self_debugger_sandbox'" in message
