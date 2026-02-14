@@ -139,7 +139,12 @@ def test_resolve_self_debugger_sandbox_class_in_installed_like_layout(monkeypatc
         importlib.import_module("self_debugger_sandbox")
 
 
-def _load_installed_environment_module(monkeypatch, tmp_path, menace_files: dict[str, str]):
+def _load_installed_environment_module(
+    monkeypatch,
+    tmp_path,
+    menace_files: dict[str, str],
+    top_level_files: dict[str, str] | None = None,
+):
     repo_root = Path(__file__).resolve().parents[2]
     installed_root = tmp_path / "site_packages"
     installed_root.mkdir()
@@ -151,6 +156,8 @@ def _load_installed_environment_module(monkeypatch, tmp_path, menace_files: dict
     (menace_pkg / "__init__.py").write_text("", encoding="utf-8")
     for relative_path, contents in menace_files.items():
         (menace_pkg / relative_path).write_text(contents, encoding="utf-8")
+    for relative_path, contents in (top_level_files or {}).items():
+        (installed_root / relative_path).write_text(contents, encoding="utf-8")
 
     class _ContextBuilder:
         pass
@@ -316,3 +323,54 @@ def test_resolver_supports_fixed_internal_module_layout(monkeypatch, tmp_path):
 
     assert resolved.__name__ == "SelfDebuggerSandbox"
     assert resolved.__module__ == "menace.self_debugger_sandbox_impl"
+
+
+def test_resolver_supports_flat_human_alignment_agent_in_installed_layout(monkeypatch, tmp_path):
+    env = _load_installed_environment_module(
+        monkeypatch,
+        tmp_path,
+        {
+            "self_debugger_sandbox.py": (
+                "from menace.self_debugger_sandbox_impl import SelfDebuggerSandbox\n"
+            ),
+            "self_debugger_sandbox_impl.py": (
+                "import human_alignment_agent\n\n"
+                "class SelfDebuggerSandbox:\n"
+                "    pass\n"
+            ),
+        },
+        top_level_files={
+            "human_alignment_agent.py": "class HumanAlignmentAgent:\n    pass\n",
+        },
+    )
+
+    assert (tmp_path / "site_packages" / "human_alignment_agent.py").exists()
+    assert not (tmp_path / "site_packages" / "menace" / "human_alignment_agent.py").exists()
+
+    resolved = env._resolve_self_debugger_sandbox_class()
+
+    assert resolved.__name__ == "SelfDebuggerSandbox"
+    assert resolved.__module__ == "menace.self_debugger_sandbox_impl"
+
+
+def test_resolver_preserves_real_internal_import_errors(monkeypatch, tmp_path):
+    env = _load_installed_environment_module(
+        monkeypatch,
+        tmp_path,
+        {
+            "self_debugger_sandbox.py": (
+                "from menace.self_debugger_sandbox_impl import SelfDebuggerSandbox\n"
+            ),
+            "self_debugger_sandbox_impl.py": (
+                "raise ImportError('boom from self_debugger_sandbox_impl')\n"
+            ),
+        },
+    )
+
+    with pytest.raises(ImportError) as exc_info:
+        env._resolve_self_debugger_sandbox_class()
+
+    message = str(exc_info.value)
+    assert "Unable to import SelfDebuggerSandbox after trying all supported module paths." in message
+    assert "Candidate modules: 'menace.self_debugger_sandbox'" in message
+    assert "boom from self_debugger_sandbox_impl" in message
