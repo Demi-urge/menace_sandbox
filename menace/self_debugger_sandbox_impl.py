@@ -42,6 +42,14 @@ def _raise_packaged_import_error(module_name: str, exc: BaseException) -> None:
         f"Missing nested dependency/import target: '{missing_nested_dependency}'."
     ) from exc
 
+
+def _is_missing_module_at_import_path(exc: BaseException, *module_names: str) -> bool:
+    """Return ``True`` when an import failed because the target module itself is missing."""
+
+    if not isinstance(exc, ModuleNotFoundError):
+        return False
+    return (exc.name or "") in set(module_names)
+
 log_record, = _resolve_required_internal_import("logging_utils", "log_record")
 with_retry, = _resolve_required_internal_import("retry_utils", "with_retry")
 import os
@@ -84,13 +92,29 @@ TargetRegion, extract_target_region = _resolve_required_internal_import("target_
 KnowledgeGraph, = _resolve_required_internal_import("knowledge_graph", "KnowledgeGraph")
 try:
     from .human_alignment_agent import HumanAlignmentAgent
-except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
+except ModuleNotFoundError as exc:  # pragma: no cover - fallback for flat layout
+    packaged_human_alignment_module = "menace.human_alignment_agent"
+    package_relative_name = f"{__package__}.human_alignment_agent" if __package__ else packaged_human_alignment_module
+
+    if not _is_missing_module_at_import_path(
+        exc,
+        packaged_human_alignment_module,
+        package_relative_name,
+    ):
+        if _IS_PACKAGED_CONTEXT:
+            _raise_packaged_import_error(packaged_human_alignment_module, exc)
+        raise
+
     try:
         from human_alignment_agent import HumanAlignmentAgent  # type: ignore
     except (ModuleNotFoundError, ImportError, AttributeError) as fallback_exc:
         if _IS_PACKAGED_CONTEXT:
-            _raise_packaged_import_error("menace.human_alignment_agent", fallback_exc)
+            _raise_packaged_import_error(packaged_human_alignment_module, fallback_exc)
         raise
+except (ImportError, AttributeError) as exc:  # pragma: no cover - strict failure for internal import errors
+    if _IS_PACKAGED_CONTEXT:
+        _raise_packaged_import_error("menace.human_alignment_agent", exc)
+    raise
 _collect_diff_data, = _resolve_required_internal_import("human_alignment_flagger", "_collect_diff_data")
 log_violation, = _resolve_required_internal_import("violation_logger", "log_violation")
 record_run, = _resolve_required_internal_import("sandbox_runner.scoring", "record_run")
