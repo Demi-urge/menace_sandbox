@@ -43,6 +43,39 @@ def _resolve_required_internal_import(module_name: str, *symbols: str) -> tuple[
     return tuple(getattr(module, symbol) for symbol in symbols)
 
 
+def _resolve_collect_diff_data_import() -> Callable[..., Any]:
+    symbol_name = "_collect_diff_data"
+    module_paths = ["menace.human_alignment_flagger", "human_alignment_flagger"]
+    packaged_module_name = module_paths[0]
+    package_relative_name = f"{__package__}.human_alignment_flagger" if __package__ else packaged_module_name
+
+    try:
+        packaged_module = importlib.import_module(
+            ".human_alignment_flagger",
+            package=__package__ or "menace",
+        )
+        return getattr(packaged_module, symbol_name)
+    except ModuleNotFoundError as exc:
+        if not _is_missing_module_at_import_path(exc, packaged_module_name, package_relative_name):
+            _raise_packaged_import_error(packaged_module_name, exc)
+    except ImportError as exc:
+        if _IS_PACKAGED_CONTEXT:
+            _raise_packaged_import_error(packaged_module_name, exc)
+    except AttributeError:
+        pass
+
+    try:
+        flat_module = importlib.import_module(module_paths[1])
+        return getattr(flat_module, symbol_name)
+    except (ModuleNotFoundError, ImportError, AttributeError) as fallback_exc:
+        if _IS_PACKAGED_CONTEXT and isinstance(fallback_exc, ImportError) and not isinstance(fallback_exc, ModuleNotFoundError):
+            _raise_packaged_import_error(packaged_module_name, fallback_exc)
+        attempted_paths = ", ".join(module_paths)
+        raise ImportError(
+            f"Unable to import symbol '{symbol_name}' from compatibility module paths: {attempted_paths}."
+        ) from fallback_exc
+
+
 def _raise_packaged_import_error(module_name: str, exc: BaseException) -> None:
     missing_nested_dependency = "unknown"
     if isinstance(exc, ModuleNotFoundError):
@@ -105,7 +138,7 @@ ErrorLogger, TelemetryEvent = _resolve_required_internal_import("error_logger", 
 TargetRegion, extract_target_region = _resolve_required_internal_import("target_region", "TargetRegion", "extract_target_region")
 KnowledgeGraph, = _resolve_required_internal_import("knowledge_graph", "KnowledgeGraph")
 HumanAlignmentAgent, = _resolve_required_internal_import("human_alignment_agent", "HumanAlignmentAgent")
-_collect_diff_data, = _resolve_required_internal_import("human_alignment_flagger", "_collect_diff_data")
+_collect_diff_data = _resolve_collect_diff_data_import()
 log_violation, = _resolve_required_internal_import("violation_logger", "log_violation")
 record_run, = _resolve_required_internal_import("sandbox_runner.scoring", "record_run")
 GLOBAL_ROUTER, init_db_router = _resolve_required_internal_import("db_router", "GLOBAL_ROUTER", "init_db_router")
