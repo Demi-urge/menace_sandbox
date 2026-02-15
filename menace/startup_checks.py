@@ -1,10 +1,27 @@
-"""Compatibility wrapper exposing :mod:`startup_checks` under ``menace``."""
 from __future__ import annotations
 
-from startup_checks import *  # noqa: F401,F403
+"""Compatibility wrapper exposing :mod:`startup_checks` under ``menace``."""
 
-# Re-export ``__all__`` for ``from menace.startup_checks import *`` consumers.
-try:
-    from startup_checks import __all__ as __all__  # type: ignore
-except ImportError:  # pragma: no cover - defensive fallback
-    __all__ = []  # type: ignore[var-annotated]
+from importlib import import_module
+
+_IMPL_MODULE_NAME = f"{__package__}.startup_checks_impl" if __package__ else "menace.startup_checks_impl"
+
+
+def _resolve_source_module():
+    try:
+        return import_module(_IMPL_MODULE_NAME)
+    except ModuleNotFoundError as exc:
+        if (exc.name or "") != _IMPL_MODULE_NAME:
+            raise
+        return import_module("startup_checks")
+
+
+def _reexport(module) -> list[str]:
+    exported = getattr(module, "__all__", None)
+    if exported is None:
+        exported = [symbol for symbol in dir(module) if not symbol.startswith("_")]
+    globals().update({symbol: getattr(module, symbol) for symbol in exported})
+    return list(exported)
+
+
+__all__ = _reexport(_resolve_source_module())
