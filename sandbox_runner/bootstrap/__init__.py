@@ -49,8 +49,8 @@ path_for_prompt = getattr(
     lambda name: resolve_path(name).as_posix(),
 )
 
-from menace.auto_env_setup import ensure_env
-from menace.default_config_manager import DefaultConfigManager
+from menace_sandbox.auto_env_setup import ensure_env
+from menace_sandbox.default_config_manager import DefaultConfigManager
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 try:  # pragma: no cover - allow flat import
     from metrics_exporter import (

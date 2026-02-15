@@ -1105,7 +1105,7 @@ def _manager_generate_helper_with_builder(
         return base_helper(manager, description, **kwargs)
 
 
-for _mod_name in ("quick_fix_engine", "menace.quick_fix_engine"):
+for _mod_name in ("quick_fix_engine", "menace_sandbox.quick_fix_engine", "menace.quick_fix_engine"):
     _module = sys.modules.get(_mod_name)
     if _module is not None:
         try:

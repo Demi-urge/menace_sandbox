@@ -4041,7 +4041,7 @@ def _import_self_coding_manager_cls() -> type[Any] | None | object:
     try:  # pragma: no cover - optional self-coding dependency
         return load_internal("self_coding_manager").SelfCodingManager
     except ModuleNotFoundError as exc:  # pragma: no cover - degrade gracefully when absent
-        fallback_mod = sys.modules.get("menace.self_coding_manager")
+        fallback_mod = sys.modules.get("menace_sandbox.self_coding_manager") or sys.modules.get("menace.self_coding_manager")
         if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
             logger.debug(
                 "using stub SelfCodingManager from menace.self_coding_manager after import failure",
@@ -4055,7 +4055,7 @@ def _import_self_coding_manager_cls() -> type[Any] | None | object:
         )
         return None
     except Exception as exc:  # pragma: no cover - degrade gracefully when unavailable
-        fallback_mod = sys.modules.get("menace.self_coding_manager")
+        fallback_mod = sys.modules.get("menace_sandbox.self_coding_manager") or sys.modules.get("menace.self_coding_manager")
         if fallback_mod and hasattr(fallback_mod, "SelfCodingManager"):
             logger.debug(
                 "using stub SelfCodingManager from menace.self_coding_manager after runtime error",
@@ -4103,7 +4103,7 @@ _ENGINE_IMPORT_ERROR: Exception | None = None
 try:  # pragma: no cover - allow tests to stub engine
     _self_coding_engine = load_internal("self_coding_engine")
 except ModuleNotFoundError as exc:  # pragma: no cover - propagate requirement
-    fallback_engine = sys.modules.get("menace.self_coding_engine")
+    fallback_engine = sys.modules.get("menace_sandbox.self_coding_engine") or sys.modules.get("menace.self_coding_engine")
     if fallback_engine is not None:
         _self_coding_engine = fallback_engine  # type: ignore[assignment]
         MANAGER_CONTEXT = getattr(
@@ -4122,7 +4122,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - propagate requirement
         _ENGINE_IMPORT_ERROR = exc
         MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
 except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
-    fallback_engine = sys.modules.get("menace.self_coding_engine")
+    fallback_engine = sys.modules.get("menace_sandbox.self_coding_engine") or sys.modules.get("menace.self_coding_engine")
     if fallback_engine is not None:
         _self_coding_engine = fallback_engine  # type: ignore[assignment]
         MANAGER_CONTEXT = getattr(
@@ -10602,11 +10602,11 @@ def _bootstrap_manager(
                 code_db_cls = _load_optional_module("code_database").CodeDB
                 memory_cls = _load_optional_module("gpt_memory").GPTMemoryManager
                 engine_mod = _load_optional_module(
-                    "self_coding_engine", fallback="menace.self_coding_engine"
+                    "self_coding_engine", fallback="menace_sandbox.self_coding_engine"
                 )
                 patch_db_cls = _load_optional_module("code_database").PatchHistoryDB
                 pipeline_mod = _load_optional_module(
-                    "model_automation_pipeline", fallback="menace.model_automation_pipeline"
+                    "model_automation_pipeline", fallback="menace_sandbox.model_automation_pipeline"
                 )
                 patch_logger = None
                 patch_db_bootstrap_fast = bootstrap_fast
@@ -10622,7 +10622,7 @@ def _bootstrap_manager(
                     try:
                         patch_logger_mod = _load_optional_module(
                             "vector_service.patch_logger",
-                            fallback="menace.vector_service.patch_logger",
+                            fallback="menace_sandbox.vector_service.patch_logger",
                         )
                         patch_logger_cls = getattr(
                             patch_logger_mod, "PatchLogger", None
@@ -10818,7 +10818,7 @@ def _bootstrap_manager(
                 if owner_context is not None:
                     _pop_bootstrap_context(owner_context)
             manager_mod = _load_optional_module(
-                "self_coding_manager", fallback="menace.self_coding_manager"
+                "self_coding_manager", fallback="menace_sandbox.self_coding_manager"
             )
             manager = manager_mod.SelfCodingManager(
                 engine,
@@ -12206,24 +12206,24 @@ def self_coding_managed(
                 try:
                     _capital_module = _load_optional_module(
                         "capital_management_bot",
-                        fallback="menace.capital_management_bot",
+                        fallback="menace_sandbox.capital_management_bot",
                     )
                     CapitalManagementBot = _capital_module.CapitalManagementBot
                     _improvement_module = _load_optional_module(
                         "self_improvement.engine",
-                        fallback="menace.self_improvement.engine",
+                        fallback="menace_sandbox.self_improvement.engine",
                     )
                     SelfImprovementEngine = _improvement_module.SelfImprovementEngine
                     _evolution_manager_module = _load_optional_module(
                         "system_evolution_manager",
-                        fallback="menace.system_evolution_manager",
+                        fallback="menace_sandbox.system_evolution_manager",
                     )
                     SystemEvolutionManager = (
                         _evolution_manager_module.SystemEvolutionManager
                     )
                     _eo_module = _load_optional_module(
                         "evolution_orchestrator",
-                        fallback="menace.evolution_orchestrator",
+                        fallback="menace_sandbox.evolution_orchestrator",
                     )
                     _EO = _eo_module.EvolutionOrchestrator
 
@@ -12287,14 +12287,14 @@ def self_coding_managed(
             if getattr(manager_local, "quick_fix", None) is None:
                 try:
                     _quick_fix_module = _load_optional_module(
-                        "quick_fix_engine", fallback="menace.quick_fix_engine"
+                        "quick_fix_engine", fallback="menace_sandbox.quick_fix_engine"
                     )
                     QuickFixEngine = _quick_fix_module.QuickFixEngine
                     ErrorDB = _load_optional_module(
-                        "error_bot", fallback="menace.error_bot"
+                        "error_bot", fallback="menace_sandbox.error_bot"
                     ).ErrorDB
                     _helper_fn = _load_optional_module(
-                        "self_coding_manager", fallback="menace.self_coding_manager"
+                        "self_coding_manager", fallback="menace_sandbox.self_coding_manager"
                     )._manager_generate_helper_with_builder
                 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
                     logger.warning(
