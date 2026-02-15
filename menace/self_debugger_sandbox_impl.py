@@ -104,27 +104,21 @@ def _raise_packaged_import_error(
     missing_symbol: str | None = None,
     import_path: str = "packaged import path",
 ) -> None:
+    original_exception_type = type(exc).__name__
+    original_exception_message = " ".join(str(exc).split()).strip() or "<no message>"
+
     missing_nested_dependency = "unknown"
     if isinstance(exc, ModuleNotFoundError):
         missing_nested_dependency = exc.name or "unknown"
-    elif isinstance(exc, ImportError):
-        if getattr(exc, "name", None):
-            missing_nested_dependency = str(exc.name)
-        else:
-            import_error_context = " ".join(str(exc).split()).strip()
-            if import_error_context:
-                missing_nested_dependency = (
-                    f"{module_name} (from ImportError: {import_error_context})"
-                )
+    elif isinstance(exc, ImportError) and getattr(exc, "name", None):
+        missing_nested_dependency = str(exc.name)
 
     if missing_nested_dependency == "unknown":
-        fallback_target = " ".join(str(exc).split()).strip()
-        if fallback_target:
-            if len(fallback_target) > 180:
-                fallback_target = f"{fallback_target[:177]}..."
-            missing_nested_dependency = f"{module_name} (from exception: {fallback_target})"
-        else:
-            missing_nested_dependency = f"{module_name} (from exception type: {type(exc).__name__})"
+        missing_nested_dependency = (
+            f"{module_name} "
+            f"(fallback diagnostics: type={original_exception_type}, "
+            f"message={original_exception_message}, importing={module_name})"
+        )
 
     symbol_context = ""
     if missing_symbol:
@@ -138,8 +132,10 @@ def _raise_packaged_import_error(
             "verify packaged imports are absolute and package metadata is intact."
         )
 
-    original_exception_type = type(exc).__name__
-    original_exception_message = " ".join(str(exc).split()).strip() or "<no message>"
+    root_cause = (
+        f" Root cause: {original_exception_type}: {original_exception_message} "
+        f"(while importing '{module_name}' via {import_path})."
+    )
 
     raise ImportError(
         f"Failed to import internal module '{module_name}' while running in packaged "
@@ -150,6 +146,7 @@ def _raise_packaged_import_error(
         f"{original_exception_type}: {original_exception_message}."
         f"{relative_import_context}"
         f"{symbol_context}"
+        f"{root_cause}"
     ) from exc
 
 

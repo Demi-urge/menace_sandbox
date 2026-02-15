@@ -49,3 +49,33 @@ def test_import_internal_module_wraps_relative_import_failure_details(monkeypatc
     assert "Original exception from 'menace.automated_debugger': ImportError:" in message
     assert "attempted relative import with no known parent package" in message
     assert "Missing nested dependency/import target: 'unknown'" not in message
+
+
+def test_packaged_import_error_uses_fallback_diagnostics_when_exc_name_missing():
+    helpers = _load_import_helpers()
+
+    with pytest.raises(ImportError) as exc_info:
+        helpers["_raise_packaged_import_error"](
+            "menace.sample_module",
+            ImportError("cannot import dependency_x"),
+            import_path="packaged import path",
+        )
+
+    message = str(exc_info.value)
+    assert "fallback diagnostics: type=ImportError" in message
+    assert "message=cannot import dependency_x" in message
+    assert "importing=menace.sample_module" in message
+    assert "Root cause: ImportError: cannot import dependency_x" in message
+
+
+def test_packaged_import_error_keeps_missing_symbol_context():
+    helpers = _load_import_helpers()
+
+    with pytest.raises(ImportError) as exc_info:
+        helpers["_raise_packaged_import_error"](
+            "menace.sample_module",
+            ImportError("symbol not exported"),
+            missing_symbol="required_symbol",
+        )
+
+    assert "Missing required symbol export: 'required_symbol'." in str(exc_info.value)
