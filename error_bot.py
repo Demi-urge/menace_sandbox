@@ -11,8 +11,6 @@ import sys
 from pathlib import Path
 
 current_module = sys.modules[__name__]
-sys.modules.setdefault("menace.error_bot", current_module)
-sys.modules.setdefault("menace_sandbox.error_bot", current_module)
 sys.modules.setdefault("error_bot", current_module)
 
 if __package__ in {None, ""}:
@@ -25,6 +23,9 @@ if __package__ in {None, ""}:
     package = importlib.import_module("menace_sandbox")
     sys.modules.setdefault("menace_sandbox", package)
     __package__ = "menace_sandbox"
+
+sys.modules.setdefault("menace_sandbox.error_bot", current_module)
+sys.modules.setdefault("menace.error_bot", current_module)
 
 import logging
 import sqlite3

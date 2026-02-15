@@ -22,7 +22,7 @@ if __name__ == "self_improvement":  # pragma: no cover - runtime import aliasing
         parent = _types.ModuleType("menace_sandbox")
         parent.__path__ = [str(_Path(__file__).resolve().parent.parent)]
         _sys.modules["menace_sandbox"] = parent
-    _sys.modules["menace_sandbox.self_improvement"] = _sys.modules[__name__]
+    _sys.modules.setdefault("menace_sandbox.self_improvement", _sys.modules[__name__])
 
 
 def _load_api_module():
