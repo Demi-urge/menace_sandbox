@@ -1643,9 +1643,10 @@ class SelfImprovementEngine:
             else:
                 self.pipeline.aggregator = self.aggregator
         self.action_planner = action_planner
-        _qfe_log("SI-2f.5 importing menace_sandbox.error_bot")
-        from menace_sandbox.error_bot import ErrorBot, ErrorDB
-        _qfe_log("SI-2f.5 menace_sandbox.error_bot imported")
+        error_bot_module_name = f"{(__package__ or '<unknown-package>').rsplit('.', 1)[0]}.error_bot"
+        _qfe_log(f"SI-2f.5 importing {error_bot_module_name}")
+        from ..error_bot import ErrorBot, ErrorDB
+        _qfe_log(f"SI-2f.5 imported {error_bot_module_name}")
         err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
         self.error_bot = err_bot
         self.diagnostics = diagnostics or DiagnosticManager(
