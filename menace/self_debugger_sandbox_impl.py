@@ -108,14 +108,35 @@ def _raise_packaged_import_error(
     elif isinstance(exc, ImportError) and getattr(exc, "name", None):
         missing_nested_dependency = str(exc.name)
 
+    if missing_nested_dependency == "unknown":
+        fallback_target = " ".join(str(exc).split()).strip()
+        if fallback_target:
+            if len(fallback_target) > 180:
+                fallback_target = f"{fallback_target[:177]}..."
+            missing_nested_dependency = fallback_target
+
     symbol_context = ""
     if missing_symbol:
         symbol_context = f" Missing required symbol export: '{missing_symbol}'."
+
+    relative_import_context = ""
+    normalized_exc_message = " ".join(str(exc).split()).strip().lower()
+    if "attempted relative import with no known parent package" in normalized_exc_message:
+        relative_import_context = (
+            " Relative import resolution failed because no parent package is known; "
+            "verify packaged imports are absolute and package metadata is intact."
+        )
+
+    original_exception_type = type(exc).__name__
+    original_exception_message = " ".join(str(exc).split()).strip() or "<no message>"
 
     raise ImportError(
         f"Failed to import internal module '{module_name}' while running in packaged "
         "context; this indicates a broken package/internal import layout. "
         f"Missing nested dependency/import target: '{missing_nested_dependency}'."
+        f" Original exception from '{module_name}': "
+        f"{original_exception_type}: {original_exception_message}."
+        f"{relative_import_context}"
         f"{symbol_context}"
     ) from exc
 
