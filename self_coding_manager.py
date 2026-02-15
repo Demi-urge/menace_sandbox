@@ -403,10 +403,6 @@ from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 from .self_coding_engine import SelfCodingEngine
 from .data_bot import DataBot, persist_sc_thresholds
 try:  # pragma: no cover - optional dependency
-    from .error_bot import ErrorDB
-except Exception:  # pragma: no cover - provide stub when unavailable
-    ErrorDB = None  # type: ignore
-try:  # pragma: no cover - optional dependency
     from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
 except Exception:  # pragma: no cover - provide stubs in minimal environments
     FormalVerifier = AutomatedRollbackManager = None  # type: ignore
@@ -447,6 +443,7 @@ except Exception as exc:  # pragma: no cover - fail fast when unavailable
 from context_builder_util import ensure_fresh_weights, create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only import avoids circular dependency
+    from .error_bot import ErrorDB
     from .model_automation_pipeline import AutomationResult, ModelAutomationPipeline
 
 _MODEL_AUTOMATION_PIPELINE_CLS: type["ModelAutomationPipeline"] | None = None
@@ -1197,6 +1194,14 @@ def _get_target_region_cls() -> type[_TargetRegion]:
     return _TARGET_REGION_CLS
 
 
+def _get_error_db_cls():
+    """Import ``ErrorDB`` lazily so module import does not require ``error_bot``."""
+
+    from .error_bot import ErrorDB as _ErrorDB
+
+    return _ErrorDB
+
+
 class ObjectiveAdjacentPathClassifier:
     """Classify patch targets using the shared objective-surface manifest."""
 
@@ -1516,7 +1521,7 @@ class SelfCodingManager:
         baseline_window: int | None = None,
         bot_registry: BotRegistry | None = None,
         quick_fix: QuickFixEngine | None = None,
-        error_db: ErrorDB | None = None,
+        error_db: "ErrorDB | None" = None,
         event_bus: UnifiedEventBus | None = None,
         evolution_orchestrator: "EvolutionOrchestrator | None" = None,
         threshold_service: ThresholdService | None = None,
@@ -2118,7 +2123,8 @@ class SelfCodingManager:
             )
             self.logger.error(msg)
             raise ImportError(msg)
-        db = self.error_db or ErrorDB()
+        error_db_cls = _get_error_db_cls()
+        db = self.error_db or error_db_cls()
         self.error_db = db
         try:
             self.quick_fix = QuickFixEngine(
