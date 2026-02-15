@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Automatic debugging service that patches errors without manual help."""
 
-import importlib
 import importlib.util
 import logging
 import re
@@ -11,7 +10,7 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import Any, Iterable
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"
@@ -35,52 +34,22 @@ else:  # pragma: no cover - ensure helper aliases exist
     sys.modules.setdefault(f"{_PACKAGE_NAME}.{_HELPER_NAME}", import_compat)
 
 import_compat.bootstrap(__name__, __file__)
+load_internal = import_compat.load_internal
 
+SelfCodingEngine = load_internal("self_coding_engine").SelfCodingEngine
+retry = load_internal("retry_utils").retry
+_target_region = load_internal("self_improvement.target_region")
+TargetRegion = _target_region.TargetRegion
+extract_target_region = _target_region.extract_target_region
+PatchAttemptTracker = load_internal("patch_attempt_tracker").PatchAttemptTracker
+ContextBuilder = load_internal("vector_service.context_builder").ContextBuilder
+BotRegistry = load_internal("bot_registry").BotRegistry
+DataBot = load_internal("data_bot").DataBot
+self_coding_managed = load_internal("coding_bot_interface").self_coding_managed
 
-def _module_candidates(name: str) -> list[str]:
-    package_root = (__package__ or "").split(".", 1)[0]
-    candidates: list[str] = []
-    if package_root:
-        candidates.append(f"{package_root}.{name}")
-    for root in ("menace_sandbox", "menace"):
-        qualified = f"{root}.{name}"
-        if qualified not in candidates:
-            candidates.append(qualified)
-    if name not in candidates:
-        candidates.append(name)
-    return candidates
-
-
-def _import_attr(name: str, attr: str) -> Any:
-    last_exc: Exception | None = None
-    for module_name in _module_candidates(name):
-        try:
-            module = importlib.import_module(module_name)
-        except ModuleNotFoundError as exc:
-            if exc.name not in {module_name, module_name.split(".", 1)[0]}:
-                raise
-            last_exc = exc
-            continue
-        try:
-            return getattr(module, attr)
-        except AttributeError as exc:
-            raise ImportError(f"module '{module_name}' missing required attribute '{attr}'") from exc
-    raise ImportError(f"unable to import {attr} from {name}") from last_exc
-
-
-SelfCodingEngine = _import_attr("self_coding_engine", "SelfCodingEngine")
-retry = _import_attr("retry_utils", "retry")
-TargetRegion = _import_attr("self_improvement.target_region", "TargetRegion")
-extract_target_region = _import_attr("self_improvement.target_region", "extract_target_region")
-PatchAttemptTracker = _import_attr("patch_attempt_tracker", "PatchAttemptTracker")
-ContextBuilder = _import_attr("vector_service.context_builder", "ContextBuilder")
-BotRegistry = _import_attr("bot_registry", "BotRegistry")
-DataBot = _import_attr("data_bot", "DataBot")
-self_coding_managed = _import_attr("coding_bot_interface", "self_coding_managed")
-
-if TYPE_CHECKING:
-    SelfCodingManager = _import_attr("self_coding_manager", "SelfCodingManager")
-else:
+try:
+    SelfCodingManager = load_internal("self_coding_manager").SelfCodingManager
+except Exception:
     SelfCodingManager = Any
 
 _FRAME_RE = re.compile(r'File "([^\"]+)", line (\d+), in ([^\n]+)')
@@ -283,7 +252,7 @@ class AutomatedDebugger:
                 outcome = _apply(module_path, target)
                 summary = outcome.get("summary") if outcome else None
                 try:
-                    integrate_new_orphans = _import_attr("sandbox_runner", "integrate_new_orphans")
+                    integrate_new_orphans = load_internal("sandbox_runner").integrate_new_orphans
                     integrate_new_orphans(Path.cwd(), context_builder=self.context_builder)
                 except Exception:
                     self.logger.exception("integrate_new_orphans after apply_patch failed")
