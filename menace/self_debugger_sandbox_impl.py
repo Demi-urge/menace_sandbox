@@ -3,6 +3,7 @@ from __future__ import annotations
 """Self-debugging workflow with sandboxed patch testing."""
 
 import importlib
+import re
 
 _IS_PACKAGED_CONTEXT = bool(__package__) or __name__.startswith("menace.")
 
@@ -107,11 +108,75 @@ def _raise_packaged_import_error(
     original_exception_type = type(exc).__name__
     original_exception_message = " ".join(str(exc).split()).strip() or "<no message>"
 
+    best_module_name: str | None = None
+    best_symbol_name: str | None = None
+    best_depth = -1
+    visited: set[int] = set()
+
+    def _record_candidate(depth: int, module_candidate: str | None, symbol_candidate: str | None = None) -> None:
+        nonlocal best_module_name, best_symbol_name, best_depth
+        normalized_module = (module_candidate or "").strip()
+        if not normalized_module:
+            return
+        if depth < best_depth:
+            return
+        best_depth = depth
+        best_module_name = normalized_module
+        if symbol_candidate and symbol_candidate.strip():
+            best_symbol_name = symbol_candidate.strip()
+
+    def _visit_exception_tree(error: BaseException, depth: int = 0) -> None:
+        error_id = id(error)
+        if error_id in visited:
+            return
+        visited.add(error_id)
+
+        if isinstance(error, (ModuleNotFoundError, ImportError)):
+            _record_candidate(depth, getattr(error, "name", None))
+
+            normalized_message = " ".join(str(error).split()).strip()
+            import_symbol_match = re.search(
+                r"cannot import name ['\"](?P<symbol>[^'\"]+)['\"] from ['\"](?P<module>[^'\"]+)['\"]",
+                normalized_message,
+            )
+            if import_symbol_match:
+                _record_candidate(
+                    depth,
+                    import_symbol_match.group("module"),
+                    import_symbol_match.group("symbol"),
+                )
+
+            no_module_match = re.search(r"No module named ['\"](?P<module>[^'\"]+)['\"]", normalized_message)
+            if no_module_match:
+                _record_candidate(depth, no_module_match.group("module"))
+
+        if isinstance(error, AttributeError):
+            normalized_message = " ".join(str(error).split()).strip()
+            attribute_match = re.search(
+                r"module ['\"](?P<module>[^'\"]+)['\"] has no attribute ['\"](?P<symbol>[^'\"]+)['\"]",
+                normalized_message,
+            )
+            if attribute_match:
+                _record_candidate(
+                    depth,
+                    attribute_match.group("module"),
+                    attribute_match.group("symbol"),
+                )
+
+        for nested_error in (error.__cause__, error.__context__):
+            if isinstance(nested_error, BaseException):
+                _visit_exception_tree(nested_error, depth + 1)
+
+    _visit_exception_tree(exc)
+
+    if not best_symbol_name and missing_symbol:
+        best_symbol_name = missing_symbol
+
     missing_nested_dependency = "unknown"
-    if isinstance(exc, ModuleNotFoundError):
-        missing_nested_dependency = exc.name or "unknown"
-    elif isinstance(exc, ImportError) and getattr(exc, "name", None):
-        missing_nested_dependency = str(exc.name)
+    if best_module_name and best_symbol_name:
+        missing_nested_dependency = f"{best_module_name}.{best_symbol_name}"
+    elif best_module_name:
+        missing_nested_dependency = best_module_name
 
     if missing_nested_dependency == "unknown":
         missing_nested_dependency = (
