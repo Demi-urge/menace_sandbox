@@ -9,18 +9,53 @@ import tempfile
 import traceback
 from typing import Any, Iterable
 
-from .self_coding_engine import SelfCodingEngine
+try:
+    from .self_coding_engine import SelfCodingEngine
+except ImportError:  # pragma: no cover - flat import fallback
+    from self_coding_engine import SelfCodingEngine
+
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager
-except ImportError:  # pragma: no cover - self-coding unavailable
-    SelfCodingManager = Any  # type: ignore
-from .retry_utils import retry
-from .self_improvement.target_region import TargetRegion, extract_target_region
-from .patch_attempt_tracker import PatchAttemptTracker
-from .vector_service.context_builder import ContextBuilder
-from .bot_registry import BotRegistry
-from .data_bot import DataBot
-from .coding_bot_interface import self_coding_managed
+except ImportError:  # pragma: no cover - optional/flat import fallback
+    try:
+        from self_coding_manager import SelfCodingManager
+    except ImportError:  # pragma: no cover - self-coding unavailable
+        SelfCodingManager = Any  # type: ignore
+
+try:
+    from .retry_utils import retry
+except ImportError:  # pragma: no cover - flat import fallback
+    from retry_utils import retry
+
+try:
+    from .self_improvement.target_region import TargetRegion, extract_target_region
+except ImportError:  # pragma: no cover - flat import fallback
+    from self_improvement.target_region import TargetRegion, extract_target_region
+
+try:
+    from .patch_attempt_tracker import PatchAttemptTracker
+except ImportError:  # pragma: no cover - flat import fallback
+    from patch_attempt_tracker import PatchAttemptTracker
+
+try:
+    from .vector_service.context_builder import ContextBuilder
+except ImportError:  # pragma: no cover - flat import fallback
+    from vector_service.context_builder import ContextBuilder
+
+try:
+    from .bot_registry import BotRegistry
+except ImportError:  # pragma: no cover - flat import fallback
+    from bot_registry import BotRegistry
+
+try:
+    from .data_bot import DataBot
+except ImportError:  # pragma: no cover - flat import fallback
+    from data_bot import DataBot
+
+try:
+    from .coding_bot_interface import self_coding_managed
+except ImportError:  # pragma: no cover - flat import fallback
+    from coding_bot_interface import self_coding_managed
 
 
 _FRAME_RE = re.compile(r"File \"([^\"]+)\", line (\d+), in ([^\n]+)")
