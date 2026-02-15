@@ -24,16 +24,16 @@ def _import_internal_module(module_name: str):
             packaged_module_name,
             package_relative_name,
         ):
-            _raise_packaged_import_error(packaged_module_name, exc)
+            _raise_packaged_import_error(packaged_module_name, exc, import_path="packaged import path")
         try:
             return importlib.import_module(module_name)
         except (ModuleNotFoundError, ImportError, AttributeError) as fallback_exc:
             if _IS_PACKAGED_CONTEXT:
-                _raise_packaged_import_error(packaged_module_name, fallback_exc)
+                _raise_packaged_import_error(packaged_module_name, fallback_exc, import_path="fallback import path")
             raise
     except (ImportError, AttributeError) as exc:
         if _IS_PACKAGED_CONTEXT:
-            _raise_packaged_import_error(packaged_module_name, exc)
+            _raise_packaged_import_error(packaged_module_name, exc, import_path="packaged import path")
         raise
 
 
@@ -57,6 +57,7 @@ def _resolve_required_internal_import(module_name: str, *symbols: str) -> tuple[
                     packaged_module_name,
                     symbol_exc,
                     missing_symbol=symbol,
+                    import_path="packaged symbol resolution path",
                 )
             raise symbol_exc from exc
 
@@ -77,10 +78,10 @@ def _resolve_collect_diff_data_import() -> Callable[..., Any]:
         return getattr(packaged_module, symbol_name)
     except ModuleNotFoundError as exc:
         if not _is_missing_module_at_import_path(exc, packaged_module_name, package_relative_name):
-            _raise_packaged_import_error(packaged_module_name, exc)
+            _raise_packaged_import_error(packaged_module_name, exc, import_path="packaged import path")
     except ImportError as exc:
         if _IS_PACKAGED_CONTEXT:
-            _raise_packaged_import_error(packaged_module_name, exc)
+            _raise_packaged_import_error(packaged_module_name, exc, import_path="packaged import path")
     except AttributeError:
         pass
 
@@ -89,7 +90,7 @@ def _resolve_collect_diff_data_import() -> Callable[..., Any]:
         return getattr(flat_module, symbol_name)
     except (ModuleNotFoundError, ImportError, AttributeError) as fallback_exc:
         if _IS_PACKAGED_CONTEXT and isinstance(fallback_exc, ImportError) and not isinstance(fallback_exc, ModuleNotFoundError):
-            _raise_packaged_import_error(packaged_module_name, fallback_exc)
+            _raise_packaged_import_error(packaged_module_name, fallback_exc, import_path="fallback import path")
         attempted_paths = ", ".join(module_paths)
         raise ImportError(
             f"Unable to import symbol '{symbol_name}' from compatibility module paths: {attempted_paths}."
@@ -101,19 +102,29 @@ def _raise_packaged_import_error(
     exc: BaseException,
     *,
     missing_symbol: str | None = None,
+    import_path: str = "packaged import path",
 ) -> None:
     missing_nested_dependency = "unknown"
     if isinstance(exc, ModuleNotFoundError):
         missing_nested_dependency = exc.name or "unknown"
-    elif isinstance(exc, ImportError) and getattr(exc, "name", None):
-        missing_nested_dependency = str(exc.name)
+    elif isinstance(exc, ImportError):
+        if getattr(exc, "name", None):
+            missing_nested_dependency = str(exc.name)
+        else:
+            import_error_context = " ".join(str(exc).split()).strip()
+            if import_error_context:
+                missing_nested_dependency = (
+                    f"{module_name} (from ImportError: {import_error_context})"
+                )
 
     if missing_nested_dependency == "unknown":
         fallback_target = " ".join(str(exc).split()).strip()
         if fallback_target:
             if len(fallback_target) > 180:
                 fallback_target = f"{fallback_target[:177]}..."
-            missing_nested_dependency = fallback_target
+            missing_nested_dependency = f"{module_name} (from exception: {fallback_target})"
+        else:
+            missing_nested_dependency = f"{module_name} (from exception type: {type(exc).__name__})"
 
     symbol_context = ""
     if missing_symbol:
@@ -133,6 +144,7 @@ def _raise_packaged_import_error(
     raise ImportError(
         f"Failed to import internal module '{module_name}' while running in packaged "
         "context; this indicates a broken package/internal import layout. "
+        f"Failure source: {import_path}. "
         f"Missing nested dependency/import target: '{missing_nested_dependency}'."
         f" Original exception from '{module_name}': "
         f"{original_exception_type}: {original_exception_message}."
@@ -209,7 +221,7 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
         "menace.code_database",
         f"{__package__}.code_database" if __package__ else "menace.code_database",
     ):
-        _raise_packaged_import_error("menace.code_database", exc)
+        _raise_packaged_import_error("menace.code_database", exc, import_path="packaged import path")
     from code_database import PatchHistoryDB  # type: ignore
 
     def _hash_code(data: bytes) -> str:
@@ -222,7 +234,7 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
         "menace.dynamic_path_router",
         f"{__package__}.dynamic_path_router" if __package__ else "menace.dynamic_path_router",
     ):
-        _raise_packaged_import_error("menace.dynamic_path_router", exc)
+        _raise_packaged_import_error("menace.dynamic_path_router", exc, import_path="packaged import path")
     from dynamic_path_router import resolve_path  # type: ignore
 SelfImprovementPolicy, = _resolve_required_internal_import("self_improvement_policy", "SelfImprovementPolicy")
 try:
@@ -292,7 +304,7 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
         "menace.sandbox_settings",
         f"{__package__}.sandbox_settings" if __package__ else "menace.sandbox_settings",
     ):
-        _raise_packaged_import_error("menace.sandbox_settings", exc)
+        _raise_packaged_import_error("menace.sandbox_settings", exc, import_path="packaged import path")
     from sandbox_settings import SandboxSettings  # type: ignore
 try:
     from .sandbox_runner import post_round_orphan_scan
@@ -302,7 +314,7 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
         "menace.sandbox_runner",
         f"{__package__}.sandbox_runner" if __package__ else "menace.sandbox_runner",
     ):
-        _raise_packaged_import_error("menace.sandbox_runner", exc)
+        _raise_packaged_import_error("menace.sandbox_runner", exc, import_path="packaged import path")
     from sandbox_runner import post_round_orphan_scan  # type: ignore
 try:
     from menace.vector_service.context_builder import ContextBuilder
