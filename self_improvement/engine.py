@@ -1268,6 +1268,7 @@ _qfe_log("SI-2f.3 context_builder_util imported")
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from vector_service.context_builder import ContextBuilder
+    from menace_sandbox.error_bot import ErrorBot, ErrorDB
 _qfe_log("SI-2f.4 importing menace_sandbox.diagnostic_manager")
 from menace_sandbox.diagnostic_manager import DiagnosticManager
 _qfe_log("SI-2f.4 menace_sandbox.diagnostic_manager imported")
@@ -1438,12 +1439,12 @@ class MovingBaseline:
         return list(self._scores)
 
 
-def _create_error_bot(context_builder: "ContextBuilder") -> "ErrorBot":
-    """Instantiate ErrorBot lazily to avoid module import side effects."""
+def _load_error_bot_types() -> tuple[type["ErrorBot"], type["ErrorDB"]]:
+    """Lazily import ErrorBot types to avoid module import side effects."""
 
     from menace_sandbox.error_bot import ErrorBot, ErrorDB
 
-    return ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
+    return ErrorBot, ErrorDB
 
 __all__ = [
     "SelfImprovementEngine",
@@ -1653,7 +1654,8 @@ class SelfImprovementEngine:
         self.action_planner = action_planner
         error_bot_module_name = "menace_sandbox.error_bot"
         _qfe_log(f"SI-2f.5 importing {error_bot_module_name}")
-        err_bot = _create_error_bot(context_builder)
+        ErrorBot, ErrorDB = _load_error_bot_types()
+        err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
         _qfe_log(f"SI-2f.5 imported {error_bot_module_name}")
         self.error_bot = err_bot
         self.diagnostics = diagnostics or DiagnosticManager(
