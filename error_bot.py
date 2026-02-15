@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 current_module = sys.modules[__name__]
+sys.modules.setdefault("menace.error_bot", current_module)
 sys.modules.setdefault("error_bot", current_module)
 
 if __package__ in {None, ""}:

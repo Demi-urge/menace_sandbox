@@ -1440,10 +1440,11 @@ class MovingBaseline:
 
 
 def _load_error_bot_types() -> tuple[type["ErrorBot"], type["ErrorDB"]]:
-    """Lazily import ErrorBot types to avoid module import side effects."""
+    """Lazily import ErrorBot types with canonical module-path aliasing."""
 
-    from menace_sandbox.error_bot import ErrorBot, ErrorDB
-
+    module = importlib.import_module("menace.error_bot")
+    ErrorBot = getattr(module, "ErrorBot")
+    ErrorDB = getattr(module, "ErrorDB")
     return ErrorBot, ErrorDB
 
 __all__ = [
