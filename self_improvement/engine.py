@@ -1272,10 +1272,6 @@ _qfe_log("SI-2f.4 importing menace_sandbox.diagnostic_manager")
 from menace_sandbox.diagnostic_manager import DiagnosticManager
 _qfe_log("SI-2f.4 menace_sandbox.diagnostic_manager imported")
 
-_qfe_log("SI-2f.5 importing menace_sandbox.error_bot")
-from menace_sandbox.error_bot import ErrorBot, ErrorDB
-_qfe_log("SI-2f.5 menace_sandbox.error_bot imported")
-
 _qfe_log("SI-2f.6 importing menace_sandbox.data_bot")
 from menace_sandbox.data_bot import MetricsDB, DataBot
 _qfe_log("SI-2f.6 menace_sandbox.data_bot imported")
@@ -1647,6 +1643,9 @@ class SelfImprovementEngine:
             else:
                 self.pipeline.aggregator = self.aggregator
         self.action_planner = action_planner
+        _qfe_log("SI-2f.5 importing menace_sandbox.error_bot")
+        from menace_sandbox.error_bot import ErrorBot, ErrorDB
+        _qfe_log("SI-2f.5 menace_sandbox.error_bot imported")
         err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
         self.error_bot = err_bot
         self.diagnostics = diagnostics or DiagnosticManager(
