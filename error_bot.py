@@ -109,6 +109,49 @@ except Exception:  # pragma: no cover - fallback when the dependency is missing
 logger = logging.getLogger(__name__)
 
 _WATCH_THREAD: threading.Thread | None = None
+_registry: BotRegistry | None = None
+_data_bot: DataBot | None = None
+_watcher_start_lock = threading.Lock()
+
+
+def _get_registry() -> BotRegistry:
+    """Return the shared :class:`BotRegistry` instance lazily."""
+
+    global _registry
+    if _registry is None:
+        _registry = BotRegistry()
+    return _registry
+
+
+def _get_data_bot() -> DataBot:
+    """Return the shared :class:`DataBot` instance lazily."""
+
+    global _data_bot
+    if _data_bot is None:
+        _data_bot = DataBot(start_server=False)
+    return _data_bot
+
+
+def _ensure_watcher_started() -> None:
+    """Ensure embedding backfill watcher startup is deferred until runtime use."""
+
+    with _watcher_start_lock:
+        _ensure_backfill_watcher(UnifiedEventBus())
+
+
+class _LazyHelperProxy:
+    """Proxy used by decorators to lazily resolve helper singletons."""
+
+    __self_coding_lazy__ = True  # type: ignore[attr-defined]
+
+    def __init__(self, getter: Callable[[], Any]) -> None:
+        self._getter = getter
+
+    def __call__(self) -> Any:
+        return self._getter()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._getter(), item)
 
 
 def _ensure_backfill_watcher(bus: "EventBus" | None) -> None:
@@ -127,9 +170,6 @@ def _ensure_backfill_watcher(bus: "EventBus" | None) -> None:
         _WATCH_THREAD = thread
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to start embedding watcher")
-
-
-_ensure_backfill_watcher(UnifiedEventBus())
 
 try:
     import pandas as pd  # type: ignore
@@ -167,8 +207,8 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .self_coding_engine import SelfCodingEngine
     from .self_coding_manager import SelfCodingManager
 
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
+registry = _LazyHelperProxy(_get_registry)
+data_bot = _LazyHelperProxy(_get_data_bot)
 
 _self_coding_lock = threading.RLock()
 _context_builder: ContextBuilder | None = None
@@ -187,6 +227,7 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
     global _evolution_orchestrator, _thresholds, _manager_instance, _pipeline_promoter
 
     with _self_coding_lock:
+        _ensure_watcher_started()
         if _context_builder is None:
             _context_builder = create_context_builder()
 
@@ -317,15 +358,15 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
             pipeline, promoter = prepare_pipeline_for_bootstrap(
                 pipeline_cls=ModelAutomationPipeline,
                 context_builder=_context_builder,
-                bot_registry=registry,
-                data_bot=data_bot,
+                bot_registry=_get_registry(),
+                data_bot=_get_data_bot(),
             )
             _pipeline = pipeline
             _pipeline_promoter = promoter
         assert _pipeline is not None
 
         if _evolution_orchestrator is None:
-            _evolution_orchestrator = get_orchestrator("ErrorBot", data_bot, _engine)
+            _evolution_orchestrator = get_orchestrator("ErrorBot", _get_data_bot(), _engine)
 
         if _thresholds is None:
             _thresholds = get_thresholds("ErrorBot")
@@ -343,8 +384,8 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
                 "ErrorBot",
                 _engine,
                 _pipeline,
-                data_bot=data_bot,
-                bot_registry=registry,
+                data_bot=_get_data_bot(),
+                bot_registry=_get_registry(),
                 evolution_orchestrator=_evolution_orchestrator,
                 threshold_service=ThresholdService(),
                 roi_threshold=_thresholds.roi_drop,
@@ -421,6 +462,10 @@ def __getattr__(name: str) -> Any:
         return _evolution_orchestrator
     if name == "manager":
         return get_manager()
+    if name == "registry":
+        return _get_registry()
+    if name == "data_bot":
+        return _get_data_bot()
     raise AttributeError(name)
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
