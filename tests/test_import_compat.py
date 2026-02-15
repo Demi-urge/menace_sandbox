@@ -302,3 +302,103 @@ def test_package_import_aliases(
 
     assert sys.modules[qualified] is module
     assert sys.modules[module_name] is module
+
+
+def test_deferred_engine_import_after_legacy_error_bot_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Importing legacy error_bot first should not break deferred engine initialization."""
+
+    try:
+        scm = importlib.import_module("menace_sandbox.self_coding_manager")
+    except (ModuleNotFoundError, ImportError) as exc:
+        pytest.skip(f"self_coding_manager unavailable in this environment: {exc}")
+
+    error_bot_module = ModuleType("menace.error_bot")
+
+    class ErrorDB:
+        pass
+
+    class ErrorBot:
+        def __init__(self, error_db, metrics_db, context_builder=None):
+            self.error_db = error_db
+            self.metrics_db = metrics_db
+            self.context_builder = context_builder
+
+    error_bot_module.ErrorBot = ErrorBot
+    error_bot_module.ErrorDB = ErrorDB
+
+    monkeypatch.setitem(sys.modules, "menace.error_bot", error_bot_module)
+
+    # Simulate a call path that touches the legacy alias first.
+    imported_legacy = importlib.import_module("menace.error_bot")
+    assert imported_legacy is error_bot_module
+
+    data_bot_module = ModuleType("menace_sandbox.data_bot")
+
+    class MetricsDB:
+        pass
+
+    data_bot_module.MetricsDB = MetricsDB
+    monkeypatch.setitem(sys.modules, "menace_sandbox.data_bot", data_bot_module)
+
+    cap_module = ModuleType("menace_sandbox.capital_management_bot")
+    cap_module.CapitalManagementBot = lambda *a, **k: object()
+    monkeypatch.setitem(sys.modules, "menace_sandbox.capital_management_bot", cap_module)
+
+    sem_module = ModuleType("menace_sandbox.system_evolution_manager")
+    sem_module.SystemEvolutionManager = lambda *_a, **_k: object()
+    monkeypatch.setitem(sys.modules, "menace_sandbox.system_evolution_manager", sem_module)
+
+    evo_module = ModuleType("menace_sandbox.evolution_orchestrator")
+    evo_module.EvolutionOrchestrator = lambda *_a, **_k: object()
+    monkeypatch.setitem(sys.modules, "menace_sandbox.evolution_orchestrator", evo_module)
+
+    self_improvement_pkg = ModuleType("menace_sandbox.self_improvement")
+    self_improvement_pkg.__path__ = []
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_improvement", self_improvement_pkg)
+
+    engine_module = ModuleType("menace_sandbox.self_improvement.engine")
+
+    class StubSelfImprovementEngine(SimpleNamespace):
+        def __init__(self, context_builder, *_args, **_kwargs):
+            from ..error_bot import ErrorBot, ErrorDB
+            from ..data_bot import MetricsDB
+
+            super().__init__(
+                error_bot=ErrorBot(
+                    ErrorDB(),
+                    MetricsDB(),
+                    context_builder=context_builder,
+                )
+            )
+
+    engine_module.SelfImprovementEngine = StubSelfImprovementEngine
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_improvement.engine", engine_module)
+
+    manager = object.__new__(scm.SelfCodingManager)
+    manager.logger = SimpleNamespace(
+        debug=lambda *_a, **_k: None,
+        info=lambda *_a, **_k: None,
+        warning=lambda *_a, **_k: None,
+        exception=lambda *_a, **_k: None,
+    )
+    manager.bot_name = "test-bot"
+    manager.data_bot = object()
+    manager.pipeline = SimpleNamespace(_pipeline_promoter=None)
+    manager._context_builder = object()
+    manager.evolution_orchestrator = None
+    manager.bot_registry = SimpleNamespace(graph={})
+    manager._bootstrap_owner_token = None
+    manager._bootstrap_provenance_token = None
+    manager._mark_construction_phase = lambda *_a, **_k: None
+    manager._ensure_broker_owner_ready = lambda **_k: None
+
+    try:
+        manager.initialize_deferred_components()
+    except ImportError as exc:
+        assert "partially initialized" not in str(exc)
+        raise
+
+    canonical = sys.modules.get("menace_sandbox.error_bot")
+    legacy = sys.modules.get("menace.error_bot")
+    if canonical is not None and legacy is not None:
+        assert canonical is legacy
