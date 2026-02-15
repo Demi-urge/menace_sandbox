@@ -11,8 +11,9 @@ import sys
 from pathlib import Path
 
 current_module = sys.modules[__name__]
-sys.modules["menace_sandbox.error_bot"] = current_module
-sys.modules["error_bot"] = current_module
+sys.modules.setdefault("menace.error_bot", current_module)
+sys.modules.setdefault("menace_sandbox.error_bot", current_module)
+sys.modules.setdefault("error_bot", current_module)
 
 if __package__ in {None, ""}:
     repo_root = Path(__file__).resolve().parent.parent

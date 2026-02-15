@@ -15,7 +15,7 @@ def test_initialize_deferred_components_error_bot_import_is_local(monkeypatch, p
     except (ModuleNotFoundError, ImportError) as exc:
         pytest.skip(f"{package_alias} alias is not available in this environment: {exc}")
 
-    error_bot_module = types.ModuleType(f"{package_alias}.error_bot")
+    error_bot_module = types.ModuleType("menace.error_bot")
 
     class ErrorDB:
         pass
@@ -28,7 +28,12 @@ def test_initialize_deferred_components_error_bot_import_is_local(monkeypatch, p
 
     error_bot_module.ErrorBot = ErrorBot
     error_bot_module.ErrorDB = ErrorDB
-    monkeypatch.setitem(sys.modules, f"{package_alias}.error_bot", error_bot_module)
+    monkeypatch.setitem(sys.modules, "menace.error_bot", error_bot_module)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.error_bot", error_bot_module)
+
+    menace_error_bot = importlib.import_module("menace.error_bot")
+    menace_sandbox_error_bot = importlib.import_module("menace_sandbox.error_bot")
+    assert menace_error_bot is menace_sandbox_error_bot
 
     data_bot_module = types.ModuleType(f"{package_alias}.data_bot")
 
