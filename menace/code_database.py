@@ -5,7 +5,6 @@ from __future__ import annotations
 from importlib import import_module
 
 _IMPL_MODULE_NAME = f"{__package__}.code_database_impl" if __package__ else "menace.code_database_impl"
-_COMPAT_PRIVATE_EXPORTS = ("_hash_code",)
 
 
 def _resolve_source_module():
@@ -24,12 +23,15 @@ def _reexport(module) -> list[str]:
     else:
         exported = list(exported)
 
-    # Required for packaged mode: self_debugger_sandbox_impl imports _hash_code directly.
-    for symbol in _COMPAT_PRIVATE_EXPORTS:
-        if hasattr(module, symbol) and symbol not in exported:
-            exported.append(symbol)
-
     globals().update({symbol: getattr(module, symbol) for symbol in exported})
+
+    # Legacy internal imports still rely on _hash_code from this shim.
+    # This keeps backward compatibility rather than hiding/removing import errors.
+    if hasattr(module, "_hash_code"):
+        globals()["_hash_code"] = getattr(module, "_hash_code")
+        if "_hash_code" not in exported:
+            exported.append("_hash_code")
+
     return list(exported)
 
 
