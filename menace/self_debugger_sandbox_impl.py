@@ -277,7 +277,7 @@ except ImportError:  # pragma: no cover - self-coding unavailable
 AuditTrail, = _resolve_required_internal_import("audit_trail", "AuditTrail")
 PatchAttemptTracker, = _resolve_required_internal_import("patch_attempt_tracker", "PatchAttemptTracker")
 try:
-    from .code_database import PatchHistoryDB, _hash_code
+    from . import code_database as _code_database_module
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - test fallback
     if _IS_PACKAGED_CONTEXT and not _is_missing_module_at_import_path(
         exc,
@@ -285,14 +285,21 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
         f"{__package__}.code_database" if __package__ else "menace.code_database",
     ):
         _raise_packaged_import_error("menace.code_database", exc, import_path="packaged import path")
-    from code_database import PatchHistoryDB  # type: ignore
+    import code_database as _code_database_module  # type: ignore
 
-    def _hash_code(data: bytes) -> str:
-        if isinstance(data, str):
-            payload = data.encode("utf-8")
-        else:
-            payload = data
-        return hashlib.sha256(payload).hexdigest()
+
+def fallback_hash_function(data: bytes | str) -> str:
+    if isinstance(data, str):
+        payload = data.encode("utf-8")
+    else:
+        payload = data
+    return hashlib.sha256(payload).hexdigest()
+
+
+PatchHistoryDB = _code_database_module.PatchHistoryDB
+# ``_hash_code`` is a private compatibility API; fallback avoids startup regressions
+# when compatibility shims intentionally omit private exports.
+_hash_code = getattr(_code_database_module, "_hash_code", fallback_hash_function)
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
