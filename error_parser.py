@@ -15,9 +15,9 @@ from datetime import datetime
 from typing import Optional
 
 try:
-    from dynamic_path_router import resolve_path
-except Exception:  # pragma: no cover - fallback for package layout
     from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path
 
 try:
     from .self_improvement.target_region import (
