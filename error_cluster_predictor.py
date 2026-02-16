@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 try:
     from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
-except ImportError:  # pragma: no cover - script/top-level import fallback
+except ImportError:  # pragma: no cover - compatibility for flat-layout execution paths
     from knowledge_graph import KnowledgeGraph, _SimpleKMeans
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
