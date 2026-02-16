@@ -35,6 +35,38 @@ def _load_import_helpers():
     return namespace
 
 
+def _load_fallback_hash_code_impl():
+    tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"), filename=str(SOURCE_PATH))
+
+    hash_code_node = None
+    for node in tree.body:
+        if not isinstance(node, ast.Try):
+            continue
+        has_code_database_import = any(
+            isinstance(stmt, ast.ImportFrom)
+            and stmt.module == "code_database"
+            and any(alias.name == "_hash_code" for alias in stmt.names)
+            for stmt in node.body
+        )
+        if not has_code_database_import:
+            continue
+        for handler in node.handlers:
+            for stmt in handler.body:
+                if isinstance(stmt, ast.FunctionDef) and stmt.name == "_hash_code":
+                    hash_code_node = stmt
+                    break
+            if hash_code_node is not None:
+                break
+        if hash_code_node is not None:
+            break
+
+    assert hash_code_node is not None, "Unable to locate fallback _hash_code implementation"
+    module = ast.Module(body=[hash_code_node], type_ignores=[])
+    namespace = {"hashlib": __import__("hashlib")}
+    exec(compile(module, str(SOURCE_PATH), "exec"), namespace)
+    return namespace["_hash_code"]
+
+
 def test_import_internal_module_wraps_relative_import_failure_details(monkeypatch):
     helpers = _load_import_helpers()
 
@@ -123,3 +155,15 @@ def test_resolve_required_internal_import_symbol_failure_enriches_missing_target
     message = str(exc_info.value)
     assert "Missing nested dependency/import target: 'menace.sample_module.required_symbol'." in message
     assert "Missing required symbol export: 'required_symbol'." in message
+
+
+def test_hash_code_fallback_is_deterministic_and_distinguishes_inputs():
+    fallback_hash_code = _load_fallback_hash_code_impl()
+
+    first = fallback_hash_code(b"alpha")
+    second = fallback_hash_code(b"alpha")
+    different = fallback_hash_code(b"beta")
+
+    assert first == second
+    assert first != different
+    assert fallback_hash_code("alpha") == first

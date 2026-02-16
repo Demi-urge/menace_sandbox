@@ -3,6 +3,7 @@ from __future__ import annotations
 """Self-debugging workflow with sandboxed patch testing."""
 
 import importlib
+import hashlib
 import re
 
 _IS_PACKAGED_CONTEXT = bool(__package__) or __name__.startswith("menace.")
@@ -287,7 +288,11 @@ except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no 
     from code_database import PatchHistoryDB  # type: ignore
 
     def _hash_code(data: bytes) -> str:
-        return "x"
+        if isinstance(data, str):
+            payload = data.encode("utf-8")
+        else:
+            payload = data
+        return hashlib.sha256(payload).hexdigest()
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except (ModuleNotFoundError, ImportError, AttributeError) as exc:  # pragma: no cover - fallback for flat layout
