@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import importlib
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -83,3 +84,23 @@ def test_human_alignment_flagger_shim_exports_collect_diff_data() -> None:
     assert callable(
         module._collect_diff_data
     ), "menace.self_debugger_sandbox_impl expects menace.human_alignment_flagger._collect_diff_data to be callable."
+
+
+def test_code_database_shim_reexports_hash_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delitem(sys.modules, "menace.code_database", raising=False)
+    monkeypatch.delitem(sys.modules, "code_database", raising=False)
+
+    module = importlib.import_module("menace.code_database")
+
+    assert hasattr(
+        module,
+        "_hash_code",
+    ), "menace.code_database should re-export _hash_code for packaged imports."
+    if (module.__file__ or "").endswith("menace/code_database.py"):
+        assert "_hash_code" in module.__all__
+
+    from menace.code_database import _hash_code
+
+    assert callable(_hash_code)
+    assert _hash_code("shim-check") == module._hash_code("shim-check")
+    assert _hash_code(b"shim-check") == module._hash_code(b"shim-check")
