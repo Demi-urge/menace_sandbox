@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, TYPE_CHECKING
 import logging
+import random
 import uuid
 
 try:  # pragma: no cover - optional dependency
@@ -16,15 +17,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     KMeans = None  # type: ignore
 
-try:  # pragma: no cover - packaged import
-    from .knowledge_graph import KnowledgeGraph
-except ImportError:  # pragma: no cover - compatibility fallback
-    from menace.knowledge_graph import KnowledgeGraph
-
-try:  # pragma: no cover - private helper is available from flat runtime module
-    from knowledge_graph import _SimpleKMeans
-except ImportError:  # pragma: no cover - fallback when helper is re-exported
-    from .knowledge_graph import _SimpleKMeans  # type: ignore[attr-defined]
+from menace.knowledge_graph import KnowledgeGraph
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     try:
@@ -135,6 +128,44 @@ class ErrorClusterPredictor:
                 except Exception:
                     self.logger.debug("retriever lookup failed", exc_info=True)
         return results
+
+
+class _SimpleKMeans:
+    """Fallback k-means clustering if scikit-learn is unavailable."""
+
+    def __init__(self, n_clusters: int = 8, iters: int = 10) -> None:
+        self.n_clusters = n_clusters
+        self.iters = iters
+        self.centers: List[List[float]] | None = None
+
+    def fit(self, X: List[List[float]]) -> None:
+        if not X:
+            self.centers = []
+            return
+        self.centers = random.sample(X, min(self.n_clusters, len(X)))
+        for _ in range(self.iters):
+            clusters = [[] for _ in range(len(self.centers))]
+            for vec in X:
+                idx = self._closest(vec)[0]
+                clusters[idx].append(vec)
+            for i, cluster in enumerate(clusters):
+                if cluster:
+                    self.centers[i] = [sum(vals) / len(vals) for vals in zip(*cluster)]
+
+    def predict(self, X: List[List[float]]) -> List[int]:
+        return [self._closest(vec)[0] for vec in X]
+
+    def _closest(self, vec: List[float]) -> tuple[int, float]:
+        import math
+
+        best = 0
+        best_dist = float("inf")
+        for i, c in enumerate(self.centers or []):
+            dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(vec, c)))
+            if dist < best_dist:
+                best = i
+                best_dist = dist
+        return best, best_dist
 
 
 __all__ = ["ErrorClusterPredictor"]
