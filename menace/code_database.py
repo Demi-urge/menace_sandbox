@@ -20,6 +20,8 @@ def _reexport(module) -> list[str]:
     exported = getattr(module, "__all__", None)
     if exported is None:
         exported = [symbol for symbol in dir(module) if not symbol.startswith("_")]
+    if hasattr(module, "_hash_code") and "_hash_code" not in exported:
+        exported = [*exported, "_hash_code"]
     globals().update({symbol: getattr(module, symbol) for symbol in exported})
     return list(exported)
 
