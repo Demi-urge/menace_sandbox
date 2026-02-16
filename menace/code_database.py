@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib import import_module
 
 _IMPL_MODULE_NAME = f"{__package__}.code_database_impl" if __package__ else "menace.code_database_impl"
+_COMPAT_PRIVATE_EXPORTS = {"_hash_code"}
 
 
 def _resolve_source_module():
@@ -20,8 +21,12 @@ def _reexport(module) -> list[str]:
     exported = getattr(module, "__all__", None)
     if exported is None:
         exported = [symbol for symbol in dir(module) if not symbol.startswith("_")]
-    if hasattr(module, "_hash_code") and "_hash_code" not in exported:
-        exported = [*exported, "_hash_code"]
+
+    # Required for packaged mode: self_debugger_sandbox_impl imports _hash_code directly.
+    for symbol in _COMPAT_PRIVATE_EXPORTS:
+        if hasattr(module, symbol) and symbol not in exported:
+            exported = [*exported, symbol]
+
     globals().update({symbol: getattr(module, symbol) for symbol in exported})
     return list(exported)
 
