@@ -16,9 +16,16 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     KMeans = None  # type: ignore
 
-from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
+try:
+    from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
+except ImportError:  # pragma: no cover - script/top-level import fallback
+    from knowledge_graph import KnowledgeGraph, _SimpleKMeans
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .error_bot import ErrorDB
+    try:
+        from .error_bot import ErrorDB
+    except ImportError:  # pragma: no cover - typing fallback
+        from error_bot import ErrorDB
 from vector_service import Retriever, FallbackResult
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
