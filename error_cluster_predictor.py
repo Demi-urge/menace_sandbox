@@ -19,13 +19,13 @@ except Exception:  # pragma: no cover - optional dependency
 try:
     from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
 except ImportError:  # pragma: no cover - compatibility for flat-layout execution paths
-    from knowledge_graph import KnowledgeGraph, _SimpleKMeans
+    from knowledge_graph import KnowledgeGraph, _SimpleKMeans  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     try:
         from .error_bot import ErrorDB
     except ImportError:  # pragma: no cover - typing fallback
-        from error_bot import ErrorDB
+        from error_bot import ErrorDB  # type: ignore
 from vector_service import Retriever, FallbackResult
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
