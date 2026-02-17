@@ -7269,15 +7269,10 @@ async def _section_worker(
 
     misuse_marker = "SANDBOX_MISUSE_EVENT="
     misuse_forbidden_path_tag = "SIMULATED_MISUSE_FORBIDDEN_PATH"
+    scenario_name = str(env_input.get("SCENARIO_NAME", "")).strip().lower()
     failure_modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
 
-    def _classify_expected_misuse(stderr_text: str, modes: set[str]) -> Dict[str, float]:
-        if "user_misuse" not in modes:
-            return {
-                "expected_misuse_count": 0.0,
-                "expected_misuse_ratio": 0.0,
-                "has_expected_misuse": 0.0,
-            }
+    def _classify_simulated_errors(stderr_text: str, modes: set[str]) -> Dict[str, float]:
         lines = [line.strip() for line in str(stderr_text or "").splitlines() if line.strip()]
         known_tokens = (
             "simulated_user_misuse_len_probe",
@@ -7285,15 +7280,20 @@ async def _section_worker(
             misuse_forbidden_path_tag,
             "TypeError",
         )
-        count = 0
+        simulated_misuse_count = 0
         for line in lines:
             if line.startswith(misuse_marker) or any(token in line for token in known_tokens):
-                count += 1
-        ratio = (float(count) / float(len(lines))) if lines else 0.0
+                simulated_misuse_count += 1
+        ratio = (float(simulated_misuse_count) / float(len(lines))) if lines else 0.0
+        expected_misuse = (
+            ("user_misuse" in modes or scenario_name == "user_misuse")
+            and simulated_misuse_count > 0
+        )
         return {
-            "expected_misuse_count": float(count),
+            "simulated_misuse_count": float(simulated_misuse_count),
+            "expected_misuse_count": float(simulated_misuse_count if expected_misuse else 0),
             "expected_misuse_ratio": ratio,
-            "has_expected_misuse": 1.0 if count > 0 else 0.0,
+            "has_expected_misuse": 1.0 if expected_misuse else 0.0,
         }
 
     if env_input:
@@ -7734,6 +7734,31 @@ async def _section_worker(
                 results = [await _run()]
             duration = time.perf_counter() - start
         except Exception as exc:  # pragma: no cover - runtime failures
+            simulated_error = _classify_simulated_errors(str(exc), failure_modes)
+            if simulated_error["has_expected_misuse"]:
+                final_result = {
+                    "stdout": "",
+                    "stderr": str(exc),
+                    "exit_code": 1,
+                    "expected_misuse_count": simulated_error["expected_misuse_count"],
+                    "expected_misuse_ratio": simulated_error["expected_misuse_ratio"],
+                    "simulated_misuse_count": simulated_error["simulated_misuse_count"],
+                    "has_expected_misuse": True,
+                    "expected_scenario_fault": "user_misuse",
+                }
+                metrics.update(simulated_error)
+                metrics.update(
+                    {
+                        "concurrency_level": float(concurrency),
+                        "concurrency_error_rate": 1.0,
+                        "concurrency_throughput": 0.0,
+                        "success_rate": 0.0,
+                        "avg_completion_time": 0.0,
+                    }
+                )
+                updates.append((prev, 0.0, metrics.copy()))
+                _log_diagnostic("section_worker_expected_misuse", True)
+                break
             if _ERROR_CONTEXT_BUILDER is not None:
                 record_error(exc, context_builder=_ERROR_CONTEXT_BUILDER)
             else:
@@ -7786,7 +7811,7 @@ async def _section_worker(
                 "avg_completion_time": avg_time,
             }
         )
-        misuse_telemetry = _classify_expected_misuse(stderr_combined, failure_modes)
+        misuse_telemetry = _classify_simulated_errors(stderr_combined, failure_modes)
         metrics.update(misuse_telemetry)
         if SANDBOX_EXTRA_METRICS:
             metrics.update(SANDBOX_EXTRA_METRICS)
@@ -7798,6 +7823,7 @@ async def _section_worker(
         result["exit_code"] = -1 if neg else (0 if error_count == 0 else 1)
         result["expected_misuse_count"] = misuse_telemetry["expected_misuse_count"]
         result["expected_misuse_ratio"] = misuse_telemetry["expected_misuse_ratio"]
+        result["simulated_misuse_count"] = misuse_telemetry["simulated_misuse_count"]
         result["has_expected_misuse"] = bool(misuse_telemetry["has_expected_misuse"])
         if result["has_expected_misuse"]:
             result["expected_scenario_fault"] = "user_misuse"

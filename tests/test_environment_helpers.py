@@ -72,11 +72,44 @@ def test_section_worker_user_misuse(monkeypatch):
     assert "run" in res["stdout"]
     assert "SANDBOX_MISUSE_EVENT=" in res["stderr"]
     assert "synthetic-probe:user-misuse-len:simulated_user_misuse_len_probe" in res["stderr"]
-    assert "forbidden-path:" in res["stderr"]
+    assert "SIMULATED_MISUSE_FORBIDDEN_PATH" in res["stderr"]
     assert res["has_expected_misuse"] is True
     assert res["expected_scenario_fault"] == "user_misuse"
     assert res["expected_misuse_count"] >= 1.0
     assert len(updates) == 1
+
+
+def test_section_worker_user_misuse_scenario_name_only(monkeypatch):
+    monkeypatch.setattr(env, "get_edge_case_profiles", lambda: [])
+    snippet = "import sys; print('SANDBOX_MISUSE_EVENT=synthetic-probe:user-misuse-len:simulated_user_misuse_len_probe', file=sys.stderr); print('run')"
+    res, updates, _ = asyncio.run(
+        env._section_worker(snippet, {"SCENARIO_NAME": "user_misuse"}, 0.0)
+    )
+    assert res["exit_code"] == 0
+    assert res["has_expected_misuse"] is True
+    assert res["expected_scenario_fault"] == "user_misuse"
+    assert res["simulated_misuse_count"] >= 1.0
+    assert res["expected_misuse_count"] == res["simulated_misuse_count"]
+    assert len(updates) == 1
+
+
+def test_section_worker_repeated_user_misuse_runs_do_not_loop(monkeypatch):
+    monkeypatch.setattr(env, "get_edge_case_profiles", lambda: [])
+    run_one = lambda: asyncio.run(
+        env._section_worker("print('run')", {"FAILURE_MODES": ["user_misuse"]}, 0.0)
+    )
+
+    first_res, first_updates, _ = run_one()
+    second_res, second_updates, _ = run_one()
+
+    assert first_res["has_expected_misuse"] is True
+    assert second_res["has_expected_misuse"] is True
+    assert first_res["expected_scenario_fault"] == "user_misuse"
+    assert second_res["expected_scenario_fault"] == "user_misuse"
+    assert first_res["simulated_misuse_count"] >= 1.0
+    assert second_res["simulated_misuse_count"] >= 1.0
+    assert len(first_updates) == 1
+    assert len(second_updates) == 1
 
 
 def test_generate_presets_concurrency(monkeypatch):
