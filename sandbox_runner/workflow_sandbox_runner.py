@@ -100,6 +100,35 @@ except Exception:  # pragma: no cover - ROI tracker unavailable
 logger = logging.getLogger(__name__)
 
 
+def classify_failure_for_retry(exc: BaseException | str) -> tuple[str, str]:
+    """Classify failures by retry/internalisation policy."""
+
+    error_text = str(exc)
+    lowered = error_text.lower()
+    misuse_tokens = (
+        "sandbox_misuse_event=",
+        "simulated_user_misuse",
+        "expected_negative_path",
+        "simulated_misuse_forbidden_path",
+    )
+    if any(token in lowered for token in misuse_tokens):
+        return "expected_simulation_misuse", "handled_expected_failure"
+
+    if isinstance(exc, PermissionError) or any(
+        token in lowered
+        for token in (
+            "network access disabled",
+            "file write disabled",
+            "path escapes sandbox",
+            "forbidden",
+            "policy",
+        )
+    ):
+        return "policy_enforcement_event", "policy_enforcement"
+
+    return "runtime_regression", "retry_runtime_regression"
+
+
 def _ensure_utf8(text: str, *, context: str) -> None:
     """Validate that ``text`` can be encoded as UTF-8."""
 
@@ -177,6 +206,8 @@ class ModuleMetrics:
     coverage_files: list[str] | None = None
     coverage_functions: list[str] | None = None
     entropy_delta: float | None = None
+    failure_classification: str | None = None
+    retry_policy: str | None = None
 
 
 @dataclass
@@ -1334,6 +1365,8 @@ class WorkflowSandboxRunner:
                 error: str | None = None
                 result: Any | None = None
                 frames: list[tuple[str, int, str]] | None = None
+                failure_classification: str | None = None
+                retry_policy: str | None = None
                 timeout_event = threading.Event()
                 mem_event = threading.Event()
                 mem_stop = threading.Event()
@@ -1404,9 +1437,11 @@ class WorkflowSandboxRunner:
                 except Exception as exc:  # pragma: no cover - exercise failure path
                     success = False
                     error = str(exc)
+                    failure_classification, retry_policy = classify_failure_for_retry(exc)
                     tb = traceback.TracebackException.from_exception(exc)
                     frames = [(f.filename, f.lineno, f.name) for f in tb.stack]
-                    metrics.crash_count += 1
+                    if retry_policy != "handled_expected_failure":
+                        metrics.crash_count += 1
                     logger.exception("module %s failed", name)
                     if not safe_mode:
                         raise
@@ -1416,6 +1451,8 @@ class WorkflowSandboxRunner:
                     if mem_event.is_set():
                         success = False
                         error = "module exceeded memory limit"
+                        failure_classification = "runtime_regression"
+                        retry_policy = "retry_runtime_regression"
                         metrics.crash_count += 1
                         logger.exception("module %s exceeded memory limit", name)
                         if not safe_mode:
@@ -1423,6 +1460,8 @@ class WorkflowSandboxRunner:
                     elif timeout_event.is_set():
                         success = False
                         error = "module exceeded timeout"
+                        failure_classification = "runtime_regression"
+                        retry_policy = "retry_runtime_regression"
                         metrics.crash_count += 1
                         logger.exception("module %s exceeded timeout", name)
                         if not safe_mode:
@@ -1538,6 +1577,8 @@ class WorkflowSandboxRunner:
                         coverage_files=cov_files or None,
                         coverage_functions=cov_funcs or None,
                         entropy_delta=entropy_val,
+                        failure_classification=failure_classification,
+                        retry_policy=retry_policy,
                     )
                     metrics.modules.append(module_metric)
 
@@ -1620,6 +1661,17 @@ class WorkflowSandboxRunner:
                 if metrics.modules
                 else 0.0
             )
+            retry_policy_per_module = {
+                m.name: m.retry_policy for m in metrics.modules if m.retry_policy
+            }
+            failure_classification_per_module = {
+                m.name: m.failure_classification
+                for m in metrics.modules
+                if m.failure_classification
+            }
+            handled_expected_failures = sum(
+                1 for m in metrics.modules if m.retry_policy == "handled_expected_failure"
+            )
             telemetry: dict[str, Any] = {
                 "time_per_module": times,
                 "cpu_per_module": cpu_times,
@@ -1628,7 +1680,12 @@ class WorkflowSandboxRunner:
                 "crash_frequency": crash_freq,
                 "peak_memory": peak_mem,
                 "peak_memory_per_module": peak_per_module,
+                "handled_expected_failures": handled_expected_failures,
             }
+            if retry_policy_per_module:
+                telemetry["retry_policy_per_module"] = retry_policy_per_module
+            if failure_classification_per_module:
+                telemetry["failure_classification_per_module"] = failure_classification_per_module
             if fixtures_info:
                 telemetry["module_fixtures"] = fixtures_info
             if roi_delta is not None:
