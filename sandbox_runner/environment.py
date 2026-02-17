@@ -7234,16 +7234,24 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
 
     if "user_misuse" in modes:
         parts.append(
-            "import sys, os\n"
+            "import sys, os, json\n"
+            "_MISUSE_PREFIX='SANDBOX_MISUSE_EVENT='\n"
+            "def _emit_misuse_event(event, **details):\n"
+            "    payload={'event':event, **details}\n"
+            "    print(_MISUSE_PREFIX + json.dumps(payload, sort_keys=True), file=sys.stderr)\n"
+            "def _simulate_len_misuse(*args):\n"
+            "    if len(args) != 1:\n"
+            "        raise TypeError('len() takes exactly one argument')\n"
+            "    return len(args[0])\n"
             "def _misuse():\n"
             "    try:\n"
-            "        len('x', 'y')\n"
+            "        _simulate_len_misuse('x', 'y')\n"
             "    except Exception as exc:\n"
-            "        print(exc, file=sys.stderr)\n"
+            "        _emit_misuse_event('len-arity', exception_type=type(exc).__name__)\n"
             "    try:\n"
             "        open('/root/forbidden', 'r')\n"
             "    except Exception as exc:\n"
-            "        print(exc, file=sys.stderr)\n"
+            "        _emit_misuse_event('forbidden-open', exception_type=type(exc).__name__, path='/root/forbidden')\n"
             "_misuse()\n"
         )
 
