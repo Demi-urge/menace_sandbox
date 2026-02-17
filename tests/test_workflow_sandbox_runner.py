@@ -175,6 +175,7 @@ def test_subprocess_guard_forbids_absolute_open_outside_root():
     assert metrics.crash_count == 1
     exc = metrics.modules[0].exception or ''
     assert 'forbidden path access' in exc
+    assert 'error: forbidden path access' in exc
     assert 'No such file or directory' not in exc
 
 
@@ -198,6 +199,7 @@ def test_subprocess_guard_path_wrappers_report_forbidden_path_access(step):
     assert metrics.crash_count == 1
     exc = metrics.modules[0].exception or ''
     assert 'forbidden path access' in exc
+    assert 'error: forbidden path access' in exc
     assert 'No such file or directory' not in exc
 
 def test_open_write_requires_mock_in_safe_mode():
