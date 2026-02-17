@@ -58,7 +58,8 @@ def test_inject_failure_modes_user_misuse(capsys):
     out = env._inject_failure_modes("print('ok')", {"user_misuse"})
     exec(out, {})
     captured = capsys.readouterr()
-    assert "len(" in captured.err
+    assert "invalid-call:" in captured.err
+    assert "forbidden-path:" in captured.err
     assert captured.out.strip() == "ok"
 
 
@@ -70,6 +71,8 @@ def test_section_worker_user_misuse(monkeypatch):
     assert res["exit_code"] == 0
     assert "run" in res["stdout"]
     assert "SANDBOX_MISUSE_EVENT=" in res["stderr"]
+    assert "invalid-call:" in res["stderr"]
+    assert "forbidden-path:" in res["stderr"]
     assert res["has_expected_misuse"] is True
     assert res["expected_scenario_fault"] == "user_misuse"
     assert res["expected_misuse_count"] >= 1.0
