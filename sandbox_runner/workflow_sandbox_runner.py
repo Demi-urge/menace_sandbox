@@ -223,23 +223,21 @@ class WorkflowSandboxRunner:
     def _resolve(self, root: pathlib.Path, path: str | pathlib.Path) -> pathlib.Path:
         """Return a normalised path within ``root``.
 
-        ``path`` may be relative or absolute.  Absolute paths already located
-        inside ``root`` are preserved while all other paths are treated as being
-        relative to ``root``.  The final resolved path is verified to reside
-        inside ``root`` to guard against ``..`` segments or symlink escapes.  A
-        :class:`RuntimeError` is raised if the normalised path would point
-        outside the sandbox.
+        ``path`` may be relative or absolute. Relative paths are resolved
+        against ``root``. Absolute paths must already be located inside
+        ``root``; otherwise a :class:`RuntimeError` is raised. The final
+        resolved path is verified to reside inside ``root`` to guard against
+        ``..`` segments or symlink escapes.
         """
 
         root = root.resolve()
         p = pathlib.Path(path)
         if p.is_absolute():
-            try:
-                p = p.relative_to(root)
-            except ValueError:
-                p = pathlib.Path(*p.parts[1:])
+            if not _path_is_relative_to(p, root):
+                raise RuntimeError("path escapes sandbox")
+            p = p.relative_to(root)
         candidate = (root / p).resolve()
-        if not candidate.is_relative_to(root):
+        if not _path_is_relative_to(candidate, root):
             raise RuntimeError("path escapes sandbox")
         return candidate
 
@@ -572,6 +570,14 @@ class WorkflowSandboxRunner:
                     except Exception:
                         logger.exception("audit hook error")
 
+            def _resolve_guarded(path: str | pathlib.Path) -> pathlib.Path:
+                try:
+                    return self._resolve(root, path)
+                except RuntimeError:
+                    if subprocess_guard:
+                        _raise_forbidden_access("forbidden path access")
+                    raise
+
             # ``funcs`` already validated above
 
             # Copy each module's source file into the sandbox for completeness.
@@ -594,7 +600,7 @@ class WorkflowSandboxRunner:
             original_spooled_temporary_file = tempfile.SpooledTemporaryFile
 
             def sandbox_named_temporary_file(*a, dir=None, **kw):
-                target_dir = self._resolve(root, dir or root)
+                target_dir = _resolve_guarded(dir or root)
                 fn = fs_mocks.get("tempfile.NamedTemporaryFile")
                 if fn:
                     return fn(*a, dir=str(target_dir), **kw)
@@ -603,7 +609,7 @@ class WorkflowSandboxRunner:
                 return original_named_temporary_file(*a, dir=str(target_dir), **kw)
 
             def sandbox_temporary_file(*a, dir=None, **kw):
-                target_dir = self._resolve(root, dir or root)
+                target_dir = _resolve_guarded(dir or root)
                 fn = fs_mocks.get("tempfile.TemporaryFile")
                 if fn:
                     return fn(*a, dir=str(target_dir), **kw)
@@ -612,7 +618,7 @@ class WorkflowSandboxRunner:
                 return original_temporary_file(*a, dir=str(target_dir), **kw)
 
             def sandbox_spooled_temporary_file(*a, dir=None, **kw):
-                target_dir = self._resolve(root, dir or root)
+                target_dir = _resolve_guarded(dir or root)
                 fn = fs_mocks.get("tempfile.SpooledTemporaryFile")
                 if fn:
                     return fn(*a, dir=str(target_dir), **kw)
@@ -646,16 +652,7 @@ class WorkflowSandboxRunner:
                 if file_path.startswith("/proc/"):
                     return original_open(file, mode, *a, **kw)
                 p = pathlib.Path(file_path)
-                try:
-                    path = self._resolve(root, file_path)
-                except RuntimeError:
-                    if subprocess_guard:
-                        _raise_forbidden_access("forbidden path access")
-                    raise
-                if not path.is_relative_to(root):
-                    if subprocess_guard:
-                        _raise_forbidden_access("forbidden path access")
-                    raise RuntimeError("path escapes sandbox")
+                path = _resolve_guarded(file_path)
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("open")
                     if fn:
@@ -685,7 +682,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_path_open(path_obj, *a, **kw)
                 p = pathlib.Path(raw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 if any(m in mode for m in ("w", "a", "x", "+")):
                     fn = fs_mocks.get("pathlib.Path.open")
                     if fn:
@@ -701,7 +698,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_write_text(path_obj, data, *a, **kw)
                 p = pathlib.Path(raw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 if not path.is_relative_to(root):
                     raise RuntimeError("path escapes sandbox")
                 fn = fs_mocks.get("pathlib.Path.write_text")
@@ -717,7 +714,7 @@ class WorkflowSandboxRunner:
                 raw = os.fspath(path_obj)
                 if raw.startswith("/proc/"):
                     return original_read_text(path_obj, *a, **kw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 _audit("file_read", path=str(path))
                 return original_read_text(path, *a, **kw)
 
@@ -726,7 +723,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_write_bytes(path_obj, data, *a, **kw)
                 p = pathlib.Path(raw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 if not path.is_relative_to(root):
                     raise RuntimeError("path escapes sandbox")
                 fn = fs_mocks.get("pathlib.Path.write_bytes")
@@ -742,7 +739,7 @@ class WorkflowSandboxRunner:
                 raw = os.fspath(path_obj)
                 if raw.startswith("/proc/"):
                     return original_read_bytes(path_obj, *a, **kw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 _audit("file_read", path=str(path))
                 return original_read_bytes(path, *a, **kw)
 
@@ -751,7 +748,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_path_mkdir(path_obj, *a, **kw)
                 p = pathlib.Path(raw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 fn = fs_mocks.get("pathlib.Path.mkdir")
                 if fn:
                     return fn(path, *a, **kw)
@@ -765,7 +762,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_path_unlink(path_obj, *a, **kw)
                 p = pathlib.Path(raw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 fn = fs_mocks.get("pathlib.Path.unlink")
                 if fn:
                     return fn(path, *a, **kw)
@@ -779,7 +776,7 @@ class WorkflowSandboxRunner:
                 if raw.startswith("/proc/"):
                     return original_path_rmdir(path_obj, *a, **kw)
                 p = pathlib.Path(raw)
-                path = self._resolve(root, raw)
+                path = _resolve_guarded(raw)
                 fn = fs_mocks.get("pathlib.Path.rmdir")
                 if fn:
                     return fn(path, *a, **kw)
@@ -828,7 +825,7 @@ class WorkflowSandboxRunner:
             original_move = shutil.move
 
             def _safe_makedirs(path, mode=0o777):
-                target = self._resolve(root, path)
+                target = _resolve_guarded(path)
                 fn = fs_mocks.get("os.makedirs")
                 if fn:
                     return fn(target, mode, exist_ok=True)
@@ -837,7 +834,7 @@ class WorkflowSandboxRunner:
 
             def sandbox_makedirs(path, mode=0o777, exist_ok=False):
                 p = pathlib.Path(path)
-                s = self._resolve(root, path)
+                s = _resolve_guarded(path)
                 fn = fs_mocks.get("os.makedirs")
                 if fn:
                     return fn(s, mode, exist_ok=exist_ok)
@@ -851,7 +848,7 @@ class WorkflowSandboxRunner:
                 if kw.get("dir_fd") is not None and not os.path.isabs(raw):
                     return original_rmdir(raw, *a, **kw)
                 p = pathlib.Path(raw)
-                s = self._resolve(root, raw)
+                s = _resolve_guarded(raw)
                 fn = fs_mocks.get("os.rmdir")
                 if fn:
                     return fn(s, *a, **kw)
@@ -862,7 +859,7 @@ class WorkflowSandboxRunner:
 
             def sandbox_removedirs(path, *a, **kw):
                 p = pathlib.Path(path)
-                s = self._resolve(root, path)
+                s = _resolve_guarded(path)
                 fn = fs_mocks.get("os.removedirs")
                 if fn:
                     return fn(s, *a, **kw)
@@ -878,7 +875,7 @@ class WorkflowSandboxRunner:
                 if kw.get("dir_fd") is not None and not os.path.isabs(raw):
                     return original_os_open(path, flags, *a, **kw)
                 p = pathlib.Path(raw)
-                s = self._resolve(root, raw)
+                s = _resolve_guarded(raw)
                 if flags & (
                     os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
                 ):
@@ -907,7 +904,7 @@ class WorkflowSandboxRunner:
                 current = os.stat
                 try:
                     os.stat = original_stat
-                    s = self._resolve(root, raw)
+                    s = _resolve_guarded(raw)
                 finally:
                     os.stat = current
                 fn = fs_mocks.get("os.stat")
@@ -919,7 +916,7 @@ class WorkflowSandboxRunner:
 
             def sandbox_rmtree(path, *a, **kw):
                 p = pathlib.Path(path)
-                s = self._resolve(root, path)
+                s = _resolve_guarded(path)
                 fn = fs_mocks.get("shutil.rmtree")
                 if fn:
                     return fn(s, *a, **kw)
@@ -931,7 +928,7 @@ class WorkflowSandboxRunner:
                 raw = os.fspath(path)
                 if kw.get("dir_fd") is not None and not os.path.isabs(raw):
                     return original_remove(raw, *a, **kw)
-                p = self._resolve(root, raw)
+                p = _resolve_guarded(raw)
                 fn = fs_mocks.get("os.remove")
                 if fn:
                     return fn(p, *a, **kw)
@@ -941,15 +938,15 @@ class WorkflowSandboxRunner:
                 raw = os.fspath(path)
                 if kw.get("dir_fd") is not None and not os.path.isabs(raw):
                     return original_unlink(raw, *a, **kw)
-                p = self._resolve(root, raw)
+                p = _resolve_guarded(raw)
                 fn = fs_mocks.get("os.unlink")
                 if fn:
                     return fn(p, *a, **kw)
                 return original_unlink(p, *a, **kw)
 
             def sandbox_rename(src, dst, *a, **kw):
-                s = self._resolve(root, src)
-                d = self._resolve(root, dst)
+                s = _resolve_guarded(src)
+                d = _resolve_guarded(dst)
                 fn = fs_mocks.get("os.rename")
                 if fn:
                     return fn(s, d, *a, **kw)
@@ -960,8 +957,8 @@ class WorkflowSandboxRunner:
                 return original_rename(s, d, *a, **kw)
 
             def sandbox_replace(src, dst, *a, **kw):
-                s = self._resolve(root, src)
-                d = self._resolve(root, dst)
+                s = _resolve_guarded(src)
+                d = _resolve_guarded(dst)
                 fn = fs_mocks.get("os.replace")
                 if fn:
                     return fn(s, d, *a, **kw)
@@ -972,8 +969,8 @@ class WorkflowSandboxRunner:
                 return original_replace(s, d, *a, **kw)
 
             def sandbox_copy(src, dst, *a, **kw):
-                s = self._resolve(root, src)
-                d = self._resolve(root, dst)
+                s = _resolve_guarded(src)
+                d = _resolve_guarded(dst)
                 fn = fs_mocks.get("shutil.copy")
                 if fn:
                     return fn(s, d, *a, **kw)
@@ -984,8 +981,8 @@ class WorkflowSandboxRunner:
                 return original_copy(s, d, *a, **kw)
 
             def sandbox_copy2(src, dst, *a, **kw):
-                s = self._resolve(root, src)
-                d = self._resolve(root, dst)
+                s = _resolve_guarded(src)
+                d = _resolve_guarded(dst)
                 fn = fs_mocks.get("shutil.copy2")
                 if fn:
                     return fn(s, d, *a, **kw)
@@ -996,8 +993,8 @@ class WorkflowSandboxRunner:
                 return original_copy2(s, d, *a, **kw)
 
             def sandbox_copyfile(src, dst, *a, **kw):
-                s = self._resolve(root, src)
-                d = self._resolve(root, dst)
+                s = _resolve_guarded(src)
+                d = _resolve_guarded(dst)
                 fn = fs_mocks.get("shutil.copyfile")
                 if fn:
                     return fn(s, d, *a, **kw)
@@ -1008,8 +1005,8 @@ class WorkflowSandboxRunner:
                 return original_copyfile(s, d, *a, **kw)
 
             def sandbox_copytree(src, dst, *a, **kw):
-                s = self._resolve(root, src)
-                d = self._resolve(root, dst)
+                s = _resolve_guarded(src)
+                d = _resolve_guarded(dst)
                 fn = fs_mocks.get("shutil.copytree")
                 if fn:
                     return fn(s, d, *a, **kw)
@@ -1020,8 +1017,8 @@ class WorkflowSandboxRunner:
                 return original_copytree(s, d, *a, **kw)
 
             def sandbox_move(src, dst, *a, **kw):
-                s = self._resolve(root, src)
-                d = self._resolve(root, dst)
+                s = _resolve_guarded(src)
+                d = _resolve_guarded(dst)
                 fn = fs_mocks.get("shutil.move")
                 if fn:
                     return fn(s, d, *a, **kw)
@@ -1049,7 +1046,7 @@ class WorkflowSandboxRunner:
 
             # Pre-populate any provided file data into the sandbox.
             for name, content in file_data.items():
-                real = self._resolve(root, name)
+                real = _resolve_guarded(name)
                 _safe_makedirs(real.parent)
                 if content is None:
                     original_open(real, "w").close()
@@ -1288,7 +1285,7 @@ class WorkflowSandboxRunner:
 
                 # Write per-module file fixtures
                 for fname, content in files.items():
-                    real = self._resolve(root, fname)
+                    real = _resolve_guarded(fname)
                     _safe_makedirs(real.parent)
                     mode = "wb" if isinstance(content, (bytes, bytearray)) else "w"
                     with original_open(real, mode) as fh:
