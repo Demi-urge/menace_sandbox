@@ -99,6 +99,35 @@ T = TypeVar("T")
 
 _SELF_DEBUGGER_SANDBOX_MODULE_NAMES = frozenset(SELF_DEBUGGER_SANDBOX_MODULE_CANDIDATES)
 _LEGACY_SELF_DEBUGGER_SANDBOX_MODULE = "self_debugger_sandbox"
+_COVERAGE_GUARD_LOCK = threading.Lock()
+_COVERAGE_INITIALIZED_PIDS: set[int] = set()
+_COVERAGE_SKIP_LOGGED_MODES: set[str] = set()
+
+
+def _claim_process_coverage_startup() -> bool:
+    """Return ``True`` only for the first coverage startup attempt per process."""
+
+    pid = os.getpid()
+    with _COVERAGE_GUARD_LOCK:
+        if pid in _COVERAGE_INITIALIZED_PIDS:
+            return False
+        _COVERAGE_INITIALIZED_PIDS.add(pid)
+        return True
+
+
+def _log_coverage_skipped_once(mode: str, reason: str) -> None:
+    """Emit one structured log line when coverage/tracing startup is skipped."""
+
+    with _COVERAGE_GUARD_LOCK:
+        if mode in _COVERAGE_SKIP_LOGGED_MODES:
+            return
+        _COVERAGE_SKIP_LOGGED_MODES.add(mode)
+    logger.info(
+        "coverage_startup_skipped mode=%s reason=%s pid=%s",
+        mode,
+        reason,
+        os.getpid(),
+    )
 
 
 def _legacy_self_debugger_import_enabled() -> bool:
@@ -7323,9 +7352,27 @@ async def _section_worker(
             logger.exception("failed to record input history")
 
     cov_map: Dict[str, List[str]] = {}
-    cov = coverage.Coverage(data_file=None) if coverage else None
-    if cov:
+    self_debug_mode = bool(os.getenv("MENACE_SELF_DEBUG_MODULE")) or (
+        str(env_input.get("SELF_DEBUG_FALLBACK_MODE", "")).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    coverage_skip_mode: str | None = None
+    coverage_skip_reason: str | None = None
+    cov = None
+    if self_debug_mode:
+        coverage_skip_mode = "self_debug_fallback"
+        coverage_skip_reason = "self-debug fallback worker thread"
+    elif not coverage:
+        coverage_skip_mode = "coverage_unavailable"
+        coverage_skip_reason = "coverage module unavailable"
+    elif not _claim_process_coverage_startup():
+        coverage_skip_mode = "already_initialized"
+        coverage_skip_reason = "coverage already initialized for process"
+    else:
+        cov = coverage.Coverage(data_file=None)
         cov.start()
+    if coverage_skip_mode == "self_debug_fallback":
+        _log_coverage_skipped_once(coverage_skip_mode, coverage_skip_reason or "unknown")
 
     def _run_snippet() -> Dict[str, Any]:
         _reset_runtime_state()
@@ -10725,6 +10772,7 @@ def run_workflow_simulations(
             logger.exception('unexpected error')
 
     forced_module = os.getenv("MENACE_SELF_DEBUG_MODULE")
+    self_debug_fallback_mode = bool(forced_module)
     wf_db = WorkflowDB(Path(workflows_db), router=router)
     if forced_module:
         workflows = [
@@ -10884,6 +10932,8 @@ def run_workflow_simulations(
                 for preset in all_presets:
                     scenario = preset.get("SCENARIO_NAME", "")
                     env_input = dict(preset)
+                    if self_debug_fallback_mode:
+                        env_input["SELF_DEBUG_FALLBACK_MODE"] = "1"
                     _radar_track_module_usage(mod_name)
                     for _ in range(3):
                         result = simulate_execution_environment(snippet, env_input)
@@ -10985,6 +11035,8 @@ def run_workflow_simulations(
         for preset in all_presets:
             scenario = preset.get("SCENARIO_NAME", "")
             env_input = dict(preset)
+            if self_debug_fallback_mode:
+                env_input["SELF_DEBUG_FALLBACK_MODE"] = "1"
             for m in workflow_modules:
                 _radar_track_module_usage(m)
             res, updates, _ = await _section_worker(
