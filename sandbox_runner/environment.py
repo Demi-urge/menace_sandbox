@@ -347,7 +347,7 @@ def _resolve_memory_manager_class() -> type[Any]:
         f"Flat attempt error: {flat_exc!r}."
     ) from (flat_exc or package_exc)
 
-from .workflow_sandbox_runner import WorkflowSandboxRunner
+from .workflow_sandbox_runner import WorkflowSandboxRunner, classify_failure_for_retry
 from metrics_exporter import Gauge, environment_failure_total
 
 environment_failure_severity_total = Gauge(
@@ -7308,6 +7308,14 @@ async def _section_worker(
             "has_expected_misuse": 1.0 if expected_misuse else 0.0,
         }
 
+    def _scenario_signature(result: Dict[str, Any], classification: str) -> str:
+        stderr_head = str(result.get("stderr", "")).strip().splitlines()[:3]
+        stdout_head = str(result.get("stdout", "")).strip().splitlines()[:2]
+        parts = [scenario_name or "unknown", classification]
+        parts.extend(stderr_head)
+        parts.extend(stdout_head)
+        return "|".join(parts)[:600]
+
     if env_input:
         try:
             _get_history_db().add(env_input)
@@ -7747,7 +7755,11 @@ async def _section_worker(
             duration = time.perf_counter() - start
         except Exception as exc:  # pragma: no cover - runtime failures
             simulated_error = _classify_simulated_errors(str(exc), failure_modes)
+            classification, retry_policy = classify_failure_for_retry(exc)
             if simulated_error["has_expected_misuse"]:
+                classification = "expected_simulation_misuse"
+                retry_policy = "handled_expected_failure"
+            if retry_policy == "handled_expected_failure":
                 final_result = {
                     "stdout": "",
                     "stderr": str(exc),
@@ -7757,7 +7769,10 @@ async def _section_worker(
                     "simulated_misuse_count": simulated_error["simulated_misuse_count"],
                     "has_expected_misuse": True,
                     "expected_scenario_fault": "user_misuse",
+                    "failure_classification": classification,
+                    "retry_policy": retry_policy,
                 }
+                final_result["scenario_signature"] = _scenario_signature(final_result, classification)
                 metrics.update(simulated_error)
                 metrics.update(
                     {
@@ -7839,10 +7854,19 @@ async def _section_worker(
         result["expected_misuse_ratio"] = misuse_telemetry["expected_misuse_ratio"]
         result["simulated_misuse_count"] = misuse_telemetry["simulated_misuse_count"]
         result["has_expected_misuse"] = bool(misuse_telemetry["has_expected_misuse"])
+        failure_classification, retry_policy = classify_failure_for_retry(result.get("stderr", ""))
         if result["has_expected_misuse"]:
             result["expected_scenario_fault"] = "user_misuse"
+            failure_classification = "expected_simulation_misuse"
+            retry_policy = "handled_expected_failure"
+        result["failure_classification"] = failure_classification
+        result["retry_policy"] = retry_policy
+        result["scenario_signature"] = _scenario_signature(result, failure_classification)
 
         if result.get("exit_code", 0) < 0:
+            if result.get("retry_policy") == "handled_expected_failure":
+                final_result = result
+                break
             _log_diagnostic(str(result.get("stderr", "error")), False)
             if attempt >= 2:
                 final_result = result
@@ -7855,7 +7879,7 @@ async def _section_worker(
 
         actual = success_rate
         updates.append((prev, actual, metrics))
-        if result.get("has_expected_misuse"):
+        if result.get("retry_policy") == "handled_expected_failure" or result.get("has_expected_misuse"):
             if retried:
                 _log_diagnostic("section_worker_retry", True)
             final_result = result
@@ -9545,6 +9569,9 @@ def run_repo_section_simulations(
             tuple[int, asyncio.Task, str, str, str, Dict[str, Any], Dict[str, Any]]
         ] = []
         index = 0
+        expected_failure_counts: Dict[str, int] = {}
+        logged_scenario_signatures: set[str] = set()
+        expected_failure_cooldown = 2
         max_cpu = (
             max(float(p.get("CPU_LIMIT", 1)) for p in all_presets)
             if all_presets
@@ -9626,8 +9653,22 @@ def run_repo_section_simulations(
                                     result = simulate_execution_environment(
                                         code_str, env_input
                                     )
-                                    if not result.get("risk_flags_triggered"):
+                                    risk_flags = result.get("risk_flags_triggered") or []
+                                    if not risk_flags:
                                         break
+                                    signature = f"{scenario}|{module}|{sec_name}|{','.join(sorted(map(str, risk_flags)))}"
+                                    if str(scenario).strip().lower() == "user_misuse":
+                                        expected_failure_counts[signature] = expected_failure_counts.get(signature, 0) + 1
+                                        if signature not in logged_scenario_signatures:
+                                            logged_scenario_signatures.add(signature)
+                                            logger.info(
+                                                "scenario signature summary: %s repeated expected misuse risk flags=%s",
+                                                signature,
+                                                sorted(map(str, risk_flags)),
+                                            )
+                                        if expected_failure_counts[signature] > expected_failure_cooldown:
+                                            env_input["EXPECTED_FAILURE_COOLDOWN"] = "1"
+                                            break
                                     debugger.analyse_and_fix()
 
                                 await sem.acquire()
@@ -10778,6 +10819,9 @@ def run_workflow_simulations(
 
         tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any], str, str]] = []
         index = 0
+        expected_failure_counts: Dict[str, int] = {}
+        logged_scenario_signatures: set[str] = set()
+        expected_failure_cooldown = 2
         synergy_data: Dict[str, Dict[str, list]] = {
             name: {"roi": [], "metrics": []} for name in scenario_names
         }
@@ -10843,8 +10887,22 @@ def run_workflow_simulations(
                     _radar_track_module_usage(mod_name)
                     for _ in range(3):
                         result = simulate_execution_environment(snippet, env_input)
-                        if not result.get("risk_flags_triggered"):
+                        risk_flags = result.get("risk_flags_triggered") or []
+                        if not risk_flags:
                             break
+                        signature = f"{scenario}|{mod_name}|{','.join(sorted(map(str, risk_flags)))}"
+                        if scenario == "user_misuse":
+                            expected_failure_counts[signature] = expected_failure_counts.get(signature, 0) + 1
+                            if signature not in logged_scenario_signatures:
+                                logged_scenario_signatures.add(signature)
+                                logger.info(
+                                    "scenario signature summary: %s repeated expected misuse risk flags=%s",
+                                    signature,
+                                    sorted(map(str, risk_flags)),
+                                )
+                            if expected_failure_counts[signature] > expected_failure_cooldown:
+                                env_input["EXPECTED_FAILURE_COOLDOWN"] = "1"
+                                break
                         debugger.analyse_and_fix()
                     fut = asyncio.create_task(
                         _section_worker(
