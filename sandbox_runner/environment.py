@@ -7236,10 +7236,14 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
         parts.append(
             "import sys\n"
             "_MISUSE_PREFIX='SANDBOX_MISUSE_EVENT='\n"
+            "_MISUSE_LEN_PROBE='simulated_user_misuse_len_probe'\n"
             "def _emit_misuse_event(message):\n"
             "    print(_MISUSE_PREFIX + message, file=sys.stderr)\n"
             "def _misuse():\n"
-            "    _emit_misuse_event('invalid-call: len expects exactly 1 argument')\n"
+            "    try:\n"
+            "        raise RuntimeError(_MISUSE_LEN_PROBE)\n"
+            "    except RuntimeError as exc:\n"
+            "        _emit_misuse_event('synthetic-probe:user-misuse-len:' + str(exc))\n"
             "    _emit_misuse_event('forbidden-path: /root/forbidden')\n"
             "_misuse()\n"
         )
@@ -7274,7 +7278,8 @@ async def _section_worker(
             }
         lines = [line.strip() for line in str(stderr_text or "").splitlines() if line.strip()]
         known_tokens = (
-            "len() takes exactly one argument",
+            "simulated_user_misuse_len_probe",
+            "synthetic-probe:user-misuse-len",
             "forbidden-open",
             "PermissionError",
             "/root/forbidden",
