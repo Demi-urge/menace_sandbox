@@ -157,6 +157,49 @@ def test_httpx_network_mock():
     assert metrics.modules[0].result == "mocked"
 
 
+
+
+def test_subprocess_guard_forbids_absolute_open_outside_root():
+    def step():
+        with open('/root/forbidden', 'r'):
+            pass
+
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run(
+        [step],
+        safe_mode=True,
+        use_subprocess=False,
+        subprocess_guard=True,
+    )
+
+    assert metrics.crash_count == 1
+    exc = metrics.modules[0].exception or ''
+    assert 'forbidden path access' in exc
+    assert 'No such file or directory' not in exc
+
+
+@pytest.mark.parametrize(
+    'step',
+    [
+        lambda: Path('/root/forbidden').open('r'),
+        lambda: Path('/root/forbidden').write_text('x'),
+        lambda: Path('/root/forbidden').write_bytes(b'x'),
+    ],
+)
+def test_subprocess_guard_path_wrappers_report_forbidden_path_access(step):
+    runner = WorkflowSandboxRunner()
+    metrics = runner.run(
+        [step],
+        safe_mode=True,
+        use_subprocess=False,
+        subprocess_guard=True,
+    )
+
+    assert metrics.crash_count == 1
+    exc = metrics.modules[0].exception or ''
+    assert 'forbidden path access' in exc
+    assert 'No such file or directory' not in exc
+
 def test_open_write_requires_mock_in_safe_mode():
     def step():
         with open("foo.txt", "w") as f:
