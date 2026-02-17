@@ -7234,18 +7234,31 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
 
     if "user_misuse" in modes:
         parts.append(
-            "import sys\n"
+            "import json, sys\n"
             "_MISUSE_PREFIX='SANDBOX_MISUSE_EVENT='\n"
             "_MISUSE_FORBIDDEN_PATH_TAG='SIMULATED_MISUSE_FORBIDDEN_PATH'\n"
-            "_MISUSE_LEN_PROBE='simulated_user_misuse_len_probe'\n"
-            "def _emit_misuse_event(message):\n"
-            "    print(_MISUSE_PREFIX + message, file=sys.stderr)\n"
+            "_MISUSE_INVALID_ARITY='simulated_user_misuse_invalid_arity'\n"
+            "_MISUSE_FORBIDDEN_PATH='simulated_user_misuse_forbidden_path'\n"
+            "def _emit_misuse_event(event, channel='stderr', **extra):\n"
+            "    payload={\n"
+            "        'kind':'expected_user_misuse',\n"
+            "        'event':event,\n"
+            "        'expected':True,\n"
+            "        'simulation_outcome':'expected_negative_path',\n"
+            "    }\n"
+            "    if extra:\n"
+            "        payload.update(extra)\n"
+            "    stream = sys.stdout if channel == 'stdout' else sys.stderr\n"
+            "    print(_MISUSE_PREFIX + json.dumps(payload, sort_keys=True), file=stream)\n"
             "def _misuse():\n"
             "    try:\n"
-            "        raise RuntimeError(_MISUSE_LEN_PROBE)\n"
-            "    except RuntimeError as exc:\n"
-            "        _emit_misuse_event('synthetic-probe:user-misuse-len:' + str(exc))\n"
-            "    _emit_misuse_event(_MISUSE_FORBIDDEN_PATH_TAG + ': /root/forbidden')\n"
+            "        raise ValueError(_MISUSE_INVALID_ARITY)\n"
+            "    except ValueError as exc:\n"
+            "        _emit_misuse_event('invalid_arity', error_type='ValueError', error_code=str(exc))\n"
+            "    try:\n"
+            "        raise PermissionError(_MISUSE_FORBIDDEN_PATH)\n"
+            "    except PermissionError as exc:\n"
+            "        _emit_misuse_event('forbidden_path', channel='stdout', error_type='PermissionError', error_code=str(exc), path='/root/forbidden', tag=_MISUSE_FORBIDDEN_PATH_TAG)\n"
             "_misuse()\n"
         )
 
@@ -7272,13 +7285,12 @@ async def _section_worker(
     scenario_name = str(env_input.get("SCENARIO_NAME", "")).strip().lower()
     failure_modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
 
-    def _classify_simulated_errors(stderr_text: str, modes: set[str]) -> Dict[str, float]:
-        lines = [line.strip() for line in str(stderr_text or "").splitlines() if line.strip()]
+    def _classify_simulated_errors(output_text: str, modes: set[str]) -> Dict[str, float]:
+        lines = [line.strip() for line in str(output_text or "").splitlines() if line.strip()]
         known_tokens = (
-            "simulated_user_misuse_len_probe",
-            "synthetic-probe:user-misuse-len",
+            "simulated_user_misuse_invalid_arity",
+            "simulated_user_misuse_forbidden_path",
             misuse_forbidden_path_tag,
-            "TypeError",
         )
         simulated_misuse_count = 0
         for line in lines:
@@ -7811,7 +7823,9 @@ async def _section_worker(
                 "avg_completion_time": avg_time,
             }
         )
-        misuse_telemetry = _classify_simulated_errors(stderr_combined, failure_modes)
+        misuse_telemetry = _classify_simulated_errors(
+            f"{stdout_combined}\n{stderr_combined}", failure_modes
+        )
         metrics.update(misuse_telemetry)
         if SANDBOX_EXTRA_METRICS:
             metrics.update(SANDBOX_EXTRA_METRICS)
