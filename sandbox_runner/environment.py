@@ -7236,6 +7236,7 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
         parts.append(
             "import sys\n"
             "_MISUSE_PREFIX='SANDBOX_MISUSE_EVENT='\n"
+            "_MISUSE_FORBIDDEN_PATH_TAG='SIMULATED_MISUSE_FORBIDDEN_PATH'\n"
             "_MISUSE_LEN_PROBE='simulated_user_misuse_len_probe'\n"
             "def _emit_misuse_event(message):\n"
             "    print(_MISUSE_PREFIX + message, file=sys.stderr)\n"
@@ -7244,7 +7245,7 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
             "        raise RuntimeError(_MISUSE_LEN_PROBE)\n"
             "    except RuntimeError as exc:\n"
             "        _emit_misuse_event('synthetic-probe:user-misuse-len:' + str(exc))\n"
-            "    _emit_misuse_event('forbidden-path: /root/forbidden')\n"
+            "    _emit_misuse_event(_MISUSE_FORBIDDEN_PATH_TAG + ': /root/forbidden')\n"
             "_misuse()\n"
         )
 
@@ -7267,6 +7268,7 @@ async def _section_worker(
     """Execute ``snippet`` with resource limits and return results."""
 
     misuse_marker = "SANDBOX_MISUSE_EVENT="
+    misuse_forbidden_path_tag = "SIMULATED_MISUSE_FORBIDDEN_PATH"
     failure_modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
 
     def _classify_expected_misuse(stderr_text: str, modes: set[str]) -> Dict[str, float]:
@@ -7280,9 +7282,7 @@ async def _section_worker(
         known_tokens = (
             "simulated_user_misuse_len_probe",
             "synthetic-probe:user-misuse-len",
-            "forbidden-open",
-            "PermissionError",
-            "/root/forbidden",
+            misuse_forbidden_path_tag,
             "TypeError",
         )
         count = 0
@@ -9682,7 +9682,11 @@ def run_repo_section_simulations(
                             "result": res,
                         }
                     )
-                if res.get("exit_code") not in (0, None):
+                tagged_expected_misuse = (
+                    res.get("expected_scenario_fault") == "user_misuse"
+                    and "SIMULATED_MISUSE_FORBIDDEN_PATH" in str(res.get("stderr", ""))
+                )
+                if res.get("exit_code") not in (0, None) and not tagged_expected_misuse:
                     all_diminished = False
 
         await _gather_tasks()
