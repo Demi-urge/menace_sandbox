@@ -537,6 +537,7 @@ When no `input_stubs` argument is supplied the function calls `generate_input_st
 
 The `hostile` strategy generates adversarial examples such as SQL injection strings, XSS payloads, oversized values and malformed JSON. The `misuse` strategy omits required fields or provides values of incorrect types to mimic user errors. Presets with the `hostile_input` failure mode automatically set `SANDBOX_STUB_STRATEGY=hostile` and `_inject_failure_modes` replaces any lower-case stub variables with these malicious payloads before execution.
 Presets that include the `user_misuse` failure mode set `SANDBOX_STUB_STRATEGY=misuse` and attempt to call functions with incorrect argument counts and touch disallowed files. These errors are printed to `stderr` but execution proceeds so the sandbox can observe misuse safely.
+Expected `stderr` signatures for this scenario include `SANDBOX_MISUSE_EVENT=synthetic-probe:user-misuse-len:simulated_user_misuse_len_probe` and `SANDBOX_MISUSE_EVENT=SIMULATED_MISUSE_FORBIDDEN_PATH: /root/forbidden`. The section worker classifies these as simulated misuse, records `simulated_misuse_count`/`expected_misuse_count` telemetry, and avoids retry/escalation paths reserved for unexpected runtime faults.
 ### Stub generation settings
 
 The generative stub provider exposes several knobs via environment variables:
