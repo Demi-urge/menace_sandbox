@@ -7273,6 +7273,35 @@ async def _section_worker(
 ]:
     """Execute ``snippet`` with resource limits and return results."""
 
+    misuse_marker = "SANDBOX_MISUSE_EVENT="
+    failure_modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
+
+    def _classify_expected_misuse(stderr_text: str, modes: set[str]) -> Dict[str, float]:
+        if "user_misuse" not in modes:
+            return {
+                "expected_misuse_count": 0.0,
+                "expected_misuse_ratio": 0.0,
+                "has_expected_misuse": 0.0,
+            }
+        lines = [line.strip() for line in str(stderr_text or "").splitlines() if line.strip()]
+        known_tokens = (
+            "len() takes exactly one argument",
+            "forbidden-open",
+            "PermissionError",
+            "/root/forbidden",
+            "TypeError",
+        )
+        count = 0
+        for line in lines:
+            if line.startswith(misuse_marker) or any(token in line for token in known_tokens):
+                count += 1
+        ratio = (float(count) / float(len(lines))) if lines else 0.0
+        return {
+            "expected_misuse_count": float(count),
+            "expected_misuse_ratio": ratio,
+            "has_expected_misuse": 1.0 if count > 0 else 0.0,
+        }
+
     if env_input:
         try:
             _get_history_db().add(env_input)
@@ -7288,7 +7317,7 @@ async def _section_worker(
         _reset_runtime_state()
         with tempfile.TemporaryDirectory(prefix="run_") as td:
             path = Path(td) / path_for_prompt(SNIPPET_NAME)
-            modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
+            modes = set(failure_modes)
             snip = _inject_failure_modes(snippet, modes)
             path.write_text(snip, encoding="utf-8")
             env = os.environ.copy()
@@ -7318,8 +7347,8 @@ async def _section_worker(
                         stubs: Dict[str, Any] = {}
                         for prof in profiles:
                             stubs.update(prof)
-                        td = dict(rc.get("test_data") or {})
-                        stubs.update(td)
+                        test_data = dict(rc.get("test_data") or {})
+                        stubs.update(test_data)
                         rc["test_data"] = stubs
                         existing = list(rc.get("edge_case_profiles", []))
                         existing.extend(profiles)
@@ -7763,6 +7792,8 @@ async def _section_worker(
                 "avg_completion_time": avg_time,
             }
         )
+        misuse_telemetry = _classify_expected_misuse(stderr_combined, failure_modes)
+        metrics.update(misuse_telemetry)
         if SANDBOX_EXTRA_METRICS:
             metrics.update(SANDBOX_EXTRA_METRICS)
 
@@ -7771,6 +7802,11 @@ async def _section_worker(
         result["stdout"] = stdout_combined
         result["stderr"] = stderr_combined
         result["exit_code"] = -1 if neg else (0 if error_count == 0 else 1)
+        result["expected_misuse_count"] = misuse_telemetry["expected_misuse_count"]
+        result["expected_misuse_ratio"] = misuse_telemetry["expected_misuse_ratio"]
+        result["has_expected_misuse"] = bool(misuse_telemetry["has_expected_misuse"])
+        if result["has_expected_misuse"]:
+            result["expected_scenario_fault"] = "user_misuse"
 
         if result.get("exit_code", 0) < 0:
             _log_diagnostic(str(result.get("stderr", "error")), False)
@@ -7785,6 +7821,11 @@ async def _section_worker(
 
         actual = success_rate
         updates.append((prev, actual, metrics))
+        if result.get("has_expected_misuse"):
+            if retried:
+                _log_diagnostic("section_worker_retry", True)
+            final_result = result
+            break
         if abs(actual - prev) <= threshold:
             if retried:
                 _log_diagnostic("section_worker_retry", True)

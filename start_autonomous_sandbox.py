@@ -1390,6 +1390,59 @@ def _evaluate_self_debug_health(
     return not failures, failures
 
 
+_SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY: dict[str, float] = {
+    "events": 0.0,
+    "checks": 0.0,
+    "ratio": 0.0,
+}
+
+
+def _failure_modes_for_self_debug() -> set[str]:
+    raw = os.getenv("FAILURE_MODES", "")
+    if isinstance(raw, str):
+        return {m.strip().lower() for m in raw.split(",") if m.strip()}
+    return set()
+
+
+def _classify_expected_misuse_failures(
+    failures: Sequence[Mapping[str, Any]],
+) -> tuple[bool, dict[str, float]]:
+    modes = _failure_modes_for_self_debug()
+    if "user_misuse" not in modes:
+        return False, {"expected_misuse_events": 0.0, "expected_misuse_ratio": 0.0}
+    expected = 0
+    markers = (
+        "user_misuse",
+        "misuse",
+        "len() takes exactly one argument",
+        "forbidden-open",
+        "/root/forbidden",
+    )
+    for failure in failures:
+        check_name = str(failure.get("check", ""))
+        context = failure.get("context", {})
+        context_blob = json.dumps(context, sort_keys=True, default=str)
+        if any(marker in check_name for marker in markers) or any(
+            marker in context_blob for marker in markers
+        ):
+            expected += 1
+    total = len(failures)
+    ratio = (float(expected) / float(total)) if total else 0.0
+    _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["events"] += float(expected)
+    _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["checks"] += float(total)
+    checks = _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["checks"]
+    _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["ratio"] = (
+        _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["events"] / checks if checks else 0.0
+    )
+    return expected > 0, {
+        "expected_misuse_events": float(expected),
+        "expected_misuse_ratio": ratio,
+        "expected_misuse_events_total": _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["events"],
+        "expected_misuse_checks_total": _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["checks"],
+        "expected_misuse_ratio_total": _SELF_DEBUG_EXPECTED_MISUSE_TELEMETRY["ratio"],
+    }
+
+
 def run_self_debug_until_stable(
     *,
     settings: SandboxSettings,
@@ -1413,6 +1466,19 @@ def run_self_debug_until_stable(
                     event="self-debug-guardian-pass",
                     attempt=attempt,
                     max_attempts=attempts,
+                ),
+            )
+            return True
+        expected_misuse, misuse_stats = _classify_expected_misuse_failures(failures)
+        if expected_misuse:
+            logger.info(
+                "self-debug guardian classified expected user misuse; suppressing instability retry",
+                extra=log_record(
+                    event="self-debug-guardian-expected-misuse",
+                    attempt=attempt,
+                    max_attempts=attempts,
+                    failures=failures,
+                    telemetry=misuse_stats,
                 ),
             )
             return True
@@ -1484,6 +1550,18 @@ def _self_debug_health_loop(
     while not stop_event.is_set():
         ok, failures = _evaluate_self_debug_health(loop_logger, checks)
         if not ok:
+            expected_misuse, misuse_stats = _classify_expected_misuse_failures(failures)
+            if expected_misuse:
+                loop_logger.info(
+                    "self-debug health loop classified expected user misuse",
+                    extra=log_record(
+                        event="self-debug-health-loop-expected-misuse",
+                        failures=failures,
+                        telemetry=misuse_stats,
+                    ),
+                )
+                stop_event.wait(max(cadence, 1.0))
+                continue
             loop_logger.warning(
                 "self-debug health loop detected instability",
                 extra=log_record(

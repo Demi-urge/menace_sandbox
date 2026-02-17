@@ -27,6 +27,7 @@ if "pyroute2" not in sys.modules:
     pr2.IPRoute = pr2.NSPopen = pr2.netns = object
     sys.modules["pyroute2"] = pr2
 sys.modules.pop("sandbox_runner", None)
+sys.modules.pop("sandbox_runner.environment", None)
 import sandbox_runner.environment as env  # noqa: E402
 from menace.sandbox_runner import test_harness as th  # noqa: E402
 
@@ -62,13 +63,17 @@ def test_inject_failure_modes_user_misuse(capsys):
 
 
 def test_section_worker_user_misuse(monkeypatch):
-    monkeypatch.setattr(env.time, "sleep", lambda s: None)
-    res, _ = asyncio.run(
+    monkeypatch.setattr(env, "get_edge_case_profiles", lambda: [])
+    res, updates, _ = asyncio.run(
         env._section_worker("print('run')", {"FAILURE_MODES": ["user_misuse"]}, 0.0)
     )
     assert res["exit_code"] == 0
     assert "run" in res["stdout"]
-    assert "len(" in res["stderr"]
+    assert "SANDBOX_MISUSE_EVENT=" in res["stderr"]
+    assert res["has_expected_misuse"] is True
+    assert res["expected_scenario_fault"] == "user_misuse"
+    assert res["expected_misuse_count"] >= 1.0
+    assert len(updates) == 1
 
 
 def test_generate_presets_concurrency(monkeypatch):
