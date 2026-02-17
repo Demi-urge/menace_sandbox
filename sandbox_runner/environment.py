@@ -161,6 +161,15 @@ def _forbidden_access_fingerprint(*, stage: str, path: str | None) -> str | None
     return f"{stage_name}|{clean_path}"
 
 
+def _repair_error_fingerprint(*, module_name: str, risk_flags: Sequence[Any]) -> str:
+    """Return a stable fingerprint for grouping self-debug repair attempts."""
+
+    normalized_flags = [str(flag).strip() for flag in risk_flags if str(flag).strip()]
+    if not normalized_flags:
+        normalized_flags = ["unknown_error"]
+    return f"{module_name.strip() or 'unknown_module'}|{'|'.join(sorted(normalized_flags))}"
+
+
 def _controlled_forbidden_failure(*, stage: str, path: str, reason: str, repeats: int) -> Dict[str, Any]:
     """Build a deterministic short-circuit result for repeated forbidden path access."""
 
@@ -181,6 +190,35 @@ def _controlled_forbidden_failure(*, stage: str, path: str, reason: str, repeats
         "forbidden_stage": stage_name,
         "forbidden_repeat_count": int(repeats),
         "forbidden_controlled_failure": True,
+    }
+
+
+def _controlled_deduplicated_retry(
+    *,
+    stage: str,
+    fingerprint: str,
+    reason: str,
+    cooldown_seconds: float,
+) -> Dict[str, Any]:
+    """Build a deterministic short-circuit result for deduplicated repair retries."""
+
+    stage_name = str(stage or "unknown_stage").strip() or "unknown_stage"
+    message = (
+        "controlled duplicate repair suppression: "
+        f"stage={stage_name} fingerprint={fingerprint} reason={reason} cooldown={cooldown_seconds:.2f}s"
+    )
+    return {
+        "stdout": "",
+        "stderr": message,
+        "exit_code": 1,
+        "failure_classification": "policy_enforcement_event",
+        "retry_policy": "handled_expected_failure",
+        "expected_scenario_fault": "duplicate_repair_suppressed",
+        "dedupe_stage": stage_name,
+        "dedupe_fingerprint": fingerprint,
+        "dedupe_reason": reason,
+        "dedupe_cooldown_seconds": float(cooldown_seconds),
+        "dedupe_controlled_failure": True,
     }
 
 
@@ -10989,7 +11027,7 @@ def run_workflow_simulations(
     ):
         details: Dict[str, list[Dict[str, Any]]] = {}
 
-        tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any], str, str]] = []
+        tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any], str, str, str | None]] = []
         index = 0
         expected_failure_counts: Dict[str, int] = {}
         forbidden_failure_counts: Dict[str, int] = {}
@@ -11008,6 +11046,39 @@ def run_workflow_simulations(
             name: {"roi": [], "metrics": []} for name in scenario_names
         }
         combined_results: Dict[str, Dict[str, Any]] = {}
+        fallback_worker_cap = max(
+            1,
+            int(os.getenv("SANDBOX_SELF_DEBUG_FALLBACK_WORKER_CAP", "2") or "2"),
+        )
+        duplicate_retry_cooldown_seconds = max(
+            0.1,
+            float(os.getenv("SANDBOX_DUPLICATE_RETRY_COOLDOWN_SECONDS", "2.0") or "2.0"),
+        )
+        fallback_worker_semaphore = (
+            asyncio.Semaphore(fallback_worker_cap) if self_debug_fallback_mode else None
+        )
+        active_repair_attempts: set[str] = set()
+        queued_repair_attempts: set[str] = set()
+        duplicate_retry_last_logged: Dict[str, float] = {}
+
+        async def _run_section_worker_capped(
+            snippet: str,
+            env_input: Dict[str, Any],
+        ) -> tuple[Dict[str, Any], list[tuple[float, float, Dict[str, float]]], Dict[str, List[str]]]:
+            if fallback_worker_semaphore is None:
+                return await _section_worker(
+                    snippet,
+                    env_input,
+                    tracker.diminishing(),
+                    runner_config,
+                )
+            async with fallback_worker_semaphore:
+                return await _section_worker(
+                    snippet,
+                    env_input,
+                    tracker.diminishing(),
+                    runner_config,
+                )
 
         def _wf_snippet(steps: list[str]) -> str:
             imports: list[str] = []
@@ -11071,6 +11142,7 @@ def run_workflow_simulations(
                     _radar_track_module_usage(mod_name)
                     stage_name = f"workflow_step:{wf.wid}:{mod_name}:{scenario}"
                     controlled_result: Dict[str, Any] | None = None
+                    repair_fingerprint: str | None = None
                     for _ in range(3):
                         result = simulate_execution_environment(snippet, env_input)
                         risk_flags = result.get("risk_flags_triggered") or []
@@ -11134,6 +11206,44 @@ def run_workflow_simulations(
                                     repeats=repeats,
                                 )
                                 break
+                        repair_fingerprint = _repair_error_fingerprint(
+                            module_name=mod_name,
+                            risk_flags=risk_flags,
+                        )
+                        if self_debug_fallback_mode:
+                            now = time.monotonic()
+                            last_logged = duplicate_retry_last_logged.get(repair_fingerprint, 0.0)
+                            if repair_fingerprint in active_repair_attempts:
+                                if repair_fingerprint in queued_repair_attempts:
+                                    if now - last_logged >= duplicate_retry_cooldown_seconds:
+                                        duplicate_retry_last_logged[repair_fingerprint] = now
+                                        logger.info(
+                                            "duplicate repair attempt dropped stage=%s fingerprint=%s cooldown=%.2fs",
+                                            stage_name,
+                                            repair_fingerprint,
+                                            duplicate_retry_cooldown_seconds,
+                                        )
+                                    controlled_result = _controlled_deduplicated_retry(
+                                        stage=stage_name,
+                                        fingerprint=repair_fingerprint,
+                                        reason="duplicate_dropped",
+                                        cooldown_seconds=duplicate_retry_cooldown_seconds,
+                                    )
+                                else:
+                                    queued_repair_attempts.add(repair_fingerprint)
+                                    logger.info(
+                                        "duplicate repair attempt queued stage=%s fingerprint=%s cooldown=%.2fs",
+                                        stage_name,
+                                        repair_fingerprint,
+                                        duplicate_retry_cooldown_seconds,
+                                    )
+                                    controlled_result = _controlled_deduplicated_retry(
+                                        stage=stage_name,
+                                        fingerprint=repair_fingerprint,
+                                        reason="duplicate_queued",
+                                        cooldown_seconds=duplicate_retry_cooldown_seconds,
+                                    )
+                                break
                         debugger.analyse_and_fix()
                     if controlled_result is not None:
                         async def _controlled_task() -> tuple[
@@ -11151,24 +11261,25 @@ def run_workflow_simulations(
                                     controlled_result.get("forbidden_repeat_count", 0)
                                 ),
                                 "forbidden_controlled_failure": 1.0,
+                                "dedupe_controlled_failure": float(
+                                    bool(controlled_result.get("dedupe_controlled_failure"))
+                                ),
                             }
                             return controlled_result, [(0.0, 0.0, metrics)], {}
 
                         fut = asyncio.create_task(_controlled_task())
                     else:
-                        fut = asyncio.create_task(
-                            _section_worker(
-                                snippet,
-                                env_input,
-                                tracker.diminishing(),
-                                runner_config,
-                            )
-                        )
-                    tasks.append((index, fut, wf.wid, scenario, preset, step, mod_name))
+                        if self_debug_fallback_mode and repair_fingerprint:
+                            active_repair_attempts.add(repair_fingerprint)
+                        fut = asyncio.create_task(_run_section_worker_capped(snippet, env_input))
+                    tasks.append((index, fut, wf.wid, scenario, preset, step, mod_name, repair_fingerprint))
                     index += 1
 
-        for _, fut, wid, scenario, preset, module, mod_name in sorted(tasks, key=lambda x: x[0]):
+        for _, fut, wid, scenario, preset, module, mod_name, repair_fingerprint in sorted(tasks, key=lambda x: x[0]):
             res, updates, cov_map = await fut
+            if self_debug_fallback_mode and repair_fingerprint:
+                active_repair_attempts.discard(repair_fingerprint)
+                queued_repair_attempts.discard(repair_fingerprint)
             if updates:
                 if mod_name in coverage_summary and scenario in coverage_summary[mod_name]:
                     coverage_summary[mod_name][scenario] = True
