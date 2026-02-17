@@ -102,6 +102,8 @@ _LEGACY_SELF_DEBUGGER_SANDBOX_MODULE = "self_debugger_sandbox"
 _COVERAGE_GUARD_LOCK = threading.Lock()
 _COVERAGE_INITIALIZED_PIDS: set[int] = set()
 _COVERAGE_SKIP_LOGGED_MODES: set[str] = set()
+_FORBIDDEN_PATH_ACCESS_RE = re.compile(r"forbidden\s+path\s+access(?::\s*)?(?P<path>[^\n\r]+)?", re.IGNORECASE)
+_PERMISSION_DENIED_PATH_RE = re.compile(r"permission denied:\s*['\"](?P<path>[^'\"]+)['\"]", re.IGNORECASE)
 
 
 def _claim_process_coverage_startup() -> bool:
@@ -128,6 +130,58 @@ def _log_coverage_skipped_once(mode: str, reason: str) -> None:
         reason,
         os.getpid(),
     )
+
+
+def _extract_forbidden_path(text: str) -> str | None:
+    """Return a normalized forbidden path extracted from ``text`` when present."""
+
+    payload = str(text or "")
+    if not payload:
+        return None
+    m = _FORBIDDEN_PATH_ACCESS_RE.search(payload)
+    if m:
+        value = (m.group("path") or "").strip().strip("'\"")
+        return value or "<unknown>"
+    m = _PERMISSION_DENIED_PATH_RE.search(payload)
+    if m:
+        value = (m.group("path") or "").strip().strip("'\"")
+        return value or "<unknown>"
+    if "simulated_misuse_forbidden_path" in payload.lower():
+        return "/root/forbidden"
+    return None
+
+
+def _forbidden_access_fingerprint(*, stage: str, path: str | None) -> str | None:
+    """Return ``stage + path`` fingerprint for forbidden path access events."""
+
+    clean_path = str(path or "").strip()
+    if not clean_path:
+        return None
+    stage_name = str(stage or "unknown_stage").strip() or "unknown_stage"
+    return f"{stage_name}|{clean_path}"
+
+
+def _controlled_forbidden_failure(*, stage: str, path: str, reason: str, repeats: int) -> Dict[str, Any]:
+    """Build a deterministic short-circuit result for repeated forbidden path access."""
+
+    stage_name = str(stage or "unknown_stage").strip() or "unknown_stage"
+    path_value = str(path or "<unknown>").strip() or "<unknown>"
+    message = (
+        "controlled forbidden path failure: "
+        f"stage={stage_name} path={path_value} repeats={int(repeats)} reason={reason}"
+    )
+    return {
+        "stdout": "",
+        "stderr": message,
+        "exit_code": 1,
+        "failure_classification": "policy_enforcement_event",
+        "retry_policy": "handled_expected_failure",
+        "expected_scenario_fault": "forbidden_path_repeated",
+        "forbidden_path": path_value,
+        "forbidden_stage": stage_name,
+        "forbidden_repeat_count": int(repeats),
+        "forbidden_controlled_failure": True,
+    }
 
 
 def _legacy_self_debugger_import_enabled() -> bool:
@@ -9617,8 +9671,18 @@ def run_repo_section_simulations(
         ] = []
         index = 0
         expected_failure_counts: Dict[str, int] = {}
+        forbidden_failure_counts: Dict[str, int] = {}
+        forbidden_failure_last_seen: Dict[str, float] = {}
         logged_scenario_signatures: set[str] = set()
         expected_failure_cooldown = 2
+        forbidden_repeat_limit = max(
+            1,
+            int(os.getenv("SANDBOX_FORBIDDEN_REPEAT_LIMIT", "3") or "3"),
+        )
+        forbidden_backoff_seconds = max(
+            0.0,
+            float(os.getenv("SANDBOX_FORBIDDEN_COOLDOWN_SECONDS", "3.0") or "3.0"),
+        )
         max_cpu = (
             max(float(p.get("CPU_LIMIT", 1)) for p in all_presets)
             if all_presets
@@ -9696,6 +9760,8 @@ def run_repo_section_simulations(
                                 env_input.update(stub)
                                 _radar_track_module_usage(module)
 
+                                stage_name = f"repo_section:{module}:{sec_name}:{scenario}"
+                                controlled_result: Dict[str, Any] | None = None
                                 for _ in range(3):
                                     result = simulate_execution_environment(
                                         code_str, env_input
@@ -9716,6 +9782,51 @@ def run_repo_section_simulations(
                                         if expected_failure_counts[signature] > expected_failure_cooldown:
                                             env_input["EXPECTED_FAILURE_COOLDOWN"] = "1"
                                             break
+                                    forbidden_path = _extract_forbidden_path("\n".join(map(str, risk_flags)))
+                                    fingerprint = _forbidden_access_fingerprint(
+                                        stage=stage_name,
+                                        path=forbidden_path,
+                                    )
+                                    if fingerprint:
+                                        now = time.monotonic()
+                                        last_seen = forbidden_failure_last_seen.get(fingerprint, 0.0)
+                                        repeats = forbidden_failure_counts.get(fingerprint, 0) + 1
+                                        forbidden_failure_counts[fingerprint] = repeats
+                                        forbidden_failure_last_seen[fingerprint] = now
+                                        if (
+                                            forbidden_backoff_seconds > 0
+                                            and now - last_seen < forbidden_backoff_seconds
+                                        ):
+                                            logger.info(
+                                                "forbidden access cooldown active stage=%s path=%s fingerprint=%s wait_remaining=%.2fs",
+                                                stage_name,
+                                                forbidden_path,
+                                                fingerprint,
+                                                forbidden_backoff_seconds - (now - last_seen),
+                                            )
+                                            controlled_result = _controlled_forbidden_failure(
+                                                stage=stage_name,
+                                                path=forbidden_path or "<unknown>",
+                                                reason="cooldown_active",
+                                                repeats=repeats,
+                                            )
+                                            break
+                                        if repeats >= forbidden_repeat_limit:
+                                            logger.info(
+                                                "forbidden access repeat limit reached stage=%s path=%s fingerprint=%s repeats=%s limit=%s",
+                                                stage_name,
+                                                forbidden_path,
+                                                fingerprint,
+                                                repeats,
+                                                forbidden_repeat_limit,
+                                            )
+                                            controlled_result = _controlled_forbidden_failure(
+                                                stage=stage_name,
+                                                path=forbidden_path or "<unknown>",
+                                                reason="repeat_limit_reached",
+                                                repeats=repeats,
+                                            )
+                                            break
                                     debugger.analyse_and_fix()
 
                                 await sem.acquire()
@@ -9726,6 +9837,19 @@ def run_repo_section_simulations(
                                     Dict[str, List[str]],
                                 ]:
                                     try:
+                                        if controlled_result is not None:
+                                            metrics = {
+                                                "concurrency_level": 1.0,
+                                                "concurrency_error_rate": 1.0,
+                                                "concurrency_throughput": 0.0,
+                                                "success_rate": 0.0,
+                                                "avg_completion_time": 0.0,
+                                                "forbidden_repeat_count": float(
+                                                    controlled_result.get("forbidden_repeat_count", 0)
+                                                ),
+                                                "forbidden_controlled_failure": 1.0,
+                                            }
+                                            return controlled_result, [(0.0, 0.0, metrics)], {}
                                         return await _section_worker(
                                             code_str,
                                             env_input,
@@ -10868,8 +10992,18 @@ def run_workflow_simulations(
         tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any], str, str]] = []
         index = 0
         expected_failure_counts: Dict[str, int] = {}
+        forbidden_failure_counts: Dict[str, int] = {}
+        forbidden_failure_last_seen: Dict[str, float] = {}
         logged_scenario_signatures: set[str] = set()
         expected_failure_cooldown = 2
+        forbidden_repeat_limit = max(
+            1,
+            int(os.getenv("SANDBOX_FORBIDDEN_REPEAT_LIMIT", "3") or "3"),
+        )
+        forbidden_backoff_seconds = max(
+            0.0,
+            float(os.getenv("SANDBOX_FORBIDDEN_COOLDOWN_SECONDS", "3.0") or "3.0"),
+        )
         synergy_data: Dict[str, Dict[str, list]] = {
             name: {"roi": [], "metrics": []} for name in scenario_names
         }
@@ -10935,6 +11069,8 @@ def run_workflow_simulations(
                     if self_debug_fallback_mode:
                         env_input["SELF_DEBUG_FALLBACK_MODE"] = "1"
                     _radar_track_module_usage(mod_name)
+                    stage_name = f"workflow_step:{wf.wid}:{mod_name}:{scenario}"
+                    controlled_result: Dict[str, Any] | None = None
                     for _ in range(3):
                         result = simulate_execution_environment(snippet, env_input)
                         risk_flags = result.get("risk_flags_triggered") or []
@@ -10953,15 +11089,81 @@ def run_workflow_simulations(
                             if expected_failure_counts[signature] > expected_failure_cooldown:
                                 env_input["EXPECTED_FAILURE_COOLDOWN"] = "1"
                                 break
-                        debugger.analyse_and_fix()
-                    fut = asyncio.create_task(
-                        _section_worker(
-                            snippet,
-                            env_input,
-                            tracker.diminishing(),
-                            runner_config,
+                        forbidden_path = _extract_forbidden_path("\n".join(map(str, risk_flags)))
+                        fingerprint = _forbidden_access_fingerprint(
+                            stage=stage_name,
+                            path=forbidden_path,
                         )
-                    )
+                        if fingerprint:
+                            now = time.monotonic()
+                            last_seen = forbidden_failure_last_seen.get(fingerprint, 0.0)
+                            repeats = forbidden_failure_counts.get(fingerprint, 0) + 1
+                            forbidden_failure_counts[fingerprint] = repeats
+                            forbidden_failure_last_seen[fingerprint] = now
+                            if (
+                                forbidden_backoff_seconds > 0
+                                and now - last_seen < forbidden_backoff_seconds
+                            ):
+                                logger.info(
+                                    "forbidden access cooldown active stage=%s path=%s fingerprint=%s wait_remaining=%.2fs",
+                                    stage_name,
+                                    forbidden_path,
+                                    fingerprint,
+                                    forbidden_backoff_seconds - (now - last_seen),
+                                )
+                                controlled_result = _controlled_forbidden_failure(
+                                    stage=stage_name,
+                                    path=forbidden_path or "<unknown>",
+                                    reason="cooldown_active",
+                                    repeats=repeats,
+                                )
+                                break
+                            if repeats >= forbidden_repeat_limit:
+                                logger.info(
+                                    "forbidden access repeat limit reached stage=%s path=%s fingerprint=%s repeats=%s limit=%s",
+                                    stage_name,
+                                    forbidden_path,
+                                    fingerprint,
+                                    repeats,
+                                    forbidden_repeat_limit,
+                                )
+                                controlled_result = _controlled_forbidden_failure(
+                                    stage=stage_name,
+                                    path=forbidden_path or "<unknown>",
+                                    reason="repeat_limit_reached",
+                                    repeats=repeats,
+                                )
+                                break
+                        debugger.analyse_and_fix()
+                    if controlled_result is not None:
+                        async def _controlled_task() -> tuple[
+                            Dict[str, Any],
+                            list[tuple[float, float, Dict[str, float]]],
+                            Dict[str, List[str]],
+                        ]:
+                            metrics = {
+                                "concurrency_level": 1.0,
+                                "concurrency_error_rate": 1.0,
+                                "concurrency_throughput": 0.0,
+                                "success_rate": 0.0,
+                                "avg_completion_time": 0.0,
+                                "forbidden_repeat_count": float(
+                                    controlled_result.get("forbidden_repeat_count", 0)
+                                ),
+                                "forbidden_controlled_failure": 1.0,
+                            }
+                            return controlled_result, [(0.0, 0.0, metrics)], {}
+
+                        fut = asyncio.create_task(_controlled_task())
+                    else:
+                        fut = asyncio.create_task(
+                            _section_worker(
+                                snippet,
+                                env_input,
+                                tracker.diminishing(),
+                                runner_config,
+                            )
+                        )
                     tasks.append((index, fut, wf.wid, scenario, preset, step, mod_name))
                     index += 1
 
