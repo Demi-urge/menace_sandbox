@@ -383,7 +383,7 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
         profiles.extend(infer_profiles_from_ast(path))
 
     if not profiles:
-        return list(CANONICAL_PROFILES)
+        return _filter_auto_profiles(CANONICAL_PROFILES)
 
     seen: set[str] = set()
     unique: List[str] = []
@@ -391,7 +391,7 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
         if prof not in seen:
             unique.append(prof)
             seen.add(prof)
-    return unique
+    return _filter_auto_profiles(unique)
 
 
 # probability of injecting a random profile when none specified
@@ -409,13 +409,46 @@ _ALT_OS_TYPES = ["windows", "macos"]
 _ALT_OS_PROB = 0.3
 
 
+def _flag_enabled(value: str | None) -> bool:
+    """Return ``True`` when an env-style flag is enabled."""
+
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def include_user_misuse_profile() -> bool:
+    """Return whether ``user_misuse`` should be included in auto-selection."""
+
+    if _flag_enabled(os.getenv("SANDBOX_INCLUDE_USER_MISUSE")):
+        return True
+    return os.getenv("SANDBOX_PRESET_MODE", "").strip().lower() in {
+        "canonical",
+        "chaos",
+        "robustness",
+    }
+
+
+def _filter_auto_profiles(profiles: Sequence[str]) -> List[str]:
+    """Filter profiles that should not auto-inject into routine runs."""
+
+    if include_user_misuse_profile():
+        return list(profiles)
+    return [name for name in profiles if _PROFILE_ALIASES.get(name, name) != "user_misuse"]
+
+
 def _select_failures() -> list[str]:
     """Return a list of failure modes to apply."""
 
+    allowed_modes = [mode for mode in _FAILURE_MODES if mode != "user_misuse"]
+    if include_user_misuse_profile():
+        allowed_modes = list(_FAILURE_MODES)
+
     if random.random() < _MULTI_FAILURE_CHANCE:
-        count = random.randint(2, min(3, len(_FAILURE_MODES) - 1))
-        return random.sample([m for m in _FAILURE_MODES if m], count)
-    mode = random.choice(_FAILURE_MODES)
+        non_null_modes = [m for m in allowed_modes if m]
+        count = random.randint(2, min(3, len(non_null_modes)))
+        return random.sample(non_null_modes, count)
+    mode = random.choice(allowed_modes)
     return [mode] if mode else []
 
 

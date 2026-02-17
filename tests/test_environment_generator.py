@@ -214,6 +214,7 @@ def test_generate_presets_profile_severity_levels():
 def test_generate_presets_mixed_severity_profiles(monkeypatch):
     monkeypatch.setattr(eg.random, "random", lambda: 1.0)
     presets = eg.generate_presets(
+        count=2,
         profiles=["high_latency_api", "concurrency_spike"],
         severity={"high_latency_api": "low", "concurrency_spike": "high"},
     )
@@ -242,6 +243,35 @@ def test_generate_presets_combined_profiles(monkeypatch):
     assert p["THREAD_BURST"] == 50
     assert p["SANDBOX_STUB_STRATEGY"] == "hostile"
     assert p["FAILURE_MODES"] == ["hostile_input", "concurrency_spike", "cpu_spike"]
+
+
+def test_suggest_profiles_excludes_user_misuse_by_default(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INCLUDE_USER_MISUSE", raising=False)
+    monkeypatch.delenv("SANDBOX_PRESET_MODE", raising=False)
+    profiles = eg.suggest_profiles_for_module("auth")
+    assert "hostile_input" in profiles
+    assert "user_misuse" not in profiles
+
+
+def test_suggest_profiles_includes_user_misuse_with_flag(monkeypatch):
+    monkeypatch.setenv("SANDBOX_INCLUDE_USER_MISUSE", "1")
+    profiles = eg.suggest_profiles_for_module("auth")
+    assert "user_misuse" in profiles
+
+
+def test_select_failures_excludes_user_misuse_by_default(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INCLUDE_USER_MISUSE", raising=False)
+    monkeypatch.delenv("SANDBOX_PRESET_MODE", raising=False)
+    monkeypatch.setattr(eg.random, "random", lambda: 1.0)
+    monkeypatch.setattr(eg.random, "choice", lambda seq: seq[0])
+    assert eg._select_failures() != ["user_misuse"]
+
+
+def test_select_failures_can_include_user_misuse_with_flag(monkeypatch):
+    monkeypatch.setenv("SANDBOX_INCLUDE_USER_MISUSE", "1")
+    monkeypatch.setattr(eg.random, "random", lambda: 1.0)
+    monkeypatch.setattr(eg.random, "choice", lambda seq: "user_misuse")
+    assert eg._select_failures() == ["user_misuse"]
 
 
 class _DummyTracker:
@@ -783,7 +813,6 @@ def test_suggest_profiles_merges_ast_and_name(tmp_path):
     assert set(profiles) == {
         "high_latency_api",
         "concurrency_spike",
-        "user_misuse",
         "hostile_input",
     }
 
