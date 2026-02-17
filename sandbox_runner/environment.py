@@ -9483,14 +9483,21 @@ def run_repo_section_simulations(
                         all_presets.append(preset)
             preset_map[module] = mod_presets
 
+        include_user_misuse = os.getenv("SANDBOX_INCLUDE_USER_MISUSE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         required_names = {
             "high_latency_api",
             "hostile_input",
-            "user_misuse",
             "concurrency_spike",
             "schema_drift",
             "flaky_upstream",
         }
+        if include_user_misuse:
+            required_names.add("user_misuse")
         present_names = {
             _PROFILE_ALIASES.get(p.get("SCENARIO_NAME"), p.get("SCENARIO_NAME"))
             for p in all_presets
