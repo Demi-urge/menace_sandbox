@@ -64,7 +64,7 @@ def test_self_debug_guardian_expected_misuse_is_bounded(monkeypatch):
         return (
             False,
             "workflow_discovery_failed",
-            {"scenario": "user_misuse", "detail": "len() takes exactly one argument"},
+            {"scenario": "user_misuse", "detail": "simulated_user_misuse_len_probe"},
         )
 
     run_calls: list[int] = []

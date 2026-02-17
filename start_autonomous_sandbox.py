@@ -1414,7 +1414,8 @@ def _classify_expected_misuse_failures(
     markers = (
         "user_misuse",
         "misuse",
-        "len() takes exactly one argument",
+        "simulated_user_misuse_len_probe",
+        "synthetic-probe:user-misuse-len",
         "forbidden-open",
         "/root/forbidden",
     )
