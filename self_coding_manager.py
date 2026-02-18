@@ -6615,6 +6615,38 @@ def internalize_coding_bot(
             stale_node["internalization_last_step"] = "stale in-flight cleanup"
         _replace_internalize_lock(stale_bot)
 
+    def _log_duplicate_internalize_drop(
+        *,
+        source: str,
+        reason: str,
+        active_attempt_age_seconds: float | None = None,
+        **extra_fields: Any,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "event": "internalize_duplicate_dropped",
+            "bot": bot_name,
+            "source": source,
+            "reason": reason,
+            "skip_reason": reason,
+        }
+        if active_attempt_age_seconds is not None:
+            payload["active_attempt_age_seconds"] = max(
+                0.0, float(active_attempt_age_seconds)
+            )
+        payload.update(extra_fields)
+        logger_ref.debug(
+            "internalize duplicate dropped for %s from %s (reason=%s, active_attempt_age=%s)",
+            bot_name,
+            source,
+            reason,
+            (
+                f"{payload['active_attempt_age_seconds']:.3f}s"
+                if "active_attempt_age_seconds" in payload
+                else "n/a"
+            ),
+            extra=payload,
+        )
+
     with _INTERNALIZE_IN_FLIGHT_LOCK:
         started_at = _INTERNALIZE_IN_FLIGHT.get(bot_name)
         if started_at is not None:
@@ -6685,6 +6717,12 @@ def internalize_coding_bot(
                     "internalization_last_step": last_step,
                 },
             )
+            _log_duplicate_internalize_drop(
+                source="in_flight_guard",
+                reason="skipped_in_flight",
+                active_attempt_age_seconds=age,
+                internalization_last_step=last_step,
+            )
             _record_attempt_finish("skipped_in_flight")
             return _inflight_manager_fallback()
 
@@ -6748,9 +6786,43 @@ def internalize_coding_bot(
                     "duplicate_invoke_debounce_seconds": duplicate_invoke_debounce_seconds,
                 },
             )
+            active_attempt_age = None
+            if isinstance(previous_manager_construction_started, (int, float)):
+                active_attempt_age = now_monotonic - float(
+                    previous_manager_construction_started
+                )
+            _log_duplicate_internalize_drop(
+                source="duplicate_invoke_debounce",
+                reason=duplicate_invoke_skip_reason,
+                active_attempt_age_seconds=active_attempt_age,
+                duplicate_invoke_debounce_seconds=duplicate_invoke_debounce_seconds,
+            )
             return _inflight_manager_fallback()
 
     with _INTERNALIZE_IN_FLIGHT_LOCK:
+        existing_started_at = _INTERNALIZE_IN_FLIGHT.get(bot_name)
+        if existing_started_at is not None:
+            age = max(0.0, time.monotonic() - float(existing_started_at))
+            duplicate_invoke_skip_reason = "duplicate_invoke_debounced"
+            _log_duplicate_internalize_drop(
+                source="single_flight_token",
+                reason=duplicate_invoke_skip_reason,
+                active_attempt_age_seconds=age,
+            )
+            _record_attempt_finish(duplicate_invoke_skip_reason)
+            logger_ref.info(
+                "internalize_coding_bot already in progress for %s; skipping",
+                bot_name,
+                extra={
+                    "event": "internalize_duplicate_invoke_skipped",
+                    "bot": bot_name,
+                    "skip_reason": duplicate_invoke_skip_reason,
+                    "reason": duplicate_invoke_skip_reason,
+                    "active_attempt_age_seconds": age,
+                    "source": "single_flight_token",
+                },
+            )
+            return _inflight_manager_fallback()
         _INTERNALIZE_IN_FLIGHT[bot_name] = now_monotonic
         added_in_flight = True
         _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
@@ -6786,6 +6858,10 @@ def internalize_coding_bot(
                     "skip_reason": duplicate_invoke_skip_reason,
                     "reason": duplicate_invoke_skip_reason,
                 },
+            )
+            _log_duplicate_internalize_drop(
+                source="bot_lock",
+                reason=duplicate_invoke_skip_reason,
             )
             return _inflight_manager_fallback()
 

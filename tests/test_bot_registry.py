@@ -591,3 +591,56 @@ def test_force_internalization_retry_uses_force_reason(monkeypatch):
 
     assert registry.force_internalization_retry("bot", delay=2.5) is True
     assert calls == [("bot", "force_retry", 2.5, True)]
+
+
+def test_workflow_evolution_retry_dedupes_same_reason_without_parallel_timers(monkeypatch):
+    import menace_sandbox.bot_registry as br
+
+    created_timers = []
+
+    class FakeTimer:
+        def __init__(self, delay, callback, args=()):
+            self.delay = delay
+            self.callback = callback
+            self.args = args
+            self.daemon = False
+            self._alive = True
+            created_timers.append(self)
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    now = [1000.0]
+
+    monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(br.time, "monotonic", lambda: now[0])
+
+    registry = br.BotRegistry()
+    registry.graph.add_node(
+        "WorkflowEvolutionBot",
+        is_coding_bot=True,
+        pending_internalization=True,
+    )
+
+    registry._schedule_internalization_retry(
+        "WorkflowEvolutionBot",
+        reason="internalization_prerequisite_missing",
+        delay=4.0,
+    )
+    registry._schedule_internalization_retry(
+        "WorkflowEvolutionBot",
+        reason="internalization_prerequisite_missing",
+        delay=4.0,
+    )
+
+    assert len(created_timers) == 1
+    assert registry._internalization_retry_handles.get("WorkflowEvolutionBot") is created_timers[0]
+    state = registry._retry_schedule_state[("WorkflowEvolutionBot", "internalization_prerequisite_missing")]
+    assert state.scheduled_count == 1
+    assert state.pending_skip_count >= 1

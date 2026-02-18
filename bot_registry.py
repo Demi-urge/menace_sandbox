@@ -1968,6 +1968,18 @@ class BotRegistry:
 
             if pending_until is not None:
                 schedule_state.pending_skip_count += 1
+                logger.debug(
+                    "internalization retry deduped while pending for %s (reason=%s)",
+                    name,
+                    reason,
+                    extra={
+                        "event": "internalization_retry_deduped",
+                        "bot": name,
+                        "reason": reason,
+                        "source": "pending_retry_window",
+                        "pending_until": pending_until,
+                    },
+                )
                 self._log_retry_schedule_summary(
                     name=name,
                     reason=reason,
@@ -1985,6 +1997,17 @@ class BotRegistry:
                 and existing_reason == reason
             ):
                 schedule_state.pending_skip_count += 1
+                logger.debug(
+                    "internalization retry deduped with active timer for %s (reason=%s)",
+                    name,
+                    reason,
+                    extra={
+                        "event": "internalization_retry_deduped",
+                        "bot": name,
+                        "reason": reason,
+                        "source": "active_retry_timer",
+                    },
+                )
                 self._log_retry_schedule_summary(
                     name=name,
                     reason=reason,

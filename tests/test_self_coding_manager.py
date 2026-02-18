@@ -3832,3 +3832,59 @@ def test_force_clear_in_flight_entry_emits_structured_log_and_retry(monkeypatch,
     ]
     assert matching_logs
     assert matching_logs[-1].reason == "stale_watchdog_force_clear"
+
+
+def test_internalize_in_flight_dedup_skips_manager_construction_and_logs_drop(monkeypatch, caplog):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+
+    existing_manager = types.SimpleNamespace(
+        quick_fix=object(),
+        event_bus=object(),
+        logger=logging.getLogger(__name__),
+    )
+    registry = DummyRegistry()
+    registry.graph.nodes["WorkflowEvolutionBot"] = {"selfcoding_manager": existing_manager}
+
+    now = scm.time.monotonic()
+    monkeypatch.setattr(
+        scm,
+        "_INTERNALIZE_IN_FLIGHT",
+        {"WorkflowEvolutionBot": now - 2.5},
+    )
+    monkeypatch.setattr(scm, "_INTERNALIZE_LAST_ATTEMPT_STARTED_AT", {})
+    monkeypatch.setattr(scm, "_INTERNALIZE_DEBOUNCE_SECONDS", 60.0)
+
+    def _unexpected_manager(*_args, **_kwargs):
+        raise AssertionError("manager construction should not run for in-flight dedupe")
+
+    monkeypatch.setattr(scm, "SelfCodingManager", _unexpected_manager)
+
+    with caplog.at_level(logging.DEBUG):
+        manager = scm.internalize_coding_bot(
+            "WorkflowEvolutionBot",
+            object(),
+            object(),
+            data_bot=types.SimpleNamespace(),
+            bot_registry=registry,
+            provenance_token="token",
+        )
+
+    assert manager is existing_manager
+    node = registry.graph.nodes["WorkflowEvolutionBot"]
+    assert node["attempt_result"] == "skipped_in_flight"
+
+    dropped = [
+        rec for rec in caplog.records if getattr(rec, "event", "") == "internalize_duplicate_dropped"
+    ]
+    assert dropped
+    record = dropped[-1]
+    assert getattr(record, "bot", None) == "WorkflowEvolutionBot"
+    assert getattr(record, "reason", None) == "skipped_in_flight"
+    assert getattr(record, "source", None) == "in_flight_guard"
+    assert getattr(record, "active_attempt_age_seconds", 0.0) >= 0.0
