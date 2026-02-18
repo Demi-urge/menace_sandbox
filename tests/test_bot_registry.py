@@ -376,7 +376,10 @@ def test_schedule_internalization_retry_dedupes_pending_same_reason(monkeypatch)
         def is_alive(self):
             return self._alive
 
+    now = [300.0]
+
     monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(br.time, "monotonic", lambda: now[0])
 
     registry = br.BotRegistry()
     registry.graph.add_node("bot", is_coding_bot=True, pending_internalization=True)
@@ -388,7 +391,9 @@ def test_schedule_internalization_retry_dedupes_pending_same_reason(monkeypatch)
     registry._schedule_internalization_retry("bot", reason="force_retry", delay=3.0)
     second = registry._internalization_retry_handles.get("bot")
     assert second is first
-    assert ("bot", "force_retry") in registry._internalization_retry_pending
+    pending_until = registry._internalization_retry_pending.get(("bot", "force_retry"))
+    assert pending_until is not None
+    assert pending_until >= registry._retry_schedule_state[("bot", "force_retry")].next_allowed_at
 
 
 def test_schedule_internalization_retry_dedupes_pending_same_reason_even_with_replaced_handle(
@@ -413,7 +418,10 @@ def test_schedule_internalization_retry_dedupes_pending_same_reason_even_with_re
         def is_alive(self):
             return self._alive
 
+    now = [300.0]
+
     monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(br.time, "monotonic", lambda: now[0])
 
     registry = br.BotRegistry()
     registry.graph.add_node("bot", is_coding_bot=True, pending_internalization=True)
@@ -432,6 +440,98 @@ def test_schedule_internalization_retry_dedupes_pending_same_reason_even_with_re
     assert registry._internalization_retry_handles.get("bot") is None
     assert registry._internalization_retry_reasons.get("bot") == "other_reason"
     assert registry._retry_schedule_state[("bot", "force_retry")].pending_skip_count >= 1
+
+
+
+def test_schedule_internalization_retry_respects_next_allowed_cooldown(monkeypatch):
+    import menace_sandbox.bot_registry as br
+
+    class FakeTimer:
+        def __init__(self, delay, callback, args=()):
+            self.delay = delay
+            self.callback = callback
+            self.args = args
+            self.daemon = False
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            return None
+
+        def is_alive(self):
+            return False
+
+    now = [100.0]
+
+    monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(br.time, "monotonic", lambda: now[0])
+
+    registry = br.BotRegistry()
+    registry._retry_schedule_min_interval = 2.0
+    registry.graph.add_node("bot", is_coding_bot=True, pending_internalization=True)
+
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
+    state = registry._retry_schedule_state[("bot", "force_retry")]
+    assert state.scheduled_count == 1
+
+    # Simulate pending timer completion while still inside cooldown window.
+    registry._internalization_retry_pending.pop(("bot", "force_retry"), None)
+
+    now[0] += 0.5
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
+
+    state = registry._retry_schedule_state[("bot", "force_retry")]
+    assert state.scheduled_count == 1
+    assert state.deduped_count >= 1
+
+
+def test_schedule_internalization_retry_logs_suppressed_summary_periodically(monkeypatch):
+    import menace_sandbox.bot_registry as br
+
+    class FakeTimer:
+        def __init__(self, delay, callback, args=()):
+            self.delay = delay
+            self.callback = callback
+            self.args = args
+            self.daemon = False
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            return None
+
+        def is_alive(self):
+            return False
+
+    now = [200.0]
+
+    monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(br.time, "monotonic", lambda: now[0])
+
+    registry = br.BotRegistry()
+    registry._retry_summary_log_interval = 10.0
+    registry.graph.add_node("bot", is_coding_bot=True, pending_internalization=True)
+
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=20.0)
+    state = registry._retry_schedule_state[("bot", "force_retry")]
+    first_log_at = state.last_log_at
+
+    now[0] += 1.0
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=20.0)
+    state = registry._retry_schedule_state[("bot", "force_retry")]
+    assert state.pending_skip_count == 1
+    assert state.last_log_at == first_log_at
+    assert state.last_logged_suppressed_count == 0
+
+    now[0] += 11.0
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=20.0)
+
+    state = registry._retry_schedule_state[("bot", "force_retry")]
+    assert state.pending_skip_count == 2
+    assert state.last_log_at == now[0]
+    assert state.last_logged_suppressed_count == 2
 
 
 def test_schedule_internalization_retry_caps_window_and_pauses(monkeypatch):
@@ -454,7 +554,10 @@ def test_schedule_internalization_retry_caps_window_and_pauses(monkeypatch):
         def is_alive(self):
             return self._alive
 
+    now = [300.0]
+
     monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(br.time, "monotonic", lambda: now[0])
 
     registry = br.BotRegistry()
     registry._retry_schedule_max_per_window = 2
@@ -462,7 +565,9 @@ def test_schedule_internalization_retry_caps_window_and_pauses(monkeypatch):
     registry.graph.add_node("bot", is_coding_bot=True, pending_internalization=True)
 
     registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
+    now[0] += 0.2
     registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
+    now[0] += 0.2
     registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
 
     disabled = registry.graph.nodes["bot"]["self_coding_disabled"]
