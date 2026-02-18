@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+from collections import Counter
+import json
 import logging
 import shutil
+from datetime import datetime, timezone
 
 from dynamic_path_router import resolve_path
 
@@ -214,7 +217,10 @@ class ModuleRetirementService:
         )
         dependents = list(self._dependents(module))
         if dependents:
-            self.logger.warning("cannot retire %s; dependents exist: %s", module, dependents)
+            self.logger.debug(
+                "cannot retire %s; dependents exist: %s", module, dependents
+            )
+            self._record_retirement_block(module, dependents)
             return False
         archive_dir = self.root / "sandbox_data" / "retired_modules"
         try:
@@ -229,6 +235,46 @@ class ModuleRetirementService:
         except Exception:  # pragma: no cover - filesystem issues
             self.logger.exception("failed to retire module %s", module)
         return False
+
+    def _record_retirement_block(self, module: str, dependents: list[str]) -> None:
+        details = getattr(self, "_retirement_blocked", None)
+        if details is None:
+            self._retirement_blocked: list[dict[str, Any]] = []
+            details = self._retirement_blocked
+        details.append({"module": module, "dependents": sorted(dependents)})
+
+    def _flush_retirement_block_summary(self) -> None:
+        details = getattr(self, "_retirement_blocked", None) or []
+        if not details:
+            return
+
+        dependent_counts = Counter(
+            dependent
+            for item in details
+            for dependent in item.get("dependents", [])
+        )
+        top_offenders = [
+            {"module": module, "blocked_count": count}
+            for module, count in dependent_counts.most_common(5)
+        ]
+        self.logger.warning(
+            "retirement scan blocked %d module(s) due to dependents; top dependents: %s",
+            len(details),
+            top_offenders,
+        )
+
+        artifact_dir = self.root / "sandbox_data" / "retirement_reports"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        report_path = artifact_dir / (
+            f"blocked_retirements_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+        )
+        report = {
+            "blocked_count": len(details),
+            "top_dependents": top_offenders,
+            "blocked_modules": details,
+        }
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True))
+        self.logger.debug("wrote blocked retirement report: %s", report_path)
 
     def compress_module(self, module: str) -> bool:
         """Invoke quick fix tooling to minimise ``module``."""
@@ -361,6 +407,7 @@ class ModuleRetirementService:
         """Process relevancy ``flags`` mapping modules to actions."""
 
         results: Dict[str, str] = {}
+        self._retirement_blocked: list[dict[str, Any]] = []
         for mod, flag in flags.items():
             success = False
             if flag == "retire":
@@ -382,6 +429,7 @@ class ModuleRetirementService:
                 continue
             if not success:
                 results.setdefault(mod, "skipped")
+        self._flush_retirement_block_summary()
         update_module_retirement_metrics(results)
         return results
 
