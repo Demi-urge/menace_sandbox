@@ -103,6 +103,25 @@ else:
 _INTERNALIZE_MONITOR_INTERVAL_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_MONITOR_INTERVAL_SECONDS", "30")
 )
+_RAW_INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS = os.getenv(
+    "SELF_CODING_INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS", ""
+).strip()
+if _RAW_INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS:
+    try:
+        _INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS = max(
+            float(_RAW_INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS),
+            0.0,
+        )
+    except ValueError:
+        _INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS = max(
+            _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS * 2,
+            _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS,
+        )
+else:
+    _INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS = max(
+        _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS * 2,
+        _INTERNALIZE_IN_FLIGHT_WARN_THRESHOLD_SECONDS,
+    )
 _INTERNALIZE_BOT_LOCKS_LOCK = threading.Lock()
 _INTERNALIZE_BOT_LOCKS: dict[str, threading.Lock] = {}
 _INTERNALIZE_REUSE_WINDOW_SECONDS = float(
@@ -668,6 +687,77 @@ def _replace_internalize_lock(bot_name: str) -> None:
         _INTERNALIZE_BOT_LOCKS[bot_name] = threading.Lock()
 
 
+def _force_clear_in_flight_entry(
+    *,
+    bot_name: str,
+    started_at: float,
+    age_seconds: float,
+    reason: str,
+    logger: logging.Logger,
+    bot_registry: Any = None,
+) -> None:
+    """Force-clear stale in-flight state and emit structured diagnostics."""
+
+    node = None
+    with _INTERNALIZE_IN_FLIGHT_LOCK:
+        removed_at = _INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
+        _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
+    if removed_at is None:
+        return
+
+    if bot_registry is not None:
+        try:
+            node = bot_registry.graph.nodes.get(bot_name)
+        except Exception:
+            node = None
+
+    last_step = None
+    started_epoch = None
+    if node is not None:
+        last_step = node.get("internalization_last_step")
+        started_epoch = node.pop("internalization_in_progress", None)
+        node["internalization_last_step"] = f"forced stale cleanup ({reason})"
+
+    _replace_internalize_lock(bot_name)
+    logger.warning(
+        "force-cleared internalize in-flight entry for %s after %.1fs (%s)",
+        bot_name,
+        age_seconds,
+        reason,
+        extra={
+            "event": "internalize_in_flight_force_cleared",
+            "bot": bot_name,
+            "reason": reason,
+            "started_at_monotonic": started_at,
+            "in_flight_seconds": age_seconds,
+            "internalization_last_step": last_step,
+            "internalization_in_progress": started_epoch,
+            "force_clear_max_age_seconds": _INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS,
+        },
+    )
+
+    _record_internalize_failure(
+        bot_name,
+        module_path=None,
+        reason=reason,
+        logger=logger,
+    )
+    _record_stale_internalization_failure_event(
+        bot_name=bot_name,
+        started_at=started_at,
+        age_seconds=age_seconds,
+        threshold_seconds=_INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS,
+        logger=logger,
+        bot_registry=bot_registry,
+        node=node,
+    )
+    _schedule_internalization_timeout_retry(
+        bot_name=bot_name,
+        logger=logger,
+        bot_registry=bot_registry,
+    )
+
+
 def _record_stale_internalization_failure_event(
     *,
     bot_name: str,
@@ -874,6 +964,19 @@ def _start_internalize_monitor(bot_registry: Any) -> None:
                             "internalization_in_progress": started_epoch,
                         },
                     )
+
+                    if (
+                        _INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS > 0
+                        and age >= _INTERNALIZE_FORCE_CLEAR_MAX_AGE_SECONDS
+                    ):
+                        _force_clear_in_flight_entry(
+                            bot_name=candidate,
+                            started_at=started_at,
+                            age_seconds=age,
+                            reason="stale_watchdog_force_clear",
+                            logger=logger,
+                            bot_registry=bot_registry,
+                        )
 
                 time.sleep(_INTERNALIZE_MONITOR_INTERVAL_SECONDS)
 
@@ -6580,28 +6683,32 @@ def internalize_coding_bot(
                 _record_manager_phase("manager_init:return")
                 return manager
 
-            if manager_timeout == 0.0:
-                manager = _build_manager()
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            manager_future = executor.submit(_build_manager)
+            try:
+                logger_ref.info(
+                    "internalize_coding_bot waiting on manager construction future",
+                    extra={
+                        "event": "internalize_manager_wait_start",
+                        "bot_name": bot_name,
+                        "bot_key": _normalize_env_bot_name(bot_name),
+                        "manager_timeout_seconds": manager_timeout,
+                    },
+                )
+                manager = manager_future.result(
+                    timeout=None if manager_timeout == 0.0 else manager_timeout
+                )
                 _record_successful_phase_durations()
-            else:
-                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                manager_future = executor.submit(_build_manager)
-                try:
-                    logger_ref.info(
-                        "internalize_coding_bot waiting on manager construction future",
-                        extra={
-                            "event": "internalize_manager_wait_start",
-                            "bot_name": bot_name,
-                            "bot_key": _normalize_env_bot_name(bot_name),
-                            "manager_timeout_seconds": manager_timeout,
-                        },
-                    )
-                    manager = manager_future.result(timeout=manager_timeout)
-                    _record_successful_phase_durations()
-                except concurrent.futures.TimeoutError:
+            except concurrent.futures.TimeoutError:
                     elapsed = max(0.0, time.monotonic() - manager_timer)
                     timeout_phase, phase_started_at, timeout_history = _snapshot_phase_state()
                     phase_elapsed = max(0.0, time.monotonic() - phase_started_at)
+                    _record_internalize_failure(
+                        bot_name,
+                        module_path=module_path,
+                        reason="manager_construction_timeout",
+                        logger=logger_ref,
+                    )
                     is_bot_planning = _normalize_env_bot_name(bot_name) == "BOTPLANNINGBOT"
                     phase_metrics = _phase_metrics_for_bot()
                     retry_timeout = None
@@ -6811,8 +6918,8 @@ def internalize_coding_bot(
                         raise TimeoutError(
                             f"manager construction timed out for {bot_name} after {manager_timeout:.2f}s"
                         )
-                finally:
-                    executor.shutdown(wait=False, cancel_futures=True)
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
             _end_step("manager construction", manager_timer)
             deferred_orchestrator_timer = _start_step("deferred orchestrator initialization")
             try:
