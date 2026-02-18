@@ -78,6 +78,8 @@ _INTERNALIZE_THROTTLE_LOCK = threading.Lock()
 _LAST_INTERNALIZE_AT = 0.0
 _INTERNALIZE_IN_FLIGHT_LOCK = threading.Lock()
 _INTERNALIZE_IN_FLIGHT: dict[str, float] = {}
+_INTERNALIZE_ACTIVE_TOKEN_LOCK = threading.Lock()
+_INTERNALIZE_ACTIVE_TOKENS: dict[str, dict[str, Any]] = {}
 _INTERNALIZE_STALE_TIMEOUT_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_STALE_TIMEOUT_SECONDS", "1200")
 )
@@ -739,6 +741,41 @@ def _consume_stale_internalize_in_flight(
             stale.append((candidate, started_at))
             _INTERNALIZE_IN_FLIGHT.pop(candidate, None)
     return stale
+
+
+def _acquire_internalize_active_token(
+    *,
+    bot_name: str,
+    reason: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Atomically acquire an internalization entry token for ``bot_name``."""
+
+    now = time.monotonic()
+    with _INTERNALIZE_ACTIVE_TOKEN_LOCK:
+        active = _INTERNALIZE_ACTIVE_TOKENS.get(bot_name)
+        if isinstance(active, dict):
+            return None, dict(active)
+        token = uuid.uuid4().hex
+        _INTERNALIZE_ACTIVE_TOKENS[bot_name] = {
+            "token": token,
+            "started_at": now,
+            "reason": reason,
+        }
+    return token, None
+
+
+def _release_internalize_active_token(*, bot_name: str, token: str | None) -> None:
+    """Clear the internalization entry token for ``bot_name`` when owned."""
+
+    if not token:
+        return
+    with _INTERNALIZE_ACTIVE_TOKEN_LOCK:
+        active = _INTERNALIZE_ACTIVE_TOKENS.get(bot_name)
+        if not isinstance(active, dict):
+            return
+        if active.get("token") != token:
+            return
+        _INTERNALIZE_ACTIVE_TOKENS.pop(bot_name, None)
 
 
 def _replace_internalize_lock(bot_name: str) -> None:
@@ -6288,6 +6325,7 @@ def internalize_coding_bot(
     attempt_started = False
     attempt_metric_recorded = False
     duplicate_invoke_skip_reason: str | None = None
+    active_token: str | None = None
 
     def _shutdown_guard_state() -> dict[str, Any] | None:
         reasons: list[str] = []
@@ -6457,6 +6495,7 @@ def internalize_coding_bot(
                 "reused_existing_manager",
                 "reused_recent_manager",
                 "churn_paused",
+                "active_token_dedup",
             }:
                 _record_internalize_stat_event(bot_name, result="early_return")
             else:
@@ -6471,6 +6510,32 @@ def internalize_coding_bot(
 
     if bot_registry is not None:
         node = bot_registry.graph.nodes.get(bot_name)
+
+    active_token, active_token_state = _acquire_internalize_active_token(
+        bot_name=bot_name,
+        reason="internalize_coding_bot",
+    )
+    if active_token is None:
+        active_reason = "unknown"
+        active_age = 0.0
+        if isinstance(active_token_state, dict):
+            active_reason = str(active_token_state.get("reason") or "unknown")
+            started_at = active_token_state.get("started_at")
+            if isinstance(started_at, (int, float)):
+                active_age = max(0.0, time.monotonic() - float(started_at))
+        duplicate_invoke_skip_reason = "active_token_dedup"
+        _record_attempt_finish(duplicate_invoke_skip_reason)
+        logger_ref.info(
+            "internalize_coding_bot deduped active entry for %s",
+            bot_name,
+            extra={
+                "event": "internalize_active_token_dedup",
+                "bot": bot_name,
+                "reason": active_reason,
+                "active_attempt_age_seconds": active_age,
+            },
+        )
+        return _inflight_manager_fallback()
 
     if _internalize_churn_paused(bot_name):
         logger_ref.warning("internalize_coding_bot paused for %s due to churn", bot_name)
@@ -7632,6 +7697,7 @@ def internalize_coding_bot(
         finally:
             internalize_lock.release()
     finally:
+        _release_internalize_active_token(bot_name=bot_name, token=active_token)
         if added_in_flight:
             with _INTERNALIZE_IN_FLIGHT_LOCK:
                 _INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
