@@ -845,10 +845,12 @@ class _RetryScheduleState:
     reason: str
     timestamps: deque[float] = field(default_factory=deque)
     last_scheduled: float = 0.0
+    next_allowed_at: float = 0.0
     scheduled_count: int = 0
     deduped_count: int = 0
     pending_skip_count: int = 0
     last_log_at: float = 0.0
+    last_logged_suppressed_count: int = 0
 
     def trim(self, *, now: float, window_seconds: float) -> None:
         if window_seconds <= 0:
@@ -1722,7 +1724,7 @@ class BotRegistry:
         self._internalization_retry_attempts: Dict[str, int] = {}
         self._internalization_retry_handles: Dict[str, threading.Timer] = {}
         self._internalization_retry_reasons: Dict[str, str] = {}
-        self._internalization_retry_pending: set[tuple[str, str]] = set()
+        self._internalization_retry_pending: Dict[tuple[str, str], float] = {}
         self._retry_schedule_state: Dict[tuple[str, str], _RetryScheduleState] = {}
         self._transient_error_state: Dict[str, _TransientErrorState] = {}
         self._module_path_failures: Dict[str, _ModulePathResolutionState] = {}
@@ -1854,7 +1856,7 @@ class BotRegistry:
         handle = self._internalization_retry_handles.pop(name, None)
         reason = self._internalization_retry_reasons.pop(name, None)
         if isinstance(reason, str):
-            self._internalization_retry_pending.discard((name, reason))
+            self._internalization_retry_pending.pop((name, reason), None)
         if handle is None:
             return
         try:
@@ -1898,6 +1900,20 @@ class BotRegistry:
         """Emit a consolidated retry scheduling summary for a bot/reason pair."""
 
         now = time.monotonic()
+        suppressed_retries = (
+            schedule_state.deduped_count + schedule_state.pending_skip_count
+        )
+        is_suppression_log = status in {"pending", "deduped"}
+
+        if is_suppression_log:
+            if (
+                schedule_state.last_log_at
+                and (now - schedule_state.last_log_at) < self._retry_summary_log_interval
+            ):
+                return
+            if suppressed_retries <= schedule_state.last_logged_suppressed_count:
+                return
+            status = "suppressed_retries"
         if (
             status == "scheduled"
             and schedule_state.last_log_at
@@ -1905,16 +1921,24 @@ class BotRegistry:
         ):
             return
         schedule_state.last_log_at = now
+        schedule_state.last_logged_suppressed_count = suppressed_retries
         logger.info(
-            "internalization retry summary bot=%s reason=%s status=%s scheduled=%s deduped=%s "
-            "pending_skipped=%s in_window=%s delay=%s",
+            "internalization retry summary bot=%s reason=%s status=%s scheduled=%s "
+            "suppressed_retries=%s deduped=%s pending_skipped=%s in_window=%s "
+            "next_allowed_in=%s delay=%s",
             name,
             reason,
             status,
             schedule_state.scheduled_count,
+            suppressed_retries,
             schedule_state.deduped_count,
             schedule_state.pending_skip_count,
             len(schedule_state.timestamps),
+            (
+                f"{max(0.0, schedule_state.next_allowed_at - now):.2f}s"
+                if schedule_state.next_allowed_at
+                else "0.00s"
+            ),
             f"{delay:.2f}s" if delay is not None else "auto",
         )
 
@@ -1937,7 +1961,12 @@ class BotRegistry:
                 self._retry_schedule_state[key] = schedule_state
             schedule_state.trim(now=now, window_seconds=self._retry_schedule_window_seconds)
 
-            if key in self._internalization_retry_pending:
+            pending_until = self._internalization_retry_pending.get(key)
+            if pending_until is not None and now >= pending_until:
+                self._internalization_retry_pending.pop(key, None)
+                pending_until = None
+
+            if pending_until is not None:
                 schedule_state.pending_skip_count += 1
                 self._log_retry_schedule_summary(
                     name=name,
@@ -1975,9 +2004,7 @@ class BotRegistry:
                         exc_info=True,
                     )
 
-            if schedule_state.last_scheduled and (
-                now - schedule_state.last_scheduled
-            ) < self._retry_schedule_min_interval:
+            if schedule_state.next_allowed_at and now < schedule_state.next_allowed_at:
                 schedule_state.deduped_count += 1
                 self._log_retry_schedule_summary(
                     name=name,
@@ -2027,7 +2054,11 @@ class BotRegistry:
             timer.daemon = True
             self._internalization_retry_handles[name] = timer
             self._internalization_retry_reasons[name] = reason
-            self._internalization_retry_pending.add(key)
+            schedule_state.next_allowed_at = now + max(
+                self._retry_schedule_min_interval,
+                retry_delay,
+            )
+            self._internalization_retry_pending[key] = schedule_state.next_allowed_at
             schedule_state.last_scheduled = now
             schedule_state.scheduled_count += 1
             schedule_state.timestamps.append(now)
@@ -2043,7 +2074,7 @@ class BotRegistry:
             timer.start()
         except Exception:  # pragma: no cover - timer creation best effort
             with self._lock:
-                self._internalization_retry_pending.discard((name, reason))
+                self._internalization_retry_pending.pop((name, reason), None)
             logger.exception("failed to start internalization retry timer for %s", name)
 
     def force_internalization_retry(
