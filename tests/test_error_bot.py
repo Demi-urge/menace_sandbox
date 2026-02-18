@@ -33,6 +33,23 @@ def make_metrics(tmp_path):
     return mdb
 
 
+
+
+def test_broker_reuse_log_extra_rate_limits(monkeypatch):
+    monkeypatch.setattr(eb, "_BROKER_REUSE_LOG_INTERVAL_SECONDS", 60)
+    monkeypatch.setattr(eb, "_BROKER_REUSE_LAST_EMIT_AT", None)
+    monkeypatch.setattr(eb, "_BROKER_REUSE_SUPPRESSED_COUNT", 0)
+
+    first = eb._broker_reuse_log_extra(now=100.0)
+    assert first == {"suppressed_count": 0, "last_emit_at": None}
+
+    suppressed = eb._broker_reuse_log_extra(now=120.0)
+    assert suppressed is None
+
+    second = eb._broker_reuse_log_extra(now=180.0)
+    assert second == {"suppressed_count": 1, "last_emit_at": 100.0}
+
+
 def test_add_error_duplicate(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(eb.ErrorDB, "add_embedding", lambda *a, **k: None)
     db = eb.ErrorDB(tmp_path / "e.db")
