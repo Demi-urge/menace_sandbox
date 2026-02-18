@@ -62,23 +62,31 @@ import threading
 from jinja2 import Template
 import yaml
 
-_BROKER_REUSE_LOGGED_AT: float | None = None
-_BROKER_REUSE_LAST_STATE: tuple[bool, bool, bool] | None = None
+_BROKER_REUSE_LOG_INTERVAL_SECONDS = 300
+_BROKER_REUSE_LAST_EMIT_AT: float | None = None
+_BROKER_REUSE_SUPPRESSED_COUNT = 0
 
 
-def _should_log_broker_reuse(*, broker_pipeline: bool, broker_manager: bool, bootstrap_inflight: bool) -> bool:
-    global _BROKER_REUSE_LOGGED_AT, _BROKER_REUSE_LAST_STATE
-    state = (broker_pipeline, broker_manager, bootstrap_inflight)
-    now = time.monotonic()
-    if _BROKER_REUSE_LAST_STATE != state:
-        _BROKER_REUSE_LAST_STATE = state
-        _BROKER_REUSE_LOGGED_AT = now
-        return True
-    if _BROKER_REUSE_LOGGED_AT is None or (now - _BROKER_REUSE_LOGGED_AT) >= 300:
-        _BROKER_REUSE_LAST_STATE = state
-        _BROKER_REUSE_LOGGED_AT = now
-        return True
-    return False
+def _broker_reuse_log_extra(*, now: float | None = None) -> dict[str, float | int | None] | None:
+    """Return extra fields for a broker reuse log when the rate limit allows it."""
+
+    global _BROKER_REUSE_LAST_EMIT_AT, _BROKER_REUSE_SUPPRESSED_COUNT
+
+    ts = now if now is not None else time.time()
+    if (
+        _BROKER_REUSE_LAST_EMIT_AT is not None
+        and (ts - _BROKER_REUSE_LAST_EMIT_AT) < _BROKER_REUSE_LOG_INTERVAL_SECONDS
+    ):
+        _BROKER_REUSE_SUPPRESSED_COUNT += 1
+        return None
+
+    extra = {
+        "suppressed_count": _BROKER_REUSE_SUPPRESSED_COUNT,
+        "last_emit_at": _BROKER_REUSE_LAST_EMIT_AT,
+    }
+    _BROKER_REUSE_LAST_EMIT_AT = ts
+    _BROKER_REUSE_SUPPRESSED_COUNT = 0
+    return extra
 
 try:  # pragma: no cover - prefer real vector service
     from vector_service import EmbeddableDBMixin, EmbeddingBackfill
@@ -279,11 +287,8 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
                     sentinel=bootstrap_manager
                     or getattr(bootstrap_pipeline, "manager", None),
                 )
-                if _should_log_broker_reuse(
-                    broker_pipeline=broker_pipeline is not None,
-                    broker_manager=broker_manager is not None,
-                    bootstrap_inflight=bootstrap_inflight,
-                ):
+                log_extra = _broker_reuse_log_extra()
+                if log_extra is not None:
                     logger.info(
                         "error bot bootstrap reusing broker pipeline",
                         extra={
@@ -291,6 +296,7 @@ def _ensure_self_coding_manager() -> "SelfCodingManager":
                             "broker_pipeline": broker_pipeline is not None,
                             "broker_manager": broker_manager is not None,
                             "bootstrap_inflight": bootstrap_inflight,
+                            **log_extra,
                         },
                     )
 
