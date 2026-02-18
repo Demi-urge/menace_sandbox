@@ -120,6 +120,17 @@ _INTERNALIZE_MONITOR_THREAD: threading.Thread | None = None
 _INTERNALIZE_MONITOR_STARTED = False
 _INTERNALIZE_MONITOR_START_LOCK = threading.Lock()
 _INTERNALIZE_MONITOR_LAST_LOGGED_AT: dict[str, float] = {}
+_RAW_INTERNALIZE_DEBOUNCE_SECONDS = os.getenv(
+    "SELF_CODING_INTERNALIZE_DEBOUNCE_SECONDS", "60"
+).strip()
+try:
+    _INTERNALIZE_DEBOUNCE_SECONDS = float(_RAW_INTERNALIZE_DEBOUNCE_SECONDS)
+except ValueError:
+    _INTERNALIZE_DEBOUNCE_SECONDS = 60.0
+_INTERNALIZE_DEBOUNCE_MIN_SECONDS = 30.0
+_INTERNALIZE_DEBOUNCE_MAX_SECONDS = 120.0
+_INTERNALIZE_DEBOUNCE_LOCK = threading.Lock()
+_INTERNALIZE_LAST_ATTEMPT_STARTED_AT: dict[str, float] = {}
 _SELF_DEBUG_BACKOFF_SECONDS = float(
     os.getenv("SELF_CODING_SELF_DEBUG_BACKOFF_SECONDS", "600")
 )
@@ -284,6 +295,38 @@ def _resolve_manager_timeout_seconds(bot_name: str) -> float:
         source="global_default",
     )
     return resolved_timeout
+
+
+def _resolve_internalize_debounce_seconds(bot_name: str) -> float:
+    """Resolve per-bot debounce window for internalization attempts."""
+
+    bot_key = _normalize_env_bot_name(bot_name)
+    candidate_vars = [
+        f"SELF_CODING_INTERNALIZE_DEBOUNCE_SECONDS_{bot_key}",
+        f"SELF_CODING_INTERNALIZATION_DEBOUNCE_SECONDS_{bot_key}",
+    ]
+    for env_var in candidate_vars:
+        raw_value = os.getenv(env_var)
+        if raw_value is None:
+            continue
+        try:
+            value = float(raw_value.strip())
+            return max(
+                _INTERNALIZE_DEBOUNCE_MIN_SECONDS,
+                min(_INTERNALIZE_DEBOUNCE_MAX_SECONDS, value),
+            )
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "invalid internalize debounce override %s=%r for %s; using default",
+                env_var,
+                raw_value,
+                bot_name,
+            )
+            break
+    return max(
+        _INTERNALIZE_DEBOUNCE_MIN_SECONDS,
+        min(_INTERNALIZE_DEBOUNCE_MAX_SECONDS, _INTERNALIZE_DEBOUNCE_SECONDS),
+    )
 
 def _resolve_manager_retry_timeout_seconds(bot_name: str, *, primary_timeout: float) -> float:
     """Resolve manager construction retry timeout for bounded retries."""
@@ -5939,6 +5982,8 @@ def internalize_coding_bot(
     node: dict[str, Any] | None = None
     added_in_flight = False
     logged_internalize_stack = False
+    attempt_result = "failed"
+    attempt_started = False
 
     def _shutdown_guard_state() -> dict[str, Any] | None:
         reasons: list[str] = []
@@ -6078,6 +6123,24 @@ def internalize_coding_bot(
             return existing_manager
         return _cooldown_disabled_manager(bot_registry, data_bot)
 
+    def _record_attempt_start() -> None:
+        nonlocal attempt_started
+        attempt_started = True
+        if node is None:
+            return
+        node["attempt_started_at"] = time.time()
+        node["attempt_finished_at"] = None
+        node["attempt_result"] = "in_progress"
+        node["internalization_last_step"] = "attempt started"
+
+    def _record_attempt_finish(result: str) -> None:
+        nonlocal attempt_result
+        attempt_result = result
+        if node is None:
+            return
+        node["attempt_finished_at"] = time.time()
+        node["attempt_result"] = result
+
     if bot_registry is not None:
         node = bot_registry.graph.nodes.get(bot_name)
 
@@ -6158,27 +6221,58 @@ def internalize_coding_bot(
                     logger=logger_ref,
                     bot_registry=bot_registry,
                 )
+                _record_attempt_finish("stale_internalization_timeout")
                 return _inflight_manager_fallback()
-            else:
-                _log_internalize_stack("in-flight")
-                logged_internalize_stack = True
-                last_step = None
-                if node is not None:
-                    last_step = node.get("internalization_last_step")
-                logger_ref.info(
-                    "internalize_coding_bot already in-flight for %s; skipping manager construction",
-                    bot_name,
-                    extra={
-                        "bot": bot_name,
-                        "in_flight_seconds": age,
-                        "internalization_last_step": last_step,
-                    },
-                )
-                return _inflight_manager_fallback()
-        _INTERNALIZE_IN_FLIGHT[bot_name] = time.monotonic()
+            _log_internalize_stack("in-flight")
+            logged_internalize_stack = True
+            last_step = None
+            if node is not None:
+                last_step = node.get("internalization_last_step")
+            logger_ref.info(
+                "internalize_coding_bot already in-flight for %s; skipping manager construction",
+                bot_name,
+                extra={
+                    "bot": bot_name,
+                    "in_flight_seconds": age,
+                    "internalization_last_step": last_step,
+                },
+            )
+            _record_attempt_finish("skipped_in_flight")
+            return _inflight_manager_fallback()
+
+    now_monotonic = time.monotonic()
+    debounce_window_seconds = _resolve_internalize_debounce_seconds(bot_name)
+    with _INTERNALIZE_DEBOUNCE_LOCK:
+        previous_attempt_started = _INTERNALIZE_LAST_ATTEMPT_STARTED_AT.get(bot_name)
+        within_debounce = (
+            isinstance(previous_attempt_started, (int, float))
+            and debounce_window_seconds > 0
+            and (now_monotonic - float(previous_attempt_started)) < debounce_window_seconds
+        )
+        if not within_debounce:
+            _INTERNALIZE_LAST_ATTEMPT_STARTED_AT[bot_name] = now_monotonic
+
+    if within_debounce:
+        if not logged_internalize_stack:
+            _log_internalize_stack("debounce")
+            logged_internalize_stack = True
+        _record_attempt_finish("skipped_debounce")
+        logger_ref.info(
+            "internalize_coding_bot debounce active for %s; skipping manager construction",
+            bot_name,
+            extra={
+                "bot": bot_name,
+                "debounce_window_seconds": debounce_window_seconds,
+            },
+        )
+        return _inflight_manager_fallback()
+
+    with _INTERNALIZE_IN_FLIGHT_LOCK:
+        _INTERNALIZE_IN_FLIGHT[bot_name] = now_monotonic
         added_in_flight = True
         _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
 
+    _record_attempt_start()
     if node is not None:
         node["internalization_in_progress"] = time.time()
         node["internalization_last_step"] = "internalization start"
@@ -6240,6 +6334,7 @@ def internalize_coding_bot(
                 return elapsed
 
             if _internalize_in_cooldown(bot_name):
+                _record_attempt_finish("cooldown")
                 return _cooldown_disabled_manager(bot_registry, data_bot)
 
             shutdown_guard = _shutdown_guard_state()
@@ -6266,6 +6361,7 @@ def internalize_coding_bot(
                             "failed to publish internalize shutdown skip event for %s",
                             bot_name,
                         )
+                _record_attempt_finish("skipped_shutdown")
                 return _inflight_manager_fallback()
 
             if _current_self_coding_import_depth() > 0:
@@ -6277,6 +6373,7 @@ def internalize_coding_bot(
                     isinstance(disabled_state, dict)
                     and disabled_state.get("source") == "module_path_resolution"
                 ):
+                    _record_attempt_finish("disabled_module_path_resolution")
                     return _cooldown_disabled_manager(bot_registry, data_bot)
             existing_manager = None
             if node is not None:
@@ -6286,6 +6383,7 @@ def internalize_coding_bot(
                 logger_ref.info(
                     "internalize_coding_bot reusing existing manager for %s", bot_name
                 )
+                _record_attempt_finish("reused_existing_manager")
                 return existing_manager
             if existing_manager is not None and _recent_internalization():
                 if not logged_internalize_stack:
@@ -6296,6 +6394,7 @@ def internalize_coding_bot(
                     "recent internalization detected",
                     bot_name,
                 )
+                _record_attempt_finish("reused_recent_manager")
                 return existing_manager
 
             delay = 0.0
@@ -7093,6 +7192,7 @@ def internalize_coding_bot(
                 print(
                     f"[debug] internalize_coding_bot returning early without post patch cycle for bot: {bot_name}"
                 )
+                _record_attempt_finish("module_path_missing")
                 return manager
             if provenance_token is None:
                 _emit_failure("missing_provenance")
@@ -7138,10 +7238,12 @@ def internalize_coding_bot(
                 _end_step("run_post_patch_cycle", post_cycle_timer)
             _record_internalize_success(bot_name)
             _mark_last_internalized()
+            _record_attempt_finish("success")
             print(f"[debug] internalize_coding_bot returning manager for bot: {bot_name}")
             return manager
         except Exception as exc:
             _track_failure(str(exc))
+            _record_attempt_finish(str(exc) or "error")
             raise
         finally:
             internalize_lock.release()
@@ -7150,6 +7252,8 @@ def internalize_coding_bot(
             with _INTERNALIZE_IN_FLIGHT_LOCK:
                 _INTERNALIZE_IN_FLIGHT.pop(bot_name, None)
                 _INTERNALIZE_MONITOR_LAST_LOGGED_AT.pop(bot_name, None)
+        if attempt_started and node is not None and node.get("attempt_finished_at") is None:
+            _record_attempt_finish(attempt_result)
         if node is not None:
             node.pop("internalization_in_progress", None)
             node["internalization_last_step"] = "internalization finished"
