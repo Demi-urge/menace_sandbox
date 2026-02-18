@@ -3581,3 +3581,125 @@ def test_divergence_guard_recovers_after_metrics_resume(monkeypatch):
     assert mgr._self_coding_paused is False
     assert mgr._self_coding_disabled_reason is None
     assert any(topic == "self_coding:divergence_recovered" for topic, _ in events)
+
+
+def test_internalize_manager_construction_uses_executor_when_timeout_zero(monkeypatch):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+            self.event_bus = None
+            self.modules = {}
+
+        def register_bot(self, _bot_name, **_kwargs):
+            return None
+
+    class DummyManager:
+        def __init__(self, *args, **kwargs):
+            self.quick_fix = object()
+            self.event_bus = None
+            self.logger = logging.getLogger(__name__)
+            self.data_bot = kwargs.get("data_bot")
+            self.evolution_orchestrator = None
+
+        def initialize_deferred_components(self, skip_non_critical=False):
+            return None
+
+        def run_post_patch_cycle(self, *args, **kwargs):
+            return {"self_tests": {"failed": 0}}
+
+    class ImmediateFuture:
+        def __init__(self, value):
+            self.value = value
+            self.requested_timeout = "unset"
+
+        def result(self, timeout=None):
+            self.requested_timeout = timeout
+            return self.value
+
+    class RecordingExecutor:
+        futures: list[ImmediateFuture] = []
+
+        def __init__(self, max_workers=1):
+            self.max_workers = max_workers
+
+        def submit(self, func):
+            future = ImmediateFuture(func())
+            self.futures.append(future)
+            return future
+
+        def shutdown(self, wait=False, cancel_futures=False):
+            return None
+
+    registry = DummyRegistry()
+    registry.graph.nodes["ObserveBot"] = {}
+
+    monkeypatch.setattr(scm, "SelfCodingManager", DummyManager)
+    monkeypatch.setattr(scm, "persist_sc_thresholds", lambda *a, **k: None)
+    monkeypatch.setattr(scm, "_resolve_manager_timeout_seconds", lambda bot_name: 0.0)
+    monkeypatch.setattr(scm.concurrent.futures, "ThreadPoolExecutor", RecordingExecutor)
+
+    manager = scm.internalize_coding_bot(
+        "ObserveBot",
+        object(),
+        object(),
+        data_bot=types.SimpleNamespace(),
+        bot_registry=registry,
+        provenance_token="token",
+    )
+
+    assert isinstance(manager, DummyManager)
+    assert RecordingExecutor.futures
+    assert RecordingExecutor.futures[-1].requested_timeout is None
+
+
+def test_force_clear_in_flight_entry_emits_structured_log_and_retry(monkeypatch, caplog):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+            self.retry_calls = []
+
+        def force_internalization_retry(self, bot_name, delay=0.0):
+            self.retry_calls.append((bot_name, delay))
+
+    registry = DummyRegistry()
+    registry.graph.nodes["WatchdogBot"] = {
+        "internalization_last_step": "manager construction",
+        "internalization_in_progress": 123.0,
+    }
+    logger = logging.getLogger("watchdog-test")
+
+    monkeypatch.setattr(scm, "_INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS", 1.0)
+    monkeypatch.setattr(scm, "_INTERNALIZE_TIMEOUT_RETRY_STATE", {})
+    monkeypatch.setattr(scm, "_record_internalize_failure", lambda *a, **k: None)
+    monkeypatch.setattr(scm, "_record_stale_internalization_failure_event", lambda **k: None)
+
+    with scm._INTERNALIZE_IN_FLIGHT_LOCK:
+        scm._INTERNALIZE_IN_FLIGHT["WatchdogBot"] = 10.0
+
+    with caplog.at_level(logging.WARNING):
+        scm._force_clear_in_flight_entry(
+            bot_name="WatchdogBot",
+            started_at=10.0,
+            age_seconds=999.0,
+            reason="stale_watchdog_force_clear",
+            logger=logger,
+            bot_registry=registry,
+        )
+
+    with scm._INTERNALIZE_IN_FLIGHT_LOCK:
+        assert "WatchdogBot" not in scm._INTERNALIZE_IN_FLIGHT
+    assert registry.retry_calls and registry.retry_calls[-1][0] == "WatchdogBot"
+
+    matching_logs = [
+        rec for rec in caplog.records if getattr(rec, "event", None) == "internalize_in_flight_force_cleared"
+    ]
+    assert matching_logs
+    assert matching_logs[-1].reason == "stale_watchdog_force_clear"
