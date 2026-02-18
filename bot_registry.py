@@ -1722,6 +1722,7 @@ class BotRegistry:
         self._internalization_retry_attempts: Dict[str, int] = {}
         self._internalization_retry_handles: Dict[str, threading.Timer] = {}
         self._internalization_retry_reasons: Dict[str, str] = {}
+        self._internalization_retry_pending: set[tuple[str, str]] = set()
         self._retry_schedule_state: Dict[tuple[str, str], _RetryScheduleState] = {}
         self._transient_error_state: Dict[str, _TransientErrorState] = {}
         self._module_path_failures: Dict[str, _ModulePathResolutionState] = {}
@@ -1851,7 +1852,9 @@ class BotRegistry:
         """Best-effort cancellation for a pending internalisation retry timer."""
 
         handle = self._internalization_retry_handles.pop(name, None)
-        self._internalization_retry_reasons.pop(name, None)
+        reason = self._internalization_retry_reasons.pop(name, None)
+        if isinstance(reason, str):
+            self._internalization_retry_pending.discard((name, reason))
         if handle is None:
             return
         try:
@@ -1934,6 +1937,17 @@ class BotRegistry:
                 self._retry_schedule_state[key] = schedule_state
             schedule_state.trim(now=now, window_seconds=self._retry_schedule_window_seconds)
 
+            if key in self._internalization_retry_pending:
+                schedule_state.pending_skip_count += 1
+                self._log_retry_schedule_summary(
+                    name=name,
+                    reason=reason,
+                    schedule_state=schedule_state,
+                    delay=delay,
+                    status="pending",
+                )
+                return
+
             existing = self._internalization_retry_handles.get(name)
             existing_reason = self._internalization_retry_reasons.get(name)
             if (
@@ -2013,6 +2027,7 @@ class BotRegistry:
             timer.daemon = True
             self._internalization_retry_handles[name] = timer
             self._internalization_retry_reasons[name] = reason
+            self._internalization_retry_pending.add(key)
             schedule_state.last_scheduled = now
             schedule_state.scheduled_count += 1
             schedule_state.timestamps.append(now)
@@ -2027,6 +2042,8 @@ class BotRegistry:
         try:
             timer.start()
         except Exception:  # pragma: no cover - timer creation best effort
+            with self._lock:
+                self._internalization_retry_pending.discard((name, reason))
             logger.exception("failed to start internalization retry timer for %s", name)
 
     def force_internalization_retry(

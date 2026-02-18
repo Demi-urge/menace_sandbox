@@ -2358,6 +2358,48 @@ def test_internalize_debounce_reuses_existing_manager(monkeypatch):
     assert node["attempt_finished_at"] is not None
 
 
+def test_internalize_duplicate_invoke_debounce_records_skip_reason(monkeypatch):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+
+    existing_manager = types.SimpleNamespace(
+        quick_fix=object(),
+        event_bus=object(),
+        logger=logging.getLogger(__name__),
+    )
+    registry = DummyRegistry()
+    registry.graph.nodes["DupBot"] = {"selfcoding_manager": existing_manager}
+
+    now = scm.time.monotonic()
+    monkeypatch.setattr(
+        scm,
+        "_INTERNALIZE_LAST_MANAGER_CONSTRUCTION_STARTED_AT",
+        {"DupBot": now - 0.05},
+    )
+    monkeypatch.setattr(scm, "_INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS", 1.0)
+    monkeypatch.setattr(scm, "_INTERNALIZE_LAST_ATTEMPT_STARTED_AT", {})
+    monkeypatch.setattr(scm, "_INTERNALIZE_DEBOUNCE_SECONDS", 60.0)
+
+    manager = scm.internalize_coding_bot(
+        "DupBot",
+        object(),
+        object(),
+        data_bot=types.SimpleNamespace(),
+        bot_registry=registry,
+        provenance_token="token",
+    )
+
+    assert manager is existing_manager
+    node = registry.graph.nodes["DupBot"]
+    assert node["attempt_result"] == "duplicate_invoke_debounced"
+    assert node["attempt_finished_at"] is not None
+
+
 def test_internalize_records_attempt_timestamps_and_result(monkeypatch, tmp_path):
     class DummyRegistry:
         class Graph:
