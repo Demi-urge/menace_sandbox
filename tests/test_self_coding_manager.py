@@ -2400,6 +2400,93 @@ def test_internalize_duplicate_invoke_debounce_records_skip_reason(monkeypatch):
     assert node["attempt_finished_at"] is not None
 
 
+
+def test_internalize_active_token_dedup_logs_age_and_reason(monkeypatch, caplog):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+
+    existing_manager = types.SimpleNamespace(
+        quick_fix=object(),
+        event_bus=object(),
+        logger=logging.getLogger(__name__),
+    )
+    registry = DummyRegistry()
+    registry.graph.nodes["TokenBot"] = {"selfcoding_manager": existing_manager}
+
+    now = scm.time.monotonic()
+    monkeypatch.setattr(
+        scm,
+        "_INTERNALIZE_ACTIVE_TOKENS",
+        {
+            "TokenBot": {
+                "token": "existing-token",
+                "reason": "manager_construction",
+                "started_at": now - 4.0,
+            }
+        },
+    )
+
+    with caplog.at_level(logging.INFO):
+        manager = scm.internalize_coding_bot(
+            "TokenBot",
+            object(),
+            object(),
+            data_bot=types.SimpleNamespace(),
+            bot_registry=registry,
+            provenance_token="token",
+        )
+
+    assert manager is existing_manager
+    node = registry.graph.nodes["TokenBot"]
+    assert node["attempt_result"] == "active_token_dedup"
+    dedup_records = [
+        record for record in caplog.records if getattr(record, "event", "") == "internalize_active_token_dedup"
+    ]
+    assert dedup_records
+    record = dedup_records[-1]
+    assert getattr(record, "bot", None) == "TokenBot"
+    assert getattr(record, "reason", None) == "manager_construction"
+    assert getattr(record, "active_attempt_age_seconds", 0.0) >= 0.0
+
+
+def test_internalize_active_token_cleared_on_early_return(monkeypatch):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+
+    existing_manager = types.SimpleNamespace(
+        quick_fix=object(),
+        event_bus=object(),
+        logger=logging.getLogger(__name__),
+    )
+    registry = DummyRegistry()
+    registry.graph.nodes["EarlyReturnBot"] = {"selfcoding_manager": existing_manager}
+
+    monkeypatch.setattr(scm, "_INTERNALIZE_LAST_ATTEMPT_STARTED_AT", {})
+    monkeypatch.setattr(scm, "_INTERNALIZE_ACTIVE_TOKENS", {})
+    monkeypatch.setattr(scm, "_INTERNALIZE_REUSE_WINDOW_SECONDS", 90.0)
+
+    manager = scm.internalize_coding_bot(
+        "EarlyReturnBot",
+        object(),
+        object(),
+        data_bot=types.SimpleNamespace(),
+        bot_registry=registry,
+        provenance_token="token",
+    )
+
+    assert manager is existing_manager
+    assert "EarlyReturnBot" not in scm._INTERNALIZE_ACTIVE_TOKENS
+
 def test_internalize_records_attempt_timestamps_and_result(monkeypatch, tmp_path):
     class DummyRegistry:
         class Graph:
