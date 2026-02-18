@@ -156,6 +156,35 @@ _SELF_DEBUG_BACKOFF_SECONDS = float(
 _INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS = float(
     os.getenv("SELF_CODING_INTERNALIZE_TIMEOUT_RETRY_BACKOFF_SECONDS", "15")
 )
+_RAW_INTERNALIZE_SUMMARY_INTERVAL_MINUTES = os.getenv(
+    "SELF_CODING_INTERNALIZE_SUMMARY_INTERVAL_MINUTES", "5"
+).strip()
+try:
+    _INTERNALIZE_SUMMARY_INTERVAL_SECONDS = max(
+        float(_RAW_INTERNALIZE_SUMMARY_INTERVAL_MINUTES) * 60.0,
+        30.0,
+    )
+except ValueError:
+    _INTERNALIZE_SUMMARY_INTERVAL_SECONDS = 300.0
+_INTERNALIZE_HEALTH_WINDOW_SECONDS = max(
+    float(os.getenv("SELF_CODING_INTERNALIZE_HEALTH_WINDOW_SECONDS", "1800")),
+    60.0,
+)
+_INTERNALIZE_HEALTH_MIN_ATTEMPTS = max(
+    int(os.getenv("SELF_CODING_INTERNALIZE_HEALTH_MIN_ATTEMPTS", "5")),
+    1,
+)
+_INTERNALIZE_HEALTH_SUCCESS_RATIO_THRESHOLD = min(
+    max(float(os.getenv("SELF_CODING_INTERNALIZE_HEALTH_SUCCESS_RATIO_THRESHOLD", "0.35")), 0.0),
+    1.0,
+)
+_INTERNALIZE_CHURN_PAUSE_SECONDS = max(
+    float(os.getenv("SELF_CODING_INTERNALIZE_CHURN_PAUSE_SECONDS", "120")),
+    0.0,
+)
+_INTERNALIZE_STATS_LOCK = threading.Lock()
+_INTERNALIZE_STATS: dict[str, dict[str, Any]] = {}
+_INTERNALIZE_CHURN_PAUSE_UNTIL: dict[str, float] = {}
 _RAW_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS = os.getenv(
     "SELF_CODING_MANAGER_CONSTRUCTION_TIMEOUT_SECONDS", "45"
 ).strip()
@@ -893,6 +922,136 @@ def _schedule_internalization_timeout_retry(
         )
 
 
+def _get_internalize_stats(bot_name: str) -> dict[str, Any]:
+    state = _INTERNALIZE_STATS.get(bot_name)
+    if state is None:
+        state = {
+            "internalize_attempts": 0,
+            "internalize_successes": 0,
+            "timeouts": 0,
+            "early_returns": 0,
+            "rolling_events": deque(),
+            "last_summary_at": 0.0,
+            "churn_debug_ran": False,
+        }
+        _INTERNALIZE_STATS[bot_name] = state
+    return state
+
+
+def _record_internalize_stat_event(bot_name: str, *, result: str) -> None:
+    now = time.monotonic()
+    with _INTERNALIZE_STATS_LOCK:
+        state = _get_internalize_stats(bot_name)
+        state["internalize_attempts"] = int(state.get("internalize_attempts", 0) or 0) + 1
+        if result == "success":
+            state["internalize_successes"] = int(state.get("internalize_successes", 0) or 0) + 1
+        if result == "timeout":
+            state["timeouts"] = int(state.get("timeouts", 0) or 0) + 1
+        if result in {"early_return", "churn_paused"}:
+            state["early_returns"] = int(state.get("early_returns", 0) or 0) + 1
+        rolling_events = state.get("rolling_events")
+        if not isinstance(rolling_events, deque):
+            rolling_events = deque()
+            state["rolling_events"] = rolling_events
+        rolling_events.append((now, result))
+        while rolling_events and (now - float(rolling_events[0][0])) > _INTERNALIZE_HEALTH_WINDOW_SECONDS:
+            rolling_events.popleft()
+
+
+def _internalize_health_snapshot(bot_name: str) -> dict[str, Any]:
+    now = time.monotonic()
+    with _INTERNALIZE_STATS_LOCK:
+        state = _get_internalize_stats(bot_name)
+        rolling_events = state.get("rolling_events")
+        if not isinstance(rolling_events, deque):
+            rolling_events = deque()
+            state["rolling_events"] = rolling_events
+        while rolling_events and (now - float(rolling_events[0][0])) > _INTERNALIZE_HEALTH_WINDOW_SECONDS:
+            rolling_events.popleft()
+        attempts = len(rolling_events)
+        successes = sum(1 for _, outcome in rolling_events if outcome == "success")
+    ratio = (float(successes) / float(attempts)) if attempts else 1.0
+    return {
+        "rolling_attempts": attempts,
+        "rolling_successes": successes,
+        "rolling_success_ratio": ratio,
+        "churn": bool(attempts >= _INTERNALIZE_HEALTH_MIN_ATTEMPTS and ratio < _INTERNALIZE_HEALTH_SUCCESS_RATIO_THRESHOLD),
+    }
+
+
+def _emit_internalize_periodic_summary(bot_name: str, logger: logging.Logger) -> None:
+    now = time.monotonic()
+    with _INTERNALIZE_STATS_LOCK:
+        state = _get_internalize_stats(bot_name)
+        last = float(state.get("last_summary_at", 0.0) or 0.0)
+        if now - last < _INTERNALIZE_SUMMARY_INTERVAL_SECONDS:
+            return
+        state["last_summary_at"] = now
+        attempts = int(state.get("internalize_attempts", 0) or 0)
+        successes = int(state.get("internalize_successes", 0) or 0)
+        timeouts = int(state.get("timeouts", 0) or 0)
+        early_returns = int(state.get("early_returns", 0) or 0)
+    health = _internalize_health_snapshot(bot_name)
+    logger.info(
+        "internalization summary for %s: attempts=%d successes=%d timeouts=%d early_returns=%d ratio=%.3f",
+        bot_name,
+        attempts,
+        successes,
+        timeouts,
+        early_returns,
+        health["rolling_success_ratio"],
+    )
+
+
+def _check_internalize_churn_and_mitigate(bot_name: str, logger: logging.Logger) -> bool:
+    health = _internalize_health_snapshot(bot_name)
+    churn = bool(health["churn"])
+    if not churn:
+        with _INTERNALIZE_STATS_LOCK:
+            state = _get_internalize_stats(bot_name)
+            state["churn_debug_ran"] = False
+        return False
+
+    now = time.monotonic()
+    should_debug = False
+    with _INTERNALIZE_STATS_LOCK:
+        _INTERNALIZE_CHURN_PAUSE_UNTIL[bot_name] = now + _INTERNALIZE_CHURN_PAUSE_SECONDS
+        state = _get_internalize_stats(bot_name)
+        if not bool(state.get("churn_debug_ran", False)):
+            state["churn_debug_ran"] = True
+            should_debug = True
+    logger.warning(
+        "internalization churn flagged for %s: rolling success ratio %.3f below %.3f",
+        bot_name,
+        health["rolling_success_ratio"],
+        _INTERNALIZE_HEALTH_SUCCESS_RATIO_THRESHOLD,
+    )
+    if should_debug and _should_trigger_self_debug(bot_name):
+        class _DebugManagerShim:
+            def __init__(self, log: logging.Logger) -> None:
+                self.logger = log
+
+        _launch_internalize_timeout_self_debug(
+            bot_name=bot_name,
+            module_path=None,
+            manager=_DebugManagerShim(logger),
+        )
+    return True
+
+
+def _internalize_churn_paused(bot_name: str) -> bool:
+    if _INTERNALIZE_CHURN_PAUSE_SECONDS <= 0:
+        return False
+    now = time.monotonic()
+    with _INTERNALIZE_STATS_LOCK:
+        pause_until = float(_INTERNALIZE_CHURN_PAUSE_UNTIL.get(bot_name, 0.0) or 0.0)
+        if pause_until and now < pause_until:
+            return True
+        if pause_until and now >= pause_until:
+            _INTERNALIZE_CHURN_PAUSE_UNTIL.pop(bot_name, None)
+    return False
+
+
 def _start_internalize_monitor(bot_registry: Any) -> None:
     """Start a lightweight monitor that warns about long-running internalization."""
 
@@ -977,6 +1136,11 @@ def _start_internalize_monitor(bot_registry: Any) -> None:
                             logger=logger,
                             bot_registry=bot_registry,
                         )
+
+                with _INTERNALIZE_STATS_LOCK:
+                    stats_bots = list(_INTERNALIZE_STATS.keys())
+                for candidate in stats_bots:
+                    _emit_internalize_periodic_summary(candidate, logger)
 
                 time.sleep(_INTERNALIZE_MONITOR_INTERVAL_SECONDS)
 
@@ -6087,6 +6251,7 @@ def internalize_coding_bot(
     logged_internalize_stack = False
     attempt_result = "failed"
     attempt_started = False
+    attempt_metric_recorded = False
 
     def _shutdown_guard_state() -> dict[str, Any] | None:
         reasons: list[str] = []
@@ -6237,8 +6402,31 @@ def internalize_coding_bot(
         node["internalization_last_step"] = "attempt started"
 
     def _record_attempt_finish(result: str) -> None:
-        nonlocal attempt_result
+        nonlocal attempt_result, attempt_metric_recorded
         attempt_result = result
+        if not attempt_metric_recorded:
+            normalized = str(result or "").lower()
+            if normalized == "success":
+                _record_internalize_stat_event(bot_name, result="success")
+            elif "timeout" in normalized:
+                _record_internalize_stat_event(bot_name, result="timeout")
+            elif normalized in {
+                "module_path_missing",
+                "skipped_in_flight",
+                "skipped_debounce",
+                "cooldown",
+                "skipped_shutdown",
+                "disabled_module_path_resolution",
+                "reused_existing_manager",
+                "reused_recent_manager",
+                "churn_paused",
+            }:
+                _record_internalize_stat_event(bot_name, result="early_return")
+            else:
+                _record_internalize_stat_event(bot_name, result="failed")
+            attempt_metric_recorded = True
+            _emit_internalize_periodic_summary(bot_name, logger_ref)
+            _check_internalize_churn_and_mitigate(bot_name, logger_ref)
         if node is None:
             return
         node["attempt_finished_at"] = time.time()
@@ -6246,6 +6434,11 @@ def internalize_coding_bot(
 
     if bot_registry is not None:
         node = bot_registry.graph.nodes.get(bot_name)
+
+    if _internalize_churn_paused(bot_name):
+        logger_ref.warning("internalize_coding_bot paused for %s due to churn", bot_name)
+        _record_attempt_finish("churn_paused")
+        return _inflight_manager_fallback()
 
     _start_internalize_monitor(bot_registry)
 
@@ -7364,9 +7557,40 @@ def internalize_coding_bot(
         if node is not None:
             node.pop("internalization_in_progress", None)
             node["internalization_last_step"] = "internalization finished"
+def get_internalization_health_status() -> dict[str, Any]:
+    """Return per-bot internalization counters and churn flags."""
+
+    status: dict[str, Any] = {"per_bot": {}, "churn_bots": []}
+    with _INTERNALIZE_STATS_LOCK:
+        bot_names = sorted(_INTERNALIZE_STATS.keys())
+    for bot_name in bot_names:
+        with _INTERNALIZE_STATS_LOCK:
+            state = _get_internalize_stats(bot_name)
+            attempts = int(state.get("internalize_attempts", 0) or 0)
+            successes = int(state.get("internalize_successes", 0) or 0)
+            timeouts = int(state.get("timeouts", 0) or 0)
+            early_returns = int(state.get("early_returns", 0) or 0)
+        health = _internalize_health_snapshot(bot_name)
+        entry = {
+            "internalize_attempts": attempts,
+            "internalize_successes": successes,
+            "timeouts": timeouts,
+            "early_returns": early_returns,
+            "rolling_attempts": health["rolling_attempts"],
+            "rolling_successes": health["rolling_successes"],
+            "rolling_success_ratio": health["rolling_success_ratio"],
+            "churn": bool(health["churn"]),
+        }
+        if entry["churn"]:
+            status["churn_bots"].append(bot_name)
+        status["per_bot"][bot_name] = entry
+    return status
+
+
 __all__ = [
     "SelfCodingManager",
     "PatchApprovalPolicy",
     "HelperGenerationError",
     "internalize_coding_bot",
+    "get_internalization_health_status",
 ]
