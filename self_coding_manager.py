@@ -150,6 +150,16 @@ _INTERNALIZE_DEBOUNCE_MIN_SECONDS = 30.0
 _INTERNALIZE_DEBOUNCE_MAX_SECONDS = 120.0
 _INTERNALIZE_DEBOUNCE_LOCK = threading.Lock()
 _INTERNALIZE_LAST_ATTEMPT_STARTED_AT: dict[str, float] = {}
+_RAW_INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS = os.getenv(
+    "SELF_CODING_INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS", "2"
+).strip()
+try:
+    _INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS = float(
+        _RAW_INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS
+    )
+except ValueError:
+    _INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS = 2.0
+_INTERNALIZE_LAST_MANAGER_CONSTRUCTION_STARTED_AT: dict[str, float] = {}
 _SELF_DEBUG_BACKOFF_SECONDS = float(
     os.getenv("SELF_CODING_SELF_DEBUG_BACKOFF_SECONDS", "600")
 )
@@ -375,6 +385,31 @@ def _resolve_internalize_debounce_seconds(bot_name: str) -> float:
         _INTERNALIZE_DEBOUNCE_MIN_SECONDS,
         min(_INTERNALIZE_DEBOUNCE_MAX_SECONDS, _INTERNALIZE_DEBOUNCE_SECONDS),
     )
+
+
+def _resolve_duplicate_invoke_debounce_seconds(bot_name: str) -> float:
+    """Resolve short per-bot duplicate-invoke debounce for manager construction."""
+
+    bot_key = _normalize_env_bot_name(bot_name)
+    candidate_vars = [
+        f"SELF_CODING_INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS_{bot_key}",
+        f"SELF_CODING_INTERNALIZATION_DUPLICATE_INVOKE_DEBOUNCE_SECONDS_{bot_key}",
+    ]
+    for env_var in candidate_vars:
+        raw_value = os.getenv(env_var)
+        if raw_value is None:
+            continue
+        try:
+            return max(0.0, float(raw_value.strip()))
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "invalid duplicate invoke debounce override %s=%r for %s; using default",
+                env_var,
+                raw_value,
+                bot_name,
+            )
+            break
+    return max(0.0, _INTERNALIZE_DUPLICATE_INVOKE_DEBOUNCE_SECONDS)
 
 def _resolve_manager_retry_timeout_seconds(bot_name: str, *, primary_timeout: float) -> float:
     """Resolve manager construction retry timeout for bounded retries."""
@@ -6252,6 +6287,7 @@ def internalize_coding_bot(
     attempt_result = "failed"
     attempt_started = False
     attempt_metric_recorded = False
+    duplicate_invoke_skip_reason: str | None = None
 
     def _shutdown_guard_state() -> dict[str, Any] | None:
         reasons: list[str] = []
@@ -6414,6 +6450,7 @@ def internalize_coding_bot(
                 "module_path_missing",
                 "skipped_in_flight",
                 "skipped_debounce",
+                "duplicate_invoke_debounced",
                 "cooldown",
                 "skipped_shutdown",
                 "disabled_module_path_resolution",
@@ -6563,6 +6600,41 @@ def internalize_coding_bot(
         )
         return _inflight_manager_fallback()
 
+    duplicate_invoke_debounce_seconds = _resolve_duplicate_invoke_debounce_seconds(
+        bot_name
+    )
+    if duplicate_invoke_debounce_seconds > 0:
+        with _INTERNALIZE_DEBOUNCE_LOCK:
+            previous_manager_construction_started = (
+                _INTERNALIZE_LAST_MANAGER_CONSTRUCTION_STARTED_AT.get(bot_name)
+            )
+            within_duplicate_invoke_debounce = (
+                isinstance(previous_manager_construction_started, (int, float))
+                and (
+                    now_monotonic
+                    - float(previous_manager_construction_started)
+                )
+                < duplicate_invoke_debounce_seconds
+            )
+        if within_duplicate_invoke_debounce:
+            duplicate_invoke_skip_reason = "duplicate_invoke_debounced"
+            if not logged_internalize_stack:
+                _log_internalize_stack(duplicate_invoke_skip_reason)
+                logged_internalize_stack = True
+            _record_attempt_finish(duplicate_invoke_skip_reason)
+            logger_ref.info(
+                "internalize_coding_bot duplicate invoke debounce active for %s; skipping manager construction",
+                bot_name,
+                extra={
+                    "event": "internalize_duplicate_invoke_skipped",
+                    "bot": bot_name,
+                    "skip_reason": duplicate_invoke_skip_reason,
+                    "reason": duplicate_invoke_skip_reason,
+                    "duplicate_invoke_debounce_seconds": duplicate_invoke_debounce_seconds,
+                },
+            )
+            return _inflight_manager_fallback()
+
     with _INTERNALIZE_IN_FLIGHT_LOCK:
         _INTERNALIZE_IN_FLIGHT[bot_name] = now_monotonic
         added_in_flight = True
@@ -6588,9 +6660,17 @@ def internalize_coding_bot(
             if not logged_internalize_stack:
                 _log_internalize_stack("lock-in-progress")
                 logged_internalize_stack = True
+            duplicate_invoke_skip_reason = "duplicate_invoke_debounced"
+            _record_attempt_finish(duplicate_invoke_skip_reason)
             logger_ref.info(
                 "internalize_coding_bot already in progress for %s; skipping",
                 bot_name,
+                extra={
+                    "event": "internalize_duplicate_invoke_skipped",
+                    "bot": bot_name,
+                    "skip_reason": duplicate_invoke_skip_reason,
+                    "reason": duplicate_invoke_skip_reason,
+                },
             )
             return _inflight_manager_fallback()
 
@@ -6784,6 +6864,10 @@ def internalize_coding_bot(
                         )
 
             manager_timer = _start_step("manager construction")
+            with _INTERNALIZE_DEBOUNCE_LOCK:
+                _INTERNALIZE_LAST_MANAGER_CONSTRUCTION_STARTED_AT[
+                    bot_name
+                ] = time.monotonic()
             reduced_scope_after_timeout_retry = False
             manager_timeout = _resolve_manager_timeout_seconds(bot_name)
             normalized_bot_name = _normalize_env_bot_name(bot_name)
