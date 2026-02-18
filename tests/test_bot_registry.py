@@ -354,3 +354,91 @@ def test_get_bot_workflow_tests_combines_sources(monkeypatch):
         "tests/from_thresholds_default.py",
     ]
 
+
+
+def test_schedule_internalization_retry_dedupes_pending_same_reason(monkeypatch):
+    import menace_sandbox.bot_registry as br
+
+    class FakeTimer:
+        def __init__(self, delay, callback, args=()):
+            self.delay = delay
+            self.callback = callback
+            self.args = args
+            self.daemon = False
+            self._alive = True
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+
+    registry = br.BotRegistry()
+    registry.graph.add_node("bot", is_coding_bot=True, pending_internalization=True)
+
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=1.0)
+    first = registry._internalization_retry_handles.get("bot")
+    assert first is not None
+
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=3.0)
+    second = registry._internalization_retry_handles.get("bot")
+    assert second is first
+
+
+def test_schedule_internalization_retry_caps_window_and_pauses(monkeypatch):
+    import menace_sandbox.bot_registry as br
+
+    class FakeTimer:
+        def __init__(self, delay, callback, args=()):
+            self.delay = delay
+            self.callback = callback
+            self.args = args
+            self.daemon = False
+            self._alive = False
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    monkeypatch.setattr(br.threading, "Timer", FakeTimer)
+
+    registry = br.BotRegistry()
+    registry._retry_schedule_max_per_window = 2
+    registry._retry_schedule_min_interval = 0.0
+    registry.graph.add_node("bot", is_coding_bot=True, pending_internalization=True)
+
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
+    registry._schedule_internalization_retry("bot", reason="force_retry", delay=0.1)
+
+    disabled = registry.graph.nodes["bot"]["self_coding_disabled"]
+    assert disabled["source"] == "retry_schedule_cap"
+    assert disabled["retry_reason"] == "force_retry"
+    assert "timestamp" in disabled
+
+
+def test_force_internalization_retry_uses_force_reason(monkeypatch):
+    import menace_sandbox.bot_registry as br
+
+    registry = br.BotRegistry()
+    registry.graph.add_node("bot", is_coding_bot=True)
+
+    calls = []
+
+    def fake_schedule(name, *, reason, delay=None, force=False):
+        calls.append((name, reason, delay, force))
+
+    monkeypatch.setattr(registry, "_schedule_internalization_retry", fake_schedule)
+
+    assert registry.force_internalization_retry("bot", delay=2.5) is True
+    assert calls == [("bot", "force_retry", 2.5, True)]
