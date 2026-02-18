@@ -21,6 +21,11 @@ from bootstrap_readiness import shared_online_state
 from objective_guard import DEFAULT_OBJECTIVE_HASH_MANIFEST, ObjectiveGuardViolation
 from objective_hash_lock import verify_objective_hash_lock
 
+try:  # pragma: no cover - optional self-coding telemetry
+    from self_coding_manager import get_internalization_health_status
+except Exception:  # pragma: no cover
+    get_internalization_health_status = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # Default paths for required files and directories that must always be present
@@ -111,6 +116,8 @@ def run_startup_diagnostics() -> Dict[str, Any]:
         "hash_integrity": True,
         "config_validation": True,
         "log_folder_accessibility": True,
+        "internalization_churn": False,
+        "internalization_health": {"per_bot": {}, "churn_bots": []},
         "missing_files": [],
         "hash_mismatches": [],
     }
@@ -137,6 +144,21 @@ def run_startup_diagnostics() -> Dict[str, Any]:
         log_dir, os.R_OK | os.W_OK | os.X_OK
     )
 
+    if callable(get_internalization_health_status):
+        try:
+            health = get_internalization_health_status()
+        except Exception as exc:  # pragma: no cover
+            logger.warning("failed to collect internalization health status: %s", exc)
+        else:
+            report["internalization_health"] = health
+            churn_bots = list(health.get("churn_bots") or [])
+            report["internalization_churn"] = bool(churn_bots)
+            if churn_bots:
+                logger.warning(
+                    "startup health check flagged internalization churn for bots: %s",
+                    ", ".join(churn_bots),
+                )
+
     return report
 
 
@@ -148,6 +170,7 @@ def halt_on_failure(report: Dict[str, Any]) -> None:
             report.get("hash_integrity"),
             report.get("config_validation"),
             report.get("log_folder_accessibility"),
+            not report.get("internalization_churn", False),
         ]
     ):
         return
