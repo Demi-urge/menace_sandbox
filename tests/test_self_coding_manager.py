@@ -2321,6 +2321,95 @@ def test_resolve_manager_timeout_seconds_warns_on_low_heavy_bot_timeout(
 
 
 
+
+
+def test_internalize_debounce_reuses_existing_manager(monkeypatch):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+
+    existing_manager = types.SimpleNamespace(
+        quick_fix=object(),
+        event_bus=object(),
+        logger=logging.getLogger(__name__),
+    )
+    registry = DummyRegistry()
+    registry.graph.nodes["DebouncedBot"] = {"selfcoding_manager": existing_manager}
+
+    monkeypatch.setattr(scm, "_INTERNALIZE_LAST_ATTEMPT_STARTED_AT", {"DebouncedBot": scm.time.monotonic()})
+    monkeypatch.setattr(scm, "_INTERNALIZE_DEBOUNCE_SECONDS", 60.0)
+
+    manager = scm.internalize_coding_bot(
+        "DebouncedBot",
+        object(),
+        object(),
+        data_bot=types.SimpleNamespace(),
+        bot_registry=registry,
+        provenance_token="token",
+    )
+
+    assert manager is existing_manager
+    node = registry.graph.nodes["DebouncedBot"]
+    assert node["attempt_result"] == "skipped_debounce"
+    assert node["attempt_finished_at"] is not None
+
+
+def test_internalize_records_attempt_timestamps_and_result(monkeypatch, tmp_path):
+    class DummyRegistry:
+        class Graph:
+            def __init__(self):
+                self.nodes = {}
+
+        def __init__(self):
+            self.graph = self.Graph()
+            self.event_bus = None
+            self.modules = {}
+
+        def register_bot(self, _bot_name, **_kwargs):
+            return None
+
+    class DummyManager:
+        def __init__(self, *args, **kwargs):
+            self.quick_fix = object()
+            self.event_bus = None
+            self.logger = logging.getLogger(__name__)
+            self.data_bot = kwargs.get("data_bot")
+            self.evolution_orchestrator = None
+
+        def initialize_deferred_components(self, skip_non_critical=False):
+            return None
+
+        def run_post_patch_cycle(self, *args, **kwargs):
+            return {"self_tests": {"failed": 0}}
+
+    module_path = tmp_path / "bot_module.py"
+    module_path.write_text("x = 1\n", encoding="utf-8")
+    registry = DummyRegistry()
+    registry.graph.nodes["ObserveBot"] = {"module": str(module_path)}
+
+    monkeypatch.setattr(scm, "SelfCodingManager", DummyManager)
+    monkeypatch.setattr(scm, "persist_sc_thresholds", lambda *a, **k: None)
+    monkeypatch.setattr(scm, "_INTERNALIZE_LAST_ATTEMPT_STARTED_AT", {})
+
+    manager = scm.internalize_coding_bot(
+        "ObserveBot",
+        object(),
+        object(),
+        data_bot=types.SimpleNamespace(),
+        bot_registry=registry,
+        provenance_token="token",
+    )
+
+    assert isinstance(manager, DummyManager)
+    node = registry.graph.nodes["ObserveBot"]
+    assert isinstance(node.get("attempt_started_at"), (int, float))
+    assert isinstance(node.get("attempt_finished_at"), (int, float))
+    assert node["attempt_finished_at"] >= node["attempt_started_at"]
+    assert node.get("attempt_result") == "success"
 def test_internalize_manager_timeout_emits_internalization_failure(monkeypatch):
     class DummyEventBus:
         def __init__(self):
