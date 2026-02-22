@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict
 import re
 
-from completion_validator import validate_completion
+from .completion_validator import validate_completion
 from error_ontology import classify_error
 
 from .logging_wrapper import StabilizationLoggingWrapper
