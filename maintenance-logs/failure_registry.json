@@ -1,0 +1,1659 @@
+{
+  "failures": {
+    "0447fca2-1be6-42cd-ac2f-f73b75976191": {
+      "id": "0447fca2-1be6-42cd-ac2f-f73b75976191",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "0447fca2-1be6-42cd-ac2f-f73b75976191",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.01632168300057,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609189.2768068
+      }
+    },
+    "0a45380f-3994-4a8e-a20c-872f3e9fac99": {
+      "id": "0a45380f-3994-4a8e-a20c-872f3e9fac99",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "0a45380f-3994-4a8e-a20c-872f3e9fac99",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.01635009399979,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605435.786232
+      }
+    },
+    "0ccd753c-ce0c-4b91-be66-434c13684833": {
+      "id": "0ccd753c-ce0c-4b91-be66-434c13684833",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "0ccd753c-ce0c-4b91-be66-434c13684833",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.01156219299992,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771603948.6722152
+      }
+    },
+    "125aee30-ea08-4e08-8415-de95a307a81e": {
+      "id": "125aee30-ea08-4e08-8415-de95a307a81e",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "125aee30-ea08-4e08-8415-de95a307a81e",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.03142294300051,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771607119.9831858
+      }
+    },
+    "149a83f1-116e-4390-8367-9b79e45864b2": {
+      "id": "149a83f1-116e-4390-8367-9b79e45864b2",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "149a83f1-116e-4390-8367-9b79e45864b2",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.00213782600076,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771603926.5869138
+      }
+    },
+    "1682ec7c-adb3-44c8-823f-01d66882dfeb": {
+      "id": "1682ec7c-adb3-44c8-823f-01d66882dfeb",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "1682ec7c-adb3-44c8-823f-01d66882dfeb",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.016387545000725,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604092.7945704
+      }
+    },
+    "1a446098-385d-4ec6-a837-8b37a5375ba2": {
+      "id": "1a446098-385d-4ec6-a837-8b37a5375ba2",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "1a446098-385d-4ec6-a837-8b37a5375ba2",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.02437393799937,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604885.7709868
+      }
+    },
+    "1f2ede27-5651-404e-8d99-ca4811c1e91d": {
+      "id": "1f2ede27-5651-404e-8d99-ca4811c1e91d",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "1f2ede27-5651-404e-8d99-ca4811c1e91d",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.00616435699976,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605688.884528
+      }
+    },
+    "1f6660da-b1e2-421d-97ad-ee03e92b75e8": {
+      "id": "1f6660da-b1e2-421d-97ad-ee03e92b75e8",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "1f6660da-b1e2-421d-97ad-ee03e92b75e8",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.021096512999975,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604039.9030046
+      }
+    },
+    "1f900f6e-9aaa-4b8e-b0f6-32c5109451c3": {
+      "id": "1f900f6e-9aaa-4b8e-b0f6-32c5109451c3",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "1f900f6e-9aaa-4b8e-b0f6-32c5109451c3",
+        "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergySecurityScoreBot",
+          "elapsed_seconds": 45.0111854630004,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergySecurityScoreBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604842.0167189
+      }
+    },
+    "1ffcf5b2-6f66-49fe-b8e5-a0941d70ccf6": {
+      "id": "1ffcf5b2-6f66-49fe-b8e5-a0941d70ccf6",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "1ffcf5b2-6f66-49fe-b8e5-a0941d70ccf6",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.01752058599959,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605257.8415833
+      }
+    },
+    "21f93364-e5b7-4671-bdb5-7dda571c5fad": {
+      "id": "21f93364-e5b7-4671-bdb5-7dda571c5fad",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "21f93364-e5b7-4671-bdb5-7dda571c5fad",
+        "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+        "metadata": {
+          "bot": "ResearchAggregatorBot",
+          "elapsed_seconds": 45.0353201199996,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ResearchAggregatorBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771610159.8657722
+      }
+    },
+    "22e69c9f-5ca1-4dd0-a7c9-729b63c895d6": {
+      "id": "22e69c9f-5ca1-4dd0-a7c9-729b63c895d6",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "22e69c9f-5ca1-4dd0-a7c9-729b63c895d6",
+        "message": "manager construction timed out for InformationSynthesisBot after 45.00s",
+        "metadata": {
+          "bot": "InformationSynthesisBot",
+          "elapsed_seconds": 45.02626553600021,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for InformationSynthesisBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604489.0385325
+      }
+    },
+    "2620b864-e541-4a48-9192-1e2875c79e96": {
+      "id": "2620b864-e541-4a48-9192-1e2875c79e96",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "2620b864-e541-4a48-9192-1e2875c79e96",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.01115396099976,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771607667.1056414
+      }
+    },
+    "3174248e-cc23-436e-a837-865d72c8c352": {
+      "id": "3174248e-cc23-436e-a837-865d72c8c352",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "3174248e-cc23-436e-a837-865d72c8c352",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.01102076400093,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608127.3247612
+      }
+    },
+    "326d59be-f697-43bf-a063-35b3650010eb": {
+      "id": "326d59be-f697-43bf-a063-35b3650010eb",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "326d59be-f697-43bf-a063-35b3650010eb",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.03661495100005,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605318.0249467
+      }
+    },
+    "364ea5e2-1d8a-4411-be9b-19c8b8b21886": {
+      "id": "364ea5e2-1d8a-4411-be9b-19c8b8b21886",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "364ea5e2-1d8a-4411-be9b-19c8b8b21886",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.02574503799951,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609367.817349
+      }
+    },
+    "3bc64679-87aa-4ed4-83e9-c0adbd0b55a5": {
+      "id": "3bc64679-87aa-4ed4-83e9-c0adbd0b55a5",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "3bc64679-87aa-4ed4-83e9-c0adbd0b55a5",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.02473773699967,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771610520.9728365
+      }
+    },
+    "3c491d07-2162-4f1b-bbf7-a4942027950c": {
+      "id": "3c491d07-2162-4f1b-bbf7-a4942027950c",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "3c491d07-2162-4f1b-bbf7-a4942027950c",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.02758834399992,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771607596.634416
+      }
+    },
+    "3fd97d20-57a9-4edf-be16-e463224eb8ee": {
+      "id": "3fd97d20-57a9-4edf-be16-e463224eb8ee",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "3fd97d20-57a9-4edf-be16-e463224eb8ee",
+        "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergySecurityScoreBot",
+          "elapsed_seconds": 45.01588404100039,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergySecurityScoreBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605535.79045
+      }
+    },
+    "420b6f03-4202-4f4b-8a03-f9e4250c242b": {
+      "id": "420b6f03-4202-4f4b-8a03-f9e4250c242b",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "420b6f03-4202-4f4b-8a03-f9e4250c242b",
+        "message": "manager construction timed out for HierarchyAssessmentBot after 45.00s",
+        "metadata": {
+          "bot": "HierarchyAssessmentBot",
+          "elapsed_seconds": 45.008557137000025,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for HierarchyAssessmentBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771611703.8339212
+      }
+    },
+    "4341ed29-b100-41e5-a779-97b601e86d1d": {
+      "id": "4341ed29-b100-41e5-a779-97b601e86d1d",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "4341ed29-b100-41e5-a779-97b601e86d1d",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.012666948001424,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771637704.7015254
+      }
+    },
+    "43bd630e-4ef2-4cbf-88c6-ecf262790c39": {
+      "id": "43bd630e-4ef2-4cbf-88c6-ecf262790c39",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "43bd630e-4ef2-4cbf-88c6-ecf262790c39",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.02382706500066,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609742.164862
+      }
+    },
+    "4998a067-3000-40b3-adf9-92086eab808b": {
+      "id": "4998a067-3000-40b3-adf9-92086eab808b",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "4998a067-3000-40b3-adf9-92086eab808b",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.01583824199952,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604991.092395
+      }
+    },
+    "4e54101d-2dca-419d-8265-0aaaf500d748": {
+      "id": "4e54101d-2dca-419d-8265-0aaaf500d748",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "4e54101d-2dca-419d-8265-0aaaf500d748",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.0161522949993,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771607977.5786784
+      }
+    },
+    "4e6daae6-218e-42f7-a7cf-d8cc449c409b": {
+      "id": "4e6daae6-218e-42f7-a7cf-d8cc449c409b",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "4e6daae6-218e-42f7-a7cf-d8cc449c409b",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.02648275499996,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771613305.2684739
+      }
+    },
+    "5ee6a847-3166-4c20-92d8-eacaed6cc7b1": {
+      "id": "5ee6a847-3166-4c20-92d8-eacaed6cc7b1",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "5ee6a847-3166-4c20-92d8-eacaed6cc7b1",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.04210973499903,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771614608.9586496
+      }
+    },
+    "66bc12b8-148e-42e6-9a1b-a9ce87223da7": {
+      "id": "66bc12b8-148e-42e6-9a1b-a9ce87223da7",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "66bc12b8-148e-42e6-9a1b-a9ce87223da7",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.02653514100166,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771622794.2666874
+      }
+    },
+    "6946f4af-8131-4db3-83d0-e1433bb0bb2f": {
+      "id": "6946f4af-8131-4db3-83d0-e1433bb0bb2f",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "6946f4af-8131-4db3-83d0-e1433bb0bb2f",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.00475321200065,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608749.8675754
+      }
+    },
+    "6b3e8e9c-6ce4-4267-a856-3d93161bbb86": {
+      "id": "6b3e8e9c-6ce4-4267-a856-3d93161bbb86",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "6b3e8e9c-6ce4-4267-a856-3d93161bbb86",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.016009877000215,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771606728.0936868
+      }
+    },
+    "6ce10150-b889-4819-904f-705c186c869f": {
+      "id": "6ce10150-b889-4819-904f-705c186c869f",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "6ce10150-b889-4819-904f-705c186c869f",
+        "message": "manager construction timed out for ResourcePredictionBot after 45.00s",
+        "metadata": {
+          "bot": "ResourcePredictionBot",
+          "elapsed_seconds": 45.01644010900054,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ResourcePredictionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604069.3549113
+      }
+    },
+    "7135945e-146a-4354-af07-7446e7e050ad": {
+      "id": "7135945e-146a-4354-af07-7446e7e050ad",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "7135945e-146a-4354-af07-7446e7e050ad",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.02518123200025,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609294.574418
+      }
+    },
+    "749056cf-44a8-49d3-85e6-df3e5b9691e5": {
+      "id": "749056cf-44a8-49d3-85e6-df3e5b9691e5",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "749056cf-44a8-49d3-85e6-df3e5b9691e5",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.016276816000754,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609406.2229667
+      }
+    },
+    "74c6cac4-8338-49d9-80cd-9dfabe5dd85e": {
+      "id": "74c6cac4-8338-49d9-80cd-9dfabe5dd85e",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "74c6cac4-8338-49d9-80cd-9dfabe5dd85e",
+        "message": "manager construction timed out for HierarchyAssessmentBot after 45.00s",
+        "metadata": {
+          "bot": "HierarchyAssessmentBot",
+          "elapsed_seconds": 45.005806309000036,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for HierarchyAssessmentBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604486.868871
+      }
+    },
+    "7b5e7056-9b15-47b1-8bfd-08fd22a81bbd": {
+      "id": "7b5e7056-9b15-47b1-8bfd-08fd22a81bbd",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "7b5e7056-9b15-47b1-8bfd-08fd22a81bbd",
+        "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergySecurityScoreBot",
+          "elapsed_seconds": 45.00259222600016,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergySecurityScoreBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604731.9878113
+      }
+    },
+    "7f40a7ad-b68b-46f6-93df-1727c6d862ab": {
+      "id": "7f40a7ad-b68b-46f6-93df-1727c6d862ab",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "7f40a7ad-b68b-46f6-93df-1727c6d862ab",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.00619111200649,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771636808.6273544
+      }
+    },
+    "80c8295e-5ee1-42bd-8609-1a5c0eb19318": {
+      "id": "80c8295e-5ee1-42bd-8609-1a5c0eb19318",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "80c8295e-5ee1-42bd-8609-1a5c0eb19318",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.0061368530005,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771634815.476455
+      }
+    },
+    "81c531df-ef7a-4759-823d-e04a25b5fc6e": {
+      "id": "81c531df-ef7a-4759-823d-e04a25b5fc6e",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "81c531df-ef7a-4759-823d-e04a25b5fc6e",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.00723450999794,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771638000.6541562
+      }
+    },
+    "83667a7f-0832-4d10-9c69-0121e6af8d20": {
+      "id": "83667a7f-0832-4d10-9c69-0121e6af8d20",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "83667a7f-0832-4d10-9c69-0121e6af8d20",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.041465463998975,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608222.0833504
+      }
+    },
+    "85d77e82-e3b3-43c7-90cc-1ba0f7d620aa": {
+      "id": "85d77e82-e3b3-43c7-90cc-1ba0f7d620aa",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "85d77e82-e3b3-43c7-90cc-1ba0f7d620aa",
+        "message": "manager construction timed out for HierarchyAssessmentBot after 45.00s",
+        "metadata": {
+          "bot": "HierarchyAssessmentBot",
+          "elapsed_seconds": 45.0381431779997,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for HierarchyAssessmentBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604341.7578373
+      }
+    },
+    "861065ca-f130-4057-8bca-b942b5940fce": {
+      "id": "861065ca-f130-4057-8bca-b942b5940fce",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "861065ca-f130-4057-8bca-b942b5940fce",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.00527259699811,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771622395.7390122
+      }
+    },
+    "8b6d3fbe-5ff0-4eb1-bef3-55eb99654422": {
+      "id": "8b6d3fbe-5ff0-4eb1-bef3-55eb99654422",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "8b6d3fbe-5ff0-4eb1-bef3-55eb99654422",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.02044905300045,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771607822.499134
+      }
+    },
+    "8ba868a6-1bbd-4942-a524-402e191bbe50": {
+      "id": "8ba868a6-1bbd-4942-a524-402e191bbe50",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "8ba868a6-1bbd-4942-a524-402e191bbe50",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.02024984799937,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604647.4149122
+      }
+    },
+    "90548b59-1479-4524-8524-7ef594602c76": {
+      "id": "90548b59-1479-4524-8524-7ef594602c76",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "90548b59-1479-4524-8524-7ef594602c76",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.01946782699815,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771635860.9297833
+      }
+    },
+    "90be8839-84a9-4266-babd-9a509d7493bf": {
+      "id": "90be8839-84a9-4266-babd-9a509d7493bf",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "90be8839-84a9-4266-babd-9a509d7493bf",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.01097912000023,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771606653.191235
+      }
+    },
+    "90fdc6fa-7130-4fbd-9d53-8d2e23a5dd6d": {
+      "id": "90fdc6fa-7130-4fbd-9d53-8d2e23a5dd6d",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "90fdc6fa-7130-4fbd-9d53-8d2e23a5dd6d",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.0518072750001,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605220.9817903
+      }
+    },
+    "91b79807-7081-448d-87e6-d121984c7bcc": {
+      "id": "91b79807-7081-448d-87e6-d121984c7bcc",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "91b79807-7081-448d-87e6-d121984c7bcc",
+        "message": "manager construction timed out for InformationSynthesisBot after 45.00s",
+        "metadata": {
+          "bot": "InformationSynthesisBot",
+          "elapsed_seconds": 45.02822392500093,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for InformationSynthesisBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771613779.9567306
+      }
+    },
+    "93018ead-49f7-4306-abac-fd361f275b7b": {
+      "id": "93018ead-49f7-4306-abac-fd361f275b7b",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "93018ead-49f7-4306-abac-fd361f275b7b",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.011813483999504,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771606168.719664
+      }
+    },
+    "9488d554-5978-4788-8dbc-92d4505bb6e7": {
+      "id": "9488d554-5978-4788-8dbc-92d4505bb6e7",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "9488d554-5978-4788-8dbc-92d4505bb6e7",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.01742737400036,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604336.4079108
+      }
+    },
+    "96f1249f-0b5a-4f10-83df-5af2cc694cd9": {
+      "id": "96f1249f-0b5a-4f10-83df-5af2cc694cd9",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "96f1249f-0b5a-4f10-83df-5af2cc694cd9",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.00718078199861,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771621022.5941873
+      }
+    },
+    "97d6d109-c141-4cec-b512-466d0cabc85e": {
+      "id": "97d6d109-c141-4cec-b512-466d0cabc85e",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "97d6d109-c141-4cec-b512-466d0cabc85e",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.01086476300043,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771621350.907751
+      }
+    },
+    "9cb7c1c2-662a-4cc0-a3ff-711f62b5629d": {
+      "id": "9cb7c1c2-662a-4cc0-a3ff-711f62b5629d",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "9cb7c1c2-662a-4cc0-a3ff-711f62b5629d",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.018449674000294,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609285.879843
+      }
+    },
+    "a45a641a-baa1-4578-adf9-ed9498d9d504": {
+      "id": "a45a641a-baa1-4578-adf9-ed9498d9d504",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "a45a641a-baa1-4578-adf9-ed9498d9d504",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.005870951999896,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605459.014592
+      }
+    },
+    "a87403e9-5419-47ad-85b9-e66aff7abe4a": {
+      "id": "a87403e9-5419-47ad-85b9-e66aff7abe4a",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "a87403e9-5419-47ad-85b9-e66aff7abe4a",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.01597067500006,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771606006.0723896
+      }
+    },
+    "a9bd786a-b19f-4954-93dd-5bdbd4f7b66d": {
+      "id": "a9bd786a-b19f-4954-93dd-5bdbd4f7b66d",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "a9bd786a-b19f-4954-93dd-5bdbd4f7b66d",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.02040668100017,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771615949.4153702
+      }
+    },
+    "b35d0dfe-1702-40b7-8370-0e59f1d44062": {
+      "id": "b35d0dfe-1702-40b7-8370-0e59f1d44062",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "b35d0dfe-1702-40b7-8370-0e59f1d44062",
+        "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergySecurityScoreBot",
+          "elapsed_seconds": 45.01685750300021,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergySecurityScoreBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771618179.8376808
+      }
+    },
+    "b415e7e8-9c97-4573-bc10-147cd2b41270": {
+      "id": "b415e7e8-9c97-4573-bc10-147cd2b41270",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "b415e7e8-9c97-4573-bc10-147cd2b41270",
+        "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+        "metadata": {
+          "bot": "ResearchAggregatorBot",
+          "elapsed_seconds": 45.060871403999954,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ResearchAggregatorBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604223.0821397
+      }
+    },
+    "b42a635c-55fb-466e-b83f-dd8f9edddb2d": {
+      "id": "b42a635c-55fb-466e-b83f-dd8f9edddb2d",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "b42a635c-55fb-466e-b83f-dd8f9edddb2d",
+        "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergySecurityScoreBot",
+          "elapsed_seconds": 45.02115481299916,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergySecurityScoreBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605336.8041718
+      }
+    },
+    "b5c1a06a-f810-439d-be0e-783c74c0bd83": {
+      "id": "b5c1a06a-f810-439d-be0e-783c74c0bd83",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "b5c1a06a-f810-439d-be0e-783c74c0bd83",
+        "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergySecurityScoreBot",
+          "elapsed_seconds": 45.01091996899777,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergySecurityScoreBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771618651.7919943
+      }
+    },
+    "b7c3fa08-c610-4df7-8133-42791b8e0a30": {
+      "id": "b7c3fa08-c610-4df7-8133-42791b8e0a30",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "b7c3fa08-c610-4df7-8133-42791b8e0a30",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.0432497820002,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608732.326984
+      }
+    },
+    "bd6e8c18-b0da-45ec-a091-34c4cfa3a7ca": {
+      "id": "bd6e8c18-b0da-45ec-a091-34c4cfa3a7ca",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "bd6e8c18-b0da-45ec-a091-34c4cfa3a7ca",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.015822457997274,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771622188.0778399
+      }
+    },
+    "bdebc244-05c2-45b0-b6a6-f8a6cc0cb114": {
+      "id": "bdebc244-05c2-45b0-b6a6-f8a6cc0cb114",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "bdebc244-05c2-45b0-b6a6-f8a6cc0cb114",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.01846715400097,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771610986.3863597
+      }
+    },
+    "c0e6e12e-c1db-4e89-8c59-c652f1c01450": {
+      "id": "c0e6e12e-c1db-4e89-8c59-c652f1c01450",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "c0e6e12e-c1db-4e89-8c59-c652f1c01450",
+        "message": "manager construction timed out for InformationSynthesisBot after 45.00s",
+        "metadata": {
+          "bot": "InformationSynthesisBot",
+          "elapsed_seconds": 45.01258952799981,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for InformationSynthesisBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771612970.5681596
+      }
+    },
+    "cfe7aa91-817a-490a-b1fd-3a2f7cfa7d43": {
+      "id": "cfe7aa91-817a-490a-b1fd-3a2f7cfa7d43",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "cfe7aa91-817a-490a-b1fd-3a2f7cfa7d43",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.0210854879997,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605764.6574278
+      }
+    },
+    "d0baa988-b03e-4643-be45-db82cb847b21": {
+      "id": "d0baa988-b03e-4643-be45-db82cb847b21",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "d0baa988-b03e-4643-be45-db82cb847b21",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.02790817999994,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609213.9882731
+      }
+    },
+    "d2cddf83-2b86-4f14-bbe0-423971c32054": {
+      "id": "d2cddf83-2b86-4f14-bbe0-423971c32054",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "d2cddf83-2b86-4f14-bbe0-423971c32054",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.01103706400045,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771603838.5650723
+      }
+    },
+    "d40c3379-c4d8-4cc2-a671-5634202df9dc": {
+      "id": "d40c3379-c4d8-4cc2-a671-5634202df9dc",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "d40c3379-c4d8-4cc2-a671-5634202df9dc",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.01623025700064,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608162.741159
+      }
+    },
+    "d436c0b9-66cb-41aa-addd-32006da6f11b": {
+      "id": "d436c0b9-66cb-41aa-addd-32006da6f11b",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "d436c0b9-66cb-41aa-addd-32006da6f11b",
+        "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+        "metadata": {
+          "bot": "ResearchAggregatorBot",
+          "elapsed_seconds": 45.04672818899962,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ResearchAggregatorBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604338.4210818
+      }
+    },
+    "d6834cc5-028f-4755-b49f-9b58158f7fba": {
+      "id": "d6834cc5-028f-4755-b49f-9b58158f7fba",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "d6834cc5-028f-4755-b49f-9b58158f7fba",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.043168954000066,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771607208.6234174
+      }
+    },
+    "d726c498-0e96-4294-bc7f-886ef433b42d": {
+      "id": "d726c498-0e96-4294-bc7f-886ef433b42d",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "d726c498-0e96-4294-bc7f-886ef433b42d",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.014951723002014,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771623072.354038
+      }
+    },
+    "d9c92e1f-4a91-499b-a707-9e1d60261bc0": {
+      "id": "d9c92e1f-4a91-499b-a707-9e1d60261bc0",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "d9c92e1f-4a91-499b-a707-9e1d60261bc0",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.02694021000025,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604727.674393
+      }
+    },
+    "da6c4c31-5c48-4a2d-a7cc-a20825cd5688": {
+      "id": "da6c4c31-5c48-4a2d-a7cc-a20825cd5688",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "da6c4c31-5c48-4a2d-a7cc-a20825cd5688",
+        "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+        "metadata": {
+          "bot": "ResearchAggregatorBot",
+          "elapsed_seconds": 45.02196768799877,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ResearchAggregatorBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771610009.625488
+      }
+    },
+    "dc6944f7-f0b4-42f7-8669-9124d2e3ebaf": {
+      "id": "dc6944f7-f0b4-42f7-8669-9124d2e3ebaf",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "dc6944f7-f0b4-42f7-8669-9124d2e3ebaf",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.016701364002074,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771638535.952744
+      }
+    },
+    "e4804847-e357-47a0-bca4-ec284673e744": {
+      "id": "e4804847-e357-47a0-bca4-ec284673e744",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "e4804847-e357-47a0-bca4-ec284673e744",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.032915533998676,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771614500.4584045
+      }
+    },
+    "e76c36ae-b72e-4d7b-be5f-e1de589d4d5b": {
+      "id": "e76c36ae-b72e-4d7b-be5f-e1de589d4d5b",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "e76c36ae-b72e-4d7b-be5f-e1de589d4d5b",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.035055006999755,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608247.950901
+      }
+    },
+    "e8dcc0a6-0360-434b-8c39-b583a96a99be": {
+      "id": "e8dcc0a6-0360-434b-8c39-b583a96a99be",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "e8dcc0a6-0360-434b-8c39-b583a96a99be",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.01550121799937,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605095.548773
+      }
+    },
+    "ec0b6803-7360-4099-9421-bcdbcb11cb24": {
+      "id": "ec0b6803-7360-4099-9421-bcdbcb11cb24",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "ec0b6803-7360-4099-9421-bcdbcb11cb24",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.03761974000008,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771606255.7583606
+      }
+    },
+    "ec661e1d-3e74-4f5d-b8e1-5ec1b8052748": {
+      "id": "ec661e1d-3e74-4f5d-b8e1-5ec1b8052748",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "ec661e1d-3e74-4f5d-b8e1-5ec1b8052748",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.04596045700055,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608994.9997149
+      }
+    },
+    "ed41d0ce-c872-4fe6-a0e2-dc5618ce68fd": {
+      "id": "ed41d0ce-c872-4fe6-a0e2-dc5618ce68fd",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "ed41d0ce-c872-4fe6-a0e2-dc5618ce68fd",
+        "message": "manager construction timed out for ResourcePredictionBot after 45.00s",
+        "metadata": {
+          "bot": "ResourcePredictionBot",
+          "elapsed_seconds": 45.01742084899979,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ResourcePredictionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604176.939447
+      }
+    },
+    "ed53944c-f680-48c2-9347-721e9b40d43c": {
+      "id": "ed53944c-f680-48c2-9347-721e9b40d43c",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "ed53944c-f680-48c2-9347-721e9b40d43c",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.021303842000634,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604178.4546707
+      }
+    },
+    "ef7ed32a-00e3-46cb-b518-e629254f6aeb": {
+      "id": "ef7ed32a-00e3-46cb-b518-e629254f6aeb",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "ef7ed32a-00e3-46cb-b518-e629254f6aeb",
+        "message": "manager construction timed out for TaskValidationBot after 45.00s",
+        "metadata": {
+          "bot": "TaskValidationBot",
+          "elapsed_seconds": 45.01625081699967,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for TaskValidationBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771616151.7211344
+      }
+    },
+    "f3258488-f3c7-4b64-8709-e15a26a14065": {
+      "id": "f3258488-f3c7-4b64-8709-e15a26a14065",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "f3258488-f3c7-4b64-8709-e15a26a14065",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.02463989300031,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771605162.8036342
+      }
+    },
+    "f57b14a6-1856-44bc-a58c-d2ad8b6562e2": {
+      "id": "f57b14a6-1856-44bc-a58c-d2ad8b6562e2",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "f57b14a6-1856-44bc-a58c-d2ad8b6562e2",
+        "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+        "metadata": {
+          "bot": "WorkflowEvolutionBot",
+          "elapsed_seconds": 45.03171848900001,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for WorkflowEvolutionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604814.5074856
+      }
+    },
+    "fce28a4d-2691-4774-a42d-911f06423531": {
+      "id": "fce28a4d-2691-4774-a42d-911f06423531",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "fce28a4d-2691-4774-a42d-911f06423531",
+        "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+        "metadata": {
+          "bot": "FutureSynergyEfficiencyBot",
+          "elapsed_seconds": 45.02179636599976,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for FutureSynergyEfficiencyBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771608693.9604042
+      }
+    },
+    "fda81f9f-2fb8-4ed7-aabf-daffbaa4f8eb": {
+      "id": "fda81f9f-2fb8-4ed7-aabf-daffbaa4f8eb",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "fda81f9f-2fb8-4ed7-aabf-daffbaa4f8eb",
+        "message": "manager construction timed out for ResourcePredictionBot after 45.00s",
+        "metadata": {
+          "bot": "ResourcePredictionBot",
+          "elapsed_seconds": 45.0211189419997,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ResourcePredictionBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771604837.5958521
+      }
+    },
+    "ff50a3a0-6d29-4b73-beaa-0f4261c3e972": {
+      "id": "ff50a3a0-6d29-4b73-beaa-0f4261c3e972",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "ff50a3a0-6d29-4b73-beaa-0f4261c3e972",
+        "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+        "metadata": {
+          "bot": "ChatGPTEnhancementBot",
+          "elapsed_seconds": 45.021012832999986,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for ChatGPTEnhancementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771613159.9704494
+      }
+    },
+    "ffd7880b-ace4-4f0e-a837-d3ce64fb508f": {
+      "id": "ffd7880b-ace4-4f0e-a837-d3ce64fb508f",
+      "payload": {
+        "exception_type": "TimeoutError",
+        "id": "ffd7880b-ace4-4f0e-a837-d3ce64fb508f",
+        "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+        "metadata": {
+          "bot": "_CapitalManagementBot",
+          "elapsed_seconds": 45.03685637699891,
+          "fallback": "cooldown_disabled_manager",
+          "reason": "manager_construction_timeout",
+          "severity": "warning",
+          "timeout_seconds": 45.0
+        },
+        "stack": "Traceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7166, in internalize_coding_bot\n    manager = manager_future.result(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/concurrent/futures/_base.py\", line 458, in result\n    raise TimeoutError()\nTimeoutError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/tommu/menace_sandbox/self_coding_manager.py\", line 7370, in internalize_coding_bot\n    raise TimeoutError(\nTimeoutError: manager construction timed out for _CapitalManagementBot after 45.00s\n",
+        "stage": "internalize_manager_construction",
+        "timestamp": 1771609069.0996308
+      }
+    }
+  },
+  "last_updated": 1771638536.04041,
+  "version": 1
+}

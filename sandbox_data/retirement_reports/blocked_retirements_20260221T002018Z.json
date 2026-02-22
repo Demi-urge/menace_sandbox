@@ -1,0 +1,5346 @@
+{
+  "blocked_count": 458,
+  "blocked_modules": [
+    {
+      "dependents": [
+        "tests/test_preset_policy_cli"
+      ],
+      "module": "preset_policy_cli"
+    },
+    {
+      "dependents": [
+        "environment_restoration_service",
+        "light_bootstrap",
+        "service_supervisor",
+        "tests/test_environment_bootstrap_readiness"
+      ],
+      "module": "environment_bootstrap"
+    },
+    {
+      "dependents": [
+        "action_learning_engine",
+        "evaluation_manager",
+        "self_learning_coordinator",
+        "self_learning_service",
+        "shared/pipeline_base"
+      ],
+      "module": "unified_learning_engine"
+    },
+    {
+      "dependents": [
+        ".",
+        "analytics/retrieval_ranker_model",
+        "bootstrap_metrics",
+        "captcha_system",
+        "central_evaluation_loop",
+        "error_bot",
+        "evolution_orchestrator",
+        "experiment_manager",
+        "learning_engine",
+        "metrics_aggregator",
+        "module_retirement_service",
+        "patch_attempt_tracker",
+        "patch_safety",
+        "relevancy_radar",
+        "relevancy_radar_service",
+        "roi_tracker",
+        "run_autonomous",
+        "sandbox_recovery_manager",
+        "sandbox_runner/bootstrap",
+        "sandbox_runner/environment",
+        "self_test_service",
+        "start_autonomous_sandbox",
+        "synergy_exporter",
+        "synergy_monitor",
+        "telemetry_backend",
+        "tests/integration/test_legacy_orphan_chain",
+        "tests/integration/test_orphan_pipeline_metrics",
+        "tests/integration/test_run_autonomous_metrics",
+        "tests/integration/test_run_autonomous_synergy_adaptation",
+        "tests/test_autonomous_integration",
+        "tests/test_run_autonomous_integration_full",
+        "unified_learning_engine",
+        "universal_retriever",
+        "vector_metrics_db",
+        "vector_service/decorators",
+        "vector_service/embedding_scheduler",
+        "vector_service/lazy_bootstrap",
+        "vector_service/patch_logger",
+        "vector_service/retriever",
+        "vector_service/vectorizer"
+      ],
+      "module": "metrics_exporter"
+    },
+    {
+      "dependents": [
+        "tests/test_mvp_workflow"
+      ],
+      "module": "mvp_workflow_legacy"
+    },
+    {
+      "dependents": [
+        "variant_cli"
+      ],
+      "module": "variant_manager"
+    },
+    {
+      "dependents": [
+        "objective_guard",
+        "objective_surface_policy"
+      ],
+      "module": "objective_inventory"
+    },
+    {
+      "dependents": [
+        "autoscaler",
+        "bot_performance_history_db",
+        "communication_maintenance_bot",
+        "databases",
+        "db_write_queue",
+        "menace_gui",
+        "migrations/env",
+        "sync_shared_db",
+        "tests/test_autoscaler",
+        "tests/test_env_config_normalization",
+        "tests/test_roi_scaling_policy_budget"
+      ],
+      "module": "env_config"
+    },
+    {
+      "dependents": [
+        "cross_model_comparator",
+        "model_performance_monitor"
+      ],
+      "module": "model_deployer"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "model_evaluation_service"
+    },
+    {
+      "dependents": [
+        "tests/integration/test_anomaly_to_memory_flow",
+        "tests/integration/test_sanity_consumer_flow",
+        "tests/integration/test_sanity_pipeline",
+        "tests/test_billing_feedback",
+        "tests/test_menace_sanity_layer",
+        "tests/test_sanity_feedback",
+        "tests/test_sanity_layer_hooks",
+        "tests/test_stripe_watchdog",
+        "tests/test_stripe_watchdog_sanity_feedback",
+        "unit_tests/test_stripe_watchdog"
+      ],
+      "module": "stripe_watchdog"
+    },
+    {
+      "dependents": [
+        "bot_testing_config",
+        "comm_testing_config",
+        "self_services_config",
+        "self_test_service"
+      ],
+      "module": "pydantic_settings_compat"
+    },
+    {
+      "dependents": [
+        "workflow_evolution_manager"
+      ],
+      "module": "workflow_branch_manager"
+    },
+    {
+      "dependents": [
+        "conversation_manager_bot",
+        "self_improvement/engine"
+      ],
+      "module": "neurosales"
+    },
+    {
+      "dependents": [
+        "error_bot",
+        "self_validation_dashboard"
+      ],
+      "module": "error_forecaster"
+    },
+    {
+      "dependents": [
+        "advanced_error_management",
+        "auto_escalation_manager",
+        "bot_registry",
+        "central_evaluation_loop",
+        "deployment_bot",
+        "evolution_orchestrator",
+        "rollback_validator",
+        "self_coding_manager",
+        "stripe_billing_router",
+        "unified_update_service"
+      ],
+      "module": "rollback_manager"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "debug_loop_service"
+    },
+    {
+      "dependents": [
+        "workflow_evolution_bot",
+        "workflow_synthesizer"
+      ],
+      "module": "analysis"
+    },
+    {
+      "dependents": [
+        "tests/test_action_justifier_llm"
+      ],
+      "module": "action_justifier"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator"
+      ],
+      "module": "identity_seeder"
+    },
+    {
+      "dependents": [
+        "action_planner",
+        "actor_critic_agent",
+        "autonomous_bootstrap",
+        "bot_registry",
+        "chunking",
+        "codex_fallback_handler",
+        "efficiency_bot",
+        "evolution_orchestrator",
+        "failure_fingerprint_store",
+        "human_alignment_agent",
+        "human_alignment_flagger",
+        "llm_router",
+        "prompt_engine",
+        "relevancy_radar",
+        "relevancy_radar_service",
+        "roi_thresholds",
+        "run_autonomous",
+        "sandbox_recovery_manager",
+        "sandbox_runner",
+        "sandbox_runner/tests/test_minimal_cycle",
+        "sandbox_runner/tests/test_self_improvement_flow",
+        "self_coding_manager",
+        "self_coding_scheduler",
+        "self_coding_thresholds",
+        "self_improvement/tests/test_minimal_workflow",
+        "self_improvement/tests/test_strategy_roi_decay",
+        "self_improvement_policy",
+        "self_learning_coordinator",
+        "self_modification_detector",
+        "self_test_service",
+        "setup_dependencies",
+        "snapshot_history_db",
+        "start_autonomous_sandbox",
+        "synergy_weight_cli",
+        "tests/integration/test_recursive_helper_inclusion",
+        "tests/self_improvement/test_cycle",
+        "threshold_service",
+        "truth_adapter",
+        "violation_logger",
+        "workflow_evolution_manager"
+      ],
+      "module": "sandbox_settings"
+    },
+    {
+      "dependents": [
+        "structural_evolution_bot"
+      ],
+      "module": "evolution_approval_policy"
+    },
+    {
+      "dependents": [
+        "run_autonomous",
+        "system_evolution_manager"
+      ],
+      "module": "relevancy_radar_service"
+    },
+    {
+      "dependents": [
+        "start_autonomous_sandbox"
+      ],
+      "module": "menace_self_debug"
+    },
+    {
+      "dependents": [
+        "captcha_system",
+        "identity_seeder"
+      ],
+      "module": "anticaptcha_stub"
+    },
+    {
+      "dependents": [
+        "composite_workflow_scorer",
+        "roi_scorer",
+        "workflow_metrics"
+      ],
+      "module": "workflow_scorer_core"
+    },
+    {
+      "dependents": [
+        "central_evaluation_loop",
+        "deployment_governance",
+        "run_autonomous",
+        "upgrade_forecaster"
+      ],
+      "module": "foresight_tracker"
+    },
+    {
+      "dependents": [
+        "sandbox_dashboard"
+      ],
+      "module": "alignment_dashboard"
+    },
+    {
+      "dependents": [
+        "evaluation_dashboard",
+        "experiment_manager",
+        "variant_cli",
+        "variant_manager"
+      ],
+      "module": "mutation_lineage"
+    },
+    {
+      "dependents": [
+        "tests/test_evolution_ab_comparator"
+      ],
+      "module": "evolution_ab_comparator"
+    },
+    {
+      "dependents": [
+        "governed_embeddings",
+        "logging_utils",
+        "start_autonomous_sandbox",
+        "tests/test_lock_files",
+        "tests/test_unlabeled_volume_network_cleanup"
+      ],
+      "module": "lock_utils"
+    },
+    {
+      "dependents": [
+        "ai_counter_bot",
+        "bot_creation_bot",
+        "capital_management_bot",
+        "contrarian_model_bot",
+        "efficiency_bot",
+        "energy_forecast_bot",
+        "error_bot",
+        "experiment_manager",
+        "ga_prediction_bot",
+        "niche_saturation_bot",
+        "passive_discovery_bot",
+        "pre_execution_roi_bot",
+        "prediction_training_pipeline",
+        "preliminary_research_bot",
+        "resource_allocation_bot",
+        "resources_bot",
+        "roi_tracker",
+        "sentiment_bot",
+        "strategy_prediction_bot"
+      ],
+      "module": "prediction_manager_bot"
+    },
+    {
+      "dependents": [
+        "run_autonomous"
+      ],
+      "module": "memory_maintenance"
+    },
+    {
+      "dependents": [
+        "tests/test_branch_log_cli",
+        "tests/test_menace_cli_new_db",
+        "tests/test_menace_cli_patch",
+        "tests/test_menace_cli_patches",
+        "tests/test_menace_cli_resolve_path",
+        "tests/test_menace_cli_service_flag"
+      ],
+      "module": "menace_cli"
+    },
+    {
+      "dependents": [
+        "session_aware_http"
+      ],
+      "module": "allocator_service"
+    },
+    {
+      "dependents": [
+        "action_planner",
+        "adaptive_roi_cli",
+        "evolution_orchestrator",
+        "pre_execution_roi_bot",
+        "roi_tracker"
+      ],
+      "module": "adaptive_roi_predictor"
+    },
+    {
+      "dependents": [
+        "operational_monitor_bot"
+      ],
+      "module": "database_steward_bot"
+    },
+    {
+      "dependents": [
+        "deployment_governance",
+        "foresight_gate",
+        "run_autonomous"
+      ],
+      "module": "forecast_logger"
+    },
+    {
+      "dependents": [
+        ".",
+        "environment_generator",
+        "self_coding_thresholds",
+        "tests/test_yaml_fallback",
+        "yaml"
+      ],
+      "module": "yaml_fallback"
+    },
+    {
+      "dependents": [
+        "external_dependency_provisioner"
+      ],
+      "module": "local_infrastructure_provisioner"
+    },
+    {
+      "dependents": [
+        "communication_maintenance_bot",
+        "contrarian_model_bot",
+        "dynamic_resource_allocator_bot",
+        "menace_gui",
+        "niche_saturation_bot",
+        "resources_bot",
+        "shared/pipeline_base",
+        "workflow_graph"
+      ],
+      "module": "resource_allocation_bot"
+    },
+    {
+      "dependents": [
+        "resource_allocation_bot"
+      ],
+      "module": "contrarian_model_bot"
+    },
+    {
+      "dependents": [
+        "tools/windows_sandbox_launcher_gui",
+        "unit_tests/test_bootstrap_conflict_check"
+      ],
+      "module": "bootstrap_conflict_check"
+    },
+    {
+      "dependents": [
+        "compliance_audit_service",
+        "dependency_update_service",
+        "disaster_recovery",
+        "environment_restoration_service",
+        "model_evaluation_service",
+        "secret_rotation_service",
+        "self_coding_scheduler",
+        "service_supervisor"
+      ],
+      "module": "cross_model_scheduler"
+    },
+    {
+      "dependents": [
+        "tests/test_vector_service_api"
+      ],
+      "module": "vector_service_api"
+    },
+    {
+      "dependents": [
+        "bot_development_bot",
+        "self_coding_engine"
+      ],
+      "module": "codex_output_analyzer"
+    },
+    {
+      "dependents": [
+        "codebase_diff_checker",
+        "plan_validation"
+      ],
+      "module": "unsafe_patterns"
+    },
+    {
+      "dependents": [
+        "model_automation_dependencies",
+        "shared/pipeline_base"
+      ],
+      "module": "hierarchy_assessment_bot"
+    },
+    {
+      "dependents": [
+        "bot_database",
+        "logging_utils",
+        "sandbox_results_logger"
+      ],
+      "module": "safe_serialization"
+    },
+    {
+      "dependents": [
+        "action_justifier",
+        "neurosales/tests/test_response_generation",
+        "tests/test_action_justifier_llm",
+        "user_style_model"
+      ],
+      "module": "local_model_wrapper"
+    },
+    {
+      "dependents": [
+        "action_planner",
+        "adaptive_roi_predictor",
+        "autoscaler",
+        "capability_registry",
+        "central_database_bot",
+        "central_evaluation_loop",
+        "communication_testing_bot",
+        "discrepancy_detection_bot",
+        "entry_pipeline_loader",
+        "environment_generator",
+        "intent_clusterer",
+        "invocation_tracker",
+        "logging_wrapper",
+        "memory_maintenance",
+        "menace_master",
+        "meta_workflow_planner",
+        "networked_event_bus",
+        "orchestrator_loader",
+        "passive_discovery_bot",
+        "preset_rl_agent",
+        "ranking_model_scheduler",
+        "roi_tracker",
+        "run_autonomous",
+        "sandbox_orchestrator",
+        "sandbox_recovery_manager",
+        "sandbox_runner",
+        "self_test_service",
+        "service_supervisor",
+        "start_autonomous_sandbox",
+        "synergy_auto_trainer",
+        "synergy_monitor",
+        "synergy_tools",
+        "tests/test_central_logging",
+        "tests/test_run_autonomous_central_logging",
+        "tests/test_self_debugger_sandbox",
+        "tests/test_verbose_logging",
+        "truth_adapter",
+        "unified_event_bus",
+        "unit_tests/test_meta_planning",
+        "violation_logger",
+        "workflow_chain_suggester"
+      ],
+      "module": "logging_utils"
+    },
+    {
+      "dependents": [
+        "human_alignment_agent",
+        "patch_score_backend"
+      ],
+      "module": "human_alignment_flagger"
+    },
+    {
+      "dependents": [
+        "menace_sandbox/mvp_smoke_runner",
+        "roi_tracker",
+        "workflow_chain_simulator",
+        "workflow_evolution_manager",
+        "workflow_synergy_comparator",
+        "workflow_synthesizer"
+      ],
+      "module": "workflow_run_summary"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base",
+        "strategy_prediction_bot"
+      ],
+      "module": "ai_counter_bot"
+    },
+    {
+      "dependents": [
+        "central_evaluation_loop",
+        "reward_dispatcher"
+      ],
+      "module": "kpi_reward_core"
+    },
+    {
+      "dependents": [
+        "failure_region_cli",
+        "failure_retry_utils",
+        "prompt_optimizer",
+        "self_coding_manager",
+        "tests/test_failure_fingerprinting"
+      ],
+      "module": "failure_fingerprint_store"
+    },
+    {
+      "dependents": [
+        "tests/integration/test_intent_clusterer_synergy",
+        "tests/test_intent_clusterer",
+        "workflow_synthesizer"
+      ],
+      "module": "intent_db"
+    },
+    {
+      "dependents": [
+        "self_evaluation_service",
+        "service_supervisor"
+      ],
+      "module": "microtrend_service"
+    },
+    {
+      "dependents": [
+        "evolution_orchestrator",
+        "self_improvement/engine",
+        "self_improvement/init",
+        "self_improvement/meta_planning",
+        "self_improvement/snapshot_tracker",
+        "self_improvement/system_snapshot",
+        "snapshot_history_db"
+      ],
+      "module": "self_improvement"
+    },
+    {
+      "dependents": [
+        "bootstrap_self_coding",
+        "chatgpt_prediction_bot",
+        "cognition_layer",
+        "governed_embeddings",
+        "menace_orchestrator",
+        "research_aggregator_bot",
+        "start_autonomous_sandbox",
+        "startup_health_check",
+        "tests/test_research_aggregator_bot_runtime",
+        "unit_tests/test_bootstrap_readiness",
+        "vector_metrics_db"
+      ],
+      "module": "bootstrap_readiness"
+    },
+    {
+      "dependents": [
+        "captcha_pipeline",
+        "watchdog"
+      ],
+      "module": "replay_engine"
+    },
+    {
+      "dependents": [
+        "human_alignment_flagger",
+        "risk_score_calculator"
+      ],
+      "module": "risk_domain_classifier"
+    },
+    {
+      "dependents": [
+        "config",
+        "self_coding/manager_launcher",
+        "tests/integration/test_orphan_chain_module_map_logging",
+        "tests/integration/test_orphan_chain_services",
+        "tests/integration/test_orphan_pipeline_metrics"
+      ],
+      "module": "menace_pydantic"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "offer_testing_bot"
+    },
+    {
+      "dependents": [
+        "billing/billing_ledger",
+        "billing/billing_log_db",
+        "billing/prompt_notice",
+        "billing/refund_anomaly_detector",
+        "billing/stripe_refund_audit",
+        "chatgpt_idea_bot",
+        "finance_router_bot",
+        "investment_engine",
+        "menace_sanity_layer",
+        "prompt_engine",
+        "self_coding_engine",
+        "stripe_watchdog",
+        "unit_tests/test_validate_webhook_account"
+      ],
+      "module": "stripe_billing_router"
+    },
+    {
+      "dependents": [
+        "micro_models/tool_history_dataset"
+      ],
+      "module": "capability_registry"
+    },
+    {
+      "dependents": [
+        "patch_provenance_service",
+        "patch_suggestion_db"
+      ],
+      "module": "patch_safety"
+    },
+    {
+      "dependents": [
+        "tests/test_llm_interface",
+        "tests/test_llm_router",
+        "unit_tests/test_llm_router"
+      ],
+      "module": "llm_router"
+    },
+    {
+      "dependents": [
+        "tests/test_startup_health_check"
+      ],
+      "module": "startup_health_check"
+    },
+    {
+      "dependents": [
+        "advanced_error_management",
+        "error_logger"
+      ],
+      "module": "sentry_client"
+    },
+    {
+      "dependents": [
+        "chatgpt_idea_bot",
+        "gpt_knowledge_service",
+        "knowledge_retriever",
+        "tests/test_governed_retrieval",
+        "tests/test_security_redaction",
+        "universal_retriever"
+      ],
+      "module": "governed_retrieval"
+    },
+    {
+      "dependents": [
+        "ranking_model_scheduler",
+        "vector_service/cognition_layer",
+        "vector_service/context_builder",
+        "vector_service_api"
+      ],
+      "module": "retrieval_ranker"
+    },
+    {
+      "dependents": [
+        "config",
+        "sandbox_settings_fallback",
+        "sandbox_settings_pydantic",
+        "self_coding_thresholds"
+      ],
+      "module": "stack_dataset_defaults"
+    },
+    {
+      "dependents": [
+        "ai_counter_bot",
+        "auto_escalation_manager",
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "bot_registry",
+        "bot_testing_bot",
+        "capital_management_bot",
+        "central_database_bot",
+        "communication_testing_bot",
+        "debug_loop_service",
+        "diagnostic_manager",
+        "discrepancy_detection_bot",
+        "dynamic_resource_allocator_bot",
+        "efficiency_bot",
+        "enhancement_bot",
+        "error_bot",
+        "error_logger",
+        "evolution_orchestrator",
+        "finance_router_bot",
+        "future_prediction_bots",
+        "genetic_algorithm_bot",
+        "hierarchy_assessment_bot",
+        "idea_search_bot",
+        "information_synthesis_bot",
+        "investment_engine",
+        "memory_bot",
+        "menace_cli",
+        "menace_self_debug",
+        "meta_genetic_algorithm_bot",
+        "module_retirement_service",
+        "newsreader_bot",
+        "offer_testing_bot",
+        "operational_monitor_bot",
+        "performance_assessment_bot",
+        "query_bot",
+        "research_aggregator_bot",
+        "research_fallback_bot",
+        "resource_allocation_optimizer",
+        "resource_prediction_bot",
+        "revenue_amplifier",
+        "self_coding_scheduler",
+        "sentiment_bot",
+        "service_supervisor",
+        "shared/pipeline_base",
+        "startup_health_check",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "task_handoff_bot",
+        "task_validation_bot",
+        "watchdog",
+        "workflow_evolution_bot"
+      ],
+      "module": "self_coding_manager"
+    },
+    {
+      "dependents": [
+        "bot_registry",
+        "coding_bot_interface",
+        "future_prediction_bots",
+        "tests/test_self_coding_dependency_probe"
+      ],
+      "module": "self_coding_dependency_probe"
+    },
+    {
+      "dependents": [
+        "resource_allocation_optimizer",
+        "shared/pipeline_base"
+      ],
+      "module": "performance_assessment_bot"
+    },
+    {
+      "dependents": [
+        "code_summarizer",
+        "embeddable_db_mixin",
+        "model_registry"
+      ],
+      "module": "local_client"
+    },
+    {
+      "dependents": [
+        "diagnostic_manager"
+      ],
+      "module": "coordination_manager"
+    },
+    {
+      "dependents": [
+        "ad_integration",
+        "auto_escalation_manager",
+        "bot_database",
+        "bot_registry",
+        "capital_management_bot",
+        "chatgpt_research_bot",
+        "code_database",
+        "communication_maintenance_bot",
+        "competitive_intelligence_bot",
+        "compliance_audit_service",
+        "environment_restoration_service",
+        "evolution_orchestrator",
+        "infrastructure_bootstrap",
+        "light_bootstrap",
+        "microtrend_service",
+        "model_evaluation_service",
+        "module_synergy_grapher",
+        "mutation_logger",
+        "override_policy",
+        "resource_allocation_bot",
+        "resource_allocation_optimizer",
+        "revenue_amplifier",
+        "session_aware_http",
+        "splunk_logger",
+        "synergy_exporter",
+        "tests/test_autoscaler_light",
+        "tests/test_llm_interface",
+        "violation_logger",
+        "watchdog"
+      ],
+      "module": "retry_utils"
+    },
+    {
+      "dependents": [
+        "bot_registry",
+        "error_logger",
+        "error_parser",
+        "prediction_manager_bot",
+        "sandbox_recovery_manager",
+        "tests/test_bootstrap_manager_self_coding",
+        "vector_service"
+      ],
+      "module": "import_compat"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator"
+      ],
+      "module": "self_model_bootstrap"
+    },
+    {
+      "dependents": [
+        "compliance_checker",
+        "logging_utils",
+        "patch_branch_manager",
+        "rollback_manager",
+        "startup_checks",
+        "stripe_watchdog"
+      ],
+      "module": "audit_trail"
+    },
+    {
+      "dependents": [
+        "stripe_billing_router"
+      ],
+      "module": "sandbox_review"
+    },
+    {
+      "dependents": [
+        "information_synthesis_bot",
+        "task_validation_bot"
+      ],
+      "module": "in_memory_queue"
+    },
+    {
+      "dependents": [
+        "tests/test_light_bootstrap"
+      ],
+      "module": "light_bootstrap"
+    },
+    {
+      "dependents": [
+        "bot_development_bot",
+        "composite_workflow_scorer",
+        "config",
+        "config_loader",
+        "deployment_governance",
+        "enhancement_classifier",
+        "enhancement_score",
+        "environment_generator",
+        "error_bot",
+        "error_logger",
+        "foresight_tracker",
+        "governance",
+        "human_alignment_flagger",
+        "menace_sanity_layer",
+        "micro_models/prefix_injector",
+        "plan_validation",
+        "policy_loader",
+        "prompt_engine",
+        "roi_calculator",
+        "sandbox_runner/edge_case_generator",
+        "sandbox_runner/environment",
+        "sandbox_runner/metrics_plugins",
+        "sandbox_runner/orphan_integration",
+        "sandbox_runner/tests/test_orphan_cycle_integration",
+        "sandbox_settings_fallback",
+        "sandbox_settings_pydantic",
+        "scalability_assessment_bot",
+        "self_coding_divergence_detector",
+        "self_coding_scheduler",
+        "self_improvement/metrics",
+        "service_installer",
+        "stripe_billing_router",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "tests/conftest",
+        "tests/integration/test_self_coding_path_resolution",
+        "tests/test_alignment_baseline_update",
+        "tests/test_bot_development_bot",
+        "tests/test_composite_workflow_scorer_methods",
+        "tests/test_data_bot_reload_thresholds",
+        "tests/test_data_bot_thresholds",
+        "tests/test_deployment_governance",
+        "tests/test_environment_helpers",
+        "tests/test_error_classifier_learning",
+        "tests/test_finance_router_bot",
+        "tests/test_full_self_optimisation",
+        "tests/test_investment_engine",
+        "tests/test_metrics_entropy_history",
+        "tests/test_roi_bottlenecks",
+        "tests/test_roi_calculator",
+        "tests/test_roi_scorer_workflow",
+        "tests/test_sanity_layer_hooks",
+        "tests/test_sc_threshold_persistence",
+        "tests/test_stack_context_config",
+        "tests/test_stripe_billing_router",
+        "tests/test_stripe_billing_router_logging",
+        "tests/test_stripe_ledger_logging",
+        "tests/test_workflow_evolution_bot",
+        "vector_service/text_preprocessor",
+        "vector_service/weight_adjuster",
+        "workflow_spec",
+        "workflow_synthesizer",
+        "yaml_fallback"
+      ],
+      "module": "yaml"
+    },
+    {
+      "dependents": [
+        "tests/test_prompt_engine",
+        "tests/test_prompt_engine_chunk_summaries",
+        "tests/test_prompt_engine_optimizer_integration",
+        "tests/test_vector_metrics_bootstrap_fast",
+        "unit_tests/test_prompt_engine",
+        "unit_tests/test_prompt_evolution_memory"
+      ],
+      "module": "prompt_engine"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_cli",
+        "adaptive_roi_dataset",
+        "adaptive_roi_predictor",
+        "admin_bot_base",
+        "ai_counter_bot",
+        "analytics/retrieval_ranker_dataset",
+        "audit_logger",
+        "bot_database",
+        "bot_db_utils",
+        "bot_development_bot",
+        "bot_performance_history_db",
+        "bot_registry",
+        "bot_testing_bot",
+        "capital_management_bot",
+        "central_database_bot",
+        "chatgpt_enhancement_bot",
+        "chatgpt_prediction_bot",
+        "code_database",
+        "coding_bot_interface",
+        "communication_maintenance_bot",
+        "communication_testing_bot",
+        "competitive_intelligence_bot",
+        "contrarian_db",
+        "coordination_manager",
+        "database_management_bot",
+        "database_manager",
+        "database_steward_bot",
+        "databases",
+        "db_dedup",
+        "deployment_bot",
+        "diagnostic_manager",
+        "discrepancy_db",
+        "dynamic_resource_allocator_bot",
+        "efficiency_bot",
+        "embedding_stats_db",
+        "error_bot",
+        "error_logger",
+        "error_ontology_dashboard",
+        "evaluation_history_db",
+        "evolution_history_db",
+        "experiment_history_db",
+        "failure_learning_system",
+        "information_db",
+        "intent_clusterer",
+        "intent_db",
+        "investment_engine",
+        "ipo_bot",
+        "knowledge_graph",
+        "launch_menace_bots",
+        "learning_engine",
+        "main",
+        "menace_cli",
+        "menace_memory_manager",
+        "menace_orchestrator",
+        "menace_sanity_layer",
+        "metrics_aggregator",
+        "metrics_dashboard",
+        "mirror_bot",
+        "model_automation_dependencies",
+        "neuroplasticity",
+        "newsreader_bot",
+        "niche_saturation_bot",
+        "offer_testing_bot",
+        "operational_monitor_bot",
+        "override_db",
+        "patch_safety",
+        "patch_suggestion_db",
+        "pre_execution_roi_bot",
+        "preliminary_research_bot",
+        "prompt_db",
+        "prompt_memory_trainer",
+        "relevancy_metrics_db",
+        "relevancy_radar",
+        "research_aggregator_bot",
+        "research_storage",
+        "resource_allocation_bot",
+        "resource_allocation_optimizer",
+        "resources_bot",
+        "retrieval_cache",
+        "retrieval_training_dataset",
+        "revenue_amplifier",
+        "roi_results_db",
+        "roi_tracker",
+        "rollback_manager",
+        "run_autonomous",
+        "safety_monitor",
+        "sandbox_dashboard",
+        "scalability_assessment_bot",
+        "self_test_service",
+        "sentiment_bot",
+        "service_supervisor",
+        "session_vault",
+        "shared/pipeline_base",
+        "snapshot_history_db",
+        "structural_evolution_bot",
+        "synergy_history_db",
+        "table_usage_cli",
+        "telemetry_backend",
+        "telemetry_feedback",
+        "tests/test_adaptive_roi_dataset",
+        "tests/test_adaptive_roi_predictor",
+        "tests/test_analytics_adaptive_roi_dataset",
+        "tests/test_bootstrap_audit_safety",
+        "tests/test_bootstrap_self_coding",
+        "tests/test_bot_testing_bot",
+        "tests/test_bot_testing_bot_property",
+        "tests/test_botdb_vector_search",
+        "tests/test_code_db_scope",
+        "tests/test_db_access_audit",
+        "tests/test_db_dedup",
+        "tests/test_db_initialization",
+        "tests/test_db_router",
+        "tests/test_db_router_audit_log",
+        "tests/test_db_router_bootstrap_init",
+        "tests/test_db_router_connections",
+        "tests/test_db_router_context_manager",
+        "tests/test_db_router_denied_tables",
+        "tests/test_db_router_get_connection",
+        "tests/test_db_router_get_connection_audit_table",
+        "tests/test_db_router_get_connection_concurrency",
+        "tests/test_db_router_logging",
+        "tests/test_db_router_overrides_audit",
+        "tests/test_db_router_queue_insert",
+        "tests/test_db_router_read_write_logging",
+        "tests/test_db_router_rejection",
+        "tests/test_db_router_routing_all_tables",
+        "tests/test_db_router_sqlparse",
+        "tests/test_db_router_table_sharing",
+        "tests/test_db_router_thread_safety",
+        "tests/test_db_router_threaded_isolation",
+        "tests/test_dbrouter_bootstrap_audit",
+        "tests/test_embedding_stats_db",
+        "tests/test_evaluation_history_db",
+        "tests/test_evaluation_service",
+        "tests/test_experiment_history_db",
+        "tests/test_experiment_manager",
+        "tests/test_logging_exceptions",
+        "tests/test_memory_aware_gpt_client_persistence",
+        "tests/test_memory_continuity",
+        "tests/test_model_evaluation_service",
+        "tests/test_patch_safety_router",
+        "tests/test_resource_allocation_optimizer_router_usage",
+        "tests/test_retrieval_cache",
+        "tests/test_router_initialization",
+        "tests/test_sanity_layer_hooks",
+        "tests/test_shared_db_logging",
+        "tests/test_snapshot_history_db_storage",
+        "tests/test_snapshot_regression_logging",
+        "tests/test_snapshot_tracker_confidence",
+        "tests/test_source_menace_id",
+        "tests/test_synergy_history_db",
+        "tests/test_testing_log_db_router",
+        "tests/test_vector_metrics_db",
+        "tests/test_vector_service_api",
+        "text_research_bot",
+        "trial_monitor",
+        "unified_event_bus",
+        "unified_learning_engine",
+        "universal_retriever",
+        "vector_metrics_aggregator",
+        "vector_metrics_db",
+        "vector_service/context_builder",
+        "video_research_bot",
+        "violation_logger",
+        "watchdog",
+        "workflow_evolution_manager",
+        "workflow_summary_db",
+        "workflow_synthesizer"
+      ],
+      "module": "db_router"
+    },
+    {
+      "dependents": [
+        "advanced_error_management",
+        "auto_escalation_manager",
+        "debug_loop_service",
+        "error_bot",
+        "error_cluster_analyzer",
+        "error_cluster_predictor",
+        "error_forecaster",
+        "error_logger",
+        "error_ontology_dashboard",
+        "evaluation_manager",
+        "intent_clusterer",
+        "knowledge_graph_cli",
+        "menace_memory_manager",
+        "menace_orchestrator",
+        "microtrend_service",
+        "self_test_service",
+        "self_validation_dashboard",
+        "service_supervisor",
+        "telemetry_feedback",
+        "tests/test_error_instance_ingestion",
+        "watchdog"
+      ],
+      "module": "knowledge_graph"
+    },
+    {
+      "dependents": [
+        "system_evolution_manager",
+        "workflow_cloner"
+      ],
+      "module": "ga_clone_manager"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "discovery_scheduler",
+        "evolution_orchestrator",
+        "failure_learning_system",
+        "model_automation_dependencies",
+        "shared/pipeline_base",
+        "tests/integration/test_prepare_pipeline_deduplication",
+        "workflow_cloner"
+      ],
+      "module": "bot_planning_bot"
+    },
+    {
+      "dependents": [
+        "access_control"
+      ],
+      "module": "models"
+    },
+    {
+      "dependents": [
+        "self_learning_coordinator"
+      ],
+      "module": "curriculum_builder"
+    },
+    {
+      "dependents": [
+        "menace_gui",
+        "resource_allocation_bot",
+        "roi_tracker"
+      ],
+      "module": "resources_bot"
+    },
+    {
+      "dependents": [
+        "db_router",
+        "evaluation_dashboard",
+        "metrics_dashboard",
+        "readiness_index",
+        "roi_tracker",
+        "table_usage_cli"
+      ],
+      "module": "telemetry_backend"
+    },
+    {
+      "dependents": [
+        "run_autonomous"
+      ],
+      "module": "preset_logger"
+    },
+    {
+      "dependents": [
+        "ensemble_predictor",
+        "evolution_analysis_bot",
+        "evolution_orchestrator"
+      ],
+      "module": "evolution_predictor"
+    },
+    {
+      "dependents": [
+        "code_database",
+        "resource_prediction_bot",
+        "self_coding_thresholds",
+        "workflow_evolution_bot"
+      ],
+      "module": "safe_repr"
+    },
+    {
+      "dependents": [
+        "stripe_billing_router"
+      ],
+      "module": "billing"
+    },
+    {
+      "dependents": [
+        "advanced_error_management",
+        "auto_escalation_manager",
+        "bot_creation_bot",
+        "capital_management_bot",
+        "chaos_monitoring_service",
+        "communication_maintenance_bot",
+        "curriculum_builder",
+        "database_steward_bot",
+        "deployment_bot",
+        "diagnostic_manager",
+        "error_cluster_analyzer",
+        "error_cluster_predictor",
+        "error_forecaster",
+        "error_logger",
+        "error_ontology_dashboard",
+        "evaluation_manager",
+        "menace_gui",
+        "menace_orchestrator",
+        "micro_models/error_dataset",
+        "monitoring_dashboard",
+        "resource_allocation_optimizer",
+        "self_coding_manager",
+        "self_learning_coordinator",
+        "self_service_override",
+        "self_test_service",
+        "self_validation_dashboard",
+        "service_supervisor",
+        "tests/test_import_compat",
+        "unit_tests/test_self_coding_manager_deferred_error_bot_import",
+        "watchdog"
+      ],
+      "module": "error_bot"
+    },
+    {
+      "dependents": [
+        ".",
+        "bot_creation_bot",
+        "menace_orchestrator",
+        "tests/integration/test_intent_clusterer_synergy",
+        "tests/test_intent_clusterer",
+        "tests/test_intent_clusterer_async",
+        "tests/test_intent_clusterer_categories",
+        "tests/test_intent_clusterer_helper",
+        "tests/test_intent_clusterer_labels",
+        "tests/test_intent_clusterer_logging",
+        "tests/test_intent_clusterer_query",
+        "tests/test_intent_clusterer_synergy",
+        "workflow_evolution_bot",
+        "workflow_synthesizer"
+      ],
+      "module": "intent_clusterer"
+    },
+    {
+      "dependents": [
+        "research_aggregator_bot"
+      ],
+      "module": "chatgpt_prediction_bot"
+    },
+    {
+      "dependents": [
+        "stripe_billing_router",
+        "tests/test_billing_router_logging",
+        "tests/test_sanity_layer_hooks",
+        "tests/test_stripe_billing_router_account_id_mismatch",
+        "tests/test_stripe_billing_router_mismatch"
+      ],
+      "module": "evolution_lock_flag"
+    },
+    {
+      "dependents": [
+        "adaptive_trigger_service",
+        "bot_creation_bot",
+        "contrarian_model_bot",
+        "database_management_bot",
+        "efficiency_bot",
+        "energy_forecast_bot",
+        "error_bot",
+        "evolution_analysis_bot",
+        "evolution_orchestrator",
+        "evolution_predictor",
+        "evolution_scheduler",
+        "experiment_manager",
+        "failure_learning_system",
+        "finance_router_bot",
+        "ga_clone_manager",
+        "ga_prediction_bot",
+        "genetic_algorithm_bot",
+        "menace_discovery_engine",
+        "model_automation_dependencies",
+        "orchestrator_loader",
+        "oversight_bots",
+        "prediction_manager_bot",
+        "prediction_training_pipeline",
+        "research_aggregator_bot",
+        "resource_allocation_bot",
+        "resource_prediction_bot",
+        "self_coding_manager",
+        "shared/capital_management_bot",
+        "variant_cli"
+      ],
+      "module": "capital_management_bot"
+    },
+    {
+      "dependents": [
+        "advanced_error_management"
+      ],
+      "module": "anomaly_detection"
+    },
+    {
+      "dependents": [
+        "bot_database",
+        "code_database",
+        "error_bot",
+        "research_storage"
+      ],
+      "module": "auto_link"
+    },
+    {
+      "dependents": [
+        "chatgpt_idea_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "newsreader_bot"
+      ],
+      "module": "memory_logging"
+    },
+    {
+      "dependents": [
+        "anthropic_client",
+        "llm_interface",
+        "llm_router"
+      ],
+      "module": "llm_pricing"
+    },
+    {
+      "dependents": [
+        "audit",
+        "db_write_queue",
+        "governed_embeddings",
+        "lock_utils",
+        "sandbox_runner/environment",
+        "sync_shared_db",
+        "workflow_synthesizer"
+      ],
+      "module": "fcntl_compat"
+    },
+    {
+      "dependents": [
+        "service_supervisor",
+        "unified_update_service"
+      ],
+      "module": "dependency_update_service"
+    },
+    {
+      "dependents": [
+        "candidate_matcher",
+        "discovery_scheduler",
+        "menace_discovery_engine"
+      ],
+      "module": "normalize_scraped_data"
+    },
+    {
+      "dependents": [
+        "memory_maintenance",
+        "run_autonomous"
+      ],
+      "module": "gpt_knowledge_service"
+    },
+    {
+      "dependents": [
+        "chatgpt_enhancement_bot",
+        "chatgpt_idea_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "conversation_manager_bot",
+        "cross_query",
+        "knowledge_graph",
+        "memory_bot",
+        "menace_memory_manager",
+        "query_bot"
+      ],
+      "module": "gpt_memory_interface"
+    },
+    {
+      "dependents": [
+        "central_evaluation_loop",
+        "deployment_bot"
+      ],
+      "module": "deployment_governance"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "service_supervisor",
+        "watchdog"
+      ],
+      "module": "auto_escalation_manager"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "evolution_orchestrator"
+      ],
+      "module": "evolution_analysis_bot"
+    },
+    {
+      "dependents": [
+        ".",
+        "adaptive_roi_cli",
+        "roi_scorer",
+        "sandbox_orchestrator",
+        "workflow_benchmark",
+        "workflow_chain_simulator",
+        "workflow_evolution_manager"
+      ],
+      "module": "composite_workflow_scorer"
+    },
+    {
+      "dependents": [
+        "meta_workflow_planner",
+        "run_autonomous",
+        "workflow_chain_simulator",
+        "workflow_chain_suggester",
+        "workflow_evolution_manager"
+      ],
+      "module": "workflow_stability_db"
+    },
+    {
+      "dependents": [
+        "database_steward_bot",
+        "error_bot",
+        "menace_gui",
+        "personalized_conversation"
+      ],
+      "module": "conversation_manager_bot"
+    },
+    {
+      "dependents": [
+        "mvp_workflow",
+        "mvp_workflow_legacy",
+        "tests/test_mvp_executor",
+        "tests/test_mvp_workflow"
+      ],
+      "module": "mvp_executor"
+    },
+    {
+      "dependents": [
+        "cache_utils",
+        "tests/test_retrieval_cache"
+      ],
+      "module": "retrieval_cache"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "query_bot"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "memory_bot"
+    },
+    {
+      "dependents": [
+        "bot_development_bot",
+        "implementation_pipeline"
+      ],
+      "module": "models_repo"
+    },
+    {
+      "dependents": [
+        "prompt_engine"
+      ],
+      "module": "code_summarizer"
+    },
+    {
+      "dependents": [
+        "chatgpt_enhancement_bot",
+        "chatgpt_idea_bot",
+        "chatgpt_research_bot",
+        "conversation_manager_bot",
+        "memory_maintenance",
+        "menace_gui",
+        "menace_sanity_layer",
+        "query_bot",
+        "sanity_feedback"
+      ],
+      "module": "shared_gpt_memory"
+    },
+    {
+      "dependents": [
+        "self_coding_thresholds",
+        "threshold_service"
+      ],
+      "module": "roi_thresholds"
+    },
+    {
+      "dependents": [
+        "bot_registry",
+        "coding_bot_interface",
+        "menace_self_debug",
+        "patch_application",
+        "self_coding_manager"
+      ],
+      "module": "self_coding_policy"
+    },
+    {
+      "dependents": [
+        "ranking_model_scheduler",
+        "retrieval_ranker"
+      ],
+      "module": "retrieval_training_dataset"
+    },
+    {
+      "dependents": [
+        "auto_resource_setup"
+      ],
+      "module": "proxy_broker"
+    },
+    {
+      "dependents": [
+        "patch_suggestion_db",
+        "self_coding_manager"
+      ],
+      "module": "enhancement_classifier"
+    },
+    {
+      "dependents": [
+        "tests/test_persist_workflow_embedding",
+        "tests/test_vectorizer_generalisation",
+        "workflow_graph",
+        "workflow_synergy_comparator"
+      ],
+      "module": "workflow_vectorizer"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "communication_testing_bot",
+        "ipo_implementation_pipeline",
+        "safety_monitor",
+        "scalability_pipeline"
+      ],
+      "module": "bot_testing_bot"
+    },
+    {
+      "dependents": [
+        "override_policy"
+      ],
+      "module": "stats"
+    },
+    {
+      "dependents": [
+        "chatgpt_research_bot"
+      ],
+      "module": "dependency_manager"
+    },
+    {
+      "dependents": [
+        "resource_allocation_optimizer"
+      ],
+      "module": "contextual_rl"
+    },
+    {
+      "dependents": [
+        "chatgpt_idea_bot"
+      ],
+      "module": "knowledge_retriever"
+    },
+    {
+      "dependents": [
+        "tests/test_repair_loop_flow"
+      ],
+      "module": "repair_loop"
+    },
+    {
+      "dependents": [
+        "autonomous_bootstrap",
+        "start_autonomous_sandbox"
+      ],
+      "module": "bot_discovery"
+    },
+    {
+      "dependents": [
+        "error_bot",
+        "failure_guard"
+      ],
+      "module": "failure_registry"
+    },
+    {
+      "dependents": [
+        "codex_output_analyzer"
+      ],
+      "module": "stripe_detection"
+    },
+    {
+      "dependents": [
+        "main",
+        "menace/self_debugger_sandbox_impl",
+        "tests/test_chatgpt_enhancement_bot",
+        "tests/test_db_router_integration",
+        "tests/test_dqn_synergy_learner_persistence",
+        "tests/test_evolution_orchestrator_mandatory",
+        "tests/test_self_learning_service_shutdown",
+        "tests/test_synergy_learner_update_logic"
+      ],
+      "module": "menace"
+    },
+    {
+      "dependents": [
+        "self_learning_service",
+        "self_test_service"
+      ],
+      "module": "self_services_config"
+    },
+    {
+      "dependents": [
+        "lineage_dashboard_listener"
+      ],
+      "module": "evaluation_dashboard"
+    },
+    {
+      "dependents": [
+        "ai_counter_bot",
+        "contrarian_model_bot",
+        "efficiency_bot",
+        "menace_orchestrator",
+        "niche_saturation_bot",
+        "resources_bot",
+        "sentiment_bot",
+        "strategic_planner"
+      ],
+      "module": "strategy_prediction_bot"
+    },
+    {
+      "dependents": [
+        "unified_event_bus"
+      ],
+      "module": "automated_reviewer"
+    },
+    {
+      "dependents": [
+        "tests/test_sync_shared_db_main",
+        "tests/test_sync_shared_db_queue",
+        "tests/test_sync_shared_db_replay",
+        "tests/test_sync_shared_db_watch"
+      ],
+      "module": "sync_shared_db"
+    },
+    {
+      "dependents": [
+        "research_aggregator_bot",
+        "research_storage"
+      ],
+      "module": "video_research_bot"
+    },
+    {
+      "dependents": [
+        "self_coding_manager",
+        "start_autonomous_sandbox"
+      ],
+      "module": "failure_guard"
+    },
+    {
+      "dependents": [
+        "action_vectorizer"
+      ],
+      "module": "compliance"
+    },
+    {
+      "dependents": [
+        "tests/integration/test_planning_cycle",
+        "tests/test_plan_validation"
+      ],
+      "module": "plan_validation"
+    },
+    {
+      "dependents": [
+        "tests/test_mvp_workflow"
+      ],
+      "module": "mvp_workflow"
+    },
+    {
+      "dependents": [
+        "model_automation_dependencies",
+        "model_automation_pipeline",
+        "shared/pipeline_base"
+      ],
+      "module": "pre_execution_roi_bot"
+    },
+    {
+      "dependents": [
+        "chatgpt_enhancement_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "conversation_manager_bot",
+        "newsreader_bot",
+        "personalized_conversation",
+        "query_bot"
+      ],
+      "module": "chatgpt_idea_bot"
+    },
+    {
+      "dependents": [
+        "menace_cli",
+        "tests/test_workflow_synthesizer_cli",
+        "tests/test_workflow_synthesizer_cli_args"
+      ],
+      "module": "workflow_synthesizer_cli"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "deployment_bot",
+        "efficiency_bot",
+        "error_bot",
+        "menace_gui",
+        "menace_memory_manager",
+        "resource_allocation_bot"
+      ],
+      "module": "bot_database"
+    },
+    {
+      "dependents": [
+        "implementation_pipeline",
+        "model_automation_dependencies",
+        "pre_execution_roi_bot",
+        "shared/pipeline_base"
+      ],
+      "module": "implementation_optimiser_bot"
+    },
+    {
+      "dependents": [
+        "billing/sanity_consumer",
+        "bot_creation_bot",
+        "stripe_billing_router",
+        "stripe_watchdog",
+        "tests/integration/test_anomaly_to_memory_flow",
+        "tests/integration/test_sanity_consumer_flow",
+        "tests/integration/test_sanity_pipeline",
+        "tests/test_menace_sanity_layer",
+        "tests/test_sanity_feedback",
+        "tests/test_sanity_layer_hooks",
+        "unit_tests/test_stripe_watchdog"
+      ],
+      "module": "menace_sanity_layer"
+    },
+    {
+      "dependents": [
+        "auto_resource_setup"
+      ],
+      "module": "username_generator"
+    },
+    {
+      "dependents": [
+        "menace_discovery_engine"
+      ],
+      "module": "passive_discovery_bot"
+    },
+    {
+      "dependents": [
+        "evolution_approval_policy",
+        "system_evolution_manager"
+      ],
+      "module": "structural_evolution_bot"
+    },
+    {
+      "dependents": [
+        "intent_db",
+        "tests/test_intent_clusterer"
+      ],
+      "module": "intent_vectorizer"
+    },
+    {
+      "dependents": [
+        "watchdog"
+      ],
+      "module": "escalation_protocol"
+    },
+    {
+      "dependents": [
+        "evaluation_dashboard",
+        "evolution_orchestrator",
+        "lineage_dashboard_listener",
+        "self_coding_manager",
+        "variant_manager",
+        "workflow_cloner",
+        "workflow_evolution_bot",
+        "workflow_evolution_manager"
+      ],
+      "module": "mutation_logger"
+    },
+    {
+      "dependents": [
+        "ga_clone_manager",
+        "prediction_manager_bot"
+      ],
+      "module": "ga_prediction_bot"
+    },
+    {
+      "dependents": [
+        "workflow_branch_manager",
+        "workflow_synergy_comparator"
+      ],
+      "module": "workflow_merger"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "candidate_matcher",
+        "codex_db_helpers",
+        "contrarian_model_bot",
+        "deployment_bot",
+        "efficiency_bot",
+        "implementation_pipeline",
+        "information_synthesis_bot",
+        "ipo_implementation_pipeline",
+        "menace_self_debug",
+        "model_automation_pipeline",
+        "module_synergy_grapher",
+        "pre_execution_roi_bot",
+        "shared/pipeline_base",
+        "start_autonomous_sandbox",
+        "workflow_chain_suggester",
+        "workflow_graph"
+      ],
+      "module": "task_handoff_bot"
+    },
+    {
+      "dependents": [
+        "central_evaluation_loop",
+        "deployment_bot",
+        "deployment_governance",
+        "roi_tracker",
+        "trial_monitor"
+      ],
+      "module": "borderline_bucket"
+    },
+    {
+      "dependents": [
+        "environment_cli",
+        "preset_policy_cli",
+        "tests/test_adaptive_preset_agent",
+        "tests/test_autonomous_stress",
+        "tests/test_environment_generator",
+        "tests/test_preset_policy_cli",
+        "tests/test_sandbox_integration",
+        "tests/test_sandbox_runner_metrics",
+        "tests/test_synergy_predictions"
+      ],
+      "module": "environment_generator"
+    },
+    {
+      "dependents": [
+        "information_synthesis_bot",
+        "shared/pipeline_base",
+        "task_validation_bot"
+      ],
+      "module": "simple_validation"
+    },
+    {
+      "dependents": [
+        "model_automation_pipeline",
+        "shared/pipeline_base"
+      ],
+      "module": "model_automation_dependencies"
+    },
+    {
+      "dependents": [
+        "bot_development_bot"
+      ],
+      "module": "bot_dev_config"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator",
+        "shared/pipeline_base"
+      ],
+      "module": "efficiency_bot"
+    },
+    {
+      "dependents": [
+        "central_database_bot",
+        "communication_maintenance_bot",
+        "database_steward_bot",
+        "databases",
+        "db_dedup",
+        "information_synthesis_bot",
+        "migrations/versions/0001_initial",
+        "migrations/versions/0002_memory_embeddings",
+        "migrations/versions/0003_telemetry_patch_deploy",
+        "migrations/versions/0004_source_menace_id",
+        "migrations/versions/0005_enhancements_source_menace_idx",
+        "migrations/versions/0006_bots_source_menace_idx",
+        "migrations/versions/0007_errors_source_menace_idx",
+        "migrations/versions/0008_discrepancies_source_menace_idx",
+        "migrations/versions/0009_code_source_menace_idx",
+        "migrations/versions/0010_content_hash",
+        "migrations/versions/0011_add_content_hash",
+        "migrations/versions/0012_content_hash_not_null",
+        "neurosales/neurosales/api_gateway",
+        "neurosales/neurosales/db_backup",
+        "neurosales/neurosales/rl_integration",
+        "neurosales/neurosales/sql_db",
+        "neurosales/scripts/backup_db",
+        "neurosales/scripts/restore_db",
+        "neurosales/tests/test_ensure_schema",
+        "tests/conftest",
+        "tests/test_db_dedup_helper",
+        "tests/test_full_self_optimisation",
+        "tests/test_workflow_evolution_bot"
+      ],
+      "module": "sqlalchemy"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "dependency_watchdog"
+    },
+    {
+      "dependents": [
+        "failure_localization",
+        "prompt_engine"
+      ],
+      "module": "target_region"
+    },
+    {
+      "dependents": [
+        "bot_planning_bot",
+        "capital_management_bot",
+        "enhancement_bot",
+        "error_bot",
+        "genetic_algorithm_bot",
+        "research_aggregator_bot",
+        "shared_gpt_memory",
+        "structural_evolution_bot",
+        "workflow_evolution_bot"
+      ],
+      "module": "gpt_memory"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "ipo_implementation_pipeline",
+        "scalability_pipeline"
+      ],
+      "module": "scalability_assessment_bot"
+    },
+    {
+      "dependents": [
+        "auto_escalation_manager",
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "bot_testing_bot",
+        "capital_management_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "debug_loop_service",
+        "enhancement_bot",
+        "error_bot",
+        "genetic_algorithm_bot",
+        "menace_cli",
+        "menace_orchestrator",
+        "orchestrator_loader",
+        "research_aggregator_bot",
+        "self_coding_manager",
+        "service_supervisor",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "tests/test_objective_approval_policy_enforcement",
+        "watchdog",
+        "workflow_evolution_bot"
+      ],
+      "module": "self_coding_engine"
+    },
+    {
+      "dependents": [
+        "self_coding_manager"
+      ],
+      "module": "failure_retry_utils"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base",
+        "strategy_prediction_bot"
+      ],
+      "module": "sentiment_bot"
+    },
+    {
+      "dependents": [
+        "llm_router"
+      ],
+      "module": "llm_registry"
+    },
+    {
+      "dependents": [
+        "startup_checks"
+      ],
+      "module": "bootstrap_policy"
+    },
+    {
+      "dependents": [
+        "roi_tracker",
+        "sandbox_dashboard"
+      ],
+      "module": "readiness_index"
+    },
+    {
+      "dependents": [
+        "anthropic_client",
+        "llm_interface",
+        "local_backend",
+        "private_backend",
+        "unit_tests/test_llm_client",
+        "unit_tests/test_shared_rate_limiter"
+      ],
+      "module": "llm_config"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator",
+        "tests/integration/test_build_cognitive_context_feedback",
+        "tests/test_cognition_layer",
+        "vector_service"
+      ],
+      "module": "cognition_layer"
+    },
+    {
+      "dependents": [
+        "synergy_auto_trainer",
+        "tests/test_synergy_weight_cli",
+        "tests/test_synergy_weight_cli_train"
+      ],
+      "module": "synergy_weight_cli"
+    },
+    {
+      "dependents": [
+        "coding_bot_interface",
+        "evaluation_dashboard",
+        "metrics_dashboard",
+        "relevancy_radar_cli",
+        "relevancy_radar_service",
+        "sandbox_dashboard",
+        "system_evolution_manager",
+        "tests/test_menace_orchestrator_bootstrap",
+        "tests/test_module_retirement_service",
+        "tests/test_relevancy_radar_cli",
+        "tests/test_relevancy_retirement_flow"
+      ],
+      "module": "relevancy_radar"
+    },
+    {
+      "dependents": [
+        "menace"
+      ],
+      "module": "numeric_backend"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "menace_master"
+    },
+    {
+      "dependents": [
+        "menace_sandbox/environment_bootstrap",
+        "scripts/bootstrap_env",
+        "service_supervisor"
+      ],
+      "module": "startup_checks"
+    },
+    {
+      "dependents": [
+        "auto_env_setup",
+        "config",
+        "light_bootstrap",
+        "stripe_billing_router",
+        "stripe_watchdog",
+        "unified_config_store"
+      ],
+      "module": "vault_secret_provider"
+    },
+    {
+      "dependents": [
+        "bot_development_bot",
+        "human_alignment_flagger",
+        "knowledge_retriever",
+        "memory_bot"
+      ],
+      "module": "secret_redactor"
+    },
+    {
+      "dependents": [
+        "prediction_manager_bot"
+      ],
+      "module": "prediction_training_pipeline"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator"
+      ],
+      "module": "strategic_planner"
+    },
+    {
+      "dependents": [
+        "chaos_monitoring_service"
+      ],
+      "module": "chaos_scheduler"
+    },
+    {
+      "dependents": [
+        "prompt_evolution_logger"
+      ],
+      "module": "prompt_evolution_memory"
+    },
+    {
+      "dependents": [
+        "enhancement_classifier",
+        "patch_provenance_service",
+        "self_coding_manager",
+        "tests/test_offline_suggestions"
+      ],
+      "module": "patch_suggestion_db"
+    },
+    {
+      "dependents": [
+        "menace_self_debug",
+        "unified_config_store"
+      ],
+      "module": "default_config_manager"
+    },
+    {
+      "dependents": [
+        "bot_testing_bot",
+        "cognition_layer",
+        "implementation_optimiser_bot",
+        "menace_orchestrator",
+        "orchestrator_loader",
+        "research_aggregator_bot",
+        "unit_tests/test_bootstrap_gate"
+      ],
+      "module": "bootstrap_gate"
+    },
+    {
+      "dependents": [
+        "start_autonomous_sandbox"
+      ],
+      "module": "system_binary_check"
+    },
+    {
+      "dependents": [
+        "menace_self_debug",
+        "sandbox_runner/tests/test_results_logger_sync",
+        "sandbox_runner/tests/test_run_metrics_persistence",
+        "self_improvement/system_snapshot"
+      ],
+      "module": "sandbox_results_logger"
+    },
+    {
+      "dependents": [
+        "relevancy_radar_service",
+        "tests/test_module_retirement_service",
+        "tests/test_module_retirement_service_replace",
+        "tests/test_relevancy_retirement_flow"
+      ],
+      "module": "module_retirement_service"
+    },
+    {
+      "dependents": [
+        "code_database",
+        "code_vectorizer",
+        "error_vectorizer",
+        "prompt_engine",
+        "tests/integration/test_chunked_patch_flow",
+        "tests/test_chunk_summary_cache",
+        "tests/test_chunk_workflow",
+        "tests/test_chunked_patch_parallel",
+        "tests/test_chunking_cache",
+        "tests/test_chunking_enriched_prompt",
+        "tests/test_chunking_prompt_builder",
+        "tests/test_chunking_split",
+        "tests/test_chunking_summarize_cache",
+        "tests/test_prompt_engine_chunk_summaries",
+        "tests/test_self_coding_engine_chunking"
+      ],
+      "module": "chunking"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_cli",
+        "analysis/roi_dashboard",
+        "composite_workflow_scorer",
+        "meta_workflow_planner",
+        "meta_workflow_planner_cli",
+        "roi_tracker",
+        "run_autonomous",
+        "stripe_watchdog",
+        "workflow_chain_suggester",
+        "workflow_evolution_manager",
+        "workflow_synergy_comparator"
+      ],
+      "module": "roi_results_db"
+    },
+    {
+      "dependents": [
+        "auto_env_setup",
+        "light_bootstrap",
+        "secret_rotation_service",
+        "unified_config_store",
+        "vault_secret_provider"
+      ],
+      "module": "secrets_manager"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_dataset",
+        "adaptive_roi_predictor",
+        "evolution_ab_comparator",
+        "evolution_analysis_bot",
+        "evolution_orchestrator",
+        "evolution_predictor",
+        "lineage_tracker",
+        "model_evaluation_service",
+        "monitoring_dashboard",
+        "mutation_lineage",
+        "mutation_logger",
+        "resource_allocation_optimizer",
+        "trend_predictor",
+        "trial_monitor",
+        "variant_manager",
+        "workflow_cloner",
+        "workflow_evolution_manager"
+      ],
+      "module": "evolution_history_db"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_cli",
+        "adaptive_trigger_service",
+        "advanced_error_management",
+        "ai_counter_bot",
+        "anomaly_detection",
+        "auto_escalation_manager",
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "bot_registry",
+        "bot_testing_bot",
+        "capital_management_bot",
+        "central_database_bot",
+        "chaos_monitoring_service",
+        "chatgpt_enhancement_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "communication_maintenance_bot",
+        "communication_testing_bot",
+        "competitive_intelligence_bot",
+        "contrarian_model_bot",
+        "conversation_manager_bot",
+        "database_management_bot",
+        "database_steward_bot",
+        "debug_loop_service",
+        "deployment_bot",
+        "diagnostic_manager",
+        "discrepancy_detection_bot",
+        "dynamic_resource_allocator_bot",
+        "efficiency_bot",
+        "energy_forecast_bot",
+        "enhancement_bot",
+        "error_bot",
+        "error_forecaster",
+        "evolution_analysis_bot",
+        "evolution_orchestrator",
+        "evolution_predictor",
+        "evolution_scheduler",
+        "experiment_manager",
+        "finance_router_bot",
+        "future_prediction_bots",
+        "ga_clone_manager",
+        "ga_prediction_bot",
+        "genetic_algorithm_bot",
+        "hierarchy_assessment_bot",
+        "information_synthesis_bot",
+        "ipo_bot",
+        "market_manipulation_bot",
+        "memory_bot",
+        "menace_cli",
+        "menace_orchestrator",
+        "meta_genetic_algorithm_bot",
+        "metrics_aggregator",
+        "mirror_bot",
+        "monitoring_dashboard",
+        "niche_saturation_bot",
+        "offer_testing_bot",
+        "operational_monitor_bot",
+        "orchestrator_loader",
+        "oversight_bots",
+        "passive_discovery_bot",
+        "patch_score_backend",
+        "performance_assessment_bot",
+        "pre_execution_roi_bot",
+        "prediction_manager_bot",
+        "prediction_training_pipeline",
+        "preliminary_research_bot",
+        "query_bot",
+        "report_generation_bot",
+        "research_aggregator_bot",
+        "research_fallback_bot",
+        "resource_allocation_bot",
+        "resource_allocation_optimizer",
+        "resource_prediction_bot",
+        "resources_bot",
+        "sanity_feedback",
+        "scalability_assessment_bot",
+        "self_coding_manager",
+        "self_coding_scheduler",
+        "self_learning_coordinator",
+        "self_service_override",
+        "self_test_service",
+        "self_validation_dashboard",
+        "sentiment_bot",
+        "service_supervisor",
+        "shared/lazy_data_bot",
+        "strategy_prediction_bot",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "system_evolution_manager",
+        "telemetry_feedback",
+        "tests/test_import_compat",
+        "text_research_bot",
+        "trend_predictor",
+        "trial_monitor",
+        "unit_tests/test_self_coding_manager_deferred_error_bot_import",
+        "universal_retriever",
+        "variant_cli",
+        "video_research_bot",
+        "watchdog",
+        "weekly_metrics_bot",
+        "workflow_benchmark",
+        "workflow_evolution_bot",
+        "workflow_evolution_manager"
+      ],
+      "module": "data_bot"
+    },
+    {
+      "dependents": [
+        "action_vectorizer",
+        "enhancement_vectorizer",
+        "error_vectorizer",
+        "failure_fingerprint",
+        "failure_fingerprint_store",
+        "failure_retry_utils",
+        "intent_clusterer",
+        "meta_workflow_planner",
+        "module_synergy_grapher",
+        "workflow_chain_suggester",
+        "workflow_vectorizer"
+      ],
+      "module": "vector_utils"
+    },
+    {
+      "dependents": [
+        "compliance_audit_service",
+        "menace_self_debug",
+        "roi_tracker"
+      ],
+      "module": "config_loader"
+    },
+    {
+      "dependents": [
+        "tests/test_meta_workflow_planner_cli"
+      ],
+      "module": "meta_workflow_planner_cli"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "communication_testing_bot"
+    },
+    {
+      "dependents": [
+        "codex_db_helpers",
+        "menace_sanity_layer",
+        "operational_monitor_bot",
+        "sanity_feedback",
+        "stripe_billing_router",
+        "stripe_watchdog"
+      ],
+      "module": "discrepancy_db"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator"
+      ],
+      "module": "rollback_validator"
+    },
+    {
+      "dependents": [
+        "intent_clusterer",
+        "intent_db",
+        "menace_orchestrator",
+        "tests/test_module_synergy_grapher",
+        "workflow_evolution_bot",
+        "workflow_synthesizer"
+      ],
+      "module": "module_synergy_grapher"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_cli",
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "bot_registry",
+        "capital_management_bot",
+        "debug_loop_service",
+        "enhancement_bot",
+        "error_bot",
+        "genetic_algorithm_bot",
+        "menace_cli",
+        "research_aggregator_bot",
+        "service_supervisor",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "threshold_service",
+        "workflow_evolution_bot"
+      ],
+      "module": "self_coding_thresholds"
+    },
+    {
+      "dependents": [
+        "self_coding_manager",
+        "startup_health_check"
+      ],
+      "module": "objective_hash_lock"
+    },
+    {
+      "dependents": [
+        "chunking",
+        "prompt_engine"
+      ],
+      "module": "chunk_summary_cache"
+    },
+    {
+      "dependents": [
+        "bot_registry",
+        "deployment_governance",
+        "generate_provenance",
+        "manual_override_handler"
+      ],
+      "module": "override_validator"
+    },
+    {
+      "dependents": [
+        "bootstrap_timeout_policy",
+        "bot_registry",
+        "coding_bot_interface",
+        "evolution_orchestrator",
+        "failure_guard",
+        "self_coding_manager",
+        "service_supervisor",
+        "single_agent_roi_runner",
+        "start_autonomous_sandbox",
+        "stripe_watchdog",
+        "threshold_service"
+      ],
+      "module": "shared_event_bus"
+    },
+    {
+      "dependents": [
+        "unit_tests/test_workflow_chain_simulator",
+        "workflow_synergy_cli"
+      ],
+      "module": "workflow_chain_simulator"
+    },
+    {
+      "dependents": [
+        "tests/test_new_backends",
+        "unit_tests/test_llm_client"
+      ],
+      "module": "anthropic_client"
+    },
+    {
+      "dependents": [
+        "automated_debugger",
+        "bootstrap_readiness",
+        "bootstrap_self_coding",
+        "bot_discovery",
+        "coding_bot_interface",
+        "data_bot",
+        "embeddable_db_mixin",
+        "failure_guard",
+        "gpt_knowledge_service",
+        "gpt_memory",
+        "local_knowledge_module",
+        "menace_sandbox/environment_bootstrap",
+        "menace_sandbox/quick_fix_engine/start_autonomous_sandbox",
+        "prompt_memory_trainer",
+        "run_mvp",
+        "self_coding_engine",
+        "self_coding_manager",
+        "shared_knowledge_module",
+        "start_autonomous_sandbox",
+        "task_handoff_bot",
+        "task_validation_bot",
+        "vector_service"
+      ],
+      "module": "menace_sandbox"
+    },
+    {
+      "dependents": [
+        "db_dedup",
+        "db_router",
+        "queue_cleanup",
+        "sync_shared_db"
+      ],
+      "module": "db_write_queue"
+    },
+    {
+      "dependents": [
+        "risk_score_calculator"
+      ],
+      "module": "nlp_domain_parser"
+    },
+    {
+      "dependents": [
+        "ai_counter_bot",
+        "auto_escalation_manager",
+        "automated_reviewer",
+        "bootstrap_gate",
+        "bootstrap_placeholder",
+        "bootstrap_timeout_policy",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "bot_registry",
+        "bot_testing_bot",
+        "capital_management_bot",
+        "central_database_bot",
+        "chatgpt_enhancement_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "cognition_layer",
+        "communication_maintenance_bot",
+        "communication_testing_bot",
+        "competitive_intelligence_bot",
+        "contrarian_model_bot",
+        "conversation_manager_bot",
+        "database_management_bot",
+        "database_steward_bot",
+        "debug_loop_service",
+        "deployment_bot",
+        "discrepancy_detection_bot",
+        "efficiency_bot",
+        "energy_forecast_bot",
+        "enhancement_bot",
+        "error_bot",
+        "evolution_analysis_bot",
+        "experiment_manager",
+        "finance_router_bot",
+        "ga_prediction_bot",
+        "genetic_algorithm_bot",
+        "hierarchy_assessment_bot",
+        "information_synthesis_bot",
+        "investment_engine",
+        "ipo_bot",
+        "market_manipulation_bot",
+        "memory_bot",
+        "menace_cli",
+        "menace_master",
+        "menace_orchestrator",
+        "meta_genetic_algorithm_bot",
+        "mirror_bot",
+        "module_retirement_service",
+        "niche_saturation_bot",
+        "offer_testing_bot",
+        "operational_monitor_bot",
+        "orchestrator_loader",
+        "oversight_bots",
+        "passive_discovery_bot",
+        "performance_assessment_bot",
+        "pre_execution_roi_bot",
+        "prediction_manager_bot",
+        "preliminary_research_bot",
+        "query_bot",
+        "report_generation_bot",
+        "research_aggregator_bot",
+        "research_fallback_bot",
+        "resource_allocation_bot",
+        "resource_prediction_bot",
+        "resources_bot",
+        "revenue_amplifier",
+        "sanity_feedback",
+        "scalability_assessment_bot",
+        "self_coding_manager",
+        "sentiment_bot",
+        "service_supervisor",
+        "shared/pipeline_base",
+        "start_autonomous_sandbox",
+        "strategy_prediction_bot",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "telemetry_feedback",
+        "tests/integration/test_bootstrap_cascade_reuse",
+        "tests/integration/test_bootstrap_import_reuse",
+        "tests/integration/test_bootstrap_single_flight_concurrency",
+        "tests/integration/test_bootstrap_watchdog",
+        "tests/integration/test_prepare_pipeline_deduplication",
+        "tests/test_bootstrap_cascading_guard",
+        "tests/test_bootstrap_dependency_broker_clients",
+        "tests/test_bootstrap_placeholder_concurrency",
+        "tests/test_bootstrap_timeout_policy",
+        "tests/test_coding_bot_repository_provenance",
+        "tests/test_prepare_pipeline_degraded",
+        "tests/test_prepare_pipeline_recursion_guard",
+        "tests/test_prepare_pipeline_timeout_hints",
+        "tests/test_vector_metrics_bootstrap_fast",
+        "text_research_bot",
+        "unit_tests/test_prepare_pipeline_recursion_guard",
+        "video_research_bot",
+        "watchdog",
+        "weekly_metrics_bot",
+        "workflow_evolution_bot"
+      ],
+      "module": "coding_bot_interface"
+    },
+    {
+      "dependents": [
+        "deployment_governance"
+      ],
+      "module": "foresight_gate"
+    },
+    {
+      "dependents": [
+        "tests/test_workflow_synergy_cli"
+      ],
+      "module": "workflow_synergy_cli"
+    },
+    {
+      "dependents": [
+        "unit_tests/test_patch_validator_module"
+      ],
+      "module": "patch_validator"
+    },
+    {
+      "dependents": [
+        "prompt_engine",
+        "tests/test_failure_fingerprint_scenarios"
+      ],
+      "module": "prompt_optimizer"
+    },
+    {
+      "dependents": [
+        "meta_workflow_planner_cli",
+        "tests/test_find_synergy_chain",
+        "tests/test_meta_workflow_planner",
+        "tests/test_meta_workflow_planner_cli",
+        "tests/test_meta_workflow_planner_cross_domain",
+        "tests/test_meta_workflow_planner_embeddings",
+        "tests/test_meta_workflow_planner_failures",
+        "tests/test_meta_workflow_planner_mutation",
+        "tests/test_meta_workflow_planner_pipeline_flow",
+        "workflow_chain_simulator",
+        "workflow_evolution_manager",
+        "workflow_synergy_cli"
+      ],
+      "module": "meta_workflow_planner"
+    },
+    {
+      "dependents": [
+        "relevancy_metrics_db",
+        "self_test_service"
+      ],
+      "module": "module_index_db"
+    },
+    {
+      "dependents": [
+        "tests/test_codex_fallback_context_builder"
+      ],
+      "module": "codex_fallback_handler"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "meta_genetic_algorithm_bot"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "bot_testing_bot",
+        "enhancement_bot",
+        "error_bot",
+        "genetic_algorithm_bot",
+        "research_aggregator_bot",
+        "service_supervisor",
+        "structural_evolution_bot",
+        "workflow_evolution_bot"
+      ],
+      "module": "shared_evolution_orchestrator"
+    },
+    {
+      "dependents": [
+        "communication_maintenance_bot",
+        "deployment_bot",
+        "deployment_governance",
+        "infrastructure_bootstrap",
+        "menace_sanity_layer",
+        "prompt_engine",
+        "stripe_watchdog",
+        "tests/test_audit_logger_queue"
+      ],
+      "module": "audit_logger"
+    },
+    {
+      "dependents": [
+        "mvp_workflow",
+        "tests/test_mvp_codegen",
+        "tests/test_mvp_codegen_generation"
+      ],
+      "module": "mvp_codegen"
+    },
+    {
+      "dependents": [
+        "dependency_update_service",
+        "self_validation_dashboard"
+      ],
+      "module": "dependency_update_bot"
+    },
+    {
+      "dependents": [
+        "action_learning_engine",
+        "auto_escalation_manager",
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "capital_management_bot",
+        "composite_workflow_scorer",
+        "debug_loop_service",
+        "deployment_bot",
+        "efficiency_bot",
+        "enhancement_bot",
+        "enhancement_classifier",
+        "enhancement_score_backfill",
+        "error_bot",
+        "genetic_algorithm_bot",
+        "menace/self_debugger_sandbox_impl",
+        "menace_cli",
+        "meta_workflow_planner",
+        "mutation_lineage",
+        "patch_provenance",
+        "patch_provenance_service",
+        "prompt_memory_trainer",
+        "research_aggregator_bot",
+        "roi_tracker",
+        "self_coding_engine",
+        "self_coding_manager",
+        "self_learning_service",
+        "service_supervisor",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "tests/test_db_router_connections",
+        "tests/test_patch_history_bootstrap",
+        "tests/test_vector_metrics_bootstrap_fast",
+        "unified_learning_engine",
+        "watchdog",
+        "workflow_chain_suggester",
+        "workflow_evolution_bot"
+      ],
+      "module": "code_database"
+    },
+    {
+      "dependents": [
+        "chaos_scheduler",
+        "watchdog"
+      ],
+      "module": "chaos_tester"
+    },
+    {
+      "dependents": [
+        "action_planner",
+        "analytics/retrieval_ranker_dataset",
+        "automated_reviewer",
+        "bot_database",
+        "chatgpt_enhancement_bot",
+        "chatgpt_idea_bot",
+        "chatgpt_prediction_bot",
+        "code_database",
+        "communication_maintenance_bot",
+        "contrarian_db",
+        "error_bot",
+        "error_cluster_predictor",
+        "experiment_manager",
+        "failure_fingerprint",
+        "failure_fingerprint_store",
+        "failure_learning_system",
+        "information_db",
+        "intent_db",
+        "patch_provenance",
+        "patch_safety",
+        "patch_suggestion_db",
+        "research_aggregator_bot",
+        "research_storage",
+        "resources_bot",
+        "self_coding_engine",
+        "tests/test_automated_reviewer",
+        "tests/test_automated_reviewer_bootstrap_guard",
+        "tests/test_menace_cli_patch",
+        "tests/test_self_coding_engine",
+        "tests/test_vector_service_imports",
+        "tests/test_vectorizer_registry",
+        "universal_retriever",
+        "vector_service/context_builder",
+        "vector_service/embedding_backfill",
+        "vector_service/embedding_scheduler",
+        "vector_service/lazy_bootstrap",
+        "vector_service/patch_logger",
+        "vector_service/retriever",
+        "vector_service_api"
+      ],
+      "module": "vector_service"
+    },
+    {
+      "dependents": [
+        "tests/test_generate_patch_module",
+        "unit_tests/test_generate_patch_module"
+      ],
+      "module": "generate_patch"
+    },
+    {
+      "dependents": [
+        "bootstrap_readiness",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "competitive_intelligence_bot",
+        "enhancement_vectorizer",
+        "error_logger",
+        "intent_clusterer",
+        "intent_vectorizer",
+        "ipo_bot",
+        "memory_bot",
+        "menace_memory_manager",
+        "meta_workflow_planner",
+        "module_synergy_grapher",
+        "nlp_domain_parser",
+        "research_fallback_bot",
+        "vector_service/embed_utils",
+        "vector_service/vectorizer"
+      ],
+      "module": "governed_embeddings"
+    },
+    {
+      "dependents": [
+        "analytics/retrieval_ranker_dataset",
+        "code_database",
+        "enhancement_score_backfill",
+        "ranking_model_scheduler",
+        "roi_tracker",
+        "tests/test_session_roi_analysis",
+        "tests/test_vector_metrics_bootstrap_fast",
+        "tests/test_vector_metrics_bootstrap_timers",
+        "tests/test_vector_metrics_readiness_hook",
+        "tests/test_vector_metrics_shared_stub",
+        "tests/test_vector_metrics_warmup_stub",
+        "universal_retriever",
+        "vector_metrics_aggregator",
+        "vector_metrics_analytics",
+        "vector_service_api"
+      ],
+      "module": "vector_metrics_db"
+    },
+    {
+      "dependents": [
+        "evolution_scheduler",
+        "shared/pipeline_base"
+      ],
+      "module": "operational_monitor_bot"
+    },
+    {
+      "dependents": [
+        "central_evaluation_loop"
+      ],
+      "module": "reward_dispatcher"
+    },
+    {
+      "dependents": [
+        "bot_database",
+        "research_storage"
+      ],
+      "module": "menace_db"
+    },
+    {
+      "dependents": [
+        "bootstrap_defaults",
+        "bootstrap_gate",
+        "bootstrap_timeout_policy",
+        "start_autonomous_sandbox"
+      ],
+      "module": "bootstrap_manager"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "intent_clusterer",
+        "tests/test_retriever_reliability_refresh",
+        "tests/test_universal_retriever_error_frequency",
+        "tests/test_universal_retriever_event",
+        "workflow_evolution_bot"
+      ],
+      "module": "universal_retriever"
+    },
+    {
+      "dependents": [
+        "capital_management_bot",
+        "shared_evolution_orchestrator"
+      ],
+      "module": "orchestrator_loader"
+    },
+    {
+      "dependents": [
+        "experiment_manager",
+        "tests/test_experiment_history_db"
+      ],
+      "module": "experiment_history_db"
+    },
+    {
+      "dependents": [
+        "resource_allocation_optimizer"
+      ],
+      "module": "cross_query"
+    },
+    {
+      "dependents": [
+        "auto_escalation_manager",
+        "chaos_monitoring_service",
+        "cross_model_comparator",
+        "dynamic_resource_allocator_bot",
+        "error_logger",
+        "menace_orchestrator",
+        "operational_monitor_bot",
+        "self_coding_manager",
+        "self_coding_scheduler",
+        "service_supervisor",
+        "watchdog"
+      ],
+      "module": "advanced_error_management"
+    },
+    {
+      "dependents": [
+        "capital_management_bot",
+        "evolution_orchestrator",
+        "menace_orchestrator",
+        "self_coding_thresholds",
+        "strategic_planner"
+      ],
+      "module": "trend_predictor"
+    },
+    {
+      "dependents": [
+        "evaluation_manager",
+        "self_learning_coordinator",
+        "self_learning_service"
+      ],
+      "module": "action_learning_engine"
+    },
+    {
+      "dependents": [
+        "identity_seeder",
+        "research_fallback_bot"
+      ],
+      "module": "proxy_manager"
+    },
+    {
+      "dependents": [
+        "failure_fingerprint_store",
+        "failure_retry_utils",
+        "prompt_optimizer",
+        "tests/test_failure_fingerprinting"
+      ],
+      "module": "failure_fingerprint"
+    },
+    {
+      "dependents": [
+        "market_manipulation_bot",
+        "menace_discovery_engine",
+        "strategy_prediction_bot"
+      ],
+      "module": "niche_saturation_bot"
+    },
+    {
+      "dependents": [
+        "dynamic_module_mapper",
+        "sandbox_runner/cycle",
+        "sandbox_runner/environment",
+        "sandbox_runner/orphan_discovery",
+        "self_test_service",
+        "tests/integration/test_auto_include_isolated_dependency",
+        "tests/integration/test_dynamic_import_orphans",
+        "tests/integration/test_legacy_orphan_chain",
+        "tests/integration/test_recursive_auto_include",
+        "tests/integration/test_recursive_helper_inclusion",
+        "tests/test_discover_isolated_dependencies",
+        "tests/test_discover_recursive_orphans",
+        "tests/test_dynamic_import_discovery",
+        "tests/test_isolated_orphan_dependency",
+        "tests/test_orphan_analyzer_cache",
+        "tests/test_orphan_analyzer_plugins",
+        "tests/test_orphan_cache_chain",
+        "tests/test_orphan_classification_metrics",
+        "tests/test_orphan_dependency_auto_include",
+        "tests/test_orphan_discovery_dynamic_import",
+        "tests/test_orphan_module_integration",
+        "tests/test_orphan_rerun_on_change",
+        "tests/test_orphan_runtime_metrics",
+        "tests/test_recursive_inclusion_autonomous",
+        "tests/test_recursive_self_improvement"
+      ],
+      "module": "orphan_analyzer"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_cli",
+        "adaptive_roi_predictor"
+      ],
+      "module": "adaptive_roi_dataset"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator",
+        "operational_monitor_bot",
+        "roi_scaling_policy",
+        "service_supervisor",
+        "strategic_planner",
+        "tests/test_autoscaler",
+        "tests/test_autoscaler_light",
+        "tests/test_roi_scaling_policy_budget"
+      ],
+      "module": "autoscaler"
+    },
+    {
+      "dependents": [
+        "tests/test_failure_fingerprint_logging",
+        "tests/test_failure_fingerprint_retry",
+        "tests/test_patch_retry_escalation",
+        "tests/test_self_improvement_error_handling"
+      ],
+      "module": "tests"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "bot_database",
+        "dependency_update_bot",
+        "dependency_update_service",
+        "ipo_implementation_pipeline",
+        "scalability_pipeline",
+        "trial_monitor",
+        "unified_update_service",
+        "universal_retriever"
+      ],
+      "module": "deployment_bot"
+    },
+    {
+      "dependents": [
+        "codex_db_helpers",
+        "workflow_evolution_manager"
+      ],
+      "module": "workflow_summary_db"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "investment_engine"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "central_database_bot"
+    },
+    {
+      "dependents": [
+        "run_autonomous"
+      ],
+      "module": "menace_filelock"
+    },
+    {
+      "dependents": [
+        "error_bot",
+        "error_logger"
+      ],
+      "module": "error_ontology"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "implementation_pipeline",
+        "ipo_implementation_pipeline",
+        "scalability_pipeline"
+      ],
+      "module": "bot_development_bot"
+    },
+    {
+      "dependents": [
+        "chatgpt_enhancement_bot"
+      ],
+      "module": "override_policy"
+    },
+    {
+      "dependents": [
+        "cluster_supervisor"
+      ],
+      "module": "service_supervisor"
+    },
+    {
+      "dependents": [
+        "evaluation_dashboard",
+        "evaluation_worker",
+        "model_evaluation_service",
+        "self_learning_coordinator"
+      ],
+      "module": "evaluation_manager"
+    },
+    {
+      "dependents": [
+        "menace_cli",
+        "meta_workflow_planner",
+        "tests/test_meta_workflow_planner"
+      ],
+      "module": "cache_utils"
+    },
+    {
+      "dependents": [
+        "auto_escalation_manager",
+        "automated_reviewer",
+        "bot_development_bot",
+        "bot_planning_bot",
+        "bot_testing_bot",
+        "debug_loop_service",
+        "enhancement_bot",
+        "error_bot",
+        "experiment_manager",
+        "menace_cli",
+        "menace_orchestrator",
+        "research_aggregator_bot",
+        "self_coding_manager",
+        "service_supervisor",
+        "shared/pipeline_base",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "watchdog"
+      ],
+      "module": "model_automation_pipeline"
+    },
+    {
+      "dependents": [
+        "candidate_matcher",
+        "codex_db_helpers",
+        "contrarian_model_bot",
+        "deployment_bot",
+        "efficiency_bot",
+        "enhancement_bot",
+        "menace_memory_manager",
+        "micro_models/diff_summarizer_dataset",
+        "override_policy",
+        "pre_execution_roi_bot",
+        "research_aggregator_bot"
+      ],
+      "module": "chatgpt_enhancement_bot"
+    },
+    {
+      "dependents": [
+        "error_ontology_dashboard",
+        "sandbox_dashboard"
+      ],
+      "module": "metrics_dashboard"
+    },
+    {
+      "dependents": [
+        "dynamic_resource_allocator_bot",
+        "microtrend_service",
+        "service_supervisor",
+        "watchdog"
+      ],
+      "module": "menace_orchestrator"
+    },
+    {
+      "dependents": [
+        "metrics_dashboard",
+        "metrics_scheduler",
+        "ranking_model_scheduler"
+      ],
+      "module": "metrics_aggregator"
+    },
+    {
+      "dependents": [
+        "auto_escalation_manager",
+        "chatgpt_idea_bot",
+        "knowledge_cli",
+        "query_bot",
+        "run_autonomous",
+        "self_learning_service"
+      ],
+      "module": "local_knowledge_module"
+    },
+    {
+      "dependents": [
+        "contrarian_model_bot",
+        "implementation_pipeline",
+        "information_synthesis_bot",
+        "ipo_implementation_pipeline",
+        "model_automation_dependencies",
+        "shared/pipeline_base",
+        "strategy_prediction_bot",
+        "tests/integration/test_bootstrap_single_flight_concurrency",
+        "tests/test_dbrouter_bootstrap_audit"
+      ],
+      "module": "research_aggregator_bot"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator"
+      ],
+      "module": "oversight_bots"
+    },
+    {
+      "dependents": [
+        "action_planner",
+        "advanced_error_management",
+        "central_evaluation_loop",
+        "deployment_bot",
+        "deployment_governance",
+        "rollback_manager",
+        "tests/test_governance"
+      ],
+      "module": "governance"
+    },
+    {
+      "dependents": [
+        "alignment_review_agent",
+        "evaluation_dashboard",
+        "human_alignment_agent"
+      ],
+      "module": "violation_logger"
+    },
+    {
+      "dependents": [
+        "action_learning_engine",
+        "action_planner",
+        "bot_registry",
+        "capital_management_bot",
+        "cross_model_comparator",
+        "cross_model_scheduler",
+        "cross_query",
+        "dynamic_resource_allocator_bot",
+        "event_collector",
+        "learning_engine",
+        "menace_orchestrator",
+        "model_evaluation_service",
+        "preprocessing_utils",
+        "self_learning_coordinator",
+        "self_learning_service",
+        "shared/pipeline_base",
+        "unified_learning_engine",
+        "workflow_benchmark",
+        "workflow_cloner",
+        "workflow_evolution_bot",
+        "workflow_evolution_manager"
+      ],
+      "module": "neuroplasticity"
+    },
+    {
+      "dependents": [
+        "tests/test_synergy_tools_runtime"
+      ],
+      "module": "synergy_tools"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_database",
+        "bot_development_bot",
+        "code_database",
+        "communication_maintenance_bot",
+        "debug_loop_service",
+        "deployment_bot",
+        "error_bot",
+        "finance_router_bot",
+        "ga_clone_manager",
+        "learning_engine",
+        "menace_cli",
+        "menace_gui",
+        "menace_sanity_layer",
+        "offer_testing_bot",
+        "resource_allocation_optimizer",
+        "self_learning_service",
+        "service_supervisor",
+        "stripe_watchdog",
+        "task_handoff_bot",
+        "unified_learning_engine",
+        "watchdog"
+      ],
+      "module": "menace_memory_manager"
+    },
+    {
+      "dependents": [
+        "deployment_governance",
+        "foresight_gate"
+      ],
+      "module": "upgrade_forecaster"
+    },
+    {
+      "dependents": [
+        "action_learning_engine",
+        "action_planner",
+        "chaos_monitoring_service",
+        "discrepancy_detection_bot",
+        "dynamic_resource_allocator_bot",
+        "evolution_orchestrator",
+        "menace_orchestrator",
+        "self_learning_service",
+        "self_service_override",
+        "trial_monitor",
+        "unified_learning_engine",
+        "watchdog"
+      ],
+      "module": "resource_allocation_optimizer"
+    },
+    {
+      "dependents": [
+        "tests/test_patch_outcome_logging",
+        "tests/test_patch_score_backend",
+        "tests/test_self_debugger_sandbox"
+      ],
+      "module": "patch_score_backend"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "self_evaluation_service"
+    },
+    {
+      "dependents": [
+        "self_learning_service"
+      ],
+      "module": "self_learning_coordinator"
+    },
+    {
+      "dependents": [
+        "access_control",
+        "compliance_checker",
+        "models"
+      ],
+      "module": "roles"
+    },
+    {
+      "dependents": [
+        "tests/test_vectorizer_generalisation"
+      ],
+      "module": "code_vectorizer"
+    },
+    {
+      "dependents": [
+        "auto_env_setup",
+        "default_config_manager",
+        "menace_self_debug",
+        "unified_config_store"
+      ],
+      "module": "config_discovery"
+    },
+    {
+      "dependents": [
+        "run_autonomous",
+        "self_coding_manager",
+        "self_improvement/engine",
+        "service_supervisor"
+      ],
+      "module": "self_test_service"
+    },
+    {
+      "dependents": [
+        "audit",
+        "audit_logger",
+        "tests/test_audit_watchdog"
+      ],
+      "module": "audit_utils"
+    },
+    {
+      "dependents": [
+        ".",
+        "meta_workflow_planner",
+        "unit_tests/test_workflow_synergy_comparator",
+        "workflow_chain_simulator",
+        "workflow_chain_suggester",
+        "workflow_evolution_manager",
+        "workflow_synergy_cli"
+      ],
+      "module": "workflow_synergy_comparator"
+    },
+    {
+      "dependents": [
+        "query_bot",
+        "tests/test_config",
+        "tests/test_config_module"
+      ],
+      "module": "config"
+    },
+    {
+      "dependents": [
+        "bot_registry",
+        "cross_query",
+        "deployment_bot",
+        "error_bot",
+        "menace",
+        "menace_db",
+        "menace_memory_manager",
+        "resource_allocation_bot",
+        "resource_allocation_optimizer"
+      ],
+      "module": "databases"
+    },
+    {
+      "dependents": [
+        "communication_testing_bot"
+      ],
+      "module": "comm_testing_config"
+    },
+    {
+      "dependents": [
+        "action_learning_engine",
+        "shared/pipeline_base"
+      ],
+      "module": "action_planner"
+    },
+    {
+      "dependents": [
+        "environment_generator",
+        "preset_rl_agent",
+        "tests/test_rl_strategy_abstract"
+      ],
+      "module": "self_improvement_policy"
+    },
+    {
+      "dependents": [
+        "self_coding_manager"
+      ],
+      "module": "self_coding_divergence_detector"
+    },
+    {
+      "dependents": [
+        "dynamic_module_mapper",
+        "intent_clusterer",
+        "module_retirement_service",
+        "module_synergy_grapher",
+        "orphan_analyzer",
+        "relevancy_radar_service",
+        "tests/test_module_graph_analyzer"
+      ],
+      "module": "module_graph_analyzer"
+    },
+    {
+      "dependents": [
+        "tests/test_environment_cli"
+      ],
+      "module": "environment_cli"
+    },
+    {
+      "dependents": [
+        "action_planner",
+        "adaptive_roi_cli",
+        "adaptive_trigger_service",
+        "auto_escalation_manager",
+        "bot_database",
+        "bot_db_utils",
+        "bot_registry",
+        "candidate_matcher",
+        "chatgpt_enhancement_bot",
+        "code_database",
+        "communication_maintenance_bot",
+        "config",
+        "contrarian_model_bot",
+        "curriculum_builder",
+        "debug_loop_service",
+        "deployment_bot",
+        "efficiency_bot",
+        "error_bot",
+        "evaluation_manager",
+        "evaluation_worker",
+        "event_collector",
+        "evolution_orchestrator",
+        "finance_router_bot",
+        "information_db",
+        "information_synthesis_bot",
+        "knowledge_graph",
+        "lineage_dashboard_listener",
+        "menace_memory_manager",
+        "menace_sanity_layer",
+        "microtrend_service",
+        "model_evaluation_service",
+        "monitoring_dashboard",
+        "mutation_logger",
+        "neo4j_listener",
+        "neuroplasticity",
+        "offer_testing_bot",
+        "operational_monitor_bot",
+        "pre_execution_roi_bot",
+        "ranking_model_scheduler",
+        "relevancy_radar_service",
+        "research_storage",
+        "resource_allocation_optimizer",
+        "revenue_amplifier",
+        "rollback_manager",
+        "run_autonomous",
+        "safety_monitor",
+        "self_coding_manager",
+        "self_learning_coordinator",
+        "self_learning_service",
+        "shared/pipeline_base",
+        "shared_event_bus",
+        "threshold_service",
+        "universal_retriever",
+        "violation_logger",
+        "watchdog",
+        "workflow_graph",
+        "workflow_vectorizer"
+      ],
+      "module": "unified_event_bus"
+    },
+    {
+      "dependents": [
+        "override_policy"
+      ],
+      "module": "override_db"
+    },
+    {
+      "dependents": [
+        "scripts/run_personal_sandbox",
+        "self_test_service"
+      ],
+      "module": "auto_env_setup"
+    },
+    {
+      "dependents": [
+        "advanced_error_management",
+        "debug_loop_service",
+        "error_bot",
+        "self_test_service",
+        "stripe_watchdog",
+        "telemetry_feedback"
+      ],
+      "module": "error_logger"
+    },
+    {
+      "dependents": [
+        "meta_workflow_planner",
+        "tests/test_workflow_lineage",
+        "workflow_branch_manager",
+        "workflow_evolution_manager"
+      ],
+      "module": "workflow_lineage"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "central_database_bot",
+        "communication_maintenance_bot",
+        "database_management_bot",
+        "database_steward_bot",
+        "error_bot",
+        "operational_monitor_bot"
+      ],
+      "module": "admin_bot_base"
+    },
+    {
+      "dependents": [
+        "tests/test_relevancy_radar_cli"
+      ],
+      "module": "relevancy_radar_cli"
+    },
+    {
+      "dependents": [
+        "anthropic_client",
+        "chatgpt_idea_bot",
+        "chatgpt_research_bot",
+        "chunking",
+        "code_summarizer",
+        "codex_fallback_handler",
+        "enhancement_bot",
+        "llm_registry",
+        "llm_router",
+        "local_backend",
+        "local_client",
+        "model_registry",
+        "private_backend",
+        "prompt_db",
+        "prompt_engine",
+        "prompt_evolution_logger",
+        "prompt_evolution_memory",
+        "tests/test_llm_interface",
+        "unit_tests/test_llm_client"
+      ],
+      "module": "llm_interface"
+    },
+    {
+      "dependents": [
+        "menace_discovery_engine"
+      ],
+      "module": "candidate_matcher"
+    },
+    {
+      "dependents": [
+        "information_synthesis_bot",
+        "model_automation_dependencies",
+        "shared/pipeline_base"
+      ],
+      "module": "synthesis_models"
+    },
+    {
+      "dependents": [
+        "model_automation_dependencies",
+        "shared/pipeline_base"
+      ],
+      "module": "information_synthesis_bot"
+    },
+    {
+      "dependents": [
+        "relevancy_radar",
+        "relevancy_radar_service"
+      ],
+      "module": "relevancy_metrics_db"
+    },
+    {
+      "dependents": [
+        "meta_workflow_planner",
+        "module_synergy_grapher",
+        "synergy_auto_trainer",
+        "tests/test_autonomous_stress"
+      ],
+      "module": "synergy_history_db"
+    },
+    {
+      "dependents": [
+        "action_justifier",
+        "chatgpt_enhancement_bot",
+        "chatgpt_idea_bot",
+        "chatgpt_prediction_bot",
+        "code_summarizer",
+        "codex_fallback_handler",
+        "conversation_manager_bot",
+        "enhancement_bot",
+        "local_model_wrapper",
+        "newsreader_bot",
+        "query_bot",
+        "user_style_model",
+        "vector_service"
+      ],
+      "module": "context_builder"
+    },
+    {
+      "dependents": [
+        "data_bot",
+        "foresight_tracker",
+        "governance",
+        "sandbox_settings",
+        "sandbox_settings_fallback",
+        "sandbox_settings_pydantic",
+        "start_autonomous_sandbox",
+        "tests/test_pipeline_no_pandas"
+      ],
+      "module": "dependency_health"
+    },
+    {
+      "dependents": [
+        "snippet_compressor"
+      ],
+      "module": "redaction_utils"
+    },
+    {
+      "dependents": [
+        "monitoring_dashboard"
+      ],
+      "module": "lineage_tracker"
+    },
+    {
+      "dependents": [
+        "sandbox_runner/tests/test_start_autonomous_failure",
+        "sandbox_runner/tests/test_start_autonomous_health",
+        "sandbox_runner/tests/test_start_autonomous_launch",
+        "sandbox_runner/tests/test_start_autonomous_noninteractive",
+        "tests/test_start_autonomous_sandbox_degraded"
+      ],
+      "module": "start_autonomous_sandbox"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "experiment_manager",
+        "orchestrator_loader",
+        "stripe_watchdog"
+      ],
+      "module": "bootstrap_placeholder"
+    },
+    {
+      "dependents": [
+        "capital_management_bot",
+        "code_database",
+        "stripe_billing_router",
+        "stripe_watchdog",
+        "synergy_auto_trainer",
+        "synergy_monitor",
+        "synergy_weight_cli",
+        "weekly_metrics_bot"
+      ],
+      "module": "alert_dispatcher"
+    },
+    {
+      "dependents": [
+        "auto_escalation_manager",
+        "watchdog"
+      ],
+      "module": "automated_debugger"
+    },
+    {
+      "dependents": [
+        "discrepancy_detection_bot",
+        "menace_sanity_layer",
+        "resource_allocation_optimizer",
+        "sanity_feedback"
+      ],
+      "module": "failure_learning_system"
+    },
+    {
+      "dependents": [
+        "menace_sandbox/mvp_brain",
+        "menace_sandbox/mvp_smoke_runner",
+        "mvp_workflow"
+      ],
+      "module": "mvp_evaluator"
+    },
+    {
+      "dependents": [
+        "chatgpt_idea_bot",
+        "composite_workflow_scorer",
+        "error_logger",
+        "menace_master",
+        "menace_orchestrator",
+        "module_retirement_service",
+        "query_bot",
+        "roi_tracker",
+        "run_autonomous",
+        "sandbox_runner/cycle",
+        "sandbox_runner/environment",
+        "sandbox_runner/test_harness",
+        "self_coding_engine",
+        "self_test_service",
+        "service_supervisor",
+        "tests/fuzz/test_hostile_input",
+        "tests/test_canonical_presets",
+        "tests/test_coverage_summary",
+        "tests/test_input_stub_generation",
+        "tests/test_menace_master",
+        "tests/test_recursive_module_auto_inclusion",
+        "tests/test_repo_section_scenarios",
+        "tests/test_repo_section_sim",
+        "tests/test_repo_section_synergy",
+        "tests/test_run_sandbox",
+        "tests/test_run_sandbox_multiscenario",
+        "tests/test_sandbox_cycle_redundant",
+        "tests/test_sandbox_integration",
+        "tests/test_sandbox_meta_logger",
+        "tests/test_sandbox_runner_metrics",
+        "tests/test_sandbox_scenario_diversity",
+        "tests/test_sandbox_section_simulations",
+        "tests/test_self_improvement_engine",
+        "tests/test_self_test_service_recursive_integration",
+        "tests/test_service_supervisor_patch",
+        "tests/test_workflow_sim",
+        "workflow_evolution_manager",
+        "workflow_synthesizer"
+      ],
+      "module": "sandbox_runner"
+    },
+    {
+      "dependents": [
+        "compliance_audit_service",
+        "market_manipulation_bot"
+      ],
+      "module": "compliance_checker"
+    },
+    {
+      "dependents": [
+        "menace_discovery_engine",
+        "shared/pipeline_base"
+      ],
+      "module": "newsreader_bot"
+    },
+    {
+      "dependents": [
+        "run_autonomous"
+      ],
+      "module": "dependency_hints"
+    },
+    {
+      "dependents": [
+        "llm_interface",
+        "llm_router",
+        "tests/test_llm_interface",
+        "tests/test_local_backend",
+        "tests/test_new_backends",
+        "unit_tests/test_llm_client"
+      ],
+      "module": "prompt_db"
+    },
+    {
+      "dependents": [
+        "discovery_scheduler",
+        "evolution_orchestrator",
+        "model_automation_dependencies",
+        "shared/pipeline_base",
+        "workflow_cloner"
+      ],
+      "module": "bot_creation_bot"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_dataset",
+        "adaptive_roi_predictor",
+        "cross_model_comparator",
+        "cross_model_scheduler",
+        "evaluation_manager",
+        "evaluation_service",
+        "evaluation_worker",
+        "evolution_orchestrator",
+        "model_evaluation_service",
+        "model_performance_monitor"
+      ],
+      "module": "evaluation_history_db"
+    },
+    {
+      "dependents": [
+        "prompt_engine",
+        "prompt_memory_trainer_cli"
+      ],
+      "module": "prompt_memory_trainer"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "bootstrap_conflict_check",
+        "bootstrap_gate",
+        "bootstrap_self_coding",
+        "chatgpt_prediction_bot",
+        "cognition_layer",
+        "governed_embeddings",
+        "manual_bootstrap",
+        "menace_master",
+        "menace_orchestrator",
+        "menace_sandbox/environment_bootstrap",
+        "research_aggregator_bot",
+        "service_supervisor",
+        "start_autonomous_sandbox",
+        "tests/integration/test_bootstrap_watchdog",
+        "tests/test_bootstrap_adaptive_readiness",
+        "tests/test_bootstrap_timeout_policy",
+        "tests/test_bootstrap_timeout_policy_adaptive",
+        "tests/test_environment_bootstrap_readiness",
+        "tests/test_prepare_pipeline_timeout_hints",
+        "tests/test_vector_metrics_bootstrap_timers",
+        "unit_tests/test_component_window_lock",
+        "unit_tests/test_prepare_pipeline_component_budgets"
+      ],
+      "module": "bootstrap_timeout_policy"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "unified_update_service"
+    },
+    {
+      "dependents": [
+        "ad_integration",
+        "shared/pipeline_base"
+      ],
+      "module": "finance_router_bot"
+    },
+    {
+      "dependents": [
+        "enhancement_score_backfill"
+      ],
+      "module": "enhancement_score"
+    },
+    {
+      "dependents": [
+        "communication_maintenance_bot",
+        "contrarian_model_bot",
+        "dynamic_resource_allocator_bot",
+        "menace_gui",
+        "niche_saturation_bot",
+        "resource_allocation_bot",
+        "resources_bot",
+        "roi_scaling_policy",
+        "shared/pipeline_base",
+        "strategy_prediction_bot"
+      ],
+      "module": "resource_prediction_bot"
+    },
+    {
+      "dependents": [
+        "contrarian_model_bot",
+        "deployment_bot",
+        "efficiency_bot",
+        "error_bot",
+        "resource_allocation_bot"
+      ],
+      "module": "contrarian_db"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "evolution_orchestrator",
+        "workflow_evolution_manager"
+      ],
+      "module": "workflow_evolution_bot"
+    },
+    {
+      "dependents": [
+        "ga_clone_manager",
+        "meta_genetic_algorithm_bot",
+        "prediction_manager_bot"
+      ],
+      "module": "genetic_algorithm_bot"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "communication_maintenance_bot"
+    },
+    {
+      "dependents": [
+        "patch_safety"
+      ],
+      "module": "failure_vectorizer"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_dataset",
+        "bot_database",
+        "capital_management_bot",
+        "chatgpt_enhancement_bot",
+        "code_database",
+        "codex_db_helpers",
+        "communication_testing_bot",
+        "cross_query",
+        "databases",
+        "deployment_bot",
+        "discrepancy_db",
+        "dynamic_resource_allocator_bot",
+        "error_bot",
+        "error_logger",
+        "error_ontology_dashboard",
+        "evaluation_dashboard",
+        "evolution_history_db",
+        "experiment_history_db",
+        "failure_learning_system",
+        "information_db",
+        "ipo_bot",
+        "knowledge_graph",
+        "launch_menace_bots",
+        "menace_gui",
+        "micro_models/error_dataset",
+        "monitoring_dashboard",
+        "newsreader_bot",
+        "operational_monitor_bot",
+        "readiness_index",
+        "revenue_amplifier",
+        "roi_tracker",
+        "synergy_history_db",
+        "telemetry_backend",
+        "telemetry_feedback",
+        "trial_monitor",
+        "universal_retriever",
+        "watchdog",
+        "workflow_summary_db"
+      ],
+      "module": "scope_utils"
+    },
+    {
+      "dependents": [
+        "implementation_pipeline",
+        "ipo_implementation_pipeline"
+      ],
+      "module": "ipo_bot"
+    },
+    {
+      "dependents": [
+        "diagnostic_manager"
+      ],
+      "module": "dynamic_resource_allocator_bot"
+    },
+    {
+      "dependents": [
+        "error_logger",
+        "stripe_watchdog",
+        "tests/test_operational_monitor_bot"
+      ],
+      "module": "codex_db_helpers"
+    },
+    {
+      "dependents": [
+        "tests/test_memory_aware_gpt_client"
+      ],
+      "module": "memory_aware_gpt_client"
+    },
+    {
+      "dependents": [
+        "chatgpt_idea_bot",
+        "idea_search_bot",
+        "menace_discovery_engine"
+      ],
+      "module": "database_management_bot"
+    },
+    {
+      "dependents": [
+        "menace_cli",
+        "menace_self_debug",
+        "objective_hash_lock",
+        "self_coding_manager",
+        "startup_health_check"
+      ],
+      "module": "objective_guard"
+    },
+    {
+      "dependents": [
+        "communication_maintenance_bot",
+        "tasks"
+      ],
+      "module": "celery_app"
+    },
+    {
+      "dependents": [
+        "capital_management_bot",
+        "operational_monitor_bot",
+        "shared/lazy_data_bot",
+        "shared/pipeline_base"
+      ],
+      "module": "data_interfaces"
+    },
+    {
+      "dependents": [
+        "adaptive_roi_cli",
+        "adaptive_roi_predictor",
+        "central_evaluation_loop",
+        "roi_tracker"
+      ],
+      "module": "truth_adapter"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "chaos_monitoring_service"
+    },
+    {
+      "dependents": [
+        "performance_assessment_bot"
+      ],
+      "module": "bot_performance_history_db"
+    },
+    {
+      "dependents": [
+        ".",
+        "central_evaluation_loop",
+        "composite_workflow_scorer",
+        "error_logger",
+        "roi_tracker",
+        "workflow_scorer_core"
+      ],
+      "module": "roi_calculator"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator",
+        "shared/pipeline_base"
+      ],
+      "module": "discrepancy_detection_bot"
+    },
+    {
+      "dependents": [
+        "database_management_bot",
+        "database_manager"
+      ],
+      "module": "preliminary_research_bot"
+    },
+    {
+      "dependents": [
+        "contrarian_model_bot",
+        "cross_query",
+        "deployment_bot",
+        "discovery_scheduler",
+        "information_synthesis_bot",
+        "menace_discovery_engine",
+        "menace_memory_manager",
+        "model_automation_dependencies",
+        "tests/test_dbrouter_bootstrap_audit"
+      ],
+      "module": "research_data"
+    },
+    {
+      "dependents": [
+        ".",
+        "action_justifier",
+        "ad_integration",
+        "adaptive_roi_cli",
+        "adaptive_roi_dataset",
+        "adaptive_roi_predictor",
+        "advanced_error_management",
+        "ai_counter_bot",
+        "alert_dispatcher",
+        "analytics/retrieval_ranker_dataset",
+        "analytics/retrieval_ranker_model",
+        "audit",
+        "audit_logger",
+        "auto_env_setup",
+        "auto_escalation_manager",
+        "autoscaler",
+        "borderline_bucket",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_registry",
+        "candidate_matcher",
+        "central_evaluation_loop",
+        "chatgpt_enhancement_bot",
+        "chatgpt_idea_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "chunking",
+        "clipped/clipped_master",
+        "code_database",
+        "codex_db_helpers",
+        "codex_output_analyzer",
+        "composite_workflow_scorer",
+        "config",
+        "config_loader",
+        "contrarian_model_bot",
+        "database_manager",
+        "db_router",
+        "deployment_bot",
+        "deployment_governance",
+        "diagnostic_manager",
+        "dynamic_module_mapper",
+        "enhancement_bot",
+        "enhancement_score",
+        "environment_generator",
+        "error_bot",
+        "error_logger",
+        "error_ontology_dashboard",
+        "error_parser",
+        "evaluation_dashboard",
+        "finance_router_bot",
+        "foresight_tracker",
+        "governance",
+        "human_alignment_flagger",
+        "implementation_pipeline",
+        "intent_clusterer",
+        "intent_db",
+        "investment_engine",
+        "invocation_tracker",
+        "launch_menace_bots",
+        "lineage_tracker",
+        "main",
+        "manual_override_handler",
+        "menace",
+        "menace_cli",
+        "menace_master",
+        "menace_orchestrator",
+        "menace_sanity_layer",
+        "meta_workflow_planner",
+        "metrics_aggregator",
+        "metrics_dashboard",
+        "metrics_exporter",
+        "metrics_plugins",
+        "module_graph_analyzer",
+        "module_index_db",
+        "module_mapper",
+        "module_retirement_service",
+        "module_synergy_grapher",
+        "newsreader_bot",
+        "passive_discovery_bot",
+        "patch_branch_manager",
+        "patch_safety",
+        "patch_suggestion_db",
+        "policy_loader",
+        "prompt_db",
+        "prompt_engine",
+        "prompt_evolution_memory",
+        "prompt_memory_trainer",
+        "prompt_memory_trainer_cli",
+        "prompt_optimizer",
+        "relevancy_radar",
+        "relevancy_radar_cli",
+        "relevancy_radar_service",
+        "reward_dispatcher",
+        "roi_calculator",
+        "roi_results_db",
+        "roi_tracker",
+        "roles",
+        "run_autonomous",
+        "sandbox_dashboard",
+        "sandbox_recovery_manager",
+        "sandbox_results_logger",
+        "sandbox_runner/bootstrap",
+        "sandbox_runner/tests/test_environment_resolver",
+        "sandbox_runner/tests/test_resolve_path_variants",
+        "sandbox_runner/tests/test_start_autonomous_health",
+        "sandbox_settings_fallback",
+        "sandbox_settings_pydantic",
+        "sanity_feedback",
+        "self_coding_divergence_detector",
+        "self_coding_manager",
+        "self_coding_scheduler",
+        "self_coding_thresholds",
+        "self_improvement/meta_planning",
+        "self_improvement_policy",
+        "self_learning_coordinator",
+        "self_learning_service",
+        "self_model_bootstrap",
+        "self_modification_detector",
+        "self_services_config",
+        "self_test_service",
+        "self_validation_dashboard",
+        "service_installer",
+        "service_supervisor",
+        "snapshot_history_db",
+        "start_autonomous_sandbox",
+        "startup_checks",
+        "stripe_billing_router",
+        "stripe_watchdog",
+        "synergy_auto_trainer",
+        "synergy_tools",
+        "synergy_weight_cli",
+        "telemetry_feedback",
+        "tests/integration/test_anomaly_to_memory_flow",
+        "tests/integration/test_manual_bootstrap_optional_service",
+        "tests/test_bootstrap_self_coding",
+        "tests/test_dynamic_path_router_missing_dirs",
+        "tests/test_dynamic_path_router_multi_root",
+        "tests/test_enhancement_db_path",
+        "tests/test_evaluation_dashboard",
+        "tests/test_repo_root_overrides",
+        "tests/test_roi_tracker_summary",
+        "tests/test_run_autonomous_relocation",
+        "tests/test_run_sandbox",
+        "tests/test_sanity_layer_hooks",
+        "tests/test_self_coding_engine",
+        "tests/test_self_coding_engine_logging",
+        "tests/test_self_coding_engine_patch_logger",
+        "tests/test_self_debugger_sandbox",
+        "tests/test_stripe_billing_router_account_id_mismatch",
+        "tests/test_stripe_billing_router_mismatch",
+        "tests/test_stripe_watchdog",
+        "tests/test_unlabeled_container_cleanup",
+        "tests/test_unlabeled_volume_network_cleanup",
+        "trending_scraper",
+        "truth_adapter",
+        "unified_learning_engine",
+        "unit_tests/test_prompt_path_resolution",
+        "universal_retriever",
+        "upgrade_forecaster",
+        "username_generator",
+        "vector_metrics_aggregator",
+        "vector_metrics_analytics",
+        "vector_metrics_db",
+        "vector_service_api",
+        "vector_utils",
+        "violation_logger",
+        "watchdog",
+        "weekly_report_generator",
+        "workflow_branch_manager",
+        "workflow_chain_simulator",
+        "workflow_chain_suggester",
+        "workflow_evolution_manager",
+        "workflow_graph",
+        "workflow_lineage",
+        "workflow_run_summary",
+        "workflow_spec",
+        "workflow_stability_db",
+        "workflow_synergy_comparator",
+        "workflow_synthesizer",
+        "workflow_synthesizer_cli",
+        "workflow_vectorizer"
+      ],
+      "module": "dynamic_path_router"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "candidate_matcher",
+        "capital_management_bot",
+        "chatgpt_idea_bot",
+        "database_management_bot",
+        "deployment_bot",
+        "efficiency_bot",
+        "passive_discovery_bot",
+        "pre_execution_roi_bot",
+        "query_bot",
+        "research_aggregator_bot",
+        "shared/pipeline_base",
+        "workflow_cloner"
+      ],
+      "module": "database_manager"
+    },
+    {
+      "dependents": [
+        "central_database_bot",
+        "discrepancy_detection_bot",
+        "networked_event_bus",
+        "passive_discovery_bot",
+        "sandbox_recovery_manager",
+        "unified_event_bus"
+      ],
+      "module": "resilience"
+    },
+    {
+      "dependents": [
+        "market_manipulation_bot"
+      ],
+      "module": "competitive_intelligence_bot"
+    },
+    {
+      "dependents": [
+        "anthropic_client",
+        "llm_interface",
+        "llm_router",
+        "local_backend",
+        "local_client",
+        "private_backend",
+        "tests/test_openai_client_http",
+        "unit_tests/test_shared_rate_limiter"
+      ],
+      "module": "rate_limit"
+    },
+    {
+      "dependents": [
+        "tests/test_bootstrap_self_coding"
+      ],
+      "module": "bootstrap_self_coding"
+    },
+    {
+      "dependents": [
+        "model_evaluation_service",
+        "self_evaluation_service",
+        "variant_manager"
+      ],
+      "module": "workflow_cloner"
+    },
+    {
+      "dependents": [
+        "bot_database",
+        "chatgpt_enhancement_bot",
+        "databases",
+        "db_write_queue",
+        "error_bot",
+        "sync_shared_db"
+      ],
+      "module": "db_dedup"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "discovery_scheduler",
+        "menace_discovery_engine",
+        "menace_orchestrator",
+        "microtrend_service"
+      ],
+      "module": "trending_scraper"
+    },
+    {
+      "dependents": [
+        "human_alignment_flagger"
+      ],
+      "module": "reward_sanity_checker"
+    },
+    {
+      "dependents": [
+        "bot_testing_bot"
+      ],
+      "module": "bot_testing_config"
+    },
+    {
+      "dependents": [
+        "captcha_pipeline"
+      ],
+      "module": "captcha_system"
+    },
+    {
+      "dependents": [
+        "menace_discovery_engine",
+        "shared/pipeline_base"
+      ],
+      "module": "idea_search_bot"
+    },
+    {
+      "dependents": [
+        "research_aggregator_bot",
+        "research_storage"
+      ],
+      "module": "text_research_bot"
+    },
+    {
+      "dependents": [
+        "failure_fingerprint",
+        "patch_safety",
+        "tests/test_vectorizer_generalisation"
+      ],
+      "module": "error_vectorizer"
+    },
+    {
+      "dependents": [
+        "self_coding_objective_paths",
+        "self_coding_policy"
+      ],
+      "module": "objective_surface_policy"
+    },
+    {
+      "dependents": [
+        "tests/test_simple_functions"
+      ],
+      "module": "simple_functions"
+    },
+    {
+      "dependents": [
+        "run_autonomous",
+        "tests/test_full_autonomous_run"
+      ],
+      "module": "sandbox_recovery_manager"
+    },
+    {
+      "dependents": [
+        "sandbox_runner",
+        "universal_retriever"
+      ],
+      "module": "metrics_plugins"
+    },
+    {
+      "dependents": [
+        "advanced_error_management",
+        "logging_utils"
+      ],
+      "module": "meta_logging"
+    },
+    {
+      "dependents": [
+        "query_bot",
+        "scripts/run_personal_sandbox"
+      ],
+      "module": "run_autonomous"
+    },
+    {
+      "dependents": [
+        "tests/test_patch_branch_manager"
+      ],
+      "module": "patch_branch_manager"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot",
+        "capital_management_bot",
+        "model_automation_pipeline",
+        "shared/model_pipeline_core"
+      ],
+      "module": "entry_pipeline_loader"
+    },
+    {
+      "dependents": [
+        "research_aggregator_bot",
+        "research_fallback_bot",
+        "research_storage"
+      ],
+      "module": "chatgpt_research_bot"
+    },
+    {
+      "dependents": [
+        "rollback_manager"
+      ],
+      "module": "access_control"
+    },
+    {
+      "dependents": [
+        "ai_counter_bot",
+        "auto_escalation_manager",
+        "automated_reviewer",
+        "autonomous_bootstrap",
+        "bot_creation_bot",
+        "bot_db_utils",
+        "bot_development_bot",
+        "bot_discovery",
+        "bot_planning_bot",
+        "bot_testing_bot",
+        "capital_management_bot",
+        "central_database_bot",
+        "chatgpt_enhancement_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "communication_maintenance_bot",
+        "communication_testing_bot",
+        "competitive_intelligence_bot",
+        "contrarian_model_bot",
+        "conversation_manager_bot",
+        "cross_query",
+        "database_management_bot",
+        "database_steward_bot",
+        "debug_loop_service",
+        "deployment_bot",
+        "discrepancy_detection_bot",
+        "efficiency_bot",
+        "energy_forecast_bot",
+        "enhancement_bot",
+        "error_bot",
+        "event_collector",
+        "evolution_analysis_bot",
+        "finance_router_bot",
+        "future_prediction_bots",
+        "ga_prediction_bot",
+        "genetic_algorithm_bot",
+        "hierarchy_assessment_bot",
+        "information_synthesis_bot",
+        "ipo_bot",
+        "market_manipulation_bot",
+        "memory_bot",
+        "menace_cli",
+        "meta_genetic_algorithm_bot",
+        "micro_models/tool_history_dataset",
+        "mirror_bot",
+        "model_automation_dependencies",
+        "niche_saturation_bot",
+        "offer_testing_bot",
+        "operational_monitor_bot",
+        "oversight_bots",
+        "passive_discovery_bot",
+        "performance_assessment_bot",
+        "pre_execution_roi_bot",
+        "prediction_manager_bot",
+        "preliminary_research_bot",
+        "query_bot",
+        "report_generation_bot",
+        "research_aggregator_bot",
+        "research_fallback_bot",
+        "resource_allocation_bot",
+        "resource_prediction_bot",
+        "resources_bot",
+        "sanity_feedback",
+        "scalability_assessment_bot",
+        "self_coding_manager",
+        "sentiment_bot",
+        "service_supervisor",
+        "shared/pipeline_base",
+        "strategy_prediction_bot",
+        "stripe_watchdog",
+        "structural_evolution_bot",
+        "telemetry_feedback",
+        "text_research_bot",
+        "video_research_bot",
+        "watchdog",
+        "weekly_metrics_bot",
+        "workflow_evolution_bot"
+      ],
+      "module": "bot_registry"
+    },
+    {
+      "dependents": [
+        "clipped/topic_classifier",
+        "video_research_bot"
+      ],
+      "module": "whisper_utils"
+    },
+    {
+      "dependents": [
+        ".",
+        "ai_counter_bot",
+        "bot_dev_config",
+        "bot_development_bot",
+        "chatgpt_enhancement_bot",
+        "chatgpt_idea_bot",
+        "chatgpt_prediction_bot",
+        "curriculum_builder",
+        "evaluation_manager",
+        "evaluation_worker",
+        "identity_seeder",
+        "model_evaluation_service",
+        "synergy_history_db",
+        "trial_monitor",
+        "watchdog"
+      ],
+      "module": "error_flags"
+    },
+    {
+      "dependents": [
+        "human_alignment_flagger",
+        "plan_validation"
+      ],
+      "module": "ethics_violation_detector"
+    },
+    {
+      "dependents": [
+        "research_aggregator_bot",
+        "research_data",
+        "research_fallback_bot",
+        "research_models",
+        "shared/pipeline_base"
+      ],
+      "module": "research_storage"
+    },
+    {
+      "dependents": [
+        "analytics/retrieval_ranker_model",
+        "bot_creation_bot",
+        "evaluation_manager",
+        "self_learning_coordinator",
+        "self_learning_service"
+      ],
+      "module": "learning_engine"
+    },
+    {
+      "dependents": [
+        "run_autonomous",
+        "synergy_tools",
+        "tests/test_synergy_tools_runtime"
+      ],
+      "module": "synergy_monitor"
+    },
+    {
+      "dependents": [
+        "bot_planning_bot",
+        "bot_registry",
+        "error_cluster_analyzer",
+        "intent_clusterer",
+        "ipo_bot",
+        "knowledge_graph",
+        "meta_workflow_planner",
+        "module_graph_analyzer",
+        "module_mapper",
+        "module_synergy_grapher",
+        "mutation_lineage",
+        "relevancy_radar",
+        "resource_prediction_bot",
+        "sandbox_runner/environment",
+        "self_improvement/metrics",
+        "self_improvement/tests/test_collect_snapshot_metrics",
+        "tests/integration/test_degradation_roi_confidence_threshold",
+        "tests/integration/test_degradation_roi_prediction_skip",
+        "tests/integration/test_meta_workflow_planner_integration",
+        "tests/test_evolution_orchestrator_builder_paths",
+        "tests/test_evolution_orchestrator_skip_patch",
+        "tests/test_generate_workflows",
+        "tests/test_meta_workflow_planner",
+        "tests/test_meta_workflow_planner_cross_domain",
+        "tests/test_module_synergy_grapher",
+        "tests/test_orphan_analyzer_cache",
+        "tests/test_relevancy_radar_service",
+        "tests/test_workflow_synergy_comparator",
+        "tests/test_workflow_synthesizer",
+        "tests/test_workflow_synthesizer_functions",
+        "workflow_graph",
+        "workflow_lineage",
+        "workflow_synergy_comparator"
+      ],
+      "module": "networkx"
+    },
+    {
+      "dependents": [
+        "self_coding_manager"
+      ],
+      "module": "patch_attempt_tracker"
+    },
+    {
+      "dependents": [
+        "cognition_layer",
+        "memory_bot",
+        "orchestrator_loader",
+        "prediction_manager_bot",
+        "research_aggregator_bot",
+        "sandbox_orchestrator",
+        "vector_service_api"
+      ],
+      "module": "bootstrap_helpers"
+    },
+    {
+      "dependents": [
+        ".",
+        "sandbox_runner/test_harness",
+        "self_coding_manager",
+        "self_coding_scheduler"
+      ],
+      "module": "error_parser"
+    },
+    {
+      "dependents": [
+        "evaluation_manager"
+      ],
+      "module": "error_cluster_analyzer"
+    },
+    {
+      "dependents": [
+        "evolution_orchestrator",
+        "variant_cli",
+        "variant_manager"
+      ],
+      "module": "experiment_manager"
+    },
+    {
+      "dependents": [
+        "chatgpt_enhancement_bot",
+        "chatgpt_idea_bot",
+        "chatgpt_prediction_bot",
+        "chatgpt_research_bot",
+        "conversation_manager_bot",
+        "knowledge_retriever",
+        "menace_sanity_layer",
+        "newsreader_bot",
+        "query_bot",
+        "sanity_feedback"
+      ],
+      "module": "log_tags"
+    },
+    {
+      "dependents": [
+        "resources_bot"
+      ],
+      "module": "resource_vectorizer"
+    },
+    {
+      "dependents": [
+        "bootstrap_manager",
+        "bootstrap_self_coding",
+        "bootstrap_timeout_policy",
+        "menace_sandbox/environment_bootstrap",
+        "start_autonomous_sandbox"
+      ],
+      "module": "bootstrap_metrics"
+    },
+    {
+      "dependents": [
+        "chatgpt_prediction_bot",
+        "code_database",
+        "competitive_intelligence_bot",
+        "governed_retrieval",
+        "human_alignment_flagger",
+        "research_fallback_bot"
+      ],
+      "module": "license_detector"
+    },
+    {
+      "dependents": [
+        "prediction_manager_bot"
+      ],
+      "module": "future_prediction_bots"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "bot_vectorizer",
+        "chatgpt_prediction_bot",
+        "code_vectorizer",
+        "enhancement_bot",
+        "error_vectorizer",
+        "ipo_bot",
+        "local_model_wrapper",
+        "niche_saturation_bot",
+        "prompt_engine",
+        "research_aggregator_bot",
+        "resource_allocation_bot",
+        "self_test_service",
+        "stripe_watchdog",
+        "workflow_vectorizer"
+      ],
+      "module": "snippet_compressor"
+    },
+    {
+      "dependents": [
+        "error_ontology_dashboard",
+        "evaluation_manager"
+      ],
+      "module": "error_cluster_predictor"
+    },
+    {
+      "dependents": [
+        "deployment_governance",
+        "foresight_gate",
+        "meta_workflow_planner",
+        "start_autonomous_sandbox",
+        "tests/test_workflow_graph",
+        "workflow_evolution_bot",
+        "workflow_evolution_manager",
+        "workflow_run_summary",
+        "workflow_synergy_comparator"
+      ],
+      "module": "workflow_graph"
+    },
+    {
+      "dependents": [
+        "cross_model_scheduler",
+        "model_evaluation_service",
+        "model_performance_monitor"
+      ],
+      "module": "cross_model_comparator"
+    },
+    {
+      "dependents": [
+        ".",
+        "tests/test_generate_workflow_variants",
+        "tests/test_orphan_auto_indexing",
+        "tests/test_orphan_inclusion_after_synthesis",
+        "tests/test_orphan_integration_rounds",
+        "tests/test_workflow_synthesizer",
+        "tests/test_workflow_synthesizer_functions",
+        "workflow_evolution_bot",
+        "workflow_evolution_manager",
+        "workflow_synthesizer_cli"
+      ],
+      "module": "workflow_synthesizer"
+    },
+    {
+      "dependents": [
+        "dependency_self_check",
+        "startup_checks"
+      ],
+      "module": "dependency_verifier"
+    },
+    {
+      "dependents": [
+        "learning_engine",
+        "unified_learning_engine"
+      ],
+      "module": "preprocessing_utils"
+    },
+    {
+      "dependents": [
+        "allocator_service",
+        "identity_seeder",
+        "menace_orchestrator",
+        "session_aware_http"
+      ],
+      "module": "session_vault"
+    },
+    {
+      "dependents": [
+        "evolution_orchestrator",
+        "orchestrator_loader",
+        "self_coding_manager"
+      ],
+      "module": "system_evolution_manager"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "environment_restoration_service"
+    },
+    {
+      "dependents": [
+        "relevancy_radar_service",
+        "tests/test_dynamic_module_mapper"
+      ],
+      "module": "dynamic_module_mapper"
+    },
+    {
+      "dependents": [
+        "conversation_manager_bot",
+        "menace_gui",
+        "monitoring_dashboard",
+        "operational_monitor_bot"
+      ],
+      "module": "report_generation_bot"
+    },
+    {
+      "dependents": [
+        "bot_development_bot",
+        "chatgpt_idea_bot",
+        "llm_interface",
+        "local_model_wrapper",
+        "prompt_evolution_logger",
+        "prompt_evolution_memory"
+      ],
+      "module": "prompt_types"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "autonomous_bootstrap",
+        "bot_creation_bot",
+        "bot_discovery",
+        "bot_testing_bot",
+        "enhancement_bot",
+        "evolution_scheduler",
+        "orchestrator_loader",
+        "research_aggregator_bot",
+        "self_coding_manager",
+        "structural_evolution_bot",
+        "workflow_evolution_bot"
+      ],
+      "module": "evolution_orchestrator"
+    },
+    {
+      "dependents": [
+        "bot_registry",
+        "coding_bot_interface",
+        "lineage_tracker",
+        "menace_cli",
+        "mutation_lineage",
+        "patch_provenance_service",
+        "self_coding_manager"
+      ],
+      "module": "patch_provenance"
+    },
+    {
+      "dependents": [
+        "single_agent_roi_runner",
+        "start_autonomous_sandbox"
+      ],
+      "module": "sandbox_orchestrator"
+    },
+    {
+      "dependents": [
+        "code_database",
+        "failure_learning_system",
+        "intent_clusterer",
+        "unit_tests/test_embeddable_db_mixin_vector_metrics_stub",
+        "unit_tests/test_patch_vectorizer_bootstrap"
+      ],
+      "module": "embeddable_db_mixin"
+    },
+    {
+      "dependents": [
+        "db_router",
+        "sync_shared_db",
+        "tests/test_audit",
+        "tests/test_db_router_get_connection_audit_table",
+        "tests/test_dbrouter_bootstrap_audit"
+      ],
+      "module": "audit"
+    },
+    {
+      "dependents": [
+        "alignment_review_agent",
+        "compliance_audit_service",
+        "self_improvement/engine",
+        "tests/test_alignment_baseline_update"
+      ],
+      "module": "security_auditor"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator"
+      ],
+      "module": "ad_integration"
+    },
+    {
+      "dependents": [
+        "menace_self_debug",
+        "single_agent_roi_runner",
+        "start_autonomous_sandbox",
+        "workflow_chain_simulator"
+      ],
+      "module": "workflow_evolution_manager"
+    },
+    {
+      "dependents": [
+        "discovery_scheduler"
+      ],
+      "module": "menace_discovery_engine"
+    },
+    {
+      "dependents": [
+        "tests/test_vectorizer_generalisation",
+        "vector_service"
+      ],
+      "module": "bot_vectorizer"
+    },
+    {
+      "dependents": [
+        "dependency_watchdog",
+        "service_supervisor"
+      ],
+      "module": "external_dependency_provisioner"
+    },
+    {
+      "dependents": [
+        "tests/test_workflow_diff_cli",
+        "tests/test_workflow_spec",
+        "workflow_merger",
+        "workflow_run_summary",
+        "workflow_synthesizer"
+      ],
+      "module": "workflow_spec"
+    },
+    {
+      "dependents": [
+        "bot_creation_bot"
+      ],
+      "module": "safety_monitor"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "bot_db_utils"
+    },
+    {
+      "dependents": [
+        "automated_reviewer",
+        "bot_creation_bot",
+        "bot_development_bot",
+        "bot_discovery",
+        "bot_planning_bot",
+        "bot_registry",
+        "capital_management_bot",
+        "enhancement_bot",
+        "error_bot",
+        "evolution_orchestrator",
+        "genetic_algorithm_bot",
+        "menace_cli",
+        "research_aggregator_bot",
+        "resource_prediction_bot",
+        "self_coding_manager",
+        "structural_evolution_bot",
+        "workflow_evolution_bot"
+      ],
+      "module": "threshold_service"
+    },
+    {
+      "dependents": [
+        "workflow_evolution_manager"
+      ],
+      "module": "workflow_benchmark"
+    },
+    {
+      "dependents": [
+        "tests/test_embedding_stats_db"
+      ],
+      "module": "embedding_stats_db"
+    },
+    {
+      "dependents": [
+        "shared/pipeline_base"
+      ],
+      "module": "research_fallback_bot"
+    },
+    {
+      "dependents": [
+        "resource_allocation_bot",
+        "tests/test_llm_interface",
+        "tests/test_local_backend",
+        "tests/test_new_backends",
+        "tests/test_openai_client_http",
+        "unit_tests/test_async_llm_fallbacks",
+        "unit_tests/test_llm_client"
+      ],
+      "module": "local_backend"
+    },
+    {
+      "dependents": [
+        "tests/test_bootstrap_self_coding",
+        "tests/test_sandbox_settings_platform_overrides"
+      ],
+      "module": "sandbox_settings_pydantic"
+    },
+    {
+      "dependents": [
+        "debug_loop_service",
+        "stripe_watchdog"
+      ],
+      "module": "telemetry_feedback"
+    },
+    {
+      "dependents": [
+        "service_supervisor"
+      ],
+      "module": "secret_rotation_service"
+    },
+    {
+      "dependents": [
+        "roi_tracker"
+      ],
+      "module": "roi_predictor"
+    },
+    {
+      "dependents": [
+        "run_autonomous"
+      ],
+      "module": "threshold_logger"
+    },
+    {
+      "dependents": [
+        "menace_orchestrator",
+        "run_autonomous",
+        "service_supervisor"
+      ],
+      "module": "self_learning_service"
+    },
+    {
+      "dependents": [
+        "tests/test_sandbox_settings_platform_overrides"
+      ],
+      "module": "sandbox_settings_fallback"
+    },
+    {
+      "dependents": [
+        "tests/test_manual_bootstrap",
+        "unit_tests/test_manual_bootstrap"
+      ],
+      "module": "manual_bootstrap"
+    },
+    {
+      "dependents": [
+        "config"
+      ],
+      "module": "unified_config_store"
+    },
+    {
+      "dependents": [
+        "model_automation_dependencies",
+        "shared/pipeline_base"
+      ],
+      "module": "task_validation_bot"
+    },
+    {
+      "dependents": [
+        "meta_workflow_planner",
+        "tests/test_workflow_chain_suggester",
+        "workflow_chain_simulator"
+      ],
+      "module": "workflow_chain_suggester"
+    },
+    {
+      "dependents": [
+        "action_planner",
+        "adaptive_roi_cli",
+        "adaptive_roi_dataset",
+        "adaptive_roi_predictor",
+        "bot_creation_bot",
+        "cognition_layer",
+        "composite_workflow_scorer",
+        "environment_generator",
+        "evaluation_dashboard",
+        "foresight_tracker",
+        "governance",
+        "meta_workflow_planner",
+        "metrics_dashboard",
+        "preset_rl_agent",
+        "ranking_model_scheduler",
+        "readiness_index",
+        "sandbox_dashboard",
+        "sandbox_recovery_manager",
+        "self_test_service",
+        "single_agent_roi_runner",
+        "tests/test_autonomous_stress",
+        "tests/test_scenario_synergy_ranking",
+        "tests/test_synergy_net_latency_throughput",
+        "tests/test_synergy_predictions",
+        "tests/test_synergy_ranking",
+        "universal_retriever",
+        "vector_service_api",
+        "workflow_benchmark",
+        "workflow_evolution_manager",
+        "workflow_graph",
+        "workflow_scorer_core",
+        "workflow_synergy_comparator"
+      ],
+      "module": "roi_tracker"
+    },
+    {
+      "dependents": [
+        "operational_monitor_bot"
+      ],
+      "module": "splunk_logger"
+    },
+    {
+      "dependents": [
+        "bot_development_bot",
+        "chaos_monitoring_service",
+        "chaos_scheduler",
+        "menace_orchestrator",
+        "model_evaluation_service",
+        "tests/integration/test_bootstrap_single_flight_concurrency",
+        "trial_monitor"
+      ],
+      "module": "watchdog"
+    },
+    {
+      "dependents": [
+        "action_planner"
+      ],
+      "module": "growth_utils"
+    },
+    {
+      "dependents": [
+        "chatgpt_prediction_bot",
+        "communication_testing_bot",
+        "personalized_conversation",
+        "user_style_model"
+      ],
+      "module": "mirror_bot"
+    },
+    {
+      "dependents": [
+        "unified_event_bus"
+      ],
+      "module": "networked_event_bus"
+    },
+    {
+      "dependents": [
+        "error_bot",
+        "report_generation_bot",
+        "tests/test_full_self_optimisation",
+        "tests/test_self_improvement_engine",
+        "tests/test_self_improvement_engine_synergy",
+        "tests/test_workflow_evolution_bot"
+      ],
+      "module": "jinja2"
+    },
+    {
+      "dependents": [
+        "tests/test_run_mvp"
+      ],
+      "module": "run_mvp"
+    },
+    {
+      "dependents": [
+        "self_coding/manager_launcher"
+      ],
+      "module": "sklearn"
+    },
+    {
+      "dependents": [
+        "ad_integration",
+        "shared/pipeline_base"
+      ],
+      "module": "revenue_amplifier"
+    }
+  ],
+  "top_dependents": [
+    {
+      "blocked_count": 46,
+      "module": "shared/pipeline_base"
+    },
+    {
+      "blocked_count": 39,
+      "module": "service_supervisor"
+    },
+    {
+      "blocked_count": 34,
+      "module": "error_bot"
+    },
+    {
+      "blocked_count": 34,
+      "module": "bot_creation_bot"
+    },
+    {
+      "blocked_count": 33,
+      "module": "menace_orchestrator"
+    }
+  ]
+}

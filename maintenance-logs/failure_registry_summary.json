@@ -1,0 +1,1659 @@
+{
+  "failures": {
+    "02c719f6e0df0693dbbe865586fc4e770908377ea426dbe03e1c40a3add1f108": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771613219.9819455,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.021012832999986,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "02c719f6e0df0693dbbe865586fc4e770908377ea426dbe03e1c40a3add1f108",
+      "first_seen": 1771613159.9819455,
+      "last_seen": 1771613159.9819455,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "0a3cded7daecb760cb200dc36fac883d4fc8f457cdbb2fda42ac172200ae2067": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771606315.764212,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.03761974000008,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "0a3cded7daecb760cb200dc36fac883d4fc8f457cdbb2fda42ac172200ae2067",
+      "first_seen": 1771606255.764212,
+      "last_seen": 1771606255.764212,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "0d522c0033d3148f7e686a343d586dd3a2e4ddf54fc723f2c980f6f9671204e9": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608187.3306386,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.01102076400093,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "0d522c0033d3148f7e686a343d586dd3a2e4ddf54fc723f2c980f6f9671204e9",
+      "first_seen": 1771608127.3306386,
+      "last_seen": 1771608127.3306386,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "0df18cca7985785e061d6cfba304791b9f45d8353a5b55af4a5d98e1aef8aca4": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771607656.6351733,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.02758834399992,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "0df18cca7985785e061d6cfba304791b9f45d8353a5b55af4a5d98e1aef8aca4",
+      "first_seen": 1771607596.6351733,
+      "last_seen": 1771607596.6351733,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "0e0a3caff814bafb5f6cd8c8d23cec4c796bff0dfe15f582b312dbf25ab8612e": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604707.4156835,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.02024984799937,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "0e0a3caff814bafb5f6cd8c8d23cec4c796bff0dfe15f582b312dbf25ab8612e",
+      "first_seen": 1771604647.4156835,
+      "last_seen": 1771604647.4156835,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "0f0e1b0cae96c9675058a34c16e4d60b5d020272fcdf580094b6063d576b3fbc": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609129.105361,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.03685637699891,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "0f0e1b0cae96c9675058a34c16e4d60b5d020272fcdf580094b6063d576b3fbc",
+      "first_seen": 1771609069.105361,
+      "last_seen": 1771609069.105361,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "16d385ecd149b014134574b411587fac807449b187e0dafb110251cc3c0c16b2": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608792.3277574,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.0432497820002,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "16d385ecd149b014134574b411587fac807449b187e0dafb110251cc3c0c16b2",
+      "first_seen": 1771608732.3277574,
+      "last_seen": 1771608732.3277574,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "1beee6d449b9594ae986794ff898b2aec4a9dfb6b07c59b62ddd3cdc99fd2034": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771606713.1970375,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.01097912000023,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "1beee6d449b9594ae986794ff898b2aec4a9dfb6b07c59b62ddd3cdc99fd2034",
+      "first_seen": 1771606653.1970375,
+      "last_seen": 1771606653.1970375,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "1c514f3cca571b8578e01d2bbd6ed05669c6cf1fdf7e4a9b0a2158a81f21b72a": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771606066.0732405,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.01597067500006,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "1c514f3cca571b8578e01d2bbd6ed05669c6cf1fdf7e4a9b0a2158a81f21b72a",
+      "first_seen": 1771606006.0732405,
+      "last_seen": 1771606006.0732405,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "1d834c36ef3ebbfa054d5e793e02c33c5457166a1eb09bd7cbb589eb69951b1a": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605051.0931895,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.01583824199952,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "1d834c36ef3ebbfa054d5e793e02c33c5457166a1eb09bd7cbb589eb69951b1a",
+      "first_seen": 1771604991.0931895,
+      "last_seen": 1771604991.0931895,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "1e2b932ea5c45b432a1bb21d7c73b0ebdd261776b98fd0a28d4a597dc4ace466": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605317.8429284,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.01752058599959,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "1e2b932ea5c45b432a1bb21d7c73b0ebdd261776b98fd0a28d4a597dc4ace466",
+      "first_seen": 1771605257.8429284,
+      "last_seen": 1771605257.8429284,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "1e78c6d43e8c56915737dbb9781629319530661a57addacd12e878f8589860a7": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604401.7637887,
+      "context": {
+        "bot": "HierarchyAssessmentBot",
+        "elapsed_seconds": 45.0381431779997,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "1e78c6d43e8c56915737dbb9781629319530661a57addacd12e878f8589860a7",
+      "first_seen": 1771604341.7637887,
+      "last_seen": 1771604341.7637887,
+      "message": "manager construction timed out for HierarchyAssessmentBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "240535bb29678195f136c285ffe1c79edd7e7b5dc37cd3f71b61c9f1fb471719": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771622455.7410405,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.00527259699811,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "240535bb29678195f136c285ffe1c79edd7e7b5dc37cd3f71b61c9f1fb471719",
+      "first_seen": 1771622395.7410405,
+      "last_seen": 1771622395.7410405,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "240d8c30133bb2f3c4d69adecaf3a41db8e50d9ede259420edd6cf8a2ad4fedc": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771603986.6424572,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.00213782600076,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "240d8c30133bb2f3c4d69adecaf3a41db8e50d9ede259420edd6cf8a2ad4fedc",
+      "first_seen": 1771603926.6424572,
+      "last_seen": 1771603926.6424572,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "2908f68d964af2a1811d54635e41d37ea3a55dc0021a40bcc201c0cdcdea84c9": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771637764.719913,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.012666948001424,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "2908f68d964af2a1811d54635e41d37ea3a55dc0021a40bcc201c0cdcdea84c9",
+      "first_seen": 1771637704.719913,
+      "last_seen": 1771637704.719913,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "2d6851c072da963f3b0dfad7ed65ab1aa55a3a59aa1f260080203bb9c74c5c9b": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605280.982487,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.0518072750001,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "2d6851c072da963f3b0dfad7ed65ab1aa55a3a59aa1f260080203bb9c74c5c9b",
+      "first_seen": 1771605220.982487,
+      "last_seen": 1771605220.982487,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "340923d4d38bb6e6e2ac31e7b859750997c066a23a0d2cb1ab015b42072fbca4": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608222.7576807,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.01623025700064,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "340923d4d38bb6e6e2ac31e7b859750997c066a23a0d2cb1ab015b42072fbca4",
+      "first_seen": 1771608162.7576807,
+      "last_seen": 1771608162.7576807,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "37e9fb52bc9d178f3c22b8b4b4f25a7d20fceefaa1c326de24d4d859a89e0cf0": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604283.0828843,
+      "context": {
+        "bot": "ResearchAggregatorBot",
+        "elapsed_seconds": 45.060871403999954,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "37e9fb52bc9d178f3c22b8b4b4f25a7d20fceefaa1c326de24d4d859a89e0cf0",
+      "first_seen": 1771604223.0828843,
+      "last_seen": 1771604223.0828843,
+      "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "3acbcc993f29f57adb26b0a3d78fbc3834bbe1328fc0daeb50ce108feb8f202a": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771622854.2675815,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.02653514100166,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "3acbcc993f29f57adb26b0a3d78fbc3834bbe1328fc0daeb50ce108feb8f202a",
+      "first_seen": 1771622794.2675815,
+      "last_seen": 1771622794.2675815,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "3ce01639eae0407e7efebd96cbe66c121d7bbec893fd5719b58df1c71025288f": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608753.9664905,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.02179636599976,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "3ce01639eae0407e7efebd96cbe66c121d7bbec893fd5719b58df1c71025288f",
+      "first_seen": 1771608693.9664905,
+      "last_seen": 1771608693.9664905,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "403384f5617a1cda8d7f215bd4b125a9e0b3c091882a2e53134255d83e16bb61": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771621410.9137974,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.01086476300043,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "403384f5617a1cda8d7f215bd4b125a9e0b3c091882a2e53134255d83e16bb61",
+      "first_seen": 1771621350.9137974,
+      "last_seen": 1771621350.9137974,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "420caa237bb51a5938e1ca81f16d3548a17719f0dcaf25c8c1ca36d61f126b67": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609055.000566,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.04596045700055,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "420caa237bb51a5938e1ca81f16d3548a17719f0dcaf25c8c1ca36d61f126b67",
+      "first_seen": 1771608995.000566,
+      "last_seen": 1771608995.000566,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "44388e38351ab25ce5b3a79b5c544bb666beb6a87f4e663c65bb0a31853b1380": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604129.36129,
+      "context": {
+        "bot": "ResourcePredictionBot",
+        "elapsed_seconds": 45.01644010900054,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "44388e38351ab25ce5b3a79b5c544bb666beb6a87f4e663c65bb0a31853b1380",
+      "first_seen": 1771604069.36129,
+      "last_seen": 1771604069.36129,
+      "message": "manager construction timed out for ResourcePredictionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "493b66dd535df9fe101f3539b2a493dd84f92717a32e3df9916bcd64d2fe26d0": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609802.170825,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.02382706500066,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "493b66dd535df9fe101f3539b2a493dd84f92717a32e3df9916bcd64d2fe26d0",
+      "first_seen": 1771609742.170825,
+      "last_seen": 1771609742.170825,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "4e8bbf6bf94dfb223be6f2fdbb3ae24d27bf83d52edba4f9768afcc8fc9bcede": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605824.6581686,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.0210854879997,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "4e8bbf6bf94dfb223be6f2fdbb3ae24d27bf83d52edba4f9768afcc8fc9bcede",
+      "first_seen": 1771605764.6581686,
+      "last_seen": 1771605764.6581686,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "4f2083cc0aa99cfb65cff6d20d89e77f1de7566d426d2ee03ffcc0e54a938511": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608282.0891964,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.041465463998975,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "4f2083cc0aa99cfb65cff6d20d89e77f1de7566d426d2ee03ffcc0e54a938511",
+      "first_seen": 1771608222.0891964,
+      "last_seen": 1771608222.0891964,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "512a368c8a9254500b5bef4c72f04fc87491599159d675907c759684f3ec264d": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608037.5844996,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.0161522949993,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "512a368c8a9254500b5bef4c72f04fc87491599159d675907c759684f3ec264d",
+      "first_seen": 1771607977.5844996,
+      "last_seen": 1771607977.5844996,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "5202f9135413db807e79b7692f2e2dddd7b74a36068d14c7813a08285bc8b8a7": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771606228.7307482,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.011813483999504,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "5202f9135413db807e79b7692f2e2dddd7b74a36068d14c7813a08285bc8b8a7",
+      "first_seen": 1771606168.7307482,
+      "last_seen": 1771606168.7307482,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "53594981029259971b96485b0f036181160ff6854a9b520b4e8c9554b71199ef": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604897.6016915,
+      "context": {
+        "bot": "ResourcePredictionBot",
+        "elapsed_seconds": 45.0211189419997,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "53594981029259971b96485b0f036181160ff6854a9b520b4e8c9554b71199ef",
+      "first_seen": 1771604837.6016915,
+      "last_seen": 1771604837.6016915,
+      "message": "manager construction timed out for ResourcePredictionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "55f1189390150e12116271c2dece32ef9dd94f8fc7feac2165af889f069d9d6e": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771607882.5051339,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.02044905300045,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "55f1189390150e12116271c2dece32ef9dd94f8fc7feac2165af889f069d9d6e",
+      "first_seen": 1771607822.5051339,
+      "last_seen": 1771607822.5051339,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "583e815c4a292c3c6448f45e463321e552464e1bb5b9a98bf912b9253c2f3a5f": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771613365.2692397,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.02648275499996,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "583e815c4a292c3c6448f45e463321e552464e1bb5b9a98bf912b9253c2f3a5f",
+      "first_seen": 1771613305.2692397,
+      "last_seen": 1771613305.2692397,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "58dbf1678e9e62172f3764ea9461c1d00d61ed6b1ea2bec5ee59c0256c3c26b1": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771607268.6241212,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.043168954000066,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "58dbf1678e9e62172f3764ea9461c1d00d61ed6b1ea2bec5ee59c0256c3c26b1",
+      "first_seen": 1771607208.6241212,
+      "last_seen": 1771607208.6241212,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "59334a45c6fcd293504dccd9f89a2d08423f64b3f961468d4ff53ee852f4c600": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605595.7963655,
+      "context": {
+        "bot": "FutureSynergySecurityScoreBot",
+        "elapsed_seconds": 45.01588404100039,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "59334a45c6fcd293504dccd9f89a2d08423f64b3f961468d4ff53ee852f4c600",
+      "first_seen": 1771605535.7963655,
+      "last_seen": 1771605535.7963655,
+      "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "5bf080a169cf478e134fff8965a61f4674c6a043ddb8ef82e4402a854868eec7": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605222.8043637,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.02463989300031,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "5bf080a169cf478e134fff8965a61f4674c6a043ddb8ef82e4402a854868eec7",
+      "first_seen": 1771605162.8043637,
+      "last_seen": 1771605162.8043637,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "5d75e9d73f241d3647b16a69608fd2a4e13cdc88f03c66190e9dda68f28ed0c0": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609466.2236812,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.016276816000754,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "5d75e9d73f241d3647b16a69608fd2a4e13cdc88f03c66190e9dda68f28ed0c0",
+      "first_seen": 1771609406.2236812,
+      "last_seen": 1771609406.2236812,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "5de5fd0ccb31872c218f3e311b4b9a41b11b5de500aae59de287920d228e5cb6": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604791.9936726,
+      "context": {
+        "bot": "FutureSynergySecurityScoreBot",
+        "elapsed_seconds": 45.00259222600016,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "5de5fd0ccb31872c218f3e311b4b9a41b11b5de500aae59de287920d228e5cb6",
+      "first_seen": 1771604731.9936726,
+      "last_seen": 1771604731.9936726,
+      "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "5fb1b7953fa89273f451fabc949c02a6485de2c527e656085a6d5d73ab5af053": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771613839.9628532,
+      "context": {
+        "bot": "InformationSynthesisBot",
+        "elapsed_seconds": 45.02822392500093,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "5fb1b7953fa89273f451fabc949c02a6485de2c527e656085a6d5d73ab5af053",
+      "first_seen": 1771613779.9628532,
+      "last_seen": 1771613779.9628532,
+      "message": "manager construction timed out for InformationSynthesisBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "6089915806a46b3bdf074d194cc967563aefcd6f7fadf8d74b3eacd49103145a": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771607179.9846382,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.03142294300051,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "6089915806a46b3bdf074d194cc967563aefcd6f7fadf8d74b3eacd49103145a",
+      "first_seen": 1771607119.9846382,
+      "last_seen": 1771607119.9846382,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "616b5dc4e3fffd0012ba6d491fdce11aa66e498b96c504f44163323cfdd567a2": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771635920.9322474,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.01946782699815,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "616b5dc4e3fffd0012ba6d491fdce11aa66e498b96c504f44163323cfdd567a2",
+      "first_seen": 1771635860.9322474,
+      "last_seen": 1771635860.9322474,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "631027056a446707e502f5c5903b66890e935b181770c499c3b7fc2d6efbfa95": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604008.6781936,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.01156219299992,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "631027056a446707e502f5c5903b66890e935b181770c499c3b7fc2d6efbfa95",
+      "first_seen": 1771603948.6781936,
+      "last_seen": 1771603948.6781936,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "675770aa4c34463084001efe7dbd0485e527c45542619f7513bdffc3e977a905": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605396.804961,
+      "context": {
+        "bot": "FutureSynergySecurityScoreBot",
+        "elapsed_seconds": 45.02115481299916,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "675770aa4c34463084001efe7dbd0485e527c45542619f7513bdffc3e977a905",
+      "first_seen": 1771605336.804961,
+      "last_seen": 1771605336.804961,
+      "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "6e85570b033eb1d435172edfc2f3c8b2d937eea576c4b8443618abaad9a6536c": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771611046.387269,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.01846715400097,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "6e85570b033eb1d435172edfc2f3c8b2d937eea576c4b8443618abaad9a6536c",
+      "first_seen": 1771610986.387269,
+      "last_seen": 1771610986.387269,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "75c3fe03042834a5fdb07ea2f83889cbc35cbd5ff8e64de25faac4364440256a": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605495.792165,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.01635009399979,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "75c3fe03042834a5fdb07ea2f83889cbc35cbd5ff8e64de25faac4364440256a",
+      "first_seen": 1771605435.792165,
+      "last_seen": 1771605435.792165,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "75c9a66909b0469ffdff6f75435e16373762f4584d5df0273feb4ec41d7c6391": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604396.4138262,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.01742737400036,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "75c9a66909b0469ffdff6f75435e16373762f4584d5df0273feb4ec41d7c6391",
+      "first_seen": 1771604336.4138262,
+      "last_seen": 1771604336.4138262,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "79c82c8ffc6d1b994eecc669648f1d72e95856f82ed466014479b9c9d78ae308": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771607727.116704,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.01115396099976,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "79c82c8ffc6d1b994eecc669648f1d72e95856f82ed466014479b9c9d78ae308",
+      "first_seen": 1771607667.116704,
+      "last_seen": 1771607667.116704,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "7bc139333cb5975cb0182b28e4ab1741d4dd03a73ea9789f9ebe54797d10f105": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605519.0155122,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.005870951999896,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "7bc139333cb5975cb0182b28e4ab1741d4dd03a73ea9789f9ebe54797d10f105",
+      "first_seen": 1771605459.0155122,
+      "last_seen": 1771605459.0155122,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "7c2c8fcb4bef0ad2e1c4d120932330cfdd244dec536fcc0b5b1cd2c130429656": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771610580.9787061,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.02473773699967,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "7c2c8fcb4bef0ad2e1c4d120932330cfdd244dec536fcc0b5b1cd2c130429656",
+      "first_seen": 1771610520.9787061,
+      "last_seen": 1771610520.9787061,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "7ca596ad61017a367d8273837848ee18f6bae2d41ab5071b8a6d966fcab0318d": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604099.9088273,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.021096512999975,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "7ca596ad61017a367d8273837848ee18f6bae2d41ab5071b8a6d966fcab0318d",
+      "first_seen": 1771604039.9088273,
+      "last_seen": 1771604039.9088273,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "7f88aa6849358d02c021f831fa3321ef5867ed21d82e159d3aded2a949a4bbd6": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605748.890389,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.00616435699976,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "7f88aa6849358d02c021f831fa3321ef5867ed21d82e159d3aded2a949a4bbd6",
+      "first_seen": 1771605688.890389,
+      "last_seen": 1771605688.890389,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "80428a30df47d308de16d7dd0c9a469addfc8ecf0f74ba193da1e2acec871c3f": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604787.695633,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.02694021000025,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "80428a30df47d308de16d7dd0c9a469addfc8ecf0f74ba193da1e2acec871c3f",
+      "first_seen": 1771604727.695633,
+      "last_seen": 1771604727.695633,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "847fe7bb4f549fd15f863296c37cd9cc37f914f0b49abb8f46c52db6b28e40b0": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604238.4553795,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.021303842000634,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "847fe7bb4f549fd15f863296c37cd9cc37f914f0b49abb8f46c52db6b28e40b0",
+      "first_seen": 1771604178.4553795,
+      "last_seen": 1771604178.4553795,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "8622ea8511e838e7d3586269f99ebdbc8c517a29ee397d008d7c98ef4362366b": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771616009.4161222,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.02040668100017,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "8622ea8511e838e7d3586269f99ebdbc8c517a29ee397d008d7c98ef4362366b",
+      "first_seen": 1771615949.4161222,
+      "last_seen": 1771615949.4161222,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "8e7efba2cf5ee422bf73a473cdeb3dcd145117907d623148399458d7ca379ba8": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604546.869647,
+      "context": {
+        "bot": "HierarchyAssessmentBot",
+        "elapsed_seconds": 45.005806309000036,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "8e7efba2cf5ee422bf73a473cdeb3dcd145117907d623148399458d7ca379ba8",
+      "first_seen": 1771604486.869647,
+      "last_seen": 1771604486.869647,
+      "message": "manager construction timed out for HierarchyAssessmentBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "90b75883d7398b26aef927288fbd5ea561112432ba06c6a9e31ca964be2f430b": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771638595.9535465,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.016701364002074,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "90b75883d7398b26aef927288fbd5ea561112432ba06c6a9e31ca964be2f430b",
+      "first_seen": 1771638535.9535465,
+      "last_seen": 1771638535.9535465,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "928df838a9419d9252e3a52134287a96dd19ddb7333bea172ebfba8ce173640d": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771613030.5876362,
+      "context": {
+        "bot": "InformationSynthesisBot",
+        "elapsed_seconds": 45.01258952799981,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "928df838a9419d9252e3a52134287a96dd19ddb7333bea172ebfba8ce173640d",
+      "first_seen": 1771612970.5876362,
+      "last_seen": 1771612970.5876362,
+      "message": "manager construction timed out for InformationSynthesisBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "940858ef62dd4dd9ed25531cddc07a97735564fc5e60b182381b0a291f8253cf": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771618239.8434815,
+      "context": {
+        "bot": "FutureSynergySecurityScoreBot",
+        "elapsed_seconds": 45.01685750300021,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "940858ef62dd4dd9ed25531cddc07a97735564fc5e60b182381b0a291f8253cf",
+      "first_seen": 1771618179.8434815,
+      "last_seen": 1771618179.8434815,
+      "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "a42f1820d54ad56e247afeb7231d0eb34a5af74c197b19326b144ebceda1d1e7": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771606788.0995324,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.016009877000215,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "a42f1820d54ad56e247afeb7231d0eb34a5af74c197b19326b144ebceda1d1e7",
+      "first_seen": 1771606728.0995324,
+      "last_seen": 1771606728.0995324,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "a613f1871f88aa48c65cde2b109f0768fef60d09a4711bd340e2fc16b13efd6d": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605378.0308318,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.03661495100005,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "a613f1871f88aa48c65cde2b109f0768fef60d09a4711bd340e2fc16b13efd6d",
+      "first_seen": 1771605318.0308318,
+      "last_seen": 1771605318.0308318,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "a6e644abfa939583cc22d8eace84bcde1ff3a91b0065625c8460ad4ad9a07322": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771621082.594941,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.00718078199861,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "a6e644abfa939583cc22d8eace84bcde1ff3a91b0065625c8460ad4ad9a07322",
+      "first_seen": 1771621022.594941,
+      "last_seen": 1771621022.594941,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "ac85091d982c88cefce33b8f6a703613d3e76e0cc1e84d520c0b5a34dd21d915": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771610219.866615,
+      "context": {
+        "bot": "ResearchAggregatorBot",
+        "elapsed_seconds": 45.0353201199996,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "ac85091d982c88cefce33b8f6a703613d3e76e0cc1e84d520c0b5a34dd21d915",
+      "first_seen": 1771610159.866615,
+      "last_seen": 1771610159.866615,
+      "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "b13b4e09fca6faa23dcafe179b5a8ea7ecea517ebcf9999f7c03bbe0c41c9058": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771616211.722164,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.01625081699967,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "b13b4e09fca6faa23dcafe179b5a8ea7ecea517ebcf9999f7c03bbe0c41c9058",
+      "first_seen": 1771616151.722164,
+      "last_seen": 1771616151.722164,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "b243260f010907c35e7d8d85d7847daba54efc46d19a2959d67efaa97c54c82e": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604902.01744,
+      "context": {
+        "bot": "FutureSynergySecurityScoreBot",
+        "elapsed_seconds": 45.0111854630004,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "b243260f010907c35e7d8d85d7847daba54efc46d19a2959d67efaa97c54c82e",
+      "first_seen": 1771604842.01744,
+      "last_seen": 1771604842.01744,
+      "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "b3d4e7d6e951e10413fa1f41e47a3a3c764bff4329d9676a0c3f01bd9b52ac1f": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604874.5082335,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.03171848900001,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "b3d4e7d6e951e10413fa1f41e47a3a3c764bff4329d9676a0c3f01bd9b52ac1f",
+      "first_seen": 1771604814.5082335,
+      "last_seen": 1771604814.5082335,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "b9d3c039c6619b0a16419cb0ee7346285c2b8f5f2ce4c07a5f4caf1f367a400f": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771605155.5495536,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.01550121799937,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "b9d3c039c6619b0a16419cb0ee7346285c2b8f5f2ce4c07a5f4caf1f367a400f",
+      "first_seen": 1771605095.5495536,
+      "last_seen": 1771605095.5495536,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "bc502472e1aded99f6e03f3f78617ba6810bf25012eedb205f8724a3e1d1761e": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771623132.366792,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.014951723002014,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "bc502472e1aded99f6e03f3f78617ba6810bf25012eedb205f8724a3e1d1761e",
+      "first_seen": 1771623072.366792,
+      "last_seen": 1771623072.366792,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "c006a1d2dcbc3d01116517687b2fa6bec6e181c422a0792fdfb2d3635816ac17": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771614668.96464,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.04210973499903,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "c006a1d2dcbc3d01116517687b2fa6bec6e181c422a0792fdfb2d3635816ac17",
+      "first_seen": 1771614608.96464,
+      "last_seen": 1771614608.96464,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "c270bd301e5b75d1c81fd3495170adc8816f0a1dad3e26856f1e96e134433ef2": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604152.7953644,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.016387545000725,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "c270bd301e5b75d1c81fd3495170adc8816f0a1dad3e26856f1e96e134433ef2",
+      "first_seen": 1771604092.7953644,
+      "last_seen": 1771604092.7953644,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "c96145947d049dd9a08a6692ee057f86092cda58eac422339a80a82bc68fca69": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771611763.8347118,
+      "context": {
+        "bot": "HierarchyAssessmentBot",
+        "elapsed_seconds": 45.008557137000025,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "c96145947d049dd9a08a6692ee057f86092cda58eac422339a80a82bc68fca69",
+      "first_seen": 1771611703.8347118,
+      "last_seen": 1771611703.8347118,
+      "message": "manager construction timed out for HierarchyAssessmentBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "c9658de75e65f8f4255afc39ccd3072bbeb463b2e71176b9ac624907d4192939": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771636868.6290052,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.00619111200649,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "c9658de75e65f8f4255afc39ccd3072bbeb463b2e71176b9ac624907d4192939",
+      "first_seen": 1771636808.6290052,
+      "last_seen": 1771636808.6290052,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "cc4599934d929c4d41f4cde11892fe26047a1be4654758413716febcf0b2b997": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609273.98905,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.02790817999994,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "cc4599934d929c4d41f4cde11892fe26047a1be4654758413716febcf0b2b997",
+      "first_seen": 1771609213.98905,
+      "last_seen": 1771609213.98905,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "d01116b25d011498528795c6784498c448f395ca8ca385e7fb139f8ffc1e54d0": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771603898.6575909,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.01103706400045,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "d01116b25d011498528795c6784498c448f395ca8ca385e7fb139f8ffc1e54d0",
+      "first_seen": 1771603838.6575909,
+      "last_seen": 1771603838.6575909,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "d14be1b4c6e6640dc3b81b089237af25b792cac2e5d8ec76b5b632b3515953e7": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604398.4268987,
+      "context": {
+        "bot": "ResearchAggregatorBot",
+        "elapsed_seconds": 45.04672818899962,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "d14be1b4c6e6640dc3b81b089237af25b792cac2e5d8ec76b5b632b3515953e7",
+      "first_seen": 1771604338.4268987,
+      "last_seen": 1771604338.4268987,
+      "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "d185efd445f66be6dec9f47db5d010c20e88ff705b48f8ff432c8d9153b1967f": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604945.7718008,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.02437393799937,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "d185efd445f66be6dec9f47db5d010c20e88ff705b48f8ff432c8d9153b1967f",
+      "first_seen": 1771604885.7718008,
+      "last_seen": 1771604885.7718008,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "d41c39e3fa4e499405b7729e66061fb137d6595ceb54ce8998625419bd6a91bc": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771618711.806062,
+      "context": {
+        "bot": "FutureSynergySecurityScoreBot",
+        "elapsed_seconds": 45.01091996899777,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "d41c39e3fa4e499405b7729e66061fb137d6595ceb54ce8998625419bd6a91bc",
+      "first_seen": 1771618651.806062,
+      "last_seen": 1771618651.806062,
+      "message": "manager construction timed out for FutureSynergySecurityScoreBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "dadd0c311eab76c46c0560b9169412c43f9074ce9cfb6c9fee8e742e8fdd70b0": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604236.9454236,
+      "context": {
+        "bot": "ResourcePredictionBot",
+        "elapsed_seconds": 45.01742084899979,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "dadd0c311eab76c46c0560b9169412c43f9074ce9cfb6c9fee8e742e8fdd70b0",
+      "first_seen": 1771604176.9454236,
+      "last_seen": 1771604176.9454236,
+      "message": "manager construction timed out for ResourcePredictionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "db49e3da882a48fc514089c866aca44b46ced7efd2709bc46be807c6fa6adefa": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609345.8805811,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.018449674000294,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "db49e3da882a48fc514089c866aca44b46ced7efd2709bc46be807c6fa6adefa",
+      "first_seen": 1771609285.8805811,
+      "last_seen": 1771609285.8805811,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "dbe7458a2202aa93089e97088aebf11726bce18f63a2b05ec29701fca1226365": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771614560.4596782,
+      "context": {
+        "bot": "ChatGPTEnhancementBot",
+        "elapsed_seconds": 45.032915533998676,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "dbe7458a2202aa93089e97088aebf11726bce18f63a2b05ec29701fca1226365",
+      "first_seen": 1771614500.4596782,
+      "last_seen": 1771614500.4596782,
+      "message": "manager construction timed out for ChatGPTEnhancementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "dcdecd3132afda8b4c987b987906b6124656a23488988e183cd33a8dd3131248": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771638060.6556568,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.00723450999794,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "dcdecd3132afda8b4c987b987906b6124656a23488988e183cd33a8dd3131248",
+      "first_seen": 1771638000.6556568,
+      "last_seen": 1771638000.6556568,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "dd94849b41d6b0b1572fc05df8158543a1c9d9d73dc893269bba4748c2f5756e": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609427.818124,
+      "context": {
+        "bot": "TaskValidationBot",
+        "elapsed_seconds": 45.02574503799951,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "dd94849b41d6b0b1572fc05df8158543a1c9d9d73dc893269bba4748c2f5756e",
+      "first_seen": 1771609367.818124,
+      "last_seen": 1771609367.818124,
+      "message": "manager construction timed out for TaskValidationBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "e1985ac80ad4eaaabd6ddf3771d42861dcd48c06c438eed32d0f8dab9418172b": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609249.2829673,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.01632168300057,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "e1985ac80ad4eaaabd6ddf3771d42861dcd48c06c438eed32d0f8dab9418172b",
+      "first_seen": 1771609189.2829673,
+      "last_seen": 1771609189.2829673,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "e82cf3b44d3dbda3fe48239be0be089d0c3b055d565a340942bacada7012d329": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771634875.4845326,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.0061368530005,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "e82cf3b44d3dbda3fe48239be0be089d0c3b055d565a340942bacada7012d329",
+      "first_seen": 1771634815.4845326,
+      "last_seen": 1771634815.4845326,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "e98165af7cfb282f916a210bdf86967835910cadf83ef41e9d273fbcfec442c7": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608809.8740351,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.00475321200065,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "e98165af7cfb282f916a210bdf86967835910cadf83ef41e9d273fbcfec442c7",
+      "first_seen": 1771608749.8740351,
+      "last_seen": 1771608749.8740351,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "f035768b3234ba2855fd088e7cabb8ad4a2d024e577cb26840fdef6a77637b3b": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771608307.9516296,
+      "context": {
+        "bot": "_CapitalManagementBot",
+        "elapsed_seconds": 45.035055006999755,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "f035768b3234ba2855fd088e7cabb8ad4a2d024e577cb26840fdef6a77637b3b",
+      "first_seen": 1771608247.9516296,
+      "last_seen": 1771608247.9516296,
+      "message": "manager construction timed out for _CapitalManagementBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "f461c2a4814fe37e153a0ac723644c857e5e1a061e4928cbbdf2a51aaf19abb8": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771622248.0871637,
+      "context": {
+        "bot": "FutureSynergyEfficiencyBot",
+        "elapsed_seconds": 45.015822457997274,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "f461c2a4814fe37e153a0ac723644c857e5e1a061e4928cbbdf2a51aaf19abb8",
+      "first_seen": 1771622188.0871637,
+      "last_seen": 1771622188.0871637,
+      "message": "manager construction timed out for FutureSynergyEfficiencyBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "f511a318e0f72ab391eb9ad45ed49cd2a915fe3a009fc86c3c134c5228928b84": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771609354.575181,
+      "context": {
+        "bot": "WorkflowEvolutionBot",
+        "elapsed_seconds": 45.02518123200025,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "f511a318e0f72ab391eb9ad45ed49cd2a915fe3a009fc86c3c134c5228928b84",
+      "first_seen": 1771609294.575181,
+      "last_seen": 1771609294.575181,
+      "message": "manager construction timed out for WorkflowEvolutionBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "fc377d9c1f0feea3a259d0adcbe8b50d23bd45eb2aad6a7c3727edd288be546b": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771604549.0393844,
+      "context": {
+        "bot": "InformationSynthesisBot",
+        "elapsed_seconds": 45.02626553600021,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "fc377d9c1f0feea3a259d0adcbe8b50d23bd45eb2aad6a7c3727edd288be546b",
+      "first_seen": 1771604489.0393844,
+      "last_seen": 1771604489.0393844,
+      "message": "manager construction timed out for InformationSynthesisBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    },
+    "ffe5b83288f5a070978f10b4c96ba6da469f7e4c6190da2e7bd52685d41c8835": {
+      "backoff_seconds": 60.0,
+      "backoff_until": 1771610069.6263976,
+      "context": {
+        "bot": "ResearchAggregatorBot",
+        "elapsed_seconds": 45.02196768799877,
+        "fallback": "cooldown_disabled_manager",
+        "reason": "manager_construction_timeout",
+        "severity": "warning",
+        "timeout_seconds": 45.0
+      },
+      "exception_type": "TimeoutError",
+      "fingerprint": "ffe5b83288f5a070978f10b4c96ba6da469f7e4c6190da2e7bd52685d41c8835",
+      "first_seen": 1771610009.6263976,
+      "last_seen": 1771610009.6263976,
+      "message": "manager construction timed out for ResearchAggregatorBot after 45.00s",
+      "occurrences": 1,
+      "stage": "internalize_manager_construction"
+    }
+  },
+  "last_updated": 1771638535.9535465,
+  "version": 1
+}
