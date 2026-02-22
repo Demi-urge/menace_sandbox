@@ -1234,6 +1234,32 @@ print(resolve_path('run_autonomous.py'))
 PY
 )" --runs 2 --preset-count 2 --dashboard-port 8002
 ```
+
+
+When using `--preset-file`, run a preset preflight first:
+
+```bash
+python scripts/check_presets.py presets.json
+```
+
+Preflight returns `0` when the JSON structure is valid and no preset entry
+contains forbidden `user_misuse` markers in `SCENARIO_NAME` or
+`FAILURE_MODES`. It returns `1` with actionable diagnostics when violations are
+found.
+
+Launch-wrapper example (preflight then autonomous run):
+
+```bash
+python scripts/check_presets.py presets/dev.json presets/prod.json && \
+python "$(python - <<'PYCMD'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PYCMD
+)" --runs 2 \
+  --preset-file presets/dev.json \
+  --preset-file presets/prod.json \
+  --preset-debug
+```
 Each iteration prints a `Starting autonomous run` message. The loop ends early
 whenever ROI deltas remain below the tracker threshold for the configured
 number of cycles. The dashboard remains available throughout to monitor

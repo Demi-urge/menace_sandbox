@@ -1,0 +1,7 @@
+[
+  {
+    "SCENARIO_NAME": "steady_state",
+    "FAILURE_MODES": ["latency_spike", "cpu_throttle"],
+    "CPU_LIMIT": 2
+  }
+]
