@@ -1901,6 +1901,35 @@ PY
   --preset-file presets/chaos.json
 ```
 
+Before launch, run an operator preflight check to reject forbidden preset
+scenarios:
+
+```bash
+python scripts/check_presets.py presets/dev.json presets/prod.json
+```
+
+The command exits ``0`` when all files are valid and free of
+``user_misuse`` markers. It exits ``1`` with actionable messages when a preset
+entry has ``SCENARIO_NAME`` containing ``user_misuse`` or ``FAILURE_MODES``
+containing/equal to ``user_misuse``.
+
+Launch wrapper example (preflight first, run only on success):
+
+```bash
+python scripts/check_presets.py presets/dev.json presets/prod.json && \
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --runs 3 \
+  --preset-file presets/dev.json \
+  --preset-file presets/prod.json \
+  --preset-debug
+```
+
+Use ``--preset-debug`` to emit verbose preset adaptation traces during the
+autonomous run after preflight passes.
+
 This prints messages such as ``Starting autonomous run 1/2`` followed by the
 standard module rankings once each run finishes. Metrics from all runs are
 written to ``sandbox_data/roi_history.json`` so they can be aggregated later.

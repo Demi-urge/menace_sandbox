@@ -1,0 +1,7 @@
+[
+  {
+    "SCENARIO_NAME": "operator_user_misuse_drill",
+    "FAILURE_MODES": ["latency_spike", "user_misuse"],
+    "CPU_LIMIT": 2
+  }
+]
