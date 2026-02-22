@@ -1945,6 +1945,45 @@ def validate_presets(presets: list[dict]) -> list[dict]:
     return validated
 
 
+def _guard_user_misuse_presets(presets: list[dict], *, source: str) -> None:
+    """Fail fast when presets include forbidden ``user_misuse`` markers."""
+
+    if os.getenv("ALLOW_USER_MISUSE_PRESETS") == "1":
+        logger.warning(
+            "skipping user_misuse preset guard due to ALLOW_USER_MISUSE_PRESETS=1",
+            **_log_extra(source=source),
+        )
+        return
+
+    for idx, preset in enumerate(presets):
+        scenario_name = str(preset.get("SCENARIO_NAME", ""))
+        if "user_misuse" in scenario_name:
+            raise SystemExit(
+                "Blocked preset before autonomous start: "
+                f"source={source} preset_index={idx} key=SCENARIO_NAME "
+                f"value={scenario_name!r}. "
+                "Set ALLOW_USER_MISUSE_PRESETS=1 to override intentionally."
+            )
+
+        failure_modes = preset.get("FAILURE_MODES")
+        if isinstance(failure_modes, str) and failure_modes.strip() == "user_misuse":
+            raise SystemExit(
+                "Blocked preset before autonomous start: "
+                f"source={source} preset_index={idx} key=FAILURE_MODES "
+                f"value={failure_modes!r}. "
+                "Set ALLOW_USER_MISUSE_PRESETS=1 to override intentionally."
+            )
+        if isinstance(failure_modes, list):
+            for mode_idx, mode in enumerate(failure_modes):
+                if str(mode).strip() == "user_misuse":
+                    raise SystemExit(
+                        "Blocked preset before autonomous start: "
+                        f"source={source} preset_index={idx} "
+                        f"key=FAILURE_MODES[{mode_idx}] value={mode!r}. "
+                        "Set ALLOW_USER_MISUSE_PRESETS=1 to override intentionally."
+                    )
+
+
 def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
     """Validate synergy history entries using :class:`SynergyEntry`."""
     validated: list[dict[str, float]] = []
@@ -2245,6 +2284,7 @@ def prepare_presets(
             pf.write_text(json.dumps(data))
         presets_raw = [data] if isinstance(data, dict) else list(data)
         presets = validate_presets(presets_raw)
+        _guard_user_misuse_presets(presets, source=str(pf))
         logger.info(
             "loaded presets from file",
             **_log_extra(run=run_idx, presets=presets, preset_file=str(pf)),
@@ -2260,6 +2300,7 @@ def prepare_presets(
             )
             if gen_func is generate_presets:
                 presets = validate_presets(generate_presets(args.preset_count))
+                _guard_user_misuse_presets(presets, source="auto-generated presets")
             else:
                 data_dir = resolve_path(
                     args.sandbox_data_dir or settings.sandbox_data_dir
@@ -2272,6 +2313,7 @@ def prepare_presets(
                     None,
                 ):
                     preset_source = "RL agent"
+        _guard_user_misuse_presets(presets, source=preset_source)
         logger.info(
             "generated presets", **_log_extra(run=run_idx, presets=presets)
         )
@@ -2964,10 +3006,12 @@ def main(argv: List[str] | None = None) -> None:
                 if isinstance(presets_raw, dict):
                     presets_raw = [presets_raw]
                 presets = validate_presets(presets_raw)
+                _guard_user_misuse_presets(presets, source="SANDBOX_ENV_PRESETS")
             except ValidationError as exc:
                 sys.exit(f"Invalid preset from SANDBOX_ENV_PRESETS: {exc}")
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
+                _guard_user_misuse_presets(presets, source="SANDBOX_ENV_PRESETS (fallback)")
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
             logger.info(
                 "generated presets from environment",
@@ -2979,14 +3023,17 @@ def main(argv: List[str] | None = None) -> None:
                 if isinstance(presets_raw, dict):
                     presets_raw = [presets_raw]
                 presets = validate_presets(presets_raw)
+                _guard_user_misuse_presets(presets, source=str(preset_file))
             except ValidationError as exc:
                 sys.exit(f"Invalid preset file {preset_file}: {exc}")
             except json.JSONDecodeError as exc:
                 logger.warning("preset file %s is corrupted: %s", preset_file, exc)
                 presets = validate_presets(generate_presets(args.preset_count))
+                _guard_user_misuse_presets(presets, source=str(preset_file))
                 preset_file.write_text(json.dumps(presets))
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
+                _guard_user_misuse_presets(presets, source=str(preset_file))
             logger.info(
                 "loaded presets from file",
                 **_log_extra(presets=presets, source=str(preset_file)),
@@ -3019,6 +3066,7 @@ def main(argv: List[str] | None = None) -> None:
                                 "failed to update adaptation actions gauge",
                                 **_log_extra(action=act),
                             )
+            _guard_user_misuse_presets(presets, source="auto")
             logger.info(
                 "generated presets", **_log_extra(presets=presets, source="auto")
             )
