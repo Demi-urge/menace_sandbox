@@ -239,3 +239,28 @@ def test_main_ignores_corrupt_synergy_db(monkeypatch, tmp_path):
         str(data_dir),
     ])
 
+
+def test_guard_user_misuse_presets_blocks_by_default(monkeypatch):
+    setup_stubs(monkeypatch)
+    mod = load_module(monkeypatch)
+
+    with pytest.raises(SystemExit, match="SCENARIO_NAME"):
+        mod._guard_user_misuse_presets(
+            [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1", "SCENARIO_NAME": "abc_user_misuse_xyz"}],
+            source="/tmp/presets.json",
+        )
+
+
+@pytest.mark.parametrize(
+    "failure_modes",
+    ["user_misuse", ["network", "user_misuse"]],
+)
+def test_guard_user_misuse_presets_respects_override(monkeypatch, failure_modes):
+    setup_stubs(monkeypatch)
+    mod = load_module(monkeypatch)
+    monkeypatch.setenv("ALLOW_USER_MISUSE_PRESETS", "1")
+
+    mod._guard_user_misuse_presets(
+        [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1", "FAILURE_MODES": failure_modes}],
+        source="/tmp/presets.json",
+    )
