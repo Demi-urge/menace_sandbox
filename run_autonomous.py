@@ -1545,6 +1545,8 @@ else:
     PresetLogger = None  # type: ignore[assignment]
     RelevancyRadarService = None  # type: ignore[assignment]
 
+_LEGACY_SANDBOX_RUNNER = None
+
 _RUNTIME_IMPORTS_LOADED = False
 
 
@@ -1667,7 +1669,7 @@ def _ensure_runtime_imports() -> None:
         )
 
     environment_generator = environment_generator_module
-    sandbox_runner = sandbox_runner_module
+    sandbox_runner = _initialize_sandbox_runner_runtime_imports(sandbox_runner_module)
     cli = cli_module
     get_logger = _get_logger  # type: ignore[assignment]
     setup_logging = _setup_logging  # type: ignore[assignment]
@@ -1698,16 +1700,54 @@ def _ensure_runtime_imports() -> None:
     PresetLogger = _PresetLogger  # type: ignore[assignment]
     RelevancyRadarService = _RelevancyRadarService  # type: ignore[assignment]
 
-    if not hasattr(sandbox_runner, "_sandbox_main"):
-        spec = importlib.util.spec_from_file_location(
-            "sandbox_runner", path_for_prompt("sandbox_runner.py")
-        )
-        sr_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sr_mod)
-        sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
-
     logger = get_logger(__name__)
     _RUNTIME_IMPORTS_LOADED = True
+
+
+def _load_legacy_sandbox_runner() -> object:
+    """Load the legacy ``sandbox_runner.py`` module under an isolated alias."""
+
+    global _LEGACY_SANDBOX_RUNNER
+    if _LEGACY_SANDBOX_RUNNER is not None:
+        return _LEGACY_SANDBOX_RUNNER
+    module_name = "_sandbox_runner_legacy"
+    legacy_mod = sys.modules.get(module_name)
+    if legacy_mod is None:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            path_for_prompt("sandbox_runner.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("unable to locate legacy sandbox_runner.py module")
+        legacy_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(legacy_mod)
+        sys.modules[module_name] = legacy_mod
+    _LEGACY_SANDBOX_RUNNER = legacy_mod
+    return legacy_mod
+
+
+def _initialize_sandbox_runner_runtime_imports(sandbox_runner_module: object) -> object:
+    """Prepare sandbox runner imports without clobbering package modules."""
+
+    module_file = getattr(sandbox_runner_module, "__file__", None)
+    if module_file and not hasattr(sandbox_runner_module, "__path__"):
+        logging.getLogger(__name__).warning(
+            "sandbox_runner resolved to module file '%s' without package path; "
+            "ensure the repository root (containing sandbox_runner/) is on PYTHONPATH "
+            "and avoid importing sandbox_runner.py as the sandbox_runner package",
+            module_file,
+        )
+    if not hasattr(sandbox_runner_module, "_sandbox_main"):
+        _load_legacy_sandbox_runner()
+    return sandbox_runner_module
+
+
+def _sandbox_main_host_module() -> object:
+    """Return the module providing ``_sandbox_main`` for runtime execution."""
+
+    if sandbox_runner is not None and hasattr(sandbox_runner, "_sandbox_main"):
+        return sandbox_runner
+    return _load_legacy_sandbox_runner()
 
 
 logger = logging.getLogger(__name__)
@@ -2374,11 +2414,12 @@ def execute_iteration(
 ) -> tuple[ROITracker | None, ForesightTracker | None]:
     """Run one autonomous iteration using ``presets`` and return trackers."""
 
+    sandbox_runner_main_host = _sandbox_main_host_module()
     recovery = SandboxRecoveryManager(
-        sandbox_runner._sandbox_main,
+        sandbox_runner_main_host._sandbox_main,
         settings=settings,
     )
-    sandbox_runner._sandbox_main = recovery.run
+    sandbox_runner_main_host._sandbox_main = recovery.run
     volatility_threshold = settings.sandbox_volatility_threshold
     foresight_tracker = ForesightTracker(
         max_cycles=10, volatility_threshold=volatility_threshold
@@ -2391,7 +2432,7 @@ def execute_iteration(
             synergy_ma_history=synergy_ma_history,
         )
     finally:
-        sandbox_runner._sandbox_main = recovery.sandbox_main
+        sandbox_runner_main_host._sandbox_main = recovery.sandbox_main
         if hasattr(args, "foresight_tracker"):
             delattr(args, "foresight_tracker")
 
