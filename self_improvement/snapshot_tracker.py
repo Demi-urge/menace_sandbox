@@ -34,11 +34,24 @@ try:  # pragma: no cover - optional dependency location
         record_delta,
     )
 except Exception:  # pragma: no cover
-    from snapshot_history_db import (  # type: ignore
-        log_regression,
-        record_snapshot,
-        record_delta,
-    )
+    try:
+        from snapshot_history_db import (  # type: ignore
+            log_regression,
+            record_snapshot,
+            record_delta,
+        )
+    except Exception:  # pragma: no cover - fallback for package installs
+        from importlib.util import module_from_spec, spec_from_file_location
+
+        _snapshot_path = Path(__file__).resolve().parents[1] / "snapshot_history_db.py"
+        _spec = spec_from_file_location("snapshot_history_db", _snapshot_path)
+        if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+            raise
+        _snapshot_module = module_from_spec(_spec)
+        _spec.loader.exec_module(_snapshot_module)
+        log_regression = _snapshot_module.log_regression
+        record_snapshot = _snapshot_module.record_snapshot
+        record_delta = _snapshot_module.record_delta
 
 try:  # pragma: no cover - optional dependency location
     from menace_sandbox.dynamic_path_router import resolve_path, get_project_root
