@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, List, Mapping
@@ -93,6 +95,42 @@ def _fallback_presets(count: int | None = None) -> list[dict[str, Any]]:
 
 
 logger = get_logger(__name__)
+_LEGACY_SANDBOX_RUNNER: object | None = None
+
+
+def _resolve_sandbox_main():
+    """Return the sandbox entrypoint, falling back to legacy module loading."""
+
+    try:
+        from sandbox_runner import _sandbox_main
+
+        return _sandbox_main
+    except (ImportError, AttributeError):
+        pass
+
+    global _LEGACY_SANDBOX_RUNNER
+    if _LEGACY_SANDBOX_RUNNER is None:
+        module_name = "_sandbox_runner_legacy"
+        legacy_mod = sys.modules.get(module_name)
+        if legacy_mod is None:
+            spec = importlib.util.spec_from_file_location(
+                module_name,
+                path_for_prompt("sandbox_runner.py"),
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError("unable to locate legacy sandbox_runner.py module")
+            legacy_mod = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = legacy_mod
+            try:
+                spec.loader.exec_module(legacy_mod)
+            except Exception:
+                sys.modules.pop(module_name, None)
+                raise
+        _LEGACY_SANDBOX_RUNNER = legacy_mod
+
+    if not hasattr(_LEGACY_SANDBOX_RUNNER, "_sandbox_main"):
+        raise ImportError("legacy sandbox_runner.py does not expose _sandbox_main")
+    return _LEGACY_SANDBOX_RUNNER._sandbox_main
 
 
 def _run_mvp_workflow_smoke(args: argparse.Namespace) -> None:
@@ -217,7 +255,7 @@ def get_settings() -> SandboxSettings:
 def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
     """Execute sandbox runs for one or multiple environment presets."""
     if sandbox_main is None:
-        from sandbox_runner import _sandbox_main as sandbox_main
+        sandbox_main = _resolve_sandbox_main()
 
     from .environment import load_presets, simulate_full_environment
 
@@ -503,12 +541,12 @@ def foresight_stability(file: str, workflow_id: str) -> None:
 
 def _capture_run(preset: dict[str, str], args: argparse.Namespace):
     """Run sandbox for ``preset`` and return the resulting tracker."""
-    from sandbox_runner import _sandbox_main
+    sandbox_main = _resolve_sandbox_main()
 
     holder: dict[str, Any] = {}
 
     def wrapper(p: dict[str, str], a: argparse.Namespace, builder: Any) -> None:
-        holder["tracker"] = _sandbox_main(p, a, builder)
+        holder["tracker"] = sandbox_main(p, a, builder)
 
     _run_sandbox(args, sandbox_main=wrapper)
     return holder.get("tracker")
