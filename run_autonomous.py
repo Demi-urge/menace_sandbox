@@ -1720,8 +1720,14 @@ def _load_legacy_sandbox_runner() -> object:
         if spec is None or spec.loader is None:
             raise ImportError("unable to locate legacy sandbox_runner.py module")
         legacy_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(legacy_mod)
+        # Register the module before execution so decorators (e.g. dataclass)
+        # can resolve ``cls.__module__`` via ``sys.modules`` during import.
         sys.modules[module_name] = legacy_mod
+        try:
+            spec.loader.exec_module(legacy_mod)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
     _LEGACY_SANDBOX_RUNNER = legacy_mod
     return legacy_mod
 
