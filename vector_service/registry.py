@@ -26,6 +26,30 @@ logger = logging.getLogger(__name__)
 _VECTOR_REGISTRY: Dict[str, Tuple[str, str, Optional[str], Optional[str]]] = {}
 
 
+def _import_module_with_fallbacks(module_name: str):
+    """Import ``module_name`` with compatibility fallbacks.
+
+    Some runtimes execute from an installed ``menace_sandbox`` package where
+    sibling top-level modules (for example ``action_vectorizer``) are only
+    addressable via ``menace_sandbox.<module>``.
+    """
+
+    candidates = [module_name]
+    if "." not in module_name:
+        candidates.append(f"menace_sandbox.{module_name}")
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            return importlib.import_module(candidate)
+        except Exception as exc:  # pragma: no cover - try next candidate
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise ModuleNotFoundError(module_name)
+
+
 def register_vectorizer(
     kind: str,
     module_path: str,
@@ -193,7 +217,7 @@ def load_handlers(
                 except TimeoutError as exc:
                     cancelled.append(_mark_cancelled(exc))
                     return
-                mod = importlib.import_module(mod_name)
+                mod = _import_module_with_fallbacks(mod_name)
                 cls = getattr(mod, cls_name)
                 kwargs = {}
                 if _accepts_bootstrap_fast(cls):
@@ -480,7 +504,7 @@ def load_handler(
 
     mod_name, cls_name, _, _ = entry
     try:
-        mod = importlib.import_module(mod_name)
+        mod = _import_module_with_fallbacks(mod_name)
         cls = getattr(mod, cls_name)
         kwargs = {}
         if _accepts_bootstrap_fast(cls):
