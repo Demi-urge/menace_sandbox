@@ -14,6 +14,7 @@ import threading
 from typing import Iterable, TYPE_CHECKING, Type
 import argparse
 import importlib
+from importlib import import_module
 import platform
 import shutil
 import subprocess
@@ -49,6 +50,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 _BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder()
+_PACKAGE_CONTEXT = (__package__ or "").strip()
+
+
+def _load_environment_bootstrap_module():
+    """Load environment_bootstrap deterministically for package or script mode."""
+
+    package_module = ".environment_bootstrap"
+    script_module = "environment_bootstrap"
+    selected = script_module if _PACKAGE_CONTEXT == "" else package_module
+    try:
+        if _PACKAGE_CONTEXT == "":
+            return import_module(script_module)
+        return import_module(package_module, package=_PACKAGE_CONTEXT)
+    except Exception as exc:  # pragma: no cover - import diagnostics
+        raise ImportError(
+            "Failed to import environment bootstrap module. "
+            f"Attempted module names: '{selected}' (selected), "
+            f"'{package_module}', '{script_module}'."
+        ) from exc
 
 
 def _load_component_inventory_hints() -> dict[str, object]:
@@ -148,7 +168,6 @@ from menace.self_coding_manager import (  # noqa: E402
 from menace.data_bot import DataBot, persist_sc_thresholds  # noqa: E402
 from menace.self_coding_thresholds import get_thresholds  # noqa: E402
 from menace.advanced_error_management import AutomatedRollbackManager  # noqa: E402
-from menace.environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
 from menace.auto_env_setup import ensure_env, interactive_setup  # noqa: E402
 from menace.auto_resource_setup import ensure_proxies, ensure_accounts  # noqa: E402
 from menace.external_dependency_provisioner import ExternalDependencyProvisioner  # noqa: E402
@@ -214,6 +233,9 @@ from menace.diagnostic_manager import DiagnosticManager  # noqa: E402
 from menace.idea_search_bot import KeywordBank  # noqa: E402
 from menace.newsreader_bot import NewsDB  # noqa: E402
 from menace.chatgpt_idea_bot import ChatGPTClient  # noqa: E402
+
+EnvironmentBootstrapper = _load_environment_bootstrap_module().EnvironmentBootstrapper
+
 try:
     from menace.shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
