@@ -1,0 +1,6 @@
+{
+  "database_url": "postgresql://postgres:B8xA4vLq1lT9oL2sX7aR6cN3wF0BJu@localhost:5432/menace_prod",
+  "logging_level": "INFO",
+  "log_directory": "logs",
+  "reward_core_path": "reward_core.pyc"
+}
