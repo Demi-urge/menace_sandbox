@@ -14,28 +14,30 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Dict, Optional, Tuple
 
-from bootstrap_timeout_policy import (
-    derive_bootstrap_timeout_env,
-    enforce_bootstrap_timeout_policy,
-    guard_bootstrap_wait_env,
-    _BOOTSTRAP_TIMEOUT_MINIMUMS,
-)
-_USE_PACKAGE_IMPORTS = bool(__package__)
-_IMPORT_MODE = "package" if _USE_PACKAGE_IMPORTS else "script"
+_USE_SCRIPT_IMPORTS = __package__ in (None, "")
+_IMPORT_MODE = "script" if _USE_SCRIPT_IMPORTS else "package"
+
+if _USE_SCRIPT_IMPORTS:
+    from bootstrap_timeout_policy import (
+        _BOOTSTRAP_TIMEOUT_MINIMUMS,
+        derive_bootstrap_timeout_env,
+        enforce_bootstrap_timeout_policy,
+        guard_bootstrap_wait_env,
+    )
+else:
+    from .bootstrap_timeout_policy import (
+        _BOOTSTRAP_TIMEOUT_MINIMUMS,
+        derive_bootstrap_timeout_env,
+        enforce_bootstrap_timeout_policy,
+        guard_bootstrap_wait_env,
+    )
 
 
 def _import_supervisor_module(package_module: str, script_module: str):
-    """Import a module in deterministic package/script mode with context-rich errors."""
-    module_ref = package_module if _USE_PACKAGE_IMPORTS else script_module
-    try:
-        if _USE_PACKAGE_IMPORTS:
-            return import_module(package_module, package=__package__)
+    """Import a module in deterministic package/script mode."""
+    if _USE_SCRIPT_IMPORTS:
         return import_module(script_module)
-    except (ImportError, ModuleNotFoundError) as exc:
-        raise ImportError(
-            "service_supervisor bootstrap import failed for "
-            f"'{module_ref}' while running in {_IMPORT_MODE} mode"
-        ) from exc
+    return import_module(package_module, package=__package__)
 
 
 log_record = _import_supervisor_module(".logging_utils", "logging_utils").log_record
@@ -164,13 +166,22 @@ self_coding_managed = _coding_bot_interface.self_coding_managed
 get_orchestrator = _import_supervisor_module(
     ".shared_evolution_orchestrator", "shared_evolution_orchestrator"
 ).get_orchestrator
-from vector_service.context_builder import ContextBuilder  # noqa: E402
-from context_builder_util import create_context_builder  # noqa: E402
+if _USE_SCRIPT_IMPORTS:
+    from context_builder_util import create_context_builder  # noqa: E402
+    from vector_service.context_builder import ContextBuilder  # noqa: E402
+else:
+    from .context_builder_util import create_context_builder  # noqa: E402
+    from .vector_service.context_builder import ContextBuilder  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
-except Exception:  # pragma: no cover - optional
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - optional
     psutil = None  # type: ignore
+
+logging.getLogger(__name__).info(
+    "service_supervisor import bootstrap mode selected: %s",
+    _IMPORT_MODE,
+)
 
 # ``bus`` is the shared :class:`UnifiedEventBus` instance so all services
 # exchange events via a common channel.  Creating separate buses would isolate
