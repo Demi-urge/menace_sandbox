@@ -86,7 +86,6 @@ if __package__:
     from .evaluation_history_db import EvaluationHistoryDB
     from .evolution_history_db import EvolutionHistoryDB
     from .truth_adapter import TruthAdapter
-    from . import roi_tracker as _roi_tracker_module
 else:  # pragma: no cover - fallback when executed outside package
     import sys
     from importlib import import_module
@@ -139,25 +138,31 @@ else:  # pragma: no cover - fallback when executed outside package
     EvaluationHistoryDB = _load_helper("evaluation_history_db", "EvaluationHistoryDB")  # type: ignore[assignment]
     EvolutionHistoryDB = _load_helper("evolution_history_db", "EvolutionHistoryDB")  # type: ignore[assignment]
     TruthAdapter = _load_helper("truth_adapter", "TruthAdapter")  # type: ignore[assignment]
-    _roi_tracker_module = _load_helper("roi_tracker")
 
 if TYPE_CHECKING:
-    try:
-        from .roi_tracker import ROITracker
-    except ImportError:  # pragma: no cover - fallback when executed outside package
-        from roi_tracker import ROITracker  # type: ignore[no-redef]
+    from .roi_tracker import ROITracker
 
 
-def _get_roi_tracker_cls() -> type["ROITracker"]:
-    """Return the lazily-resolved :class:`ROITracker` implementation."""
+def _require_tracker_protocol(
+    tracker: object,
+    *,
+    required_methods: tuple[str, ...] = (),
+    required_attributes: tuple[str, ...] = (),
+) -> None:
+    """Ensure a tracker object satisfies the protocol used by this module."""
 
-    roi_tracker_cls = getattr(_roi_tracker_module, "ROITracker", None)
-    if roi_tracker_cls is None:
-        raise ImportError(
-            "adaptive_roi_predictor requires roi_tracker.ROITracker, "
-            "but the module does not define ROITracker."
+    missing_methods = [name for name in required_methods if not callable(getattr(tracker, name, None))]
+    missing_attributes = [name for name in required_attributes if not hasattr(tracker, name)]
+    if missing_methods or missing_attributes:
+        details: list[str] = []
+        if missing_methods:
+            details.append(f"methods: {', '.join(missing_methods)}")
+        if missing_attributes:
+            details.append(f"attributes: {', '.join(missing_attributes)}")
+        raise TypeError(
+            "tracker does not implement the required ROI tracker protocol "
+            f"({'; '.join(details)})."
         )
-    return roi_tracker_cls
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
@@ -927,12 +932,14 @@ class AdaptiveROIPredictor:
             growth = "marginal"
         result = (preds.tolist(), growth, conf.tolist(), growth_conf)
         if tracker is not None:
-            roi_tracker_cls = _get_roi_tracker_cls()
-            if not isinstance(tracker, roi_tracker_cls):
-                raise TypeError(
-                    f"tracker must be an instance of {roi_tracker_cls.__name__}; "
-                    f"got {type(tracker).__name__}."
-                )
+            _require_tracker_protocol(
+                tracker,
+                required_methods=(
+                    "record_prediction",
+                    "rolling_mae",
+                    "classification_accuracy",
+                ),
+            )
         if tracker is not None and actual_roi is not None:
             try:
                 tracker.record_prediction(
@@ -982,12 +989,10 @@ class AdaptiveROIPredictor:
             Additional parameters forwarded to :meth:`ROITracker.evaluate_model`.
         """
 
-        roi_tracker_cls = _get_roi_tracker_cls()
-        if not isinstance(tracker, roi_tracker_cls):
-            raise TypeError(
-                f"tracker must be an instance of {roi_tracker_cls.__name__}; "
-                f"got {type(tracker).__name__}."
-            )
+        _require_tracker_protocol(
+            tracker,
+            required_methods=("evaluate_model",),
+        )
 
         acc, mae = tracker.evaluate_model(
             mae_threshold=mae_threshold,
@@ -1074,12 +1079,10 @@ def load_training_data(
     if pd is None:  # pragma: no cover - pandas not installed
         raise RuntimeError("pandas is required for load_training_data")
 
-    roi_tracker_cls = _get_roi_tracker_cls()
-    if not isinstance(tracker, roi_tracker_cls):
-        raise TypeError(
-            f"tracker must be an instance of {roi_tracker_cls.__name__}; "
-            f"got {type(tracker).__name__}."
-        )
+    _require_tracker_protocol(
+        tracker,
+        required_attributes=("roi_history", "metrics_history"),
+    )
 
     evolution_path = Path(evolution_path)
     roi_events_path = Path(roi_events_path)
