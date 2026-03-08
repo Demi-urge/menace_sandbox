@@ -8,13 +8,17 @@ This module intentionally re-exports the package bootstrap entry points from
 from menace_sandbox.environment_bootstrap import (
     BootstrapOrchestrator,
     EnvironmentBootstrapper,
+    bootstrap_in_progress,
     ensure_bootstrapped,
     ensure_bootstrapped_async,
+    is_bootstrapped,
 )
 
 __all__ = [
     "EnvironmentBootstrapper",
     "BootstrapOrchestrator",
+    "is_bootstrapped",
+    "bootstrap_in_progress",
     "ensure_bootstrapped",
     "ensure_bootstrapped_async",
 ]
