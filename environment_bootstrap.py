@@ -49,6 +49,8 @@ BootstrapOrchestrator = _bootstrap_impl.BootstrapOrchestrator
 EnvironmentBootstrapper = _bootstrap_impl.EnvironmentBootstrapper
 ensure_bootstrapped = _bootstrap_impl.ensure_bootstrapped
 ensure_bootstrapped_async = _bootstrap_impl.ensure_bootstrapped_async
+is_bootstrapped = _bootstrap_impl.is_bootstrapped
+bootstrap_in_progress = _bootstrap_impl.bootstrap_in_progress
 
 # Keep exports explicit to avoid wildcard/partial-import drift in the shim API.
 
@@ -61,6 +63,8 @@ if EnvironmentBootstrapper is None:
 __all__ = [
     "EnvironmentBootstrapper",
     "BootstrapOrchestrator",
+    "is_bootstrapped",
+    "bootstrap_in_progress",
     "ensure_bootstrapped",
     "ensure_bootstrapped_async",
 ]
