@@ -29,8 +29,11 @@ print(">>> [trace] Importing CodeDB from menace_sandbox.code_database...")
 from .code_database import CodeDB
 print(">>> [trace] Successfully imported CodeDB from menace_sandbox.code_database")
 print(">>> [trace] Importing GPTMemoryManager from menace_sandbox.gpt_memory...")
-from .gpt_memory import GPTMemoryManager
-print(">>> [trace] Successfully imported GPTMemoryManager from menace_sandbox.gpt_memory")
+try:
+    from . import gpt_memory as _gpt_memory_module
+except Exception:  # pragma: no cover - support flat execution
+    import gpt_memory as _gpt_memory_module  # type: ignore
+print(">>> [trace] Imported menace_sandbox.gpt_memory module")
 print(">>> [trace] Importing get_thresholds from menace_sandbox.self_coding_thresholds...")
 from .self_coding_thresholds import get_thresholds
 print(">>> [trace] Successfully imported get_thresholds from menace_sandbox.self_coding_thresholds")
@@ -116,6 +119,18 @@ _registry_instance: BotRegistry | None = None
 _data_bot_instance: DataBotInterface | None = None
 _context_builder_instance: object | None = None
 _engine_instance: SelfCodingEngine | None = None
+
+
+def _load_gpt_memory_manager() -> type:
+    """Resolve ``GPTMemoryManager`` lazily to avoid bootstrap import cycles."""
+
+    manager_cls = getattr(_gpt_memory_module, "GPTMemoryManager", None)
+    if manager_cls is None:
+        try:
+            from .gpt_memory import GPTMemoryManager as manager_cls  # type: ignore
+        except Exception:  # pragma: no cover - support flat execution
+            from gpt_memory import GPTMemoryManager as manager_cls  # type: ignore
+    return manager_cls
 
 # ``manager`` is injected later during module import once optional dependencies
 # have been resolved.  Define it up-front so decorators referencing the symbol
@@ -236,7 +251,7 @@ def _get_engine() -> SelfCodingEngine:
     if _engine_instance is None:
         _engine_instance = SelfCodingEngine(
             CodeDB(),
-            GPTMemoryManager(),
+            _load_gpt_memory_manager()(),
             context_builder=_get_context_builder(),
         )
     return _engine_instance
