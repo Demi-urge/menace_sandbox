@@ -250,6 +250,8 @@ def ensure_content_hash_column(
     """
 
     if engine is not None:
+        if engine.dialect.name != "sqlite":
+            return
         with engine.begin() as eng_conn:
             exists = eng_conn.exec_driver_sql(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
