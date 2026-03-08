@@ -32,8 +32,12 @@ from .contrarian_db import ContrarianDB, ContrarianRecord
 from .capital_management_bot import CapitalManagementBot
 from .unified_event_bus import UnifiedEventBus
 
-WORKFLOW_DB = resolve_path("contrarian_model_bot/workflows_db.json")
-INNOVATIONS_DB = resolve_path("contrarian_model_bot/innovations_db.json")
+WORKFLOW_DB = resolve_path(
+    "contrarian_model_bot/workflows_db.json", allow_missing_parents=True
+)
+INNOVATIONS_DB = resolve_path(
+    "contrarian_model_bot/innovations_db.json", allow_missing_parents=True
+)
 
 @dataclass
 class WorkflowStep:
@@ -66,6 +70,7 @@ class Workflow:
 class WorkflowDB:
     def __init__(self, path: Path = WORKFLOW_DB) -> None:
         self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> List[Workflow]:
         if self.path.exists():
@@ -92,6 +97,7 @@ class Innovation:
 class InnovationsDB:
     def __init__(self, path: Path = INNOVATIONS_DB) -> None:
         self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
             self.path.write_text("[]")
 
