@@ -11,6 +11,8 @@ from menace_sandbox.environment_bootstrap import (
     ensure_bootstrapped_async,
 )
 
+# Keep exports explicit to avoid wildcard/partial-import drift in the shim API.
+
 if EnvironmentBootstrapper is None:
     raise ImportError(
         "Failed to import EnvironmentBootstrapper from "
