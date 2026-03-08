@@ -73,24 +73,24 @@ def load_self_coding_engine() -> type:
                         ).strip()
                         if error_log is None:
                             error_log = payload.pop("error_log", None)
-                else:
-                    query = str(goal).strip()
-                    payload = dict(intent or {})
-                if not query:
-                    fallback_fields = []
-                    if isinstance(payload, Mapping):
-                        fallback_fields.extend(
-                            payload.get(key)
-                            for key in ("description", "reason", "module", "file", "path")
-                        )
-                    fallback_fields.append(error_log)
-                    query = next(
-                        (str(value).strip() for value in fallback_fields if value and str(value).strip()),
-                        "",
-                    )
+                    else:
+                        query = str(goal).strip()
+                        payload = dict(intent or {})
                     if not query:
-                        raise ValueError("goal must supply a non-empty query")
-
+                        fallback_fields = []
+                        if isinstance(payload, Mapping):
+                            fallback_fields.extend(
+                                payload.get(key)
+                                for key in ("description", "reason", "module", "file", "path")
+                            )
+                        fallback_fields.append(error_log)
+                        query = next(
+                            (str(value).strip() for value in fallback_fields if value and str(value).strip()),
+                            "",
+                        )
+                        if not query:
+                            raise ValueError("goal must supply a non-empty query")
+    
                     top_k_val = payload.get("top_k", 5)
                     try:
                         top_k = int(top_k_val)
