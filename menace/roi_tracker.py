@@ -5,49 +5,47 @@ from __future__ import annotations
 from importlib import import_module
 from types import ModuleType
 
-_IMPL_MODULE_NAME = f"{__package__}.roi_tracker_impl" if __package__ else "menace.roi_tracker_impl"
-_SOURCE_MODULE: ModuleType | None = None
+_SOURCE_MODULE: ModuleType = import_module("roi_tracker")
 
+if not hasattr(_SOURCE_MODULE, "ROITracker"):
+    raise ImportError(
+        "menace.roi_tracker expected 'ROITracker' in module 'roi_tracker', "
+        "but it was not found."
+    )
 
-def _resolve_source_module() -> ModuleType:
-    global _SOURCE_MODULE
-    if _SOURCE_MODULE is not None:
-        return _SOURCE_MODULE
+ROITracker = _SOURCE_MODULE.ROITracker
 
+_PUBLIC_SYMBOLS = list(getattr(_SOURCE_MODULE, "__all__", ()))
+if not _PUBLIC_SYMBOLS:
+    _PUBLIC_SYMBOLS = [name for name in dir(_SOURCE_MODULE) if not name.startswith("_")]
+
+for _name in _PUBLIC_SYMBOLS:
+    if _name in {"ROITracker", "__all__"}:
+        continue
     try:
-        _SOURCE_MODULE = import_module(_IMPL_MODULE_NAME)
-    except ModuleNotFoundError as exc:
-        # A missing package-local implementation module is expected in setups
-        # that only ship the legacy top-level ``roi_tracker`` module.
-        if (exc.name or "") != _IMPL_MODULE_NAME:
-            raise
-        _SOURCE_MODULE = import_module("roi_tracker")
-
-    return _SOURCE_MODULE
+        globals()[_name] = getattr(_SOURCE_MODULE, _name)
+    except AttributeError:
+        continue
 
 
-# Keep a conservative static export surface that is safe before the backing
-# module has fully initialized.
-__all__ = ["ROITracker"]
+__all__ = list(dict.fromkeys(["ROITracker", *_PUBLIC_SYMBOLS]))
 
 
 def __getattr__(name: str):
-    """Resolve late-bound attributes from the backing ROI tracker module.
+    """Resolve attributes from the backing ROI tracker module."""
 
-    This keeps imports robust when callers request symbols (for example
-    ``ROITracker``) before the source module has fully initialized due to
-    circular imports.
-    """
-
-    return getattr(_resolve_source_module(), name)
+    try:
+        return getattr(_SOURCE_MODULE, name)
+    except AttributeError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
 
 
 def __dir__() -> list[str]:
-    """Include attributes from the lazily resolved backing module."""
+    """Include attributes from the backing module."""
 
     names = set(globals())
     try:
-        names.update(dir(_resolve_source_module()))
+        names.update(dir(_SOURCE_MODULE))
     except Exception:
         pass
     return sorted(names)
