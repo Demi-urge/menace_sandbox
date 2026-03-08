@@ -4,7 +4,7 @@ import logging
 import pytest
 
 import db_router
-from db_dedup import hash_fields, insert_if_unique
+from db_dedup import ensure_content_hash_column, hash_fields, insert_if_unique
 
 
 @pytest.fixture
@@ -225,3 +225,14 @@ def test_insert_if_unique_missing_field_sqlite(tmp_path):
             conn=conn,
             logger=logger,
         )
+
+
+def test_ensure_content_hash_column_skips_non_sqlite_engine():
+    class _Engine:
+        class dialect:  # noqa: D106
+            name = "postgresql"
+
+        def begin(self):  # pragma: no cover - should never be called
+            raise AssertionError("begin() should not be called for non-SQLite")
+
+    ensure_content_hash_column("items", engine=_Engine())
