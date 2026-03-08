@@ -1,4 +1,8 @@
-"""Compatibility wrapper for package-based bootstrap utilities."""
+"""Legacy compatibility wrapper for bootstrap imports.
+
+Prefer importing from ``menace.environment_bootstrap``. This root-level module
+is retained for external callers that still import ``environment_bootstrap``.
+"""
 
 from menace_sandbox.environment_bootstrap import (
     BootstrapOrchestrator,
