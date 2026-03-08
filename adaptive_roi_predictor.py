@@ -13,7 +13,7 @@ becomes available.
 
 import logging
 from pathlib import Path
-from typing import Sequence, Tuple, Dict, Any
+from typing import TYPE_CHECKING, Sequence, Tuple, Dict, Any
 
 try:  # pragma: no cover - optional dependency
     import numpy as np  # type: ignore
@@ -83,7 +83,6 @@ import pickle
 if __package__:
     from .logging_utils import get_logger
     from .adaptive_roi_dataset import build_dataset, _label_growth
-    from .roi_tracker import ROITracker
     from .evaluation_history_db import EvaluationHistoryDB
     from .evolution_history_db import EvolutionHistoryDB
     from .truth_adapter import TruthAdapter
@@ -136,10 +135,16 @@ else:  # pragma: no cover - fallback when executed outside package
     dataset_mod = _load_helper("adaptive_roi_dataset")
     build_dataset = getattr(dataset_mod, "build_dataset")  # type: ignore[assignment]
     _label_growth = getattr(dataset_mod, "_label_growth")  # type: ignore[assignment]
-    ROITracker = _load_helper("roi_tracker", "ROITracker")  # type: ignore[assignment]
     EvaluationHistoryDB = _load_helper("evaluation_history_db", "EvaluationHistoryDB")  # type: ignore[assignment]
     EvolutionHistoryDB = _load_helper("evolution_history_db", "EvolutionHistoryDB")  # type: ignore[assignment]
     TruthAdapter = _load_helper("truth_adapter", "TruthAdapter")  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    try:
+        from .roi_tracker import ROITracker
+    except ImportError:  # pragma: no cover - fallback when executed outside package
+        from roi_tracker import ROITracker  # type: ignore[no-redef]
+
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 MENACE_ID = "adaptive_roi_predictor"
