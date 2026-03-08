@@ -2,10 +2,12 @@ from __future__ import annotations
 
 """Additional verification for distributed rollbacks."""
 
-import logging
 from typing import Iterable
 
-from .rollback_manager import RollbackManager
+try:  # pragma: no cover - import path handling
+    from .rollback_manager import RollbackManager
+except ImportError:  # pragma: no cover - script execution fallback
+    from rollback_manager import RollbackManager  # type: ignore
 
 
 class RollbackValidator(RollbackManager):
