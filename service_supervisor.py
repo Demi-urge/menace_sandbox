@@ -19,7 +19,10 @@ from bootstrap_timeout_policy import (
     guard_bootstrap_wait_env,
     _BOOTSTRAP_TIMEOUT_MINIMUMS,
 )
-from .logging_utils import log_record
+try:  # pragma: no cover - support package and script-style imports
+    from .logging_utils import log_record
+except Exception:  # pragma: no cover - fallback when executed directly
+    from logging_utils import log_record
 
 def _hydrate_bootstrap_timeout_env() -> dict[str, float]:
     guard_bootstrap_wait_env()
@@ -35,10 +38,11 @@ _BOOTSTRAP_TIMEOUT_DEFAULTS = _hydrate_bootstrap_timeout_env()
 
 BOOTSTRAP_TIMEOUT_ENV = enforce_bootstrap_timeout_policy(logger=logging.getLogger(__name__))
 
-from .db_router import GLOBAL_ROUTER, init_db_router
-try:  # pragma: no cover - allow running as script
+try:  # pragma: no cover - support package and script-style imports
+    from .db_router import GLOBAL_ROUTER, init_db_router
     from .dynamic_path_router import resolve_path  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
+    from db_router import GLOBAL_ROUTER, init_db_router
     from dynamic_path_router import resolve_path  # type: ignore
 
 # Initialise a global DB router with a unique menace_id before importing modules
@@ -53,52 +57,98 @@ SHARED_DB_PATH = os.getenv(
 )
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from .menace_master import _init_unused_bots  # noqa: E402
-from .menace_orchestrator import MenaceOrchestrator  # noqa: E402
-from .microtrend_service import MicrotrendService  # noqa: E402
-from .self_evaluation_service import SelfEvaluationService  # noqa: E402
-from .self_learning_service import main as learning_main  # noqa: E402
-from .cross_model_scheduler import ModelRankingService  # noqa: E402
-from .dependency_update_service import DependencyUpdateService  # noqa: E402
-from .advanced_error_management import SelfHealingOrchestrator  # noqa: E402
-from .knowledge_graph import KnowledgeGraph  # noqa: E402
-from .chaos_monitoring_service import ChaosMonitoringService  # noqa: E402
-from .model_evaluation_service import ModelEvaluationService  # noqa: E402
-from .secret_rotation_service import SecretRotationService  # noqa: E402
-from .environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
-from .external_dependency_provisioner import ExternalDependencyProvisioner  # noqa: E402
-from .dependency_watchdog import DependencyWatchdog  # noqa: E402
-from .environment_restoration_service import EnvironmentRestorationService  # noqa: E402
-from .startup_checks import run_startup_checks  # noqa: E402
-from .autoscaler import Autoscaler  # noqa: E402
-from .unified_update_service import UnifiedUpdateService  # noqa: E402
-from .self_test_service import SelfTestService  # noqa: E402
-from .auto_escalation_manager import AutoEscalationManager  # noqa: E402
-from .self_coding_manager import (  # noqa: E402
-    PatchApprovalPolicy,
-    _manager_generate_helper_with_builder as _helper_fn,
-    internalize_coding_bot,
-)
-from .advanced_error_management import AutomatedRollbackManager  # noqa: E402
-from .error_bot import ErrorDB  # noqa: E402
-from .self_coding_engine import SelfCodingEngine  # noqa: E402
-from .code_database import CodeDB  # noqa: E402
-from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
-from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
-from .quick_fix_engine import QuickFixEngine  # noqa: E402
+try:  # pragma: no cover - support package and script-style imports
+    from .menace_master import _init_unused_bots  # noqa: E402
+    from .menace_orchestrator import MenaceOrchestrator  # noqa: E402
+    from .microtrend_service import MicrotrendService  # noqa: E402
+    from .self_evaluation_service import SelfEvaluationService  # noqa: E402
+    from .self_learning_service import main as learning_main  # noqa: E402
+    from .cross_model_scheduler import ModelRankingService  # noqa: E402
+    from .dependency_update_service import DependencyUpdateService  # noqa: E402
+    from .advanced_error_management import SelfHealingOrchestrator  # noqa: E402
+    from .knowledge_graph import KnowledgeGraph  # noqa: E402
+    from .chaos_monitoring_service import ChaosMonitoringService  # noqa: E402
+    from .model_evaluation_service import ModelEvaluationService  # noqa: E402
+    from .secret_rotation_service import SecretRotationService  # noqa: E402
+    from .environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
+    from .external_dependency_provisioner import ExternalDependencyProvisioner  # noqa: E402
+    from .dependency_watchdog import DependencyWatchdog  # noqa: E402
+    from .environment_restoration_service import EnvironmentRestorationService  # noqa: E402
+    from .startup_checks import run_startup_checks  # noqa: E402
+    from .autoscaler import Autoscaler  # noqa: E402
+    from .unified_update_service import UnifiedUpdateService  # noqa: E402
+    from .self_test_service import SelfTestService  # noqa: E402
+    from .auto_escalation_manager import AutoEscalationManager  # noqa: E402
+    from .self_coding_manager import (  # noqa: E402
+        PatchApprovalPolicy,
+        _manager_generate_helper_with_builder as _helper_fn,
+        internalize_coding_bot,
+    )
+    from .advanced_error_management import AutomatedRollbackManager  # noqa: E402
+    from .error_bot import ErrorDB  # noqa: E402
+    from .self_coding_engine import SelfCodingEngine  # noqa: E402
+    from .code_database import CodeDB  # noqa: E402
+    from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
+    from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
+    from .quick_fix_engine import QuickFixEngine  # noqa: E402
+    from .shared_event_bus import event_bus as bus  # noqa: E402
+    from .bot_registry import BotRegistry  # noqa: E402
+    from .data_bot import DataBot, persist_sc_thresholds  # noqa: E402
+    from .self_coding_thresholds import get_thresholds  # noqa: E402
+    from .coding_bot_interface import (  # noqa: E402
+        _BOOTSTRAP_STATE,
+        _bootstrap_dependency_broker,
+        _current_bootstrap_context,
+        self_coding_managed,
+    )
+    from .shared_evolution_orchestrator import get_orchestrator  # noqa: E402
+except Exception:  # pragma: no cover - fallback when executed directly
+    from menace_master import _init_unused_bots  # noqa: E402
+    from menace_orchestrator import MenaceOrchestrator  # noqa: E402
+    from microtrend_service import MicrotrendService  # noqa: E402
+    from self_evaluation_service import SelfEvaluationService  # noqa: E402
+    from self_learning_service import main as learning_main  # noqa: E402
+    from cross_model_scheduler import ModelRankingService  # noqa: E402
+    from dependency_update_service import DependencyUpdateService  # noqa: E402
+    from advanced_error_management import SelfHealingOrchestrator  # noqa: E402
+    from knowledge_graph import KnowledgeGraph  # noqa: E402
+    from chaos_monitoring_service import ChaosMonitoringService  # noqa: E402
+    from model_evaluation_service import ModelEvaluationService  # noqa: E402
+    from secret_rotation_service import SecretRotationService  # noqa: E402
+    from environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
+    from external_dependency_provisioner import ExternalDependencyProvisioner  # noqa: E402
+    from dependency_watchdog import DependencyWatchdog  # noqa: E402
+    from environment_restoration_service import EnvironmentRestorationService  # noqa: E402
+    from startup_checks import run_startup_checks  # noqa: E402
+    from autoscaler import Autoscaler  # noqa: E402
+    from unified_update_service import UnifiedUpdateService  # noqa: E402
+    from self_test_service import SelfTestService  # noqa: E402
+    from auto_escalation_manager import AutoEscalationManager  # noqa: E402
+    from self_coding_manager import (  # noqa: E402
+        PatchApprovalPolicy,
+        _manager_generate_helper_with_builder as _helper_fn,
+        internalize_coding_bot,
+    )
+    from advanced_error_management import AutomatedRollbackManager  # noqa: E402
+    from error_bot import ErrorDB  # noqa: E402
+    from self_coding_engine import SelfCodingEngine  # noqa: E402
+    from code_database import CodeDB  # noqa: E402
+    from menace_memory_manager import MenaceMemoryManager  # noqa: E402
+    from model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
+    from quick_fix_engine import QuickFixEngine  # noqa: E402
+    from shared_event_bus import event_bus as bus  # noqa: E402
+    from bot_registry import BotRegistry  # noqa: E402
+    from data_bot import DataBot, persist_sc_thresholds  # noqa: E402
+    from self_coding_thresholds import get_thresholds  # noqa: E402
+    from coding_bot_interface import (  # noqa: E402
+        _BOOTSTRAP_STATE,
+        _bootstrap_dependency_broker,
+        _current_bootstrap_context,
+        self_coding_managed,
+    )
+    from shared_evolution_orchestrator import get_orchestrator  # noqa: E402
 from vector_service.context_builder import ContextBuilder  # noqa: E402
 from context_builder_util import create_context_builder  # noqa: E402
-from .shared_event_bus import event_bus as bus  # noqa: E402
-from .bot_registry import BotRegistry  # noqa: E402
-from .data_bot import DataBot, persist_sc_thresholds  # noqa: E402
-from .self_coding_thresholds import get_thresholds  # noqa: E402
-from .coding_bot_interface import (  # noqa: E402
-    _BOOTSTRAP_STATE,
-    _bootstrap_dependency_broker,
-    _current_bootstrap_context,
-    self_coding_managed,
-)
-from .shared_evolution_orchestrator import get_orchestrator  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
