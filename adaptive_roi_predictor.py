@@ -86,6 +86,7 @@ if __package__:
     from .evaluation_history_db import EvaluationHistoryDB
     from .evolution_history_db import EvolutionHistoryDB
     from .truth_adapter import TruthAdapter
+    from . import roi_tracker as _roi_tracker_module
 else:  # pragma: no cover - fallback when executed outside package
     import sys
     from importlib import import_module
@@ -138,12 +139,25 @@ else:  # pragma: no cover - fallback when executed outside package
     EvaluationHistoryDB = _load_helper("evaluation_history_db", "EvaluationHistoryDB")  # type: ignore[assignment]
     EvolutionHistoryDB = _load_helper("evolution_history_db", "EvolutionHistoryDB")  # type: ignore[assignment]
     TruthAdapter = _load_helper("truth_adapter", "TruthAdapter")  # type: ignore[assignment]
+    _roi_tracker_module = _load_helper("roi_tracker")
 
 if TYPE_CHECKING:
     try:
         from .roi_tracker import ROITracker
     except ImportError:  # pragma: no cover - fallback when executed outside package
         from roi_tracker import ROITracker  # type: ignore[no-redef]
+
+
+def _get_roi_tracker_cls() -> type["ROITracker"]:
+    """Return the lazily-resolved :class:`ROITracker` implementation."""
+
+    roi_tracker_cls = getattr(_roi_tracker_module, "ROITracker", None)
+    if roi_tracker_cls is None:
+        raise ImportError(
+            "adaptive_roi_predictor requires roi_tracker.ROITracker, "
+            "but the module does not define ROITracker."
+        )
+    return roi_tracker_cls
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
@@ -846,7 +860,7 @@ class AdaptiveROIPredictor:
         improvement_features: Sequence[Sequence[float]],
         horizon: int | None = None,
         *,
-        tracker: ROITracker | None = None,
+        tracker: "ROITracker" | None = None,
         actual_roi: Sequence[float] | float | None = None,
         actual_class: str | None = None,
     ) -> tuple[list[list[float]], str, list[list[float]], float | None]:
@@ -912,6 +926,13 @@ class AdaptiveROIPredictor:
         else:
             growth = "marginal"
         result = (preds.tolist(), growth, conf.tolist(), growth_conf)
+        if tracker is not None:
+            roi_tracker_cls = _get_roi_tracker_cls()
+            if not isinstance(tracker, roi_tracker_cls):
+                raise TypeError(
+                    f"tracker must be an instance of {roi_tracker_cls.__name__}; "
+                    f"got {type(tracker).__name__}."
+                )
         if tracker is not None and actual_roi is not None:
             try:
                 tracker.record_prediction(
@@ -939,7 +960,7 @@ class AdaptiveROIPredictor:
     # ------------------------------------------------------------------
     def evaluate_model(
         self,
-        tracker: ROITracker,
+        tracker: "ROITracker",
         *,
         accuracy_threshold: float = 0.6,
         mae_threshold: float = 0.1,
@@ -960,6 +981,13 @@ class AdaptiveROIPredictor:
         kwargs:
             Additional parameters forwarded to :meth:`ROITracker.evaluate_model`.
         """
+
+        roi_tracker_cls = _get_roi_tracker_cls()
+        if not isinstance(tracker, roi_tracker_cls):
+            raise TypeError(
+                f"tracker must be an instance of {roi_tracker_cls.__name__}; "
+                f"got {type(tracker).__name__}."
+            )
 
         acc, mae = tracker.evaluate_model(
             mae_threshold=mae_threshold,
@@ -995,7 +1023,7 @@ def predict(
     action_features: Sequence[Sequence[float]],
     horizon: int | None = None,
     *,
-    tracker: ROITracker | None = None,
+    tracker: "ROITracker" | None = None,
     actual_roi: Sequence[float] | float | None = None,
     actual_class: str | None = None,
 ) -> tuple[list[list[float]], str, list[list[float]], float | None]:
@@ -1014,7 +1042,7 @@ def predict(
 
 
 def load_training_data(
-    tracker: ROITracker,
+    tracker: "ROITracker",
     evolution_path: str | Path = "evolution_history.db",
     roi_events_path: str | Path = "roi_events.db",
     output_path: Path | str | None = None,
@@ -1045,6 +1073,13 @@ def load_training_data(
 
     if pd is None:  # pragma: no cover - pandas not installed
         raise RuntimeError("pandas is required for load_training_data")
+
+    roi_tracker_cls = _get_roi_tracker_cls()
+    if not isinstance(tracker, roi_tracker_cls):
+        raise TypeError(
+            f"tracker must be an instance of {roi_tracker_cls.__name__}; "
+            f"got {type(tracker).__name__}."
+        )
 
     evolution_path = Path(evolution_path)
     roi_events_path = Path(roi_events_path)
