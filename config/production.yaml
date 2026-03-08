@@ -1,0 +1,18 @@
+paths:
+  data_dir: /srv/igi/data
+  log_dir: /srv/igi/logs
+logging:
+  verbosity: WARNING
+thresholds:
+  alert: 0.95
+bot:
+  learning_rate: 0.005
+api_keys:
+  openai: prod-openai-key
+  serp: prod-serp-key
+# Ranker scheduler environment variables:
+# - RANKER_SCHEDULER_INTERVAL: seconds between retrains (0 disables)
+# - RANKER_SCHEDULER_ROI_THRESHOLD: ROI delta triggering immediate retrain
+# - RANKER_SCHEDULER_RISK_THRESHOLD: risk delta triggering immediate retrain
+# - RANKER_SCHEDULER_EVENT_LOG: path to SQLite log for UnifiedEventBus
+# - RANKER_SCHEDULER_RABBITMQ_HOST: RabbitMQ host for event mirroring
