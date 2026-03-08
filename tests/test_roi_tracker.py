@@ -12,6 +12,11 @@ from menace_sandbox.telemetry_backend import TelemetryBackend
 from menace_sandbox.readiness_index import compute_readiness
 
 
+def test_menace_roi_tracker_exports_roi_tracker_symbol():
+    from menace.roi_tracker import ROITracker
+
+    assert ROITracker is not None
+
 def test_roi_tracker_basic():
     tracker = rt.ROITracker(window=3, tolerance=0.01)
     vertex, preds, stop, _ = tracker.update(0.0, 0.1)
