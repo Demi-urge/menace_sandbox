@@ -26,8 +26,12 @@ import urllib.request
 
 import bootstrap_timeout_policy
 import bootstrap_metrics
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
+try:
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+except ImportError:  # pragma: no cover - fallback for minimal envs
+    from sqlalchemy_stub.engine import make_url
+    from sqlalchemy_stub.exc import ArgumentError
 
 # Fallback-friendly imports to support both package and script execution
 try:  # pragma: no cover - prefer package relative imports
