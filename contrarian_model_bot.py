@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
+from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
 # flake8: noqa
@@ -22,7 +23,6 @@ from .research_aggregator_bot import ResearchAggregatorBot
 from .research_data import InfoDB, ResearchItem
 from .chatgpt_enhancement_bot import EnhancementDB
 from .prediction_manager_bot import PredictionManager
-from .data_bot import DataBot
 from .strategy_prediction_bot import StrategyPredictionBot, CompetitorFeatures
 from .resource_allocation_bot import ResourceAllocationBot
 from vector_service.context_builder import ContextBuilder
