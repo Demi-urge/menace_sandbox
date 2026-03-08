@@ -14,7 +14,8 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Dict, Optional, Tuple
 
-_USE_SCRIPT_IMPORTS = __package__ in (None, "")
+_PACKAGE_CONTEXT = (__package__ or "").strip()
+_USE_SCRIPT_IMPORTS = _PACKAGE_CONTEXT == ""
 _IMPORT_MODE = "script" if _USE_SCRIPT_IMPORTS else "package"
 
 if _USE_SCRIPT_IMPORTS:
@@ -37,7 +38,7 @@ def _import_supervisor_module(package_module: str, script_module: str):
     """Import a module in deterministic package/script mode."""
     if _USE_SCRIPT_IMPORTS:
         return import_module(script_module)
-    return import_module(package_module, package=__package__)
+    return import_module(package_module, package=_PACKAGE_CONTEXT)
 
 
 log_record = _import_supervisor_module(".logging_utils", "logging_utils").log_record
