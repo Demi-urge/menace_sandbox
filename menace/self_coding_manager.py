@@ -38,4 +38,19 @@ def _reexport(module) -> list[str]:
     return list(exported)
 
 
-__all__ = _reexport(_resolve_source_module())
+_SOURCE_MODULE = _resolve_source_module()
+__all__ = _reexport(_SOURCE_MODULE)
+
+
+def __getattr__(name: str):
+    """Defer unresolved attributes to the source module.
+
+    This preserves compatibility for private helpers imported explicitly from this
+    shim (for example ``from menace.self_coding_manager import
+    _manager_generate_helper_with_builder``).
+    """
+
+    try:
+        return getattr(_SOURCE_MODULE, name)
+    except AttributeError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
