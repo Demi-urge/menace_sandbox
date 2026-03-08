@@ -36,7 +36,10 @@ from scope_utils import Scope, build_scope_clause, apply_scope
 if __package__:
     from .evolution_history_db import EvolutionHistoryDB
     from .evaluation_history_db import EvaluationHistoryDB
-    from .roi_tracker import ROITracker
+    try:
+        from .roi_tracker import ROITracker
+    except ImportError:  # pragma: no cover - fallback for mixed package layouts
+        from roi_tracker import ROITracker  # type: ignore
 else:  # pragma: no cover - fallback for flat module layout
     from evolution_history_db import EvolutionHistoryDB  # type: ignore
     from evaluation_history_db import EvaluationHistoryDB  # type: ignore
