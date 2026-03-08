@@ -28,17 +28,34 @@ except Exception:  # pragma: no cover - optional dependency
 from pathlib import Path
 import sys
 import logging
-from logging_utils import log_record
-from dynamic_path_router import resolve_path
-from coding_bot_interface import advertise_bootstrap_placeholder
-from bootstrap_timeout_policy import (
-    BOOTSTRAP_COMPONENT_HINTS_ENV,
-    BOOTSTRAP_COMPLEXITY_SCALE_ENV,
-    BOOTSTRAP_DB_INDEX_BYTES_ENV,
-    collect_timeout_telemetry,
-    derive_bootstrap_timeout_env,
-    read_bootstrap_heartbeat,
+
+_PACKAGE_CONTEXT = (__package__ or "").strip()
+_USE_SCRIPT_IMPORTS = _PACKAGE_CONTEXT == ""
+
+
+def _import_module(package_module: str, script_module: str):
+    """Import a module deterministically for package or script execution."""
+
+    if _USE_SCRIPT_IMPORTS:
+        if script_module == "environment_bootstrap":
+            return import_module("menace.environment_bootstrap")
+        return import_module(script_module)
+    return import_module(package_module, package=_PACKAGE_CONTEXT)
+
+
+log_record = _import_module(".logging_utils", "logging_utils").log_record
+resolve_path = _import_module(".dynamic_path_router", "dynamic_path_router").resolve_path
+_coding_bot_interface = _import_module(".coding_bot_interface", "coding_bot_interface")
+advertise_bootstrap_placeholder = _coding_bot_interface.advertise_bootstrap_placeholder
+_bootstrap_timeout_policy = _import_module(
+    ".bootstrap_timeout_policy", "bootstrap_timeout_policy"
 )
+BOOTSTRAP_COMPONENT_HINTS_ENV = _bootstrap_timeout_policy.BOOTSTRAP_COMPONENT_HINTS_ENV
+BOOTSTRAP_COMPLEXITY_SCALE_ENV = _bootstrap_timeout_policy.BOOTSTRAP_COMPLEXITY_SCALE_ENV
+BOOTSTRAP_DB_INDEX_BYTES_ENV = _bootstrap_timeout_policy.BOOTSTRAP_DB_INDEX_BYTES_ENV
+collect_timeout_telemetry = _bootstrap_timeout_policy.collect_timeout_telemetry
+derive_bootstrap_timeout_env = _bootstrap_timeout_policy.derive_bootstrap_timeout_env
+read_bootstrap_heartbeat = _bootstrap_timeout_policy.read_bootstrap_heartbeat
 
 # Logger for this module
 logger = logging.getLogger(__name__)
@@ -50,25 +67,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 _BOOTSTRAP_PLACEHOLDER = advertise_bootstrap_placeholder()
-_PACKAGE_CONTEXT = (__package__ or "").strip()
-
-
-def _load_environment_bootstrap_module():
-    """Load environment_bootstrap deterministically for package or script mode."""
-
-    package_module = ".environment_bootstrap"
-    script_module = "environment_bootstrap"
-    selected = script_module if _PACKAGE_CONTEXT == "" else package_module
-    try:
-        if _PACKAGE_CONTEXT == "":
-            return import_module(script_module)
-        return import_module(package_module, package=_PACKAGE_CONTEXT)
-    except Exception as exc:  # pragma: no cover - import diagnostics
-        raise ImportError(
-            "Failed to import environment bootstrap module. "
-            f"Attempted module names: '{selected}' (selected), "
-            f"'{package_module}', '{script_module}'."
-        ) from exc
 
 
 def _load_component_inventory_hints() -> dict[str, object]:
@@ -143,7 +141,7 @@ logger.info(
 )
 
 try:
-    from menace.db_router import init_db_router  # noqa: E402
+    init_db_router = _import_module(".db_router", "db_router").init_db_router
 except Exception:  # pragma: no cover - fallback for tests
     def init_db_router(*args, **kwargs):  # type: ignore[override]
         return None
@@ -176,12 +174,10 @@ from menace.bot_registry import BotRegistry  # noqa: E402
 from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.retry_utils import retry  # noqa: E402
 from menace.disaster_recovery import DisasterRecovery  # noqa: E402
-from coding_bot_interface import (  # noqa: E402
-    _bootstrap_dependency_broker,
-    _current_bootstrap_context,
-    _resolve_bootstrap_pipeline_candidate,
-    claim_bootstrap_dependency_entry,
-)
+_bootstrap_dependency_broker = _coding_bot_interface._bootstrap_dependency_broker
+_current_bootstrap_context = _coding_bot_interface._current_bootstrap_context
+_resolve_bootstrap_pipeline_candidate = _coding_bot_interface._resolve_bootstrap_pipeline_candidate
+claim_bootstrap_dependency_entry = _coding_bot_interface.claim_bootstrap_dependency_entry
 try:
     import sandbox_runner  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
@@ -234,7 +230,9 @@ from menace.idea_search_bot import KeywordBank  # noqa: E402
 from menace.newsreader_bot import NewsDB  # noqa: E402
 from menace.chatgpt_idea_bot import ChatGPTClient  # noqa: E402
 
-EnvironmentBootstrapper = _load_environment_bootstrap_module().EnvironmentBootstrapper
+EnvironmentBootstrapper = _import_module(
+    ".environment_bootstrap", "environment_bootstrap"
+).EnvironmentBootstrapper
 
 try:
     from menace.shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE  # noqa: E402
