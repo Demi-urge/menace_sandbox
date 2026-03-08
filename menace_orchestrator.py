@@ -18,11 +18,19 @@ import time
 import threading
 import asyncio
 import uuid
-from .coding_bot_interface import (
-    _bootstrap_dependency_broker,
-    advertise_bootstrap_placeholder,
-    _resolve_bootstrap_wait_timeout,
-)
+
+try:
+    from .coding_bot_interface import (
+        _bootstrap_dependency_broker,
+        advertise_bootstrap_placeholder,
+        _resolve_bootstrap_wait_timeout,
+    )
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from coding_bot_interface import (  # type: ignore
+        _bootstrap_dependency_broker,
+        advertise_bootstrap_placeholder,
+        _resolve_bootstrap_wait_timeout,
+    )
 if __package__ in (None, ""):
     from menace_sandbox.bootstrap_gate import resolve_bootstrap_placeholders
 else:
@@ -155,55 +163,98 @@ def _seed_bootstrap_placeholder() -> tuple[object, object]:
 _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_BROKER = _seed_bootstrap_placeholder()
 from dynamic_path_router import resolve_path, get_project_root
 
-from .knowledge_graph import KnowledgeGraph
-
-from .advanced_error_management import AutomatedRollbackManager
-from .self_coding_engine import SelfCodingEngine
-from .rollback_validator import RollbackValidator
-
-from .oversight_bots import (
-    L1OversightBot,
-    L2OversightBot,
-    L3OversightBot,
-    M1OversightBot,
-    M2OversightBot,
-    M3OversightBot,
-    H1OversightBot,
-    H2OversightBot,
-    H3OversightBot,
-)
-from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
-from .coding_bot_interface import (
-    _BOOTSTRAP_STATE,
-    _bootstrap_dependency_broker,
-    _GLOBAL_BOOTSTRAP_COORDINATOR,
-    _current_bootstrap_context,
-    claim_bootstrap_dependency_entry,
-    _peek_owner_promise,
-    _resolve_caller_module_name,
-    prepare_pipeline_for_bootstrap,
-)
+try:
+    from .knowledge_graph import KnowledgeGraph
+    from .advanced_error_management import AutomatedRollbackManager
+    from .self_coding_engine import SelfCodingEngine
+    from .rollback_validator import RollbackValidator
+    from .oversight_bots import (
+        L1OversightBot,
+        L2OversightBot,
+        L3OversightBot,
+        M1OversightBot,
+        M2OversightBot,
+        M3OversightBot,
+        H1OversightBot,
+        H2OversightBot,
+        H3OversightBot,
+    )
+    from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+    from .coding_bot_interface import (
+        _BOOTSTRAP_STATE,
+        _bootstrap_dependency_broker,
+        _GLOBAL_BOOTSTRAP_COORDINATOR,
+        _current_bootstrap_context,
+        claim_bootstrap_dependency_entry,
+        _peek_owner_promise,
+        _resolve_caller_module_name,
+        prepare_pipeline_for_bootstrap,
+    )
+    from .discrepancy_detection_bot import DiscrepancyDetectionBot
+    from .efficiency_bot import EfficiencyBot
+    from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
+    from .ad_integration import AdIntegration
+    from .watchdog import Watchdog, ContextBuilder
+    from .error_bot import ErrorDB
+    from .resource_allocation_optimizer import ROIDB
+    from .data_bot import MetricsDB
+    from .trending_scraper import TrendingScraper
+    from .self_learning_service import main as learning_main
+    from .strategic_planner import StrategicPlanner
+    from .strategy_prediction_bot import StrategyPredictionBot
+    from .autoscaler import Autoscaler
+    from .trend_predictor import TrendPredictor
+    from .identity_seeder import seed_identity
+    from .session_vault import SessionVault
+    from .cognition_layer import build_cognitive_context, log_feedback
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from knowledge_graph import KnowledgeGraph  # type: ignore
+    from advanced_error_management import AutomatedRollbackManager  # type: ignore
+    from self_coding_engine import SelfCodingEngine  # type: ignore
+    from rollback_validator import RollbackValidator  # type: ignore
+    from oversight_bots import (  # type: ignore
+        L1OversightBot,
+        L2OversightBot,
+        L3OversightBot,
+        M1OversightBot,
+        M2OversightBot,
+        M3OversightBot,
+        H1OversightBot,
+        H2OversightBot,
+        H3OversightBot,
+    )
+    from model_automation_pipeline import ModelAutomationPipeline, AutomationResult  # type: ignore
+    from coding_bot_interface import (  # type: ignore
+        _BOOTSTRAP_STATE,
+        _bootstrap_dependency_broker,
+        _GLOBAL_BOOTSTRAP_COORDINATOR,
+        _current_bootstrap_context,
+        claim_bootstrap_dependency_entry,
+        _peek_owner_promise,
+        _resolve_caller_module_name,
+        prepare_pipeline_for_bootstrap,
+    )
+    from discrepancy_detection_bot import DiscrepancyDetectionBot  # type: ignore
+    from efficiency_bot import EfficiencyBot  # type: ignore
+    from neuroplasticity import Outcome, PathwayDB, PathwayRecord  # type: ignore
+    from ad_integration import AdIntegration  # type: ignore
+    from watchdog import Watchdog, ContextBuilder  # type: ignore
+    from error_bot import ErrorDB  # type: ignore
+    from resource_allocation_optimizer import ROIDB  # type: ignore
+    from data_bot import MetricsDB  # type: ignore
+    from trending_scraper import TrendingScraper  # type: ignore
+    from self_learning_service import main as learning_main  # type: ignore
+    from strategic_planner import StrategicPlanner  # type: ignore
+    from strategy_prediction_bot import StrategyPredictionBot  # type: ignore
+    from autoscaler import Autoscaler  # type: ignore
+    from trend_predictor import TrendPredictor  # type: ignore
+    from identity_seeder import seed_identity  # type: ignore
+    from session_vault import SessionVault  # type: ignore
+    from cognition_layer import build_cognitive_context, log_feedback  # type: ignore
 from bootstrap_timeout_policy import (
     compute_prepare_pipeline_component_budgets,
     read_bootstrap_heartbeat,
 )
-from .discrepancy_detection_bot import DiscrepancyDetectionBot
-from .efficiency_bot import EfficiencyBot
-from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
-from .ad_integration import AdIntegration
-from .watchdog import Watchdog, ContextBuilder
-from .error_bot import ErrorDB
-from .resource_allocation_optimizer import ROIDB
-from .data_bot import MetricsDB
-from .trending_scraper import TrendingScraper
-from .self_learning_service import main as learning_main
-from .strategic_planner import StrategicPlanner
-from .strategy_prediction_bot import StrategyPredictionBot
-from .autoscaler import Autoscaler
-from .trend_predictor import TrendPredictor
-from .identity_seeder import seed_identity
-from .session_vault import SessionVault
-from .cognition_layer import build_cognitive_context, log_feedback
 import db_router
 from db_router import DBRouter
 
@@ -363,7 +414,10 @@ class MenaceOrchestrator:
         self.model_id: int | None = None
         if auto_bootstrap and bootstrap_context is None:
             try:
-                from .self_model_bootstrap import bootstrap as self_bootstrap
+                try:
+                    from .self_model_bootstrap import bootstrap as self_bootstrap
+                except ImportError:  # pragma: no cover - fallback when executed directly
+                    from self_model_bootstrap import bootstrap as self_bootstrap  # type: ignore
 
                 self.model_id = self_bootstrap(
                     context_builder=self.context_builder
