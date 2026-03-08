@@ -1,4 +1,5 @@
 import itertools
+import importlib.util
 from dataclasses import replace
 import os
 import sys
@@ -54,18 +55,37 @@ primitives_mod.serialization = ser_mod
 asym_mod.ed25519 = ed_mod
 sys.modules["cryptography.hazmat"].primitives = primitives_mod
 
+sys.modules.setdefault(
+    "tomllib", types.SimpleNamespace(load=lambda *a, **k: {}, loads=lambda *a, **k: {})
+)
+
 menace = types.ModuleType("menace")
 menace.RAISE_ERRORS = False
-menace.__path__ = [str(Path(__file__).resolve().parents[1])]
+menace.__path__ = [str(Path(__file__).resolve().parents[1] / "menace")]
 sys.modules["menace"] = menace
 sys.modules["menace.vector_service.embedding_scheduler"] = types.SimpleNamespace(
     start_scheduler_from_env=lambda *a, **k: None
 )
 
+bootstrap_path = Path(__file__).resolve().parents[1] / "menace_sandbox" / "environment_bootstrap.py"
+bootstrap_spec = importlib.util.spec_from_file_location(
+    "menace_sandbox.environment_bootstrap", bootstrap_path
+)
+bootstrap_mod = importlib.util.module_from_spec(bootstrap_spec)
+sys.modules["menace_sandbox.environment_bootstrap"] = bootstrap_mod
+bootstrap_spec.loader.exec_module(bootstrap_mod)
+
 import menace.environment_bootstrap as eb
 import menace.config_discovery as cd
 import pytest
 from sandbox_settings import SandboxSettings
+
+
+def test_environment_bootstrap_exports_environmentbootstrapper(tmp_path):
+    assert hasattr(eb, "EnvironmentBootstrapper")
+
+    bootstrapper = eb.EnvironmentBootstrapper(tf_dir=str(tmp_path))
+    assert bootstrapper is not None
 
 
 def test_environment_bootstrapper(monkeypatch, tmp_path):
@@ -549,4 +569,3 @@ def test_bootstrap_timeout_shutdown(monkeypatch):
 
     sleeper.join(0)
     assert not sleeper.is_alive()
-

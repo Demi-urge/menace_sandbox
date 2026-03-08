@@ -217,6 +217,19 @@ def _setup_mm_stubs(monkeypatch):
         pass
 
 
+def test_menace_master_import_environmentbootstrapper_line(monkeypatch):
+    _setup_mm_stubs(monkeypatch)
+
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
+    spec = importlib.util.spec_from_file_location("menace_master", path)
+    mm = importlib.util.module_from_spec(spec)
+    sys.modules["menace_master"] = mm
+    spec.loader.exec_module(mm)
+
+    assert hasattr(mm, "EnvironmentBootstrapper")
+
+
+
 def test_init_unused_bot_logs_failure(monkeypatch, caplog):
     _setup_mm_stubs(monkeypatch)
     _stub_module(monkeypatch, "menace.bot_development_bot", BotDevelopmentBot=FailingBot)
