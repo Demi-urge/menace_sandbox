@@ -3,8 +3,12 @@ import os
 import re
 from pathlib import Path
 
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
+try:
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+except ImportError:  # pragma: no cover - fallback for minimal envs
+    from sqlalchemy_stub.engine import make_url
+    from sqlalchemy_stub.exc import ArgumentError
 
 
 def load_env(path: str | None = None) -> None:
