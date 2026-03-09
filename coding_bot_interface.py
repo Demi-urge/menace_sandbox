@@ -4469,6 +4469,10 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
         "_pipeline_promoter",
         "_bootstrap_owner_delegate",
         "_extra_manager_sentinels",
+        "_promotion_state",
+        "_promotion_state_lock",
+        "_promotion_event",
+        "_promotion_terminal_reason",
     )
 
     def __init__(self, *, bot_registry: Any, data_bot: Any) -> None:
@@ -4484,6 +4488,45 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
         self._pipeline_promoter: Callable[[Any], None] | None = None
         self._bootstrap_owner_delegate: Any | None = None
         self._extra_manager_sentinels: list[Any] = []
+        self._promotion_state = "placeholder"
+        self._promotion_state_lock = threading.Lock()
+        self._promotion_event = threading.Event()
+        self._promotion_terminal_reason: str | None = None
+
+    def _transition_promotion_state(self, expected: str, target: str, *, reason: str | None = None) -> bool:
+        """Atomically transition the promotion lifecycle state."""
+
+        with self._promotion_state_lock:
+            if self._promotion_state != expected:
+                return False
+            self._promotion_state = target
+            if reason:
+                self._promotion_terminal_reason = reason
+            if target in {"promoted", "failed"}:
+                self._promotion_event.set()
+            return True
+
+    def await_promotion(self, timeout: float | None = None) -> Any:
+        """Block until promotion settles and return the resolved manager."""
+
+        with self._promotion_state_lock:
+            state = self._promotion_state
+            if state == "promoted":
+                return self._resolved_manager
+            if state == "failed":
+                raise RuntimeError(
+                    self._promotion_terminal_reason
+                    or _BOOTSTRAP_PROMOTION_TERMINAL_REASON
+                )
+        if not self._promotion_event.wait(timeout=timeout):
+            raise RuntimeError(_BOOTSTRAP_PROMOTION_TERMINAL_REASON)
+        with self._promotion_state_lock:
+            if self._promotion_state == "promoted":
+                return self._resolved_manager
+            raise RuntimeError(
+                self._promotion_terminal_reason
+                or _BOOTSTRAP_PROMOTION_TERMINAL_REASON
+            )
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial truthiness
         """Always evaluate truthy so helper heuristics keep deferring."""
@@ -4553,6 +4596,8 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
         logger.debug(
             "promoting bootstrap owner sentinel with %s", real_manager
         )
+        if not self._transition_promotion_state("placeholder", "promoting"):
+            return
         if sentinel is not None:
             attach_delegate = getattr(sentinel, "attach_delegate", None)
             if callable(attach_delegate):
@@ -4618,15 +4663,50 @@ class _BootstrapOwnerSentinel(_DisabledSelfCodingManager):
         callbacks = tuple(self._promotion_callbacks)
         self._promotion_callbacks.clear()
         self._release_bootstrap_state()
+        callback_failed = False
         for callback in callbacks:
             try:
                 callback(real_manager)
             except Exception:  # pragma: no cover - callbacks must be best-effort
+                callback_failed = True
                 logger.debug("bootstrap owner callback failed", exc_info=True)
+        if callback_failed:
+            self._transition_promotion_state(
+                "promoting",
+                "failed",
+                reason=_BOOTSTRAP_PROMOTION_TERMINAL_REASON,
+            )
+        else:
+            self._transition_promotion_state("promoting", "promoted")
 
 
 _BOOTSTRAP_STATE = threading.local()
 _DEFERRED_SENTINEL_CALLBACKS: set[int] = set()
+_BOOTSTRAP_PROMOTION_TERMINAL_REASON = "pipeline manager promotion failed to expose the real manager"
+
+
+def _resolve_promoted_manager(candidate: Any, *, timeout: float | None = None) -> Any:
+    """Resolve *candidate* to a promoted manager or raise a shared terminal error."""
+
+    if candidate is None:
+        raise RuntimeError(_BOOTSTRAP_PROMOTION_TERMINAL_REASON)
+    awaiter = getattr(candidate, "await_promotion", None)
+    if callable(awaiter):
+        try:
+            return awaiter(timeout=timeout)
+        except Exception as exc:
+            raise RuntimeError(_BOOTSTRAP_PROMOTION_TERMINAL_REASON) from exc
+    resolved = getattr(candidate, "resolve", None)
+    if callable(resolved):
+        try:
+            maybe_resolved = resolved()
+            if maybe_resolved is not None:
+                candidate = maybe_resolved
+        except Exception as exc:
+            raise RuntimeError(_BOOTSTRAP_PROMOTION_TERMINAL_REASON) from exc
+    if _is_bootstrap_placeholder(candidate):
+        raise RuntimeError(_BOOTSTRAP_PROMOTION_TERMINAL_REASON)
+    return candidate
 
 
 def _register_bootstrap_helper_callback(callback: Callable[[Any], None]) -> None:
@@ -10877,7 +10957,7 @@ def _bootstrap_manager(
                     promoted_manager = None
                 if promoted_manager is not manager:
                     raise AssertionError(
-                        "pipeline manager promotion failed to expose the real manager"
+                        _BOOTSTRAP_PROMOTION_TERMINAL_REASON
                     )
             mark_ready = getattr(bootstrap_owner, "mark_ready", None)
             if callable(mark_ready):
@@ -11310,7 +11390,7 @@ def self_coding_managed(
                 wait_start = time.perf_counter()
                 if not bootstrap_event.wait(timeout=timeout):
                     timeout_error = TimeoutError(
-                        "Bot helper bootstrap timed out waiting for prior initialisation"
+                        _BOOTSTRAP_PROMOTION_TERMINAL_REASON
                     )
                     with bootstrap_lock:
                         bootstrap_error = timeout_error
@@ -11331,7 +11411,7 @@ def self_coding_managed(
                 if bootstrap_error is not None:
                     raise bootstrap_error
                 if not bootstrap_done or resolved_registry is None or resolved_data_bot is None:
-                    raise RuntimeError("Bot helper bootstrap did not complete successfully")
+                    raise RuntimeError(_BOOTSTRAP_PROMOTION_TERMINAL_REASON)
                 return resolved_registry, resolved_data_bot, None
 
             context: _BootstrapContext | None = None

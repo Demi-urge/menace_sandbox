@@ -116,6 +116,7 @@ LOGGER = logging.getLogger(__name__)
 
 _BOOTSTRAP_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOOTSTRAP_CACHE_LOCK = threading.Lock()
+_BOOTSTRAP_SHARED_PROMOTED_CONTEXT: Dict[str, Any] | None = None
 BOOTSTRAP_PROGRESS: Dict[str, str] = {"last_step": "not-started"}
 BOOTSTRAP_ONLINE_STATE: Dict[str, Any] = {"quorum": False, "components": {}}
 BOOTSTRAP_STEP_TIMELINE: list[tuple[str, float]] = []
@@ -4380,6 +4381,28 @@ def start_embedder_warmup(
         return job_snapshot.get("placeholder", _BOOTSTRAP_PLACEHOLDER)
 
 
+def _is_promoted_manager_visible(manager: Any) -> bool:
+    if manager is None:
+        return False
+    checker = getattr(_coding_bot_interface, "_is_bootstrap_placeholder", None)
+    if callable(checker):
+        try:
+            return not bool(checker(manager))
+        except Exception:
+            return False
+    return not bool(getattr(manager, "_self_coding_bootstrap_placeholder", False))
+
+
+def _shared_promoted_bootstrap_context() -> Dict[str, Any] | None:
+    shared = _BOOTSTRAP_SHARED_PROMOTED_CONTEXT
+    if isinstance(shared, dict) and _is_promoted_manager_visible(shared.get("manager")):
+        return shared
+    for context in _BOOTSTRAP_CACHE.values():
+        if isinstance(context, dict) and _is_promoted_manager_visible(context.get("manager")):
+            return context
+    return None
+
+
 def initialize_bootstrap_context(
     bot_name: str = "ResearchAggregatorBot",
     *,
@@ -4403,7 +4426,7 @@ def initialize_bootstrap_context(
     is available or heavy vector work is expected.
     """
 
-    global _BOOTSTRAP_CACHE, _BOOTSTRAP_EMBEDDER_JOB
+    global _BOOTSTRAP_CACHE, _BOOTSTRAP_EMBEDDER_JOB, _BOOTSTRAP_SHARED_PROMOTED_CONTEXT
 
     try:
         ModelAutomationPipeline = load_pipeline_class()
@@ -8120,6 +8143,14 @@ def initialize_bootstrap_context(
                 bot_name,
             )
             return cached_context
+        shared_context = _shared_promoted_bootstrap_context()
+        if shared_context:
+            _BOOTSTRAP_CACHE[bot_name] = shared_context
+            LOGGER.info(
+                "reusing shared promoted bootstrap context for %s; avoiding duplicate promotion",
+                bot_name,
+            )
+            return shared_context
 
     with _BOOTSTRAP_CACHE_LOCK:
         _ensure_not_stopped(stop_event)
@@ -8209,6 +8240,8 @@ def initialize_bootstrap_context(
             }
             if use_cache:
                 _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+                if _is_promoted_manager_visible(bootstrap_context.get("manager")):
+                    _BOOTSTRAP_SHARED_PROMOTED_CONTEXT = bootstrap_context
             LOGGER.info(
                 "initialize_bootstrap_context completed with disabled self-coding due to budget constraints",
                 extra={"remaining_budget": remaining_budget},
@@ -8638,6 +8671,8 @@ def initialize_bootstrap_context(
                         }
                         if use_cache:
                             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+                            if _is_promoted_manager_visible(bootstrap_context.get("manager")):
+                                _BOOTSTRAP_SHARED_PROMOTED_CONTEXT = bootstrap_context
                         return bootstrap_context
 
                     pipeline, promote_pipeline = prepare_result
@@ -8923,6 +8958,8 @@ def initialize_bootstrap_context(
         bootstrap_context["warming_components"] = BOOTSTRAP_ONLINE_STATE.get("warming", [])
         if use_cache:
             _BOOTSTRAP_CACHE[bot_name] = bootstrap_context
+            if _is_promoted_manager_visible(bootstrap_context.get("manager")):
+                _BOOTSTRAP_SHARED_PROMOTED_CONTEXT = bootstrap_context
         _mark_bootstrap_step("bootstrap_complete")
         _BOOTSTRAP_SCHEDULER.mark_ready(
             "background_loops", reason="bootstrap_complete"

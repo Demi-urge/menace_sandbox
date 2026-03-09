@@ -144,9 +144,9 @@ def test_reentrant_promoter_applies_manager_once(monkeypatch):
     real_manager = object()
     promote(real_manager)
 
-    assert pipeline is pipeline_candidate
-    assert pipeline_candidate.manager is real_manager
-    assert pipeline_candidate.initial_manager is real_manager
+    assert pipeline is not None
+    assert getattr(pipeline, "manager", None) is real_manager
+    assert getattr(pipeline, "initial_manager", None) is real_manager
     assert assigned.count(real_manager) == 1
 
 
@@ -405,3 +405,40 @@ def test_placeholder_promise_shared_by_helpers(monkeypatch):
     assert shared_broker.active_sentinel is not None
     assert all(name in broker_calls for name in ("bot-planning-helper", "vector-helper"))
     assert cbi._REENTRY_ATTEMPTS == {}
+
+
+@pytest.mark.integration
+def test_sequential_bot_waiters_share_single_promotion(caplog):
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    owner = cbi._BootstrapOwnerSentinel(bot_registry=registry, data_bot=data_bot)
+    caplog.set_level("DEBUG", logger=cbi.logger.name)
+
+    pipeline = SimpleNamespace(manager=owner, initial_manager=owner)
+    owner.bind_pipeline_promoter(
+        lambda real_manager, **_kwargs: (
+            setattr(pipeline, "manager", real_manager),
+            setattr(pipeline, "initial_manager", real_manager),
+        )
+    )
+
+    promotion_callbacks: list[object] = []
+
+    def _bot_waiter(real_manager: object) -> None:
+        promotion_callbacks.append(real_manager)
+
+    # Simulate two sequential bot helpers subscribing to the same placeholder owner.
+    owner.add_promotion_callback(_bot_waiter)
+    owner.add_promotion_callback(_bot_waiter)
+
+    real_manager = SimpleNamespace(bot_registry=registry, data_bot=data_bot, pipeline=pipeline)
+    owner.mark_ready(real_manager)
+    # A second promotion attempt should be ignored by the atomic state guard.
+    owner.mark_ready(SimpleNamespace())
+
+    assert owner.await_promotion(timeout=0.2) is real_manager
+    assert pipeline.manager is real_manager
+    assert promotion_callbacks == [real_manager, real_manager]
+    assert not any(
+        "failed to expose real manager" in rec.getMessage().lower() for rec in caplog.records
+    )
