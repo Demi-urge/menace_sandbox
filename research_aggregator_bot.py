@@ -386,13 +386,18 @@ def _ensure_bootstrap_ready(
         time.sleep(poll_interval)
 
     message = (
-        f"{component} unavailable until bootstrap readiness clears: "
-        f"{_BOOTSTRAP_READINESS.describe()}"
+        f"{component} startup blocked: bootstrap readiness/broker dependency did not clear "
+        f"within {overall_budget:.1f}s ({_BOOTSTRAP_READINESS.describe()})"
     )
     if allow_degraded:
         logger.warning(
             message,
-            extra={"event": "research-aggregator-bootstrap-degraded"},
+            extra={
+                "event": "research-aggregator-bootstrap-degraded",
+                "strict_bootstrap": False,
+                "allow_fallback": True,
+                "degraded_reason": message,
+            },
         )
         return False
     raise RuntimeError(message) from timeout_exc
@@ -400,10 +405,11 @@ def _ensure_bootstrap_ready(
 
 # Eagerly advertise the bootstrap placeholder as soon as the module loads so
 # downstream imports reuse the shared sentinel before instantiating helpers.
+_STRICT_BOOTSTRAP = _resolve_research_aggregator_strict()
 _bootstrap_ready = _ensure_bootstrap_ready(
     "ResearchAggregatorBot bootstrap placeholder",
     timeout=_BOOTSTRAP_GATE_TIMEOUT,
-    allow_degraded=True,
+    allow_degraded=not _STRICT_BOOTSTRAP,
 )
 _active_pipeline, _active_manager = get_active_bootstrap_pipeline()
 _broker_owner_active = bool(getattr(_bootstrap_dependency_broker(), "active_owner", False))
@@ -414,13 +420,22 @@ if _bootstrap_ready or _active_pipeline is not None or _active_manager is not No
             extra={
                 "event": "research-aggregator-bootstrap-degraded",
                 "broker_owner": _broker_owner_active,
+                "strict_bootstrap": _STRICT_BOOTSTRAP,
+                "allow_fallback": not _STRICT_BOOTSTRAP,
+                "degraded_reason": "bootstrap dependency broker owner inactive",
             },
         )
-    _bootstrap_placeholders(allow_degraded=True)
+    _bootstrap_placeholders(allow_degraded=not _STRICT_BOOTSTRAP)
 else:
     logger.info(
         "Skipping ResearchAggregatorBot placeholder bootstrap; no active broker owner or pipeline detected",
-        extra={"event": "research-aggregator-broker-owner-missing", "broker_owner": _broker_owner_active},
+        extra={
+            "event": "research-aggregator-broker-owner-missing",
+            "broker_owner": _broker_owner_active,
+            "strict_bootstrap": _STRICT_BOOTSTRAP,
+            "allow_fallback": not _STRICT_BOOTSTRAP,
+            "degraded_reason": "bootstrap dependency broker owner inactive",
+        },
     )
 
 
@@ -1829,20 +1844,17 @@ class ResearchAggregatorBot:
             if strict_bootstrap is not None
             else _resolve_research_aggregator_strict()
         )
-        if resolved_strict:
-            allow_fallback = False
-        elif allow_fallback is None:
-            allow_fallback = True
+        resolved_allow_fallback = False if resolved_strict else bool(True if allow_fallback is None else allow_fallback)
         try:
             deps = _ensure_runtime_dependencies(
                 bootstrap_owner=bootstrap_owner,
                 pipeline_override=pipeline,
                 manager_override=manager,
                 promote_pipeline=pipeline_promoter,
-                allow_fallback=bool(allow_fallback),
+                allow_fallback=resolved_allow_fallback,
             )
         except RuntimeError as exc:
-            if resolved_strict:
+            if resolved_strict or not resolved_allow_fallback:
                 raise
             logger.warning(
                 "ResearchAggregatorBot runtime dependencies unavailable; proceeding in degraded mode: %s",
@@ -1851,6 +1863,8 @@ class ResearchAggregatorBot:
                     "event": "research-aggregator-degraded-init",
                     "reason": str(exc),
                     "strict_bootstrap": resolved_strict,
+                    "allow_fallback": resolved_allow_fallback,
+                    "degraded_reason": str(exc),
                 },
             )
             deps = _ensure_runtime_dependencies(
@@ -1879,6 +1893,9 @@ class ResearchAggregatorBot:
                 extra={
                     "event": "research-aggregator-degraded-mode",
                     "reason": deps.degraded_reason,
+                    "degraded_reason": deps.degraded_reason,
+                    "strict_bootstrap": resolved_strict,
+                    "allow_fallback": resolved_allow_fallback,
                     "capability_reductions": list(deps.capability_reductions),
                     "pipeline_available": deps.pipeline is not None,
                 },
