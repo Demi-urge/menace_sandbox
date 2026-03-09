@@ -180,7 +180,7 @@ def _setup_runtime_dependencies(monkeypatch, *, heartbeat: bool = False, max_wai
 
     rab = importlib.import_module("menace_sandbox.research_aggregator_bot")
 
-    monkeypatch.setattr(rab, "_bootstrap_placeholders", lambda: (None, None, broker))
+    monkeypatch.setattr(rab, "_bootstrap_placeholders", lambda **_k: (None, None, broker))
     monkeypatch.setattr(rab, "bootstrap_state_snapshot", lambda: {"ready": True})
     monkeypatch.setattr(rab, "get_active_bootstrap_pipeline", lambda: (None, None))
     monkeypatch.setattr(rab, "_current_bootstrap_context", lambda: None)
@@ -290,3 +290,54 @@ def test_deferred_migrations_force_reapply_env(monkeypatch, tmp_path):
 
     assert db1.apply_calls == 1
     assert db2.apply_calls == 1
+
+
+def test_get_or_create_research_aggregator_reuses_instance(monkeypatch, tmp_path, caplog):
+    rab, _broker = _setup_runtime_dependencies(monkeypatch)
+    _stub_runtime(monkeypatch, rab)
+    monkeypatch.setenv(rab._INFO_DB_MIGRATION_EPOCH_ENV, "epoch-reuse")
+    rab._CACHED_RESEARCH_AGGREGATOR = None
+    rab._CACHED_RESEARCH_AGGREGATOR_EPOCH = None
+    rab._CACHED_RESEARCH_AGGREGATOR_CREATED_AT = None
+    rab._DEFERRED_INFO_DB_MIGRATION_LATCH.clear()
+
+    info_db = _StubInfoDB(tmp_path / "info.db")
+    with caplog.at_level(logging.DEBUG, logger=rab.__name__):
+        first = rab.get_or_create_research_aggregator(
+            ["topic"],
+            info_db=info_db,
+            context_builder=_StubBuilder(),
+            capital_manager=object(),
+            defer_migrations_until_ready=True,
+            caller_label="test.first",
+            creation_reason="unit",
+        )
+        second = rab.get_or_create_research_aggregator(
+            ["topic"],
+            info_db=info_db,
+            context_builder=_StubBuilder(),
+            capital_manager=object(),
+            defer_migrations_until_ready=True,
+            caller_label="test.second",
+            creation_reason="unit",
+        )
+
+    assert first is second
+    assert info_db.apply_calls == 1
+    assert any(
+        record.__dict__.get("instance_id") == id(first) and record.__dict__.get("caller") == "test.first"
+        for record in caplog.records
+    )
+    assert any(record.__dict__.get("reused_instance_id") == id(first) for record in caplog.records)
+
+
+def test_get_or_create_reset_requires_explicit_event(monkeypatch):
+    rab, _broker = _setup_runtime_dependencies(monkeypatch)
+    monkeypatch.setenv(rab._INFO_DB_MIGRATION_EPOCH_ENV, "epoch")
+    rab._CACHED_RESEARCH_AGGREGATOR = object()
+    rab._CACHED_RESEARCH_AGGREGATOR_EPOCH = "epoch"
+    rab._CACHED_RESEARCH_AGGREGATOR_CREATED_AT = 1.0
+
+    rab.get_or_create_research_aggregator([], reset=True, reset_event="loop-iteration")
+
+    assert rab._CACHED_RESEARCH_AGGREGATOR is not None
