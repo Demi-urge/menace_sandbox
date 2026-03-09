@@ -33,6 +33,8 @@ _qfe_log(f"__name__ resolved to {__name__}")
 import logging
 _qfe_log("logging imported")
 
+import hashlib
+
 from importlib import import_module, util
 
 from pathlib import Path
@@ -562,6 +564,155 @@ except ImportError as exc:  # pragma: no cover - record for later use
     _qfe_log("neurosales import failed")
 
 logger = get_logger(__name__)
+
+_LOCAL_KNOWLEDGE_IMPORT_LOCK = threading.Lock()
+_LOCAL_KNOWLEDGE_IMPORT_STATE: dict[str, Any] = {
+    "initialized": False,
+    "skip_info_emitted": False,
+    "last_reload_at": 0.0,
+    "module_hash": None,
+    "module_name": None,
+    "LocalKnowledgeModule": None,
+    "init_local_knowledge": None,
+}
+_LOCAL_KNOWLEDGE_RELOAD_MIN_BACKOFF_SECONDS = 45.0
+
+
+def _resolve_local_knowledge_module_hash(module_name: str) -> str | None:
+    spec = importlib.util.find_spec(module_name)
+    module_path = getattr(spec, "origin", None) if spec is not None else None
+    if not module_path:
+        return None
+    try:
+        payload = Path(module_path).read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _load_local_knowledge_symbols(
+    *,
+    caller: str,
+    reason: str,
+    reload_requested: bool = False,
+    trigger: str = "engine-init",
+    failure_recovery: bool = False,
+) -> tuple[type[Any], Callable[..., Any]]:
+    now = time.monotonic()
+    with _LOCAL_KNOWLEDGE_IMPORT_LOCK:
+        initialized = bool(_LOCAL_KNOWLEDGE_IMPORT_STATE["initialized"])
+        if initialized and not reload_requested:
+            skip_payload = log_record(
+                caller=caller,
+                reason=reason,
+                trigger=trigger,
+                initialized=True,
+            )
+            if not _LOCAL_KNOWLEDGE_IMPORT_STATE["skip_info_emitted"]:
+                logger.info("SI-2f.local import skipped; already initialized", extra=skip_payload)
+                _LOCAL_KNOWLEDGE_IMPORT_STATE["skip_info_emitted"] = True
+            else:
+                logger.debug("SI-2f.local import skipped; already initialized", extra=skip_payload)
+            return (
+                _LOCAL_KNOWLEDGE_IMPORT_STATE["LocalKnowledgeModule"],
+                _LOCAL_KNOWLEDGE_IMPORT_STATE["init_local_knowledge"],
+            )
+
+        if initialized and reload_requested:
+            elapsed = now - float(_LOCAL_KNOWLEDGE_IMPORT_STATE["last_reload_at"])
+            if elapsed < _LOCAL_KNOWLEDGE_RELOAD_MIN_BACKOFF_SECONDS:
+                logger.debug(
+                    "SI-2f.local reload skipped; min backoff not met",
+                    extra=log_record(
+                        caller=caller,
+                        reason=reason,
+                        trigger=trigger,
+                        elapsed_seconds=elapsed,
+                        required_backoff_seconds=_LOCAL_KNOWLEDGE_RELOAD_MIN_BACKOFF_SECONDS,
+                    ),
+                )
+                return (
+                    _LOCAL_KNOWLEDGE_IMPORT_STATE["LocalKnowledgeModule"],
+                    _LOCAL_KNOWLEDGE_IMPORT_STATE["init_local_knowledge"],
+                )
+
+        module_candidates = (
+            "menace_sandbox.local_knowledge_module",
+            "local_knowledge_module",
+        )
+        selected_name = None
+        selected_module = None
+        selected_hash = None
+        for module_name in module_candidates:
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+            module_hash = _resolve_local_knowledge_module_hash(module_name)
+            selected_name = module_name
+            selected_module = module
+            selected_hash = module_hash
+            break
+        if selected_module is None or selected_name is None:
+            raise ImportError("Unable to import local_knowledge_module")
+
+        if initialized and reload_requested:
+            hash_changed = bool(
+                selected_hash
+                and _LOCAL_KNOWLEDGE_IMPORT_STATE["module_hash"]
+                and selected_hash != _LOCAL_KNOWLEDGE_IMPORT_STATE["module_hash"]
+            )
+            explicit_command = trigger == "explicit-command"
+            material_trigger = hash_changed or explicit_command or failure_recovery
+            if not material_trigger:
+                logger.info(
+                    "SI-2f.local reload skipped; no material trigger",
+                    extra=log_record(
+                        caller=caller,
+                        reason=reason,
+                        trigger=trigger,
+                        hash_changed=hash_changed,
+                        failure_recovery=failure_recovery,
+                    ),
+                )
+                return (
+                    _LOCAL_KNOWLEDGE_IMPORT_STATE["LocalKnowledgeModule"],
+                    _LOCAL_KNOWLEDGE_IMPORT_STATE["init_local_knowledge"],
+                )
+            selected_module = importlib.reload(selected_module)
+
+        logger.info(
+            "SI-2f.local importing local knowledge module",
+            extra=log_record(
+                caller=caller,
+                reason=reason,
+                trigger=trigger,
+                module_name=selected_name,
+                reload_requested=reload_requested,
+            ),
+        )
+        local_knowledge_module = getattr(selected_module, "LocalKnowledgeModule")
+        init_local_knowledge = getattr(selected_module, "init_local_knowledge")
+        logger.info(
+            "SI-2f.local local knowledge module imported",
+            extra=log_record(
+                caller=caller,
+                reason=reason,
+                trigger=trigger,
+                module_name=selected_name,
+            ),
+        )
+        _LOCAL_KNOWLEDGE_IMPORT_STATE.update(
+            {
+                "initialized": True,
+                "last_reload_at": now,
+                "module_hash": selected_hash,
+                "module_name": selected_name,
+                "LocalKnowledgeModule": local_knowledge_module,
+                "init_local_knowledge": init_local_knowledge,
+            }
+        )
+        return local_knowledge_module, init_local_knowledge
 atexit.register(stop_engine_heartbeat)
 
 if _NEUROSALES_ERROR is not None:
@@ -1526,36 +1677,20 @@ class SelfImprovementEngine:
         sandbox_integrate: Callable[..., Any] | None = None,
         orphan_scan: Callable[..., Any] | None = None,
         patch_generator: Callable[..., Any] | None = None,
+        local_knowledge_reload: bool = False,
+        local_knowledge_reload_trigger: str | None = None,
+        local_knowledge_failure_recovery: bool = False,
         tau: float = 0.5,
         runner_config: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        try:
-            print(
-                "\U0001F4E6 SI-2f.local importing menace_sandbox.local_knowledge_module",
-                flush=True,
-            )
-            from menace_sandbox.local_knowledge_module import (
-                LocalKnowledgeModule as _LocalKnowledgeModule,
-                init_local_knowledge as _init_local_knowledge,
-            )
-            print(
-                "\u2705 SI-2f.local menace_sandbox.local_knowledge_module imported",
-                flush=True,
-            )
-        except ImportError:  # pragma: no cover - support flat execution
-            print(
-                "\U0001F4E6 SI-2f.local importing local_knowledge_module (flat)",
-                flush=True,
-            )
-            from local_knowledge_module import (  # type: ignore
-                LocalKnowledgeModule as _LocalKnowledgeModule,
-                init_local_knowledge as _init_local_knowledge,
-            )
-            print(
-                "\u2705 SI-2f.local local_knowledge_module imported (flat)",
-                flush=True,
-            )
+        _LocalKnowledgeModule, _init_local_knowledge = _load_local_knowledge_symbols(
+            caller=self.__class__.__name__,
+            reason="constructor",
+            reload_requested=local_knowledge_reload,
+            trigger=local_knowledge_reload_trigger or "engine-init",
+            failure_recovery=local_knowledge_failure_recovery,
+        )
 
         if gpt_memory is None:
             gpt_memory = kwargs.get("gpt_memory_manager")
