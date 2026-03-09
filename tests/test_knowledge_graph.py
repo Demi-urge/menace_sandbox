@@ -1,4 +1,6 @@
 import pytest
+from concurrent.futures import ThreadPoolExecutor
+
 pytest.importorskip("networkx")
 from menace.knowledge_graph import KnowledgeGraph
 
@@ -64,3 +66,32 @@ def test_error_clusters_and_failure_chain():
 
     patches = kg.bot_patch_candidates("B")
     assert "patch:P1" in patches
+
+
+def test_add_telemetry_event_self_heals_invalid_graph_once(caplog):
+    kg = KnowledgeGraph()
+    kg.graph = {"bad": "state"}
+
+    def _write_event(i: int) -> None:
+        kg.add_telemetry_event(
+            "bot-a",
+            "TypeError",
+            "module.main",
+            {"module.main": 1},
+            patch_id=i,
+            resolved=(i % 2 == 0),
+        )
+
+    with caplog.at_level("WARNING"):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(_write_event, range(50)))
+
+    recovery_logs = [
+        rec for rec in caplog.records if rec.getMessage() == "knowledge graph recovered from invalid state"
+    ]
+    assert len(recovery_logs) == 1
+
+    enode = "error_type:TypeError"
+    assert kg.graph.nodes[enode]["frequency"] == 50
+    assert kg.graph.nodes[enode]["weight"] == 50
+    assert kg.graph[enode]["module:module.main"].get("weight") == 50
