@@ -395,7 +395,16 @@ def _dependency_provision_worker() -> None:
     """Provision external dependencies and monitor them."""
     logger = logging.getLogger("dependency_provision_worker")
     _log_worker_startup("dependency_provision_worker")
-    ExternalDependencyProvisioner().provision()
+    provisioner = ExternalDependencyProvisioner()
+    try:
+        provisioner.provision()
+    except Exception as exc:
+        if provisioner.provisioning_optional():
+            logger.warning(
+                "dependency provisioning disabled/degraded (optional mode): %s", exc
+            )
+            return
+        raise
     interval = float(os.getenv("WATCHDOG_INTERVAL", "60"))
     endpoints = _parse_map(os.getenv("DEPENDENCY_ENDPOINTS", ""))
     backups = _parse_map(os.getenv("DEPENDENCY_BACKUPS", ""))
