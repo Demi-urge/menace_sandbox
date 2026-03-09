@@ -1402,6 +1402,7 @@ from menace_sandbox.research_aggregator_bot import (
     ResearchAggregatorBot,
     ResearchItem,
     InfoDB,
+    get_or_create_research_aggregator,
 )
 _qfe_log("SI-2f.1 menace_sandbox.research_aggregator_bot imported")
 
@@ -1751,7 +1752,7 @@ class SelfImprovementEngine:
             )
         self.research_aggregation_available = True
         try:
-            self.aggregator = ResearchAggregatorBot(
+            self.aggregator = get_or_create_research_aggregator(
                 [bot_name],
                 info_db=self.info_db,
                 context_builder=context_builder,
@@ -1762,6 +1763,9 @@ class SelfImprovementEngine:
                 bootstrap=bootstrap_active,
                 allow_fallback=not strict_bootstrap,
                 strict_bootstrap=strict_bootstrap,
+                defer_migrations_until_ready=True,
+                caller_label="SelfImprovementEngine.__init__",
+                creation_reason="si-2f.local-orchestration",
             )
         except Exception as exc:
             root_cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)

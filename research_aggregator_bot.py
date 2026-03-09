@@ -123,6 +123,8 @@ _BOOTSTRAP_OUTCOME_ROOT_CAUSE: str | None = None
 _BOOTSTRAP_OUTCOME_STAGE: str | None = None
 _INSTANCE_CACHE_LOCK = threading.Lock()
 _CACHED_RESEARCH_AGGREGATOR: "ResearchAggregatorBot | None" = None
+_CACHED_RESEARCH_AGGREGATOR_EPOCH: str | None = None
+_CACHED_RESEARCH_AGGREGATOR_CREATED_AT: float | None = None
 _DEFERRED_INFO_DB_MIGRATION_LOCK = threading.Lock()
 _DEFERRED_INFO_DB_MIGRATION_LATCH: set[tuple[str, str]] = set()
 
@@ -2765,36 +2767,86 @@ def get_or_create_research_aggregator(
     caller_label: str = "unknown",
     creation_reason: str = "default",
     reset: bool = False,
+    reset_event: str | None = None,
     **kwargs: Any,
 ) -> ResearchAggregatorBot:
     """Return a process-shared :class:`ResearchAggregatorBot` instance."""
 
     global _CACHED_RESEARCH_AGGREGATOR
+    global _CACHED_RESEARCH_AGGREGATOR_EPOCH
+    global _CACHED_RESEARCH_AGGREGATOR_CREATED_AT
+    epoch = _resolve_infodb_migration_epoch()
+    explicit_reset_event = (reset_event or "").strip().lower()
+    explicit_reset_requested = explicit_reset_event in {"teardown", "recovery"}
     with _INSTANCE_CACHE_LOCK:
-        if reset:
+        if reset and not explicit_reset_requested:
+            logger.warning(
+                "Ignoring ResearchAggregatorBot reset request without explicit teardown/recovery event",
+                extra={
+                    "event": "research-aggregator-cache-reset-ignored",
+                    "caller": caller_label,
+                    "creation_reason": creation_reason,
+                    "reset_event": reset_event,
+                },
+            )
+
+        if explicit_reset_requested:
             _CACHED_RESEARCH_AGGREGATOR = None
+            _CACHED_RESEARCH_AGGREGATOR_EPOCH = None
+            _CACHED_RESEARCH_AGGREGATOR_CREATED_AT = None
             logger.info(
                 "ResearchAggregatorBot cache reset requested",
                 extra={
                     "event": "research-aggregator-cache-reset",
-                    "caller_label": caller_label,
+                    "caller": caller_label,
                     "creation_reason": creation_reason,
+                    "reset_event": explicit_reset_event,
                 },
             )
 
-        if _CACHED_RESEARCH_AGGREGATOR is not None:
+        if _CACHED_RESEARCH_AGGREGATOR is not None and _CACHED_RESEARCH_AGGREGATOR_EPOCH == epoch:
+            logger.debug(
+                "ResearchAggregatorBot reused from cache",
+                extra={
+                    "event": "research-aggregator-reused",
+                    "reused_instance_id": id(_CACHED_RESEARCH_AGGREGATOR),
+                    "created_at": _CACHED_RESEARCH_AGGREGATOR_CREATED_AT,
+                    "caller": caller_label,
+                    "creation_reason": creation_reason,
+                    "epoch": epoch,
+                },
+            )
             return _CACHED_RESEARCH_AGGREGATOR
 
+        if _CACHED_RESEARCH_AGGREGATOR is not None and _CACHED_RESEARCH_AGGREGATOR_EPOCH != epoch:
+            logger.info(
+                "ResearchAggregatorBot epoch changed; replacing cached instance",
+                extra={
+                    "event": "research-aggregator-epoch-refresh",
+                    "reused_instance_id": id(_CACHED_RESEARCH_AGGREGATOR),
+                    "previous_epoch": _CACHED_RESEARCH_AGGREGATOR_EPOCH,
+                    "epoch": epoch,
+                    "caller": caller_label,
+                },
+            )
+            _CACHED_RESEARCH_AGGREGATOR = None
+            _CACHED_RESEARCH_AGGREGATOR_CREATED_AT = None
+
+        created_at = time.time()
         instance = ResearchAggregatorBot(requirements, **kwargs)
         _CACHED_RESEARCH_AGGREGATOR = instance
+        _CACHED_RESEARCH_AGGREGATOR_EPOCH = epoch
+        _CACHED_RESEARCH_AGGREGATOR_CREATED_AT = created_at
         logger.info(
             "ResearchAggregatorBot created and cached",
             extra={
                 "event": "research-aggregator-created",
                 "instance_id": id(instance),
                 "instance_uuid": getattr(instance, "instance_uuid", None),
-                "caller_label": caller_label,
+                "created_at": created_at,
+                "caller": caller_label,
                 "creation_reason": creation_reason,
+                "epoch": epoch,
             },
         )
         return instance
