@@ -195,7 +195,13 @@ def _initialise_self_coding() -> None:
             manager = None
 
     if manager is not None and not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
-        raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
+        if getattr(manager, "bootstrap_placeholder", False):
+            logger.warning(
+                "BotPlanningBot received degraded self-coding manager placeholder; continuing without full self-coding support",
+            )
+            manager = None
+        else:
+            raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
 
     try:
         dependency_broker.advertise(
