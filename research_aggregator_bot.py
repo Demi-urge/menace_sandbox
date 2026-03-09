@@ -134,6 +134,15 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
     active_pipeline, active_manager = get_active_bootstrap_pipeline()
     broker = _bootstrap_dependency_broker()
     broker_owner = bool(getattr(broker, "active_owner", False))
+    strict_bootstrap = _resolve_research_aggregator_strict()
+    owner_diagnostics = {
+        "expected_owner": "active owner",
+        "expected_owner_active": True,
+        "observed_owner": repr(getattr(broker, "active_owner", None)),
+        "observed_owner_active": broker_owner,
+        "strict_bootstrap": strict_bootstrap,
+        "allow_degraded": allow_degraded,
+    }
     if active_pipeline is not None or active_manager is not None:
         _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL = advertise_bootstrap_placeholder(
             dependency_broker=broker,
@@ -148,16 +157,34 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
                 extra={
                     "event": "research-aggregator-broker-owner-missing",
                     "broker_owner": broker_owner,
+                    **owner_diagnostics,
                 },
             )
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
     if not broker_owner:
+        if strict_bootstrap:
+            message = (
+                "Bootstrap dependency broker owner inactive during ResearchAggregatorBot placeholder bootstrap; "
+                f"expected owner active={owner_diagnostics['expected_owner_active']}, "
+                f"observed owner active={owner_diagnostics['observed_owner_active']} "
+                f"(observed={owner_diagnostics['observed_owner']})"
+            )
+            logger.error(
+                message,
+                extra={
+                    "event": "research-aggregator-broker-owner-missing",
+                    "broker_owner": broker_owner,
+                    **owner_diagnostics,
+                },
+            )
+            raise RuntimeError(message)
         logger.warning(
             "Bootstrap dependency broker owner inactive; continuing with degraded ResearchAggregatorBot placeholders",
             extra={
                 "event": "research-aggregator-broker-owner-missing",
                 "broker_owner": broker_owner,
+                **owner_diagnostics,
             },
         )
         if allow_degraded:
@@ -166,6 +193,7 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
                 extra={
                     "event": "research-aggregator-bootstrap-degraded",
                     "broker_owner": broker_owner,
+                    **owner_diagnostics,
                 },
             )
         if any(
@@ -177,6 +205,7 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
                 extra={
                     "event": "research-aggregator-bootstrap-degraded",
                     "broker_owner": broker_owner,
+                    **owner_diagnostics,
                 },
             )
             if _BOOTSTRAP_BROKER is None:
@@ -603,8 +632,9 @@ def _ensure_runtime_dependencies(
     state = bootstrap_state or bootstrap_state_snapshot()
     if not state.get("ready") and not state.get("in_progress"):
         ensure_bootstrapped()
+    strict_bootstrap = _resolve_research_aggregator_strict()
     placeholder_pipeline, placeholder_manager, placeholder_broker = (
-        _bootstrap_placeholders(allow_degraded=allow_fallback)
+        _bootstrap_placeholders(allow_degraded=allow_fallback and not strict_bootstrap)
     )
     placeholder_broker_owner = bool(getattr(placeholder_broker, "active_owner", False))
     remediation_hint = (
