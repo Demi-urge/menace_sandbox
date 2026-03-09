@@ -94,7 +94,7 @@ try:
 except Exception:  # pragma: no cover - optional
     requests = None  # type: ignore
 
-from .research_aggregator_bot import ResearchAggregatorBot
+from .research_aggregator_bot import ResearchAggregatorBot, get_or_create_research_aggregator
 from .research_data import ResearchItem
 try:  # pragma: no cover - optional dependency
     from .task_handoff_bot import WorkflowDB
@@ -233,8 +233,12 @@ class InformationSynthesisBot:
         except Exception:
             pass
         self.context_builder = context_builder
-        self.aggregator = aggregator or ResearchAggregatorBot(
-            [], context_builder=context_builder, manager=manager
+        self.aggregator = aggregator or get_or_create_research_aggregator(
+            [],
+            context_builder=context_builder,
+            manager=manager,
+            caller_label="InformationSynthesisBot.__init__",
+            creation_reason="default_aggregator",
         )
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         if Celery:
