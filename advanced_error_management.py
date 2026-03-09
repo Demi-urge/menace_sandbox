@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import socket
 import time
 import os
 import subprocess
@@ -12,6 +13,7 @@ from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Callable, TYPE_CHECKING
+from urllib.parse import urlparse
 
 from dynamic_path_router import resolve_path
 from .knowledge_graph import KnowledgeGraph
@@ -464,6 +466,14 @@ class SelfHealingOrchestrator:
             self.extension = config.get("extension", self.extension)
         self.failures: dict[str, int] = {}
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.health_host = os.getenv("MENACE_HEALTHCHECK_HOST", "localhost")
+        self.health_url_override = os.getenv("MENACE_HEALTHCHECK_URL", "").strip()
+        self.runtime_mode = self._detect_runtime_mode()
+        self._last_health_target_warning_at = 0.0
+        self._health_target_warning_interval = 300.0
+        if config:
+            self.health_host = config.get("health_host", self.health_host)
+            self.runtime_mode = config.get("runtime_mode", self.runtime_mode)
         if self.backend == "docker":
             try:  # pragma: no cover - optional dependency
                 import docker  # type: ignore
@@ -483,6 +493,58 @@ class SelfHealingOrchestrator:
                 self.logger.warning("Kubernetes client initialization failed")
         elif self.backend == "vm":
             self.client = None
+
+    def _detect_runtime_mode(self) -> str:
+        mode = os.getenv("MENACE_RUNTIME_MODE", "").strip().lower()
+        if mode in {"container", "local"}:
+            return mode
+        if os.getenv("KUBERNETES_SERVICE_HOST") or os.path.exists("/.dockerenv"):
+            return "container"
+        return "local"
+
+    def _resolve_health_url(self, bot: str, explicit_url: str | None) -> tuple[str, str]:
+        if explicit_url:
+            return explicit_url, self.runtime_mode
+        if self.health_url_override:
+            return self.health_url_override, self.runtime_mode
+        if self.runtime_mode == "container":
+            return "http://menace:8000/health", self.runtime_mode
+        host = self.health_host or "localhost"
+        return f"http://{host}:8000/health", self.runtime_mode
+
+    def _maybe_warn_health_target(self, url: str, runtime_mode: str) -> None:
+        now = time.time()
+        if now - self._last_health_target_warning_at < self._health_target_warning_interval:
+            return
+        self._last_health_target_warning_at = now
+        self.logger.warning(
+            "Self-healing healthcheck target resolved (runtime_mode=%s, url=%s)",
+            runtime_mode,
+            url,
+        )
+
+    def _is_dns_failure(self, exc: Exception) -> bool:
+        if isinstance(exc, socket.gaierror):
+            return True
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, socket.gaierror):
+                return True
+            message = str(current).lower()
+            if any(
+                token in message
+                for token in (
+                    "name or service not known",
+                    "temporary failure in name resolution",
+                    "failed to resolve",
+                    "nodename nor servname provided",
+                )
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     def heal(self, bot: str, patch_id: str | None = None) -> None:
         if self.rollback_mgr is not None:
@@ -518,14 +580,25 @@ class SelfHealingOrchestrator:
 
     def probe_and_heal(self, bot: str, url: str | None = None) -> None:
         """Check bot health and heal if unreachable."""
-        url = url or f"http://{bot}:8000/health"
+        url, runtime_mode = self._resolve_health_url(bot, url)
+        self._maybe_warn_health_target(url, runtime_mode)
         healthy = False
         if requests:
             try:
                 r = requests.get(url, timeout=2)
                 healthy = r.status_code == 200
-            except Exception:
+            except Exception as exc:
                 healthy = False
+                if self._is_dns_failure(exc):
+                    host = urlparse(url).hostname or "unknown"
+                    self.logger.warning(
+                        "Health check DNS resolution failed for %s (host=%s, mode=%s); "
+                        "classifying as infra/config issue and suppressing restart.",
+                        bot,
+                        host,
+                        runtime_mode,
+                    )
+                    return
                 self.logger.exception("Health check failed for %s at %s", bot, url)
         if healthy:
             self.failures[bot] = 0
