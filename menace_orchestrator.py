@@ -25,7 +25,9 @@ try:
         advertise_bootstrap_placeholder,
         _resolve_bootstrap_wait_timeout,
     )
-except ImportError:  # pragma: no cover - fallback when executed directly
+except ImportError as exc:  # pragma: no cover - fallback when executed directly
+    if "attempted relative import with no known parent package" not in str(exc):
+        raise
     from coding_bot_interface import (  # type: ignore
         _bootstrap_dependency_broker,
         advertise_bootstrap_placeholder,
@@ -207,7 +209,9 @@ try:
     from .identity_seeder import seed_identity
     from .session_vault import SessionVault
     from .cognition_layer import build_cognitive_context, log_feedback
-except ImportError:  # pragma: no cover - fallback when executed directly
+except ImportError as exc:  # pragma: no cover - fallback when executed directly
+    if "attempted relative import with no known parent package" not in str(exc):
+        raise
     from knowledge_graph import KnowledgeGraph  # type: ignore
     from advanced_error_management import AutomatedRollbackManager  # type: ignore
     from self_coding_engine import SelfCodingEngine  # type: ignore
