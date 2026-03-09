@@ -266,7 +266,7 @@ class AutoEscalationManager:
                         "SelfCodingManager initialization failed"
                     ) from exc
                 debugger = AutomatedDebugger(
-                    ErrorDB(), engine, self.context_builder, manager=manager
+                    ErrorDB(), self.context_builder, engine, manager=manager
                 )
             else:  # pragma: no cover - fallback when components missing
                 class _DummyDebugger:
