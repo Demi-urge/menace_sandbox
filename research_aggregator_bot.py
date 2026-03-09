@@ -125,6 +125,9 @@ _INSTANCE_CACHE_LOCK = threading.Lock()
 _CACHED_RESEARCH_AGGREGATOR: "ResearchAggregatorBot | None" = None
 _CACHED_RESEARCH_AGGREGATOR_EPOCH: str | None = None
 _CACHED_RESEARCH_AGGREGATOR_CREATED_AT: float | None = None
+_RESEARCH_AGGREGATOR_INSTANCE_SEQ = 0
+_RESEARCH_AGGREGATOR_RETRY_ATTEMPTS = 0
+_RESEARCH_AGGREGATOR_RETRY_AFTER = 0.0
 _DEFERRED_INFO_DB_MIGRATION_LOCK = threading.Lock()
 _DEFERRED_INFO_DB_MIGRATION_LATCH: set[tuple[str, str]] = set()
 
@@ -2775,6 +2778,9 @@ def get_or_create_research_aggregator(
     global _CACHED_RESEARCH_AGGREGATOR
     global _CACHED_RESEARCH_AGGREGATOR_EPOCH
     global _CACHED_RESEARCH_AGGREGATOR_CREATED_AT
+    global _RESEARCH_AGGREGATOR_INSTANCE_SEQ
+    global _RESEARCH_AGGREGATOR_RETRY_ATTEMPTS
+    global _RESEARCH_AGGREGATOR_RETRY_AFTER
     epoch = _resolve_infodb_migration_epoch()
     explicit_reset_event = (reset_event or "").strip().lower()
     explicit_reset_requested = explicit_reset_event in {"teardown", "recovery"}
@@ -2805,11 +2811,12 @@ def get_or_create_research_aggregator(
             )
 
         if _CACHED_RESEARCH_AGGREGATOR is not None and _CACHED_RESEARCH_AGGREGATOR_EPOCH == epoch:
-            logger.debug(
+            logger.info(
                 "ResearchAggregatorBot reused from cache",
                 extra={
                     "event": "research-aggregator-reused",
-                    "reused_instance_id": id(_CACHED_RESEARCH_AGGREGATOR),
+                    "instance_id": getattr(_CACHED_RESEARCH_AGGREGATOR, "instance_id", None),
+                    "instance_uuid": getattr(_CACHED_RESEARCH_AGGREGATOR, "instance_uuid", None),
                     "created_at": _CACHED_RESEARCH_AGGREGATOR_CREATED_AT,
                     "caller": caller_label,
                     "creation_reason": creation_reason,
@@ -2832,8 +2839,39 @@ def get_or_create_research_aggregator(
             _CACHED_RESEARCH_AGGREGATOR = None
             _CACHED_RESEARCH_AGGREGATOR_CREATED_AT = None
 
+        now = time.monotonic()
+        if now < _RESEARCH_AGGREGATOR_RETRY_AFTER:
+            remaining = max(0.0, _RESEARCH_AGGREGATOR_RETRY_AFTER - now)
+            raise RuntimeError(
+                "ResearchAggregatorBot creation is rate-limited after previous failure; "
+                f"retry in {remaining:.1f}s"
+            )
+
         created_at = time.time()
-        instance = ResearchAggregatorBot(requirements, **kwargs)
+        try:
+            instance = ResearchAggregatorBot(requirements, **kwargs)
+        except Exception:
+            _RESEARCH_AGGREGATOR_RETRY_ATTEMPTS += 1
+            delay = min(60.0, 2 ** max(_RESEARCH_AGGREGATOR_RETRY_ATTEMPTS - 1, 0))
+            _RESEARCH_AGGREGATOR_RETRY_AFTER = time.monotonic() + delay
+            logger.warning(
+                "ResearchAggregatorBot creation failed; retry backoff enabled",
+                extra={
+                    "event": "research-aggregator-create-failed",
+                    "attempt": _RESEARCH_AGGREGATOR_RETRY_ATTEMPTS,
+                    "retry_after_seconds": round(delay, 3),
+                    "caller": caller_label,
+                    "creation_reason": creation_reason,
+                    "epoch": epoch,
+                },
+                exc_info=True,
+            )
+            raise
+
+        _RESEARCH_AGGREGATOR_RETRY_ATTEMPTS = 0
+        _RESEARCH_AGGREGATOR_RETRY_AFTER = 0.0
+        _RESEARCH_AGGREGATOR_INSTANCE_SEQ += 1
+        setattr(instance, "instance_id", f"ra-{_RESEARCH_AGGREGATOR_INSTANCE_SEQ:04d}")
         _CACHED_RESEARCH_AGGREGATOR = instance
         _CACHED_RESEARCH_AGGREGATOR_EPOCH = epoch
         _CACHED_RESEARCH_AGGREGATOR_CREATED_AT = created_at
@@ -2841,7 +2879,7 @@ def get_or_create_research_aggregator(
             "ResearchAggregatorBot created and cached",
             extra={
                 "event": "research-aggregator-created",
-                "instance_id": id(instance),
+                "instance_id": getattr(instance, "instance_id", None),
                 "instance_uuid": getattr(instance, "instance_uuid", None),
                 "created_at": created_at,
                 "caller": caller_label,

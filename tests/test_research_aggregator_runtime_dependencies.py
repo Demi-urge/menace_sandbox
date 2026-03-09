@@ -325,12 +325,40 @@ def test_get_or_create_research_aggregator_reuses_instance(monkeypatch, tmp_path
     assert first is second
     assert info_db.apply_calls == 1
     assert any(
-        record.__dict__.get("instance_id") == id(first) and record.__dict__.get("caller") == "test.first"
+        record.__dict__.get("instance_id") == getattr(first, "instance_id", None)
+        and record.__dict__.get("caller") == "test.first"
         for record in caplog.records
     )
-    assert any(record.__dict__.get("reused_instance_id") == id(first) for record in caplog.records)
+    assert any(
+        record.__dict__.get("instance_id") == getattr(first, "instance_id", None)
+        and "reused" in record.message
+        for record in caplog.records
+    )
 
 
+
+
+def test_get_or_create_research_aggregator_backoff_after_failure(monkeypatch):
+    rab, _broker = _setup_runtime_dependencies(monkeypatch)
+    _stub_runtime(monkeypatch, rab)
+    monkeypatch.setenv(rab._INFO_DB_MIGRATION_EPOCH_ENV, "epoch-backoff")
+    rab._CACHED_RESEARCH_AGGREGATOR = None
+    rab._CACHED_RESEARCH_AGGREGATOR_EPOCH = None
+    rab._CACHED_RESEARCH_AGGREGATOR_CREATED_AT = None
+    rab._RESEARCH_AGGREGATOR_RETRY_ATTEMPTS = 0
+    rab._RESEARCH_AGGREGATOR_RETRY_AFTER = 0.0
+
+    class _Boom:
+        def __init__(self, *_a, **_k):
+            raise RuntimeError("create boom")
+
+    monkeypatch.setattr(rab, "ResearchAggregatorBot", _Boom)
+
+    with pytest.raises(RuntimeError, match="create boom"):
+        rab.get_or_create_research_aggregator(["topic"])
+
+    with pytest.raises(RuntimeError, match="rate-limited"):
+        rab.get_or_create_research_aggregator(["topic"])
 def test_get_or_create_reset_requires_explicit_event(monkeypatch):
     rab, _broker = _setup_runtime_dependencies(monkeypatch)
     monkeypatch.setenv(rab._INFO_DB_MIGRATION_EPOCH_ENV, "epoch")
