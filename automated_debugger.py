@@ -72,8 +72,18 @@ class AutomatedDebugger:
         *,
         manager: SelfCodingManager,
     ) -> None:
-        if context_builder is None or not isinstance(context_builder, ContextBuilder):
+        if context_builder is None:
             raise TypeError("context_builder must be a ContextBuilder instance")
+        # ``ContextBuilder`` can be imported through multiple module paths
+        # (package import vs flat execution). In those cases strict ``isinstance``
+        # checks may fail even though the object provides the required API.
+        if not isinstance(context_builder, ContextBuilder):
+            has_required_api = all(
+                callable(getattr(context_builder, attr, None))
+                for attr in ("refresh_db_weights", "build_context")
+            )
+            if not has_required_api:
+                raise TypeError("context_builder must be a ContextBuilder instance")
         context_builder.refresh_db_weights()
         self.telemetry_db = telemetry_db
         self.engine = engine
