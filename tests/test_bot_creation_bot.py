@@ -189,6 +189,15 @@ def test_create_bots(tmp_path):
     assert ids and deployer.db.get(ids[0])["status"] == "success"
 
 
+def test_deployment_bot_reuses_info_db_router_without_explicit_router(tmp_path):
+    router = init_db_router("deploy-default", str(tmp_path / "l.db"), str(tmp_path / "s.db"))
+    info_db = rd.InfoDB(tmp_path / "info.db", router=router)
+
+    deployer = dep.DeploymentBot(info_db=info_db)
+
+    assert deployer.db_router is router
+
+
 def test_duplicate_bot_insert(tmp_path, caplog, monkeypatch):
     import menace.db_router as dbr
 

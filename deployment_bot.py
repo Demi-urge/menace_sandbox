@@ -28,6 +28,53 @@ def _log_exception(logger: logging.Logger, context: str, exc: Exception) -> None
     """Helper to log exceptions with context."""
     logger.exception("%s failed: %s", context, exc)
 
+
+def _router_from_context(*contexts: object) -> DBRouter | None:
+    """Return the first ``.router`` found on the provided context objects."""
+
+    for ctx in contexts:
+        router = getattr(ctx, "router", None)
+        if isinstance(router, DBRouter):
+            return router
+    return None
+
+
+def _init_deployment_router(
+    *,
+    db_router: DBRouter | None,
+    info_db: InfoDB | None,
+    deployment_db: DeploymentDB | None,
+    workflow_db: WorkflowDB | None,
+    bot_db: BotDB | None,
+    logger: logging.Logger,
+) -> DBRouter:
+    """Resolve the DB router for :class:`DeploymentBot`.
+
+    Preference order:
+    1. Explicit ``db_router`` argument.
+    2. Existing routers from injected DB contexts (InfoDB/bootstrap first).
+    3. ``GLOBAL_ROUTER`` if already initialised.
+    4. Explicitly safe in-memory fallback, with warning.
+    """
+
+    if isinstance(db_router, DBRouter):
+        return db_router
+
+    context_router = _router_from_context(info_db, deployment_db, workflow_db, bot_db)
+    if context_router is not None:
+        return context_router
+
+    if GLOBAL_ROUTER is not None:
+        return GLOBAL_ROUTER
+
+    menace_id = os.getenv("MENACE_ID", "deployment")
+    logger.warning(
+        "DeploymentBot DB router context missing; using safe in-memory fallback "
+        "router (menace_id=%s).",
+        menace_id,
+    )
+    return init_db_router(menace_id, ":memory:", ":memory:")
+
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
 
@@ -37,7 +84,6 @@ from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .research_data import InfoDB
 from .chatgpt_enhancement_bot import EnhancementDB
 from .error_bot import ErrorDB
-from .db_router import DBRouter
 from .db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .code_database import CodeDB, CodeRecord
 from .database_manager import update_model, DB_PATH
@@ -297,17 +343,26 @@ class DeploymentBot:
         event_bus: UnifiedEventBus | None = None,
         memory_mgr: MenaceMemoryManager | None = None,
     ) -> None:
+        self.logger = logging.getLogger("DeploymentBot")
+
         # Databases
-        self.db = db or DeploymentDB(event_bus=event_bus)
+        self.info_db = info_db or InfoDB()
         self.bot_db = bot_db or BotDB()
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
-        self.info_db = info_db or InfoDB()
+        self.db_router = _init_deployment_router(
+            db_router=db_router,
+            info_db=self.info_db,
+            deployment_db=db,
+            workflow_db=self.workflow_db,
+            bot_db=self.bot_db,
+            logger=self.logger,
+        )
+        self.db = db or DeploymentDB(event_bus=event_bus, router=self.db_router)
         self.enh_db = enh_db or EnhancementDB()
         self.code_db = code_db or CodeDB()
         self.error_db = error_db or ErrorDB()
         self.menace_db = menace_db
         self.contrarian_db = contrarian_db
-        self.db_router = db_router or DBRouter()
         self.event_bus = event_bus
         self.memory_mgr = memory_mgr
         self.last_deployment_event: object | None = None
@@ -318,7 +373,6 @@ class DeploymentBot:
 
         # Logging
         logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("DeploymentBot")
         if self.event_bus:
             try:
                 self.event_bus.subscribe("deployments:new", self._on_deployment_event)
