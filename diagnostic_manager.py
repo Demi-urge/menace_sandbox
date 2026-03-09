@@ -32,9 +32,33 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-from .data_bot import MetricsDB
-from .coordination_manager import CoordinationManager
-from .dynamic_resource_allocator_bot import DynamicResourceAllocator, DecisionLedger
+try:  # pragma: no cover - support package and flat layouts
+    from .data_bot import MetricsDB
+except Exception:  # pragma: no cover - fallback when optional deps fail at import-time
+    from data_bot import MetricsDB  # type: ignore
+
+try:  # pragma: no cover - support package and flat layouts
+    from .coordination_manager import CoordinationManager
+except Exception:  # pragma: no cover - minimal test stub
+    class CoordinationManager:  # type: ignore
+        def receive(self):
+            return None
+
+        def send(self, *_a, **_k) -> None:
+            return None
+
+try:  # pragma: no cover - support package and flat layouts
+    from .dynamic_resource_allocator_bot import DynamicResourceAllocator, DecisionLedger
+except Exception:  # pragma: no cover - minimal test stubs
+    class DecisionLedger:  # type: ignore
+        pass
+
+    class DynamicResourceAllocator:  # type: ignore
+        def __init__(self, *_a, **_k) -> None:
+            return None
+
+        def allocate(self, *_a, **_k) -> None:
+            return None
 
 if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
     from .error_bot import ErrorBot

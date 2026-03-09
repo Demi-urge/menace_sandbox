@@ -12612,3 +12612,6 @@ def self_coding_managed(
         return cls
 
     return decorator
+
+
+__all__ = ["prepare_pipeline_for_bootstrap"]
