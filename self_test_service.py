@@ -3425,6 +3425,7 @@ class SelfTestService:
         *,
         cron: str | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
+        stop_event: threading.Event | None = None,
         health_port: int | None = None,
         refresh_orphans: bool = False,
     ) -> asyncio.Task:
@@ -3434,6 +3435,25 @@ class SelfTestService:
             return self._task
         self._loop = loop or asyncio.get_event_loop()
         self._async_stop = asyncio.Event()
+
+        # Bridge process/thread stop signals into the async scheduler stop flag.
+        if stop_event is not None:
+            if stop_event.is_set():
+                self._async_stop.set()
+            else:
+                loop_ref = self._loop
+                async_stop = self._async_stop
+
+                def _watch_stop_signal() -> None:
+                    stop_event.wait()
+                    loop_ref.call_soon_threadsafe(async_stop.set)
+
+                threading.Thread(
+                    target=_watch_stop_signal,
+                    name="self-test-stop-watcher",
+                    daemon=True,
+                ).start()
+
         if health_port is not None:
             try:
                 self._start_health_server(int(health_port))

@@ -534,3 +534,30 @@ def test_dependency_provision_worker_raises_when_not_optional(monkeypatch):
 
     with pytest.raises(RuntimeError, match="boom"):
         ss._dependency_provision_worker()
+
+
+def test_self_test_worker_invocation_contract(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _FakeSelfTestService:
+        def __init__(self, *args, **kwargs):
+            captured["init_kwargs"] = kwargs
+
+        def run_continuous(self, *args, **kwargs):
+            captured["run_kwargs"] = kwargs
+
+    monkeypatch.setattr(ss, "SelfTestService", _FakeSelfTestService)
+    monkeypatch.setenv("SELF_TEST_INTERVAL", "42")
+
+    def _interrupt(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ss.time, "sleep", _interrupt)
+
+    ss._self_test_worker(DummyBuilder())
+
+    run_kwargs = captured["run_kwargs"]
+    assert "context_builder" in captured["init_kwargs"]
+    assert run_kwargs["interval"] == 42.0
+    assert "stop_event" in run_kwargs
+    assert run_kwargs["stop_event"].is_set()
