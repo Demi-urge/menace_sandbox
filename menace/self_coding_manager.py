@@ -41,6 +41,17 @@ def _reexport(module) -> list[str]:
 _SOURCE_MODULE = _resolve_source_module()
 __all__ = _reexport(_SOURCE_MODULE)
 
+# Legacy compatibility: expose ``DataBot`` from this import path even when the
+# source module keeps a narrow ``__all__``.
+try:
+    from .data_bot import DataBot as _LegacyDataBot
+except Exception:  # pragma: no cover - preserve import-time behaviour
+    _LegacyDataBot = None
+else:
+    DataBot = _LegacyDataBot
+    if "DataBot" not in __all__:
+        __all__.append("DataBot")
+
 
 def __getattr__(name: str):
     """Defer unresolved attributes to the source module.
