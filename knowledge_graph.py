@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import atexit
 import os
+import threading
 
 from db_router import GLOBAL_ROUTER
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -81,6 +82,8 @@ class KnowledgeGraph:
     """Lightweight wrapper around ``networkx`` to record entities."""
 
     def __init__(self, path: str | Path | None = None) -> None:
+        self._graph_lock = threading.RLock()
+        self._graph_recovery_logged = False
         self.graph = nx.DiGraph() if nx else None
         self.path = Path(path) if path else Path("knowledge_graph.gpickle")
         # attempt to load any existing graph so historical links persist
@@ -123,12 +126,44 @@ class KnowledgeGraph:
             import pickle
 
             with p.open("rb") as fh:
-                self.graph = pickle.load(fh)
+                loaded_graph = pickle.load(fh)
+                self.graph = loaded_graph
+                self._ensure_mutable_graph(reason="load")
         except Exception as exc:  # pragma: no cover - best effort
             try:
                 logger.warning("failed to load knowledge graph from %s: %s", p, exc)
             except Exception:
                 pass
+
+    def _graph_is_mutable(self) -> bool:
+        graph = self.graph
+        if graph is None:
+            return False
+        if nx is not None and isinstance(graph, nx.DiGraph):
+            return True
+        required_attrs = ("add_node", "add_edge", "nodes")
+        return all(hasattr(graph, attr) for attr in required_attrs)
+
+    def _ensure_mutable_graph(self, *, reason: str) -> object | None:
+        if self._graph_is_mutable():
+            return self.graph
+        if nx is None:
+            return None
+
+        prior_graph = self.graph
+        self.graph = nx.DiGraph()
+        if not self._graph_recovery_logged:
+            logger.warning(
+                "knowledge graph recovered from invalid state",
+                extra={
+                    "event": "knowledge_graph_recovery",
+                    "reason": reason,
+                    "prior_type": type(prior_graph).__name__,
+                    "prior_value": repr(prior_graph)[:200],
+                },
+            )
+            self._graph_recovery_logged = True
+        return self.graph
 
     # ------------------------------------------------------------------
     def register_service_dependency(self, bot: str, service: str) -> None:
@@ -692,47 +727,59 @@ class KnowledgeGraph:
         outcomes.
         """
 
-        if self.graph is None:
-            return
+        with self._graph_lock:
+            graph = self._ensure_mutable_graph(reason="add_telemetry_event")
+            if graph is None:
+                return
 
-        bnode = f"bot:{bot_id}"
-        self.graph.add_node(bnode)
-        if error_type:
-            enode = f"error_type:{error_type}"
-            self.graph.add_node(enode)
-            # increment node weight for frequency of this error type
-            self.graph.nodes[enode]["weight"] = self.graph.nodes[enode].get("weight", 0) + 1
-            self.graph.nodes[enode]["frequency"] = (
-                self.graph.nodes[enode].get("frequency", 0) + 1
-            )
-            self.graph.add_edge(enode, bnode, type="telemetry")
-            mods = module_counts or ({root_module: 1} if root_module else {})
-            for mod, cnt in mods.items():
-                mnode = f"module:{mod}"
-                self.graph.add_node(mnode)
-                prev = self.graph.get_edge_data(enode, mnode, {}).get("weight", 0)
-                self.graph.add_edge(enode, mnode, type="module", weight=prev + cnt)
-            if root_module:
-                mnode = f"module:{root_module}"
-                self.graph.add_node(mnode)
-                prev = self.graph.get_edge_data(mnode, enode, {}).get("weight", 0)
-                self.graph.add_edge(mnode, enode, type="cause", weight=prev + 1)
-            if patch_id is not None:
-                pnode = f"patch:{patch_id}"
-                self.graph.add_node(pnode)
-                self.graph.add_edge(enode, pnode, type="patch")
-                if resolved is not None:
-                    outcome = "success" if resolved else "failure"
-                    rnode = f"resolution:{outcome}"
-                    self.graph.add_node(rnode)
-                    prev = self.graph.get_edge_data(pnode, rnode, {}).get("weight", 0)
-                    self.graph.add_edge(
-                        pnode, rnode, type="resolution", weight=prev + 1
-                    )
-            if deploy_id is not None:
-                dnode = f"deploy:{deploy_id}"
-                self.graph.add_node(dnode)
-                self.graph.add_edge(enode, dnode, type="deploy")
+            def _edge_weight(src: str, dst: str) -> int:
+                if hasattr(graph, "get_edge_data"):
+                    return int(getattr(graph, "get_edge_data")(src, dst, {}).get("weight", 0))
+                try:
+                    if hasattr(graph, "has_edge") and not graph.has_edge(src, dst):
+                        return 0
+                    return int(graph[src][dst].get("weight", 0))
+                except Exception:
+                    return 0
+
+            bnode = f"bot:{bot_id}"
+            graph.add_node(bnode)
+            if error_type:
+                enode = f"error_type:{error_type}"
+                graph.add_node(enode)
+                # increment node weight for frequency of this error type
+                graph.nodes[enode]["weight"] = graph.nodes[enode].get("weight", 0) + 1
+                graph.nodes[enode]["frequency"] = (
+                    graph.nodes[enode].get("frequency", 0) + 1
+                )
+                graph.add_edge(enode, bnode, type="telemetry")
+                mods = module_counts or ({root_module: 1} if root_module else {})
+                for mod, cnt in mods.items():
+                    mnode = f"module:{mod}"
+                    graph.add_node(mnode)
+                    prev = _edge_weight(enode, mnode)
+                    graph.add_edge(enode, mnode, type="module", weight=prev + cnt)
+                if root_module:
+                    mnode = f"module:{root_module}"
+                    graph.add_node(mnode)
+                    prev = _edge_weight(mnode, enode)
+                    graph.add_edge(mnode, enode, type="cause", weight=prev + 1)
+                if patch_id is not None:
+                    pnode = f"patch:{patch_id}"
+                    graph.add_node(pnode)
+                    graph.add_edge(enode, pnode, type="patch")
+                    if resolved is not None:
+                        outcome = "success" if resolved else "failure"
+                        rnode = f"resolution:{outcome}"
+                        graph.add_node(rnode)
+                        prev = _edge_weight(pnode, rnode)
+                        graph.add_edge(
+                            pnode, rnode, type="resolution", weight=prev + 1
+                        )
+                if deploy_id is not None:
+                    dnode = f"deploy:{deploy_id}"
+                    graph.add_node(dnode)
+                    graph.add_edge(enode, dnode, type="deploy")
 
     def add_error_instance(self, category: str, module: str, cause: str | None = None) -> None:
         """Record an observed ``category``/``module``/``cause`` chain.
