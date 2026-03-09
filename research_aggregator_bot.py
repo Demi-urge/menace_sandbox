@@ -10,6 +10,7 @@ placeholder visible during orchestration.
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from typing import TYPE_CHECKING, Type, Callable
 
 if __package__ in (None, ""):
@@ -89,6 +90,9 @@ _VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
 _VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
 _RESEARCH_AGGREGATOR_STRICT_ENV = "RESEARCH_AGGREGATOR_STRICT_BOOTSTRAP"
 _DEGRADED_RETRY_BUDGET_ENV = "MENACE_RA_MAX_DEGRADED_RETRIES"
+_INFO_DB_MIGRATION_EPOCH_ENV = "MENACE_INFO_DB_MIGRATION_EPOCH"
+_INFO_DB_FORCE_REAPPLY_ENV = "MENACE_INFO_DB_FORCE_REAPPLY_MIGRATIONS"
+_INFO_DB_SCHEMA_REVISION = "research-infodb-v1"
 
 
 def _vector_bootstrap_disabled() -> bool:
@@ -119,6 +123,22 @@ _BOOTSTRAP_OUTCOME_ROOT_CAUSE: str | None = None
 _BOOTSTRAP_OUTCOME_STAGE: str | None = None
 _INSTANCE_CACHE_LOCK = threading.Lock()
 _CACHED_RESEARCH_AGGREGATOR: "ResearchAggregatorBot | None" = None
+_DEFERRED_INFO_DB_MIGRATION_LOCK = threading.Lock()
+_DEFERRED_INFO_DB_MIGRATION_LATCH: set[tuple[str, str]] = set()
+
+
+def _is_truthy_env(env_name: str) -> bool:
+    return os.getenv(env_name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_infodb_migration_epoch() -> str:
+    epoch = os.getenv(_INFO_DB_MIGRATION_EPOCH_ENV, "").strip()
+    return epoch or _INFO_DB_SCHEMA_REVISION
+
+
+def _deferred_infodb_latch_key(info_db: InfoDB) -> tuple[str, str]:
+    db_path = str(Path(getattr(info_db, "path", InfoDB.DB_FILE)).resolve())
+    return (db_path, _resolve_infodb_migration_epoch())
 
 
 @dataclass
@@ -2208,19 +2228,34 @@ class ResearchAggregatorBot:
             logger.exception("Failed to initialise ContextBuilder")
             raise
         if migration_deferred:
-            migration_start = time.perf_counter()
-            try:
-                self.info_db.apply_migrations(
-                    apply_nonessential=not migration_skipped,
-                    batch=True,
-                )
-            except Exception:
-                logger.exception("Deferred migration pass failed during bootstrap")
-                raise
+            migration_key = _deferred_infodb_latch_key(self.info_db)
+            migration_force_reapply = _is_truthy_env(_INFO_DB_FORCE_REAPPLY_ENV)
+            should_apply_deferred = migration_force_reapply
+            with _DEFERRED_INFO_DB_MIGRATION_LOCK:
+                if migration_key not in _DEFERRED_INFO_DB_MIGRATION_LATCH:
+                    should_apply_deferred = True
+            if should_apply_deferred:
+                migration_start = time.perf_counter()
+                try:
+                    self.info_db.apply_migrations(
+                        apply_nonessential=not migration_skipped,
+                        batch=True,
+                    )
+                except Exception:
+                    logger.exception("Deferred migration pass failed during bootstrap")
+                    raise
+                else:
+                    with _DEFERRED_INFO_DB_MIGRATION_LOCK:
+                        _DEFERRED_INFO_DB_MIGRATION_LATCH.add(migration_key)
+                    logger.info(
+                        "ResearchAggregatorBot migrations applied after pipeline ready: %.3fs (epoch=%s)",
+                        time.perf_counter() - migration_start,
+                        migration_key[1],
+                    )
             else:
-                logger.info(
-                    "ResearchAggregatorBot migrations applied after pipeline ready: %.3fs",
-                    time.perf_counter() - migration_start,
+                logger.debug(
+                    "ResearchAggregatorBot migrations already applied for epoch=%s",
+                    migration_key[1],
                 )
         elapsed = time.perf_counter() - init_start
         if bootstrap:
