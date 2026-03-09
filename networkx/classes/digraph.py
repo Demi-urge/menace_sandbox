@@ -6,12 +6,14 @@ from .graph import Graph
 
 class DiGraph(Graph):
     def predecessors(self, node: object):
+        self._ensure_compat_storage()
         predecessors = [
             u for u in self._adj if node in self._adj.get(u, {})
         ]
         return iter(predecessors)
 
     def to_undirected(self) -> Graph:
+        self._ensure_compat_storage()
         undirected = Graph()
         for node in self._nodes:
             undirected.add_node(node)
