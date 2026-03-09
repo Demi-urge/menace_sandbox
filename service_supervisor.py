@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import multiprocessing as mp
 import os
+import random
 import sys
 import time
 import uuid
@@ -659,6 +660,30 @@ class ServiceSupervisor:
         )
         manager.quick_fix = self.fix_engine
         self.evolution_orchestrator = evolution_orchestrator
+        self._watchdog_failure_timestamps: list[float] = []
+        self._watchdog_consecutive_failures = 0
+        self._watchdog_circuit_state = "closed"
+        self._watchdog_opened_at = 0.0
+        self._watchdog_next_action_at = 0.0
+        self._watchdog_is_degraded = False
+        self._watchdog_restart_window_seconds = float(
+            os.getenv("DEPENDENCY_WATCHDOG_RESTART_WINDOW_SECS", "300")
+        )
+        self._watchdog_circuit_threshold = int(
+            os.getenv("DEPENDENCY_WATCHDOG_CIRCUIT_THRESHOLD", "5")
+        )
+        self._watchdog_backoff_base_seconds = float(
+            os.getenv("DEPENDENCY_WATCHDOG_BACKOFF_BASE_SECS", "2")
+        )
+        self._watchdog_backoff_max_seconds = float(
+            os.getenv("DEPENDENCY_WATCHDOG_BACKOFF_MAX_SECS", "60")
+        )
+        self._watchdog_backoff_jitter_ratio = float(
+            os.getenv("DEPENDENCY_WATCHDOG_BACKOFF_JITTER", "0.2")
+        )
+        self._watchdog_probe_interval_seconds = float(
+            os.getenv("DEPENDENCY_WATCHDOG_HALF_OPEN_PROBE_SECS", "30")
+        )
 
     def _resolve_bootstrap_handles(
         self,
@@ -707,6 +732,93 @@ class ServiceSupervisor:
             self.healer.graph.add_telemetry_event("service_supervisor", etype)
         except Exception as exc:  # pragma: no cover - graph failures
             self.logger.error("telemetry logging failed: %s", exc)
+
+    def _compute_watchdog_backoff(self) -> float:
+        failures = max(1, self._watchdog_consecutive_failures)
+        backoff = min(
+            self._watchdog_backoff_max_seconds,
+            self._watchdog_backoff_base_seconds * (2 ** (failures - 1)),
+        )
+        jitter_ratio = max(0.0, self._watchdog_backoff_jitter_ratio)
+        jitter = random.uniform(max(0.0, 1.0 - jitter_ratio), 1.0 + jitter_ratio)
+        return max(self.check_interval, backoff * jitter)
+
+    def _open_watchdog_circuit(self, now: float, reason: str) -> None:
+        self._watchdog_circuit_state = "open"
+        self._watchdog_opened_at = now
+        self._watchdog_next_action_at = now + self._watchdog_probe_interval_seconds
+        self._watchdog_is_degraded = True
+        self.logger.error(
+            "dependency_watchdog circuit opened: reason=%s failures=%s probe_at=%.2f",
+            reason,
+            len(self._watchdog_failure_timestamps),
+            self._watchdog_next_action_at,
+        )
+
+    def _watchdog_status(self) -> dict[str, object]:
+        return {
+            "state": self._watchdog_circuit_state,
+            "degraded": self._watchdog_is_degraded,
+            "consecutive_failures": self._watchdog_consecutive_failures,
+            "failures_in_window": len(self._watchdog_failure_timestamps),
+            "next_action_at": self._watchdog_next_action_at,
+            "opened_at": self._watchdog_opened_at,
+        }
+
+    def status(self) -> dict[str, object]:
+        return {
+            "services": {
+                name: {"alive": proc.is_alive(), "pid": proc.pid}
+                for name, proc in self.processes.items()
+            },
+            "dependency_watchdog_breaker": self._watchdog_status(),
+        }
+
+    def _handle_dependency_watchdog_exit(self, now: float) -> None:
+        if self._watchdog_circuit_state == "open":
+            if now < self._watchdog_next_action_at:
+                return
+            self._watchdog_circuit_state = "half_open"
+            self._watchdog_next_action_at = now + self._watchdog_probe_interval_seconds
+            self.logger.warning("dependency_watchdog circuit half-open probe")
+            self._heal("dependency_watchdog")
+            return
+
+        if self._watchdog_circuit_state == "half_open":
+            self._watchdog_consecutive_failures += 1
+            self._open_watchdog_circuit(now, reason="half_open_probe_failed")
+            return
+
+        self._watchdog_failure_timestamps.append(now)
+        window = self._watchdog_restart_window_seconds
+        self._watchdog_failure_timestamps = [
+            ts for ts in self._watchdog_failure_timestamps if (now - ts) <= window
+        ]
+        self._watchdog_consecutive_failures += 1
+
+        if len(self._watchdog_failure_timestamps) >= self._watchdog_circuit_threshold:
+            self._open_watchdog_circuit(now, reason="threshold_exceeded")
+            return
+
+        if now < self._watchdog_next_action_at:
+            return
+
+        delay = self._compute_watchdog_backoff()
+        self._watchdog_next_action_at = now + delay
+        self.logger.warning(
+            "dependency_watchdog restart scheduled in %.2fs (consecutive_failures=%s)",
+            delay,
+            self._watchdog_consecutive_failures,
+        )
+        self._heal("dependency_watchdog")
+
+    def _handle_dependency_watchdog_alive(self) -> None:
+        if self._watchdog_circuit_state == "half_open":
+            self.logger.info("dependency_watchdog half-open probe succeeded; closing circuit")
+        self._watchdog_circuit_state = "closed"
+        self._watchdog_is_degraded = False
+        self._watchdog_consecutive_failures = 0
+        self._watchdog_failure_timestamps = []
 
     # ------------------------------------------------------------------
     def deploy_patch(self, path: Path, description: str) -> None:
@@ -848,10 +960,16 @@ class ServiceSupervisor:
     def _monitor(self) -> None:
         while True:
             time.sleep(self.check_interval)
+            now = time.time()
             for name, proc in list(self.processes.items()):
                 if not proc.is_alive():
+                    if name == "dependency_watchdog":
+                        self._handle_dependency_watchdog_exit(now)
+                        continue
                     self.healer.heal(name)
                     continue
+                if name == "dependency_watchdog":
+                    self._handle_dependency_watchdog_alive()
                 url = self.targets[name][1]
                 if url:
                     try:
