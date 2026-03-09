@@ -110,6 +110,46 @@ _BOOTSTRAP_READINESS = readiness_signal()
 _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
 _BOOTSTRAP_BROKER: object | None = None
+_DEGRADED_BOOTSTRAP_LOG_COUNTS: dict[tuple[str, str], int] = {}
+
+
+def _log_degraded_bootstrap_warning(
+    event: str,
+    message: str,
+    *args: object,
+    reason: str | None = None,
+    extra: Mapping[str, object] | None = None,
+) -> None:
+    """Log degraded bootstrap warnings once, then downgrade repeats to debug."""
+
+    payload: dict[str, object] = dict(extra or {})
+    resolved_reason = reason or str(
+        payload.get("degraded_reason")
+        or payload.get("reason")
+        or payload.get("broker_owner")
+        or "unspecified"
+    )
+    key = (event, resolved_reason)
+    repeat_count = _DEGRADED_BOOTSTRAP_LOG_COUNTS.get(key, 0) + 1
+    _DEGRADED_BOOTSTRAP_LOG_COUNTS[key] = repeat_count
+    payload["event"] = event
+    payload["reason"] = resolved_reason
+    payload["repeat_count"] = repeat_count
+
+    if repeat_count == 1:
+        logger.warning(message, *args, extra=payload)
+    else:
+        logger.debug(
+            "Suppressed repeated degraded bootstrap warning (event=%s, reason=%s, repeat_count=%d): "
+            + message,
+            event,
+            resolved_reason,
+            repeat_count,
+            *args,
+            extra=payload,
+        )
+
+
 def _bootstrap_gate_timeout(*, vector_heavy: bool = True, fallback: float | None = None) -> float:
     resolved_fallback = fallback if fallback is not None else 180.0
     resolved_wait = _resolve_bootstrap_wait_timeout(vector_heavy=vector_heavy)
@@ -179,20 +219,26 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
                 },
             )
             raise RuntimeError(message)
-        logger.warning(
+        _log_degraded_bootstrap_warning(
+            "research-aggregator-broker-owner-missing",
             "Bootstrap dependency broker owner inactive; continuing with degraded ResearchAggregatorBot placeholders",
+            reason="bootstrap dependency broker owner inactive",
             extra={
-                "event": "research-aggregator-broker-owner-missing",
                 "broker_owner": broker_owner,
+                "strict_bootstrap": strict_bootstrap,
+                "allow_fallback": allow_degraded,
                 **owner_diagnostics,
             },
         )
         if allow_degraded:
-            logger.warning(
+            _log_degraded_bootstrap_warning(
+                "research-aggregator-bootstrap-degraded",
                 "Bootstrap dependency broker owner inactive; entering degraded ResearchAggregatorBot bootstrap",
+                reason="bootstrap dependency broker owner inactive",
                 extra={
-                    "event": "research-aggregator-bootstrap-degraded",
                     "broker_owner": broker_owner,
+                    "strict_bootstrap": strict_bootstrap,
+                    "allow_fallback": allow_degraded,
                     **owner_diagnostics,
                 },
             )
@@ -200,11 +246,14 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
             item is not None
             for item in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER)
         ):
-            logger.warning(
+            _log_degraded_bootstrap_warning(
+                "research-aggregator-bootstrap-degraded",
                 "Bootstrap dependency broker owner inactive; returning cached ResearchAggregatorBot placeholders",
+                reason="bootstrap dependency broker owner inactive",
                 extra={
-                    "event": "research-aggregator-bootstrap-degraded",
                     "broker_owner": broker_owner,
+                    "strict_bootstrap": strict_bootstrap,
+                    "allow_fallback": allow_degraded,
                     **owner_diagnostics,
                 },
             )
@@ -419,12 +468,14 @@ def _ensure_bootstrap_ready(
         f"within {overall_budget:.1f}s ({_BOOTSTRAP_READINESS.describe()})"
     )
     if allow_degraded:
-        logger.warning(
+        _log_degraded_bootstrap_warning(
+            "research-aggregator-bootstrap-degraded",
             message,
+            reason=message,
             extra={
-                "event": "research-aggregator-bootstrap-degraded",
                 "strict_bootstrap": False,
                 "allow_fallback": True,
+                "broker_owner": bool(getattr(_bootstrap_dependency_broker(), "active_owner", False)),
                 "degraded_reason": message,
             },
         )
@@ -444,10 +495,11 @@ _active_pipeline, _active_manager = get_active_bootstrap_pipeline()
 _broker_owner_active = bool(getattr(_bootstrap_dependency_broker(), "active_owner", False))
 if _bootstrap_ready or _active_pipeline is not None or _active_manager is not None or _broker_owner_active:
     if not _broker_owner_active and _active_pipeline is None and _active_manager is None:
-        logger.warning(
+        _log_degraded_bootstrap_warning(
+            "research-aggregator-bootstrap-degraded",
             "Eager ResearchAggregatorBot bootstrap running in degraded mode; broker owner inactive",
+            reason="bootstrap dependency broker owner inactive",
             extra={
-                "event": "research-aggregator-bootstrap-degraded",
                 "broker_owner": _broker_owner_active,
                 "strict_bootstrap": _STRICT_BOOTSTRAP,
                 "allow_fallback": not _STRICT_BOOTSTRAP,
@@ -1886,14 +1938,15 @@ class ResearchAggregatorBot:
         except RuntimeError as exc:
             if resolved_strict or not resolved_allow_fallback:
                 raise
-            logger.warning(
+            _log_degraded_bootstrap_warning(
+                "research-aggregator-degraded-init",
                 "ResearchAggregatorBot runtime dependencies unavailable; proceeding in degraded mode: %s",
                 exc,
+                reason=str(exc),
                 extra={
-                    "event": "research-aggregator-degraded-init",
-                    "reason": str(exc),
                     "strict_bootstrap": resolved_strict,
                     "allow_fallback": resolved_allow_fallback,
+                    "broker_owner": bool(getattr(_bootstrap_dependency_broker(), "active_owner", False)),
                     "degraded_reason": str(exc),
                 },
             )
