@@ -6,8 +6,10 @@ import logging
 import logging.handlers
 import multiprocessing as mp
 import os
+import sys
 import time
 import uuid
+from importlib.util import find_spec
 from importlib import import_module
 from functools import partial
 from pathlib import Path
@@ -17,6 +19,14 @@ from typing import Callable, Dict, Optional, Tuple
 _PACKAGE_CONTEXT = (__package__ or "").strip()
 _USE_SCRIPT_IMPORTS = _PACKAGE_CONTEXT == ""
 _IMPORT_MODE = "script" if _USE_SCRIPT_IMPORTS else "package"
+_PACKAGE_DIR = Path(__file__).resolve().parent
+_PACKAGE_NAME = _PACKAGE_DIR.name
+_PACKAGE_PARENT = str(_PACKAGE_DIR.parent)
+
+if _USE_SCRIPT_IMPORTS and _PACKAGE_PARENT not in sys.path:
+    sys.path.insert(0, _PACKAGE_PARENT)
+
+_CAN_USE_PACKAGE_IMPORTS = _USE_SCRIPT_IMPORTS and find_spec(_PACKAGE_NAME) is not None
 
 if _USE_SCRIPT_IMPORTS:
     from bootstrap_timeout_policy import (
@@ -36,6 +46,10 @@ else:
 
 def _import_supervisor_module(package_module: str, script_module: str):
     """Import a module in deterministic package/script mode."""
+    if _CAN_USE_PACKAGE_IMPORTS:
+        if package_module.startswith("."):
+            return import_module(f"{_PACKAGE_NAME}{package_module}")
+        return import_module(package_module)
     if _USE_SCRIPT_IMPORTS:
         return import_module(script_module)
     return import_module(package_module, package=_PACKAGE_CONTEXT)
