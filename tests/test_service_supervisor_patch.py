@@ -155,7 +155,9 @@ _install_stub_module(
     "menace_sandbox.knowledge_graph", KnowledgeGraph=_StubKnowledgeGraph
 )
 _install_stub_module(
-    "menace_sandbox.chaos_monitoring_service", ChaosMonitoringService=_StubService
+    "menace_sandbox.chaos_monitoring_service",
+    ChaosMonitoringService=_StubService,
+    resolve_context_builder=lambda *a, **k: None,
 )
 _install_stub_module(
     "menace_sandbox.model_evaluation_service", ModelEvaluationService=_StubService
@@ -244,8 +246,19 @@ sys.modules.setdefault("vector_service", vector_pkg)
 _install_stub_module(
     "vector_service.context_builder", ContextBuilder=_StubContextBuilder
 )
+
+vector_pkg_local = types.ModuleType("menace_sandbox.vector_service")
+vector_pkg_local.__path__ = []
+sys.modules.setdefault("menace_sandbox.vector_service", vector_pkg_local)
+_install_stub_module(
+    "menace_sandbox.vector_service.context_builder", ContextBuilder=_StubContextBuilder
+)
+
 _install_stub_module(
     "context_builder_util", create_context_builder=lambda: DummyBuilder()
+)
+_install_stub_module(
+    "menace_sandbox.context_builder_util", create_context_builder=lambda: DummyBuilder()
 )
 
 import menace_sandbox.service_supervisor as ss
@@ -489,3 +502,35 @@ def test_constructor_reuses_inflight_bootstrap(monkeypatch, tmp_path):
 
     assert prepare_calls == []
     assert promotion_calls == [manager]
+
+
+
+def test_dependency_provision_worker_degrades_when_optional(monkeypatch):
+    called = {"check": 0}
+
+    class _FailingProvisioner:
+        def provision(self):
+            raise RuntimeError("boom")
+
+        def provisioning_optional(self):
+            return True
+
+    monkeypatch.setattr(ss, "ExternalDependencyProvisioner", _FailingProvisioner)
+    monkeypatch.setattr(ss, "DependencyWatchdog", lambda *a, **k: types.SimpleNamespace(check=lambda: called.__setitem__("check", called["check"] + 1)))
+
+    ss._dependency_provision_worker()
+    assert called["check"] == 0
+
+
+def test_dependency_provision_worker_raises_when_not_optional(monkeypatch):
+    class _FailingProvisioner:
+        def provision(self):
+            raise RuntimeError("boom")
+
+        def provisioning_optional(self):
+            return False
+
+    monkeypatch.setattr(ss, "ExternalDependencyProvisioner", _FailingProvisioner)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        ss._dependency_provision_worker()
