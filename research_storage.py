@@ -6,8 +6,10 @@ import dataclasses
 import importlib
 import json
 import logging
+import os
 import sqlite3
 import time
+import threading
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,6 +39,20 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         from .video_research_bot import VideoResearchBot
 
 logger = logging.getLogger(__name__)
+
+_INFO_DB_MIGRATION_EPOCH_ENV = "MENACE_INFO_DB_MIGRATION_EPOCH"
+_INFO_DB_SCHEMA_REVISION = "research-infodb-v1"
+_INFO_DB_MIGRATION_LATCH_LOCK = threading.Lock()
+_INFO_DB_MIGRATION_LATCH: set[tuple[str, str]] = set()
+
+
+def _resolve_migration_epoch() -> str:
+    epoch = os.getenv(_INFO_DB_MIGRATION_EPOCH_ENV, "").strip()
+    return epoch or _INFO_DB_SCHEMA_REVISION
+
+
+def _migration_latch_key(path: Path | str) -> tuple[str, str]:
+    return (str(Path(path).resolve()), _resolve_migration_epoch())
 
 
 @dataclass
@@ -145,6 +161,17 @@ class InfoDB(EmbeddableDBMixin):
 
         if self._schema_initialised:
             return
+
+        latch_key = _migration_latch_key(self.path)
+        with _INFO_DB_MIGRATION_LATCH_LOCK:
+            if latch_key in _INFO_DB_MIGRATION_LATCH:
+                self._schema_initialised = True
+                self._schema_ready_cached = True
+                logger.debug(
+                    "InfoDB migration application skipped (already applied for epoch=%s)",
+                    latch_key[1],
+                )
+                return
 
         non_blocking = (
             self._non_blocking_migrations
@@ -275,15 +302,18 @@ class InfoDB(EmbeddableDBMixin):
             _restore_busy_timeout()
             conn.audit_bootstrap_safe = previous_bootstrap_safe
             if migration_success:
+                with _INFO_DB_MIGRATION_LATCH_LOCK:
+                    _INFO_DB_MIGRATION_LATCH.add(latch_key)
                 self._schema_initialised = True
                 self._schema_ready_cached = True
                 elapsed = time.perf_counter() - start
                 logger.info(
-                    "InfoDB migrations completed in %.3fs (batch=%s, nonessential=%s, bootstrap_fast_path=%s)",
+                    "InfoDB migrations completed in %.3fs (batch=%s, nonessential=%s, bootstrap_fast_path=%s, epoch=%s)",
                     elapsed,
                     batch,
                     apply_nonessential,
                     non_blocking,
+                    latch_key[1],
                 )
 
     def set_current_model(self, model_id: int) -> None:

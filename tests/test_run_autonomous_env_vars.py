@@ -127,6 +127,9 @@ def _load_module(monkeypatch):
         pyd.RootModel = _Root
         pyd.ValidationError = type("ValidationError", (Exception,), {})
         pyd.validator = lambda *a, **k: (lambda f: f)
+        pyd.field_validator = lambda *a, **k: (lambda f: f)
+        pyd.model_validator = lambda *a, **k: (lambda f: f)
+        pyd.ConfigDict = dict
         pyd.BaseSettings = object
         pyd.Field = lambda default=None, **k: default
         monkeypatch.setitem(sys.modules, "pydantic", pyd)
@@ -232,6 +235,38 @@ def test_init_local_knowledge_expands_windows_paths(monkeypatch):
 
     assert result == "ok"
     assert os.fspath(captured["db_path"]) == r"C:\\Users\\Alice\\AppData\\Local\\Menace\\memory.db"
+
+
+def test_init_local_knowledge_reuses_singleton(monkeypatch):
+    mod = _load_module(monkeypatch)
+    calls = {"count": 0}
+
+    def _fake_loader(db_path):
+        calls["count"] += 1
+        return {"db": os.fspath(db_path), "instance": calls["count"]}
+
+    monkeypatch.setattr(mod, "_resolve_local_knowledge_loader", lambda: _fake_loader)
+
+    first = mod.init_local_knowledge("/tmp/one.db")
+    second = mod.init_local_knowledge("/tmp/two.db")
+
+    assert first is second
+    assert calls["count"] == 1
+
+
+def test_init_local_knowledge_backoff_after_failure(monkeypatch):
+    mod = _load_module(monkeypatch)
+
+    def _failing_loader(_db_path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mod, "_resolve_local_knowledge_loader", lambda: _failing_loader)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        mod.init_local_knowledge("/tmp/one.db")
+
+    with pytest.raises(RuntimeError, match="rate-limited"):
+        mod.init_local_knowledge("/tmp/one.db")
 
 
 def test_invalid_roi_cycles_warns(monkeypatch, caplog):

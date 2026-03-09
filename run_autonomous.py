@@ -15,6 +15,12 @@ import os
 # Import from the local module first and gracefully degrade when the legacy
 # package is unavailable to keep the script usable in both layouts.
 _LOCAL_KNOWLEDGE_LOADER = None
+_LOCAL_KNOWLEDGE_INSTANCE = None
+_LOCAL_KNOWLEDGE_INSTANCE_ID: str | None = None
+_LOCAL_KNOWLEDGE_INSTANCE_SEQ = 0
+_LOCAL_KNOWLEDGE_INIT_LOCK = None
+_LOCAL_KNOWLEDGE_INIT_ATTEMPTS = 0
+_LOCAL_KNOWLEDGE_INIT_RETRY_AFTER = 0.0
 
 
 def _resolve_local_knowledge_loader():
@@ -42,11 +48,72 @@ def _resolve_local_knowledge_loader():
 
 
 def init_local_knowledge(mem_db: str | os.PathLike[str] | None = None):
-    loader = _resolve_local_knowledge_loader()
     if mem_db is None:
         mem_db = os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
     resolved_path = _expand_path(mem_db)
-    return loader(resolved_path)
+    now = time.monotonic()
+    global _LOCAL_KNOWLEDGE_INIT_LOCK
+    if _LOCAL_KNOWLEDGE_INIT_LOCK is None:
+        _LOCAL_KNOWLEDGE_INIT_LOCK = threading.Lock()
+
+    with _LOCAL_KNOWLEDGE_INIT_LOCK:
+        global _LOCAL_KNOWLEDGE_INSTANCE
+        global _LOCAL_KNOWLEDGE_INSTANCE_ID
+        global _LOCAL_KNOWLEDGE_INSTANCE_SEQ
+        global _LOCAL_KNOWLEDGE_INIT_ATTEMPTS
+        global _LOCAL_KNOWLEDGE_INIT_RETRY_AFTER
+
+        if _LOCAL_KNOWLEDGE_INSTANCE is not None:
+            logging.getLogger(__name__).info(
+                "reusing LocalKnowledgeModule instance",
+                extra={
+                    "event": "local-knowledge-reused",
+                    "instance_id": _LOCAL_KNOWLEDGE_INSTANCE_ID,
+                    "memory_db": str(resolved_path),
+                },
+            )
+            return _LOCAL_KNOWLEDGE_INSTANCE
+
+        if now < _LOCAL_KNOWLEDGE_INIT_RETRY_AFTER:
+            remaining = max(0.0, _LOCAL_KNOWLEDGE_INIT_RETRY_AFTER - now)
+            raise RuntimeError(
+                "LocalKnowledgeModule init is rate-limited after previous failure; "
+                f"retry in {remaining:.1f}s"
+            )
+
+        loader = _resolve_local_knowledge_loader()
+        try:
+            instance = loader(resolved_path)
+        except Exception:
+            _LOCAL_KNOWLEDGE_INIT_ATTEMPTS += 1
+            delay = min(60.0, 2 ** max(_LOCAL_KNOWLEDGE_INIT_ATTEMPTS - 1, 0))
+            _LOCAL_KNOWLEDGE_INIT_RETRY_AFTER = time.monotonic() + delay
+            logging.getLogger(__name__).warning(
+                "LocalKnowledgeModule init failed; retry backoff enabled",
+                extra={
+                    "event": "local-knowledge-init-failed",
+                    "attempt": _LOCAL_KNOWLEDGE_INIT_ATTEMPTS,
+                    "retry_after_seconds": round(delay, 3),
+                    "memory_db": str(resolved_path),
+                },
+                exc_info=True,
+            )
+            raise
+
+        _LOCAL_KNOWLEDGE_INIT_ATTEMPTS = 0
+        _LOCAL_KNOWLEDGE_INIT_RETRY_AFTER = 0.0
+        _LOCAL_KNOWLEDGE_INSTANCE_SEQ += 1
+        _LOCAL_KNOWLEDGE_INSTANCE = instance
+        _LOCAL_KNOWLEDGE_INSTANCE_ID = f"lkm-{_LOCAL_KNOWLEDGE_INSTANCE_SEQ:04d}"
+        logging.getLogger(__name__).info(
+            "created LocalKnowledgeModule instance",
+            extra={
+                "event": "local-knowledge-created",
+                "instance_id": _LOCAL_KNOWLEDGE_INSTANCE_ID,
+                "memory_db": str(resolved_path),
+            },
+        )
+        return _LOCAL_KNOWLEDGE_INSTANCE
 
 import argparse
 import atexit
