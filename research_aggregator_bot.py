@@ -112,6 +112,9 @@ _BOOTSTRAP_PLACEHOLDER: object | None = None
 _BOOTSTRAP_SENTINEL: object | None = None
 _BOOTSTRAP_BROKER: object | None = None
 _DEGRADED_BOOTSTRAP_LOG_COUNTS: dict[tuple[str, str], int] = {}
+_BOOTSTRAP_OUTCOME_STATE = "pending"
+_BOOTSTRAP_OUTCOME_ROOT_CAUSE: str | None = None
+_BOOTSTRAP_OUTCOME_STAGE: str | None = None
 
 
 @dataclass
@@ -144,6 +147,27 @@ def _resolve_degraded_retry_budget() -> int:
 _DEGRADED_RETRY_STATE = _DegradedBootstrapRetryState(
     max_retries=_resolve_degraded_retry_budget()
 )
+
+
+def _latch_bootstrap_outcome(state: str, *, cause: str | None = None, stage: str | None = None) -> None:
+    """Store terminal/bootstrap outcome state for deterministic re-entry behaviour."""
+
+    global _BOOTSTRAP_OUTCOME_STATE, _BOOTSTRAP_OUTCOME_ROOT_CAUSE, _BOOTSTRAP_OUTCOME_STAGE
+    if _BOOTSTRAP_OUTCOME_STATE in {"degraded_terminal", "failed_terminal"}:
+        return
+    _BOOTSTRAP_OUTCOME_STATE = state
+    if cause:
+        _BOOTSTRAP_OUTCOME_ROOT_CAUSE = cause
+    if stage:
+        _BOOTSTRAP_OUTCOME_STAGE = stage
+
+
+def _bootstrap_terminal_exception(component: str) -> RuntimeError:
+    stage = _BOOTSTRAP_OUTCOME_STAGE or "unknown"
+    cause = _BOOTSTRAP_OUTCOME_ROOT_CAUSE or "unknown"
+    return RuntimeError(
+        f"{component} bootstrap is latched in failed terminal state; stage={stage} cause={cause}"
+    )
 
 
 def _mark_terminal_bootstrap_failure(
@@ -250,6 +274,17 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
     """Resolve bootstrap placeholders after the readiness gate clears."""
 
     global _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+    if _BOOTSTRAP_OUTCOME_STATE == "failed_terminal":
+        raise _bootstrap_terminal_exception("ResearchAggregatorBot")
+    if _BOOTSTRAP_OUTCOME_STATE == "degraded_terminal":
+        if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
+            return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
+        broker = _bootstrap_dependency_broker()
+        placeholder, sentinel = advertise_bootstrap_placeholder(dependency_broker=broker, owner=False)
+        _BOOTSTRAP_PLACEHOLDER = placeholder
+        _BOOTSTRAP_SENTINEL = sentinel
+        _BOOTSTRAP_BROKER = broker
+        return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
     if None not in (_BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER):
         return _BOOTSTRAP_PLACEHOLDER, _BOOTSTRAP_SENTINEL, _BOOTSTRAP_BROKER
 
@@ -300,7 +335,17 @@ def _bootstrap_placeholders(allow_degraded: bool = False) -> tuple[object, objec
                     **owner_diagnostics,
                 },
             )
+            _latch_bootstrap_outcome(
+                "failed_terminal",
+                cause=message,
+                stage="bootstrap-placeholder-owner",
+            )
             raise RuntimeError(message)
+        _latch_bootstrap_outcome(
+            "degraded_terminal",
+            cause="bootstrap dependency broker owner inactive",
+            stage="bootstrap-placeholder-owner",
+        )
         _log_degraded_bootstrap_warning(
             "research-aggregator-broker-owner-missing",
             "Bootstrap dependency broker owner inactive; continuing with degraded ResearchAggregatorBot placeholders",
@@ -479,6 +524,13 @@ def _ensure_bootstrap_ready(
 ) -> bool:
     """Block until bootstrap readiness clears unless degraded mode is allowed."""
 
+    if _BOOTSTRAP_OUTCOME_STATE == "failed_terminal":
+        raise _bootstrap_terminal_exception(component)
+    if _BOOTSTRAP_OUTCOME_STATE == "degraded_terminal":
+        return False
+    if _BOOTSTRAP_OUTCOME_STATE == "ready":
+        return True
+
     if _vector_bootstrap_disabled():
         logger.critical(
             "%s bootstrap readiness bypassed because vector seeding is disabled; "
@@ -499,6 +551,7 @@ def _ensure_bootstrap_ready(
     start = time.monotonic()
     try:
         _BOOTSTRAP_READINESS.await_ready(timeout=initial_timeout)
+        _latch_bootstrap_outcome("ready")
         return True
     except TimeoutError as exc:  # pragma: no cover - defensive path
         timeout_exc = exc
@@ -550,6 +603,11 @@ def _ensure_bootstrap_ready(
         f"within {overall_budget:.1f}s ({_BOOTSTRAP_READINESS.describe()})"
     )
     if allow_degraded:
+        _latch_bootstrap_outcome(
+            "degraded_terminal",
+            cause=message,
+            stage="bootstrap-readiness",
+        )
         _log_degraded_bootstrap_warning(
             "research-aggregator-bootstrap-degraded",
             message,
@@ -562,6 +620,11 @@ def _ensure_bootstrap_ready(
             },
         )
         return False
+    _latch_bootstrap_outcome(
+        "failed_terminal",
+        cause=message,
+        stage="bootstrap-readiness",
+    )
     raise RuntimeError(message) from timeout_exc
 
 
@@ -2008,13 +2071,10 @@ class ResearchAggregatorBot:
             else _resolve_research_aggregator_strict()
         )
         resolved_allow_fallback = False if resolved_strict else bool(True if allow_fallback is None else allow_fallback)
-        if _DEGRADED_RETRY_STATE.terminal:
-            stage = _DEGRADED_RETRY_STATE.terminal_stage or "runtime-initialisation"
-            root_cause = _DEGRADED_RETRY_STATE.root_cause or "unknown"
-            raise RuntimeError(
-                "ResearchAggregatorBot bootstrap is in terminal failed state; "
-                f"stage={stage} cause={root_cause}"
-            )
+        if _BOOTSTRAP_OUTCOME_STATE == "failed_terminal":
+            raise _bootstrap_terminal_exception("ResearchAggregatorBot")
+        if _BOOTSTRAP_OUTCOME_STATE == "degraded_terminal":
+            resolved_allow_fallback = True
         _ensure_bootstrap_ready(
             "ResearchAggregatorBot",
             allow_degraded=resolved_allow_fallback,
@@ -2029,17 +2089,17 @@ class ResearchAggregatorBot:
             )
         except RuntimeError as exc:
             if resolved_strict or not resolved_allow_fallback:
+                _latch_bootstrap_outcome(
+                    "failed_terminal",
+                    cause=str(exc),
+                    stage="runtime-dependency-resolution",
+                )
                 raise
-            if not _consume_degraded_retry_budget(
+            _latch_bootstrap_outcome(
+                "degraded_terminal",
+                cause=str(exc),
                 stage="runtime-dependency-resolution",
-                exc=exc,
-                strict_bootstrap=resolved_strict,
-                allow_fallback=resolved_allow_fallback,
-            ):
-                raise RuntimeError(
-                    "ResearchAggregatorBot degraded bootstrap retry budget exhausted; "
-                    f"cause={exc}"
-                ) from exc
+            )
             _log_degraded_bootstrap_warning(
                 "research-aggregator-degraded-init",
                 "ResearchAggregatorBot runtime dependencies unavailable; proceeding in degraded mode: %s",
@@ -2050,8 +2110,7 @@ class ResearchAggregatorBot:
                     "allow_fallback": resolved_allow_fallback,
                     "broker_owner": bool(getattr(_bootstrap_dependency_broker(), "active_owner", False)),
                     "degraded_reason": str(exc),
-                    "degraded_retry_budget": _DEGRADED_RETRY_STATE.max_retries,
-                    "degraded_retry_used": _DEGRADED_RETRY_STATE.retries_used,
+                    "bootstrap_state": _BOOTSTRAP_OUTCOME_STATE,
                 },
             )
             try:
@@ -2063,6 +2122,11 @@ class ResearchAggregatorBot:
                     allow_fallback=True,
                 )
             except RuntimeError as degraded_exc:
+                _latch_bootstrap_outcome(
+                    "failed_terminal",
+                    cause=str(degraded_exc),
+                    stage="runtime-dependency-resolution",
+                )
                 _mark_terminal_bootstrap_failure(
                     stage="runtime-dependency-resolution",
                     exc=degraded_exc,
