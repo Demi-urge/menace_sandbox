@@ -470,6 +470,52 @@ except Exception:  # pragma: no cover - flat layout fallback
         _SHARED_EVENT_BUS = None
 
 logger = logging.getLogger(__name__)
+_BOOTSTRAP_FAILURE_LOG_LOCK = threading.Lock()
+_BOOTSTRAP_FAILURE_LOG_COUNTS: dict[str, int] = {}
+_TERMINAL_FAILURE_COMPONENTS: set[str] = set()
+
+
+def _log_bootstrap_failure_rate_limited(
+    *,
+    reason: str,
+    message: str,
+    bot: str,
+    instance_id: str | None = None,
+    bootstrap_state: str | None = None,
+    promotion_state: str | None = None,
+    exc: BaseException | None = None,
+) -> None:
+    """Emit bootstrap failures once at WARNING, then DEBUG with a repeat counter."""
+
+    with _BOOTSTRAP_FAILURE_LOG_LOCK:
+        count = _BOOTSTRAP_FAILURE_LOG_COUNTS.get(reason, 0) + 1
+        _BOOTSTRAP_FAILURE_LOG_COUNTS[reason] = count
+    level = logging.WARNING if count == 1 else logging.DEBUG
+    logger.log(
+        level,
+        message,
+        bot,
+        exc,
+        extra={
+            "event": "bootstrap_failure" if count == 1 else "bootstrap_failure_repeat",
+            "bootstrap_failure_reason": reason,
+            "bootstrap_failure_count": count,
+            "bot": bot,
+            "instance_id": instance_id,
+            "bootstrap_state": bootstrap_state,
+            "promotion_state": promotion_state,
+        },
+    )
+
+
+def _log_terminal_failure_once(*, component: str, message: str, extra: Mapping[str, Any]) -> None:
+    """Log first terminal failure for *component* at ERROR and later repeats at DEBUG."""
+
+    with _BOOTSTRAP_FAILURE_LOG_LOCK:
+        first = component not in _TERMINAL_FAILURE_COMPONENTS
+        if first:
+            _TERMINAL_FAILURE_COMPONENTS.add(component)
+    logger.log(logging.ERROR if first else logging.DEBUG, message, extra=dict(extra))
 _SELF_CODING_DISABLED = bool(os.getenv("MENACE_DISABLE_SELF_CODING"))
 _COMM_BOT_BOOTSTRAP_STATE: dict[str, Any] | None = None
 
@@ -11182,10 +11228,14 @@ def _resolve_helpers(
                 print(
                     f"[debug] Bootstrap failed during _resolve_helpers for {name_local} due to: {exc}"
                 )
-                logger.warning(
-                    "SelfCodingManager bootstrap failed for %s: %s",
-                    name_local,
-                    exc,
+                _log_bootstrap_failure_rate_limited(
+                    reason="resolve_helpers_bootstrap_failed",
+                    message="SelfCodingManager bootstrap failed for %s: %s",
+                    bot=name_local,
+                    instance_id=f"{obj.__class__.__module__}.{obj.__class__.__qualname__}",
+                    bootstrap_state="resolve_helpers",
+                    promotion_state=getattr(getattr(obj, "manager", None), "_promotion_state", None),
+                    exc=exc,
                 )
                 manager = _DisabledSelfCodingManager(
                     bot_registry=registry,
@@ -11288,7 +11338,6 @@ def self_coding_managed(
                     sorted(allowlist) if allowlist else [],
                 )
             return cls
-        print(f"[debug] self_coding_managed wrapping bot={name}")
         try:
             module_path = inspect.getfile(cls)
         except Exception:  # pragma: no cover - best effort
@@ -11322,6 +11371,20 @@ def self_coding_managed(
         bootstrap_done = False
         bootstrap_wait_timeout: float | None = None
         bootstrap_wait_timeout_unset = object()
+        wrapped_init_invocations = 0
+
+        logger.info(
+            "self_coding_managed wrapping bot class %s",
+            name,
+            extra={
+                "event": "self_coding_managed_wrap",
+                "bot": name,
+                "instance_id": f"{cls.__module__}.{cls.__qualname__}",
+                "bootstrap_state": "wrapped",
+                "promotion_state": "pending",
+                "wrap_count": 1,
+            },
+        )
 
         def _resolve_candidate(candidate: Any) -> Any:
             if getattr(candidate, "__self_coding_lazy__", False):
@@ -11397,9 +11460,17 @@ def self_coding_managed(
                         bootstrap_in_progress = False
                         bootstrap_done = False
                         bootstrap_event.set()
-                    logger.error(
-                        "Bootstrap coordination stalled; falling back to fail-fast behaviour",
-                        exc_info=timeout_error,
+                    _log_terminal_failure_once(
+                        component="bootstrap_helper_wait",
+                        message="Bootstrap coordination stalled; falling back to fail-fast behaviour",
+                        extra={
+                            "event": "bootstrap_helper_wait_terminal_failure",
+                            "bot": name,
+                            "instance_id": None,
+                            "bootstrap_state": "wait_timeout",
+                            "promotion_state": getattr(getattr(_BOOTSTRAP_STATE, "sentinel_manager", None), "_promotion_state", None),
+                            "error": repr(timeout_error),
+                        },
                     )
                     _record_prepare_pipeline_stage(
                         "wait for bootstrap helpers",
@@ -11704,10 +11775,13 @@ def self_coding_managed(
                                     _refresh_bootstrap_strategy(manager_local)
                             except RuntimeError as exc:
                                 register_as_coding_local = False
-                                logger.warning(
-                                    "self-coding manager unavailable for %s; %s",
-                                    name,
-                                    exc,
+                                _log_bootstrap_failure_rate_limited(
+                                    reason="bootstrap_manager_unavailable",
+                                    message="self-coding manager unavailable for %s; %s",
+                                    bot=name,
+                                    bootstrap_state="bootstrap_helpers",
+                                    promotion_state=getattr(getattr(context, "sentinel", None), "_promotion_state", None),
+                                    exc=exc,
                                 )
                                 logger.debug(
                                     "self-coding manager bootstrap failed for %s", name, exc_info=exc
@@ -12117,7 +12191,23 @@ def self_coding_managed(
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
-            nonlocal bootstrap_wait_timeout
+            nonlocal bootstrap_wait_timeout, wrapped_init_invocations
+            wrapped_init_invocations += 1
+            instance_id = f"{id(self):x}"
+            init_extra = {
+                "event": "self_coding_managed_init" if wrapped_init_invocations == 1 else "self_coding_managed_init_repeat",
+                "bot": name,
+                "instance_id": instance_id,
+                "bootstrap_state": "init_start",
+                "promotion_state": "pending" if getattr(cls, "_self_coding_pending_manager", False) else "active",
+                "init_count": wrapped_init_invocations,
+            }
+            logger.log(
+                logging.INFO if wrapped_init_invocations == 1 else logging.DEBUG,
+                "self_coding_managed init invoked for %s",
+                name,
+                extra=init_extra,
+            )
             registry_obj: BotRegistry | None = None
             data_bot_obj: DataBot | None = None
             pipeline_ref: Any | None = self if is_pipeline_cls else None

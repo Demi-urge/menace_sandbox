@@ -137,6 +137,9 @@ _INTERNALIZE_FAILURE_COOLDOWN_SECONDS = float(
 )
 _INTERNALIZE_FAILURE_LOCK = threading.Lock()
 _INTERNALIZE_FAILURE_STATE: dict[str, dict[str, float | int | str | None]] = {}
+_INTERNALIZE_BOOTSTRAP_LOG_LOCK = threading.Lock()
+_INTERNALIZE_BOOTSTRAP_REASON_COUNTS: dict[str, int] = {}
+_INTERNALIZE_TERMINAL_FAILURE_COMPONENTS: set[str] = set()
 _INTERNALIZE_MONITOR_THREAD: threading.Thread | None = None
 _INTERNALIZE_MONITOR_STARTED = False
 _INTERNALIZE_MONITOR_START_LOCK = threading.Lock()
@@ -1390,6 +1393,56 @@ def _launch_module_path_self_debug(
         daemon=True,
     )
     thread.start()
+
+
+
+def _log_internalize_bootstrap_failure_rate_limited(
+    *,
+    logger: logging.Logger,
+    reason: str,
+    message: str,
+    bot: str,
+    args: tuple[Any, ...] = (),
+    bootstrap_state: str | None = None,
+    promotion_state: str | None = None,
+    instance_id: str | None = None,
+) -> None:
+    """Emit first bootstrap failure per reason at INFO, then DEBUG repeats."""
+
+    with _INTERNALIZE_BOOTSTRAP_LOG_LOCK:
+        count = _INTERNALIZE_BOOTSTRAP_REASON_COUNTS.get(reason, 0) + 1
+        _INTERNALIZE_BOOTSTRAP_REASON_COUNTS[reason] = count
+    logger.log(
+        logging.INFO if count == 1 else logging.DEBUG,
+        message,
+        *args,
+        extra={
+            "event": "internalize_bootstrap_failure" if count == 1 else "internalize_bootstrap_failure_repeat",
+            "reason": reason,
+            "repeat_count": count,
+            "bot": bot,
+            "instance_id": instance_id,
+            "bootstrap_state": bootstrap_state,
+            "promotion_state": promotion_state,
+        },
+    )
+
+
+def _log_terminal_component_failure_once(
+    *,
+    logger: logging.Logger,
+    component: str,
+    message: str,
+    args: tuple[Any, ...] = (),
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Keep the first terminal failure at ERROR per component, then downgrade repeats."""
+
+    with _INTERNALIZE_BOOTSTRAP_LOG_LOCK:
+        first = component not in _INTERNALIZE_TERMINAL_FAILURE_COMPONENTS
+        if first:
+            _INTERNALIZE_TERMINAL_FAILURE_COMPONENTS.add(component)
+    logger.log(logging.ERROR if first else logging.DEBUG, message, *args, extra=extra or {})
 
 
 def _record_internalize_failure(
@@ -6662,9 +6715,11 @@ def internalize_coding_bot(
                     started_epoch = node.pop("internalization_in_progress", None)
                     node["internalization_last_step"] = "stale hard-timeout recovery"
                 _replace_internalize_lock(bot_name)
-                logger_ref.error(
-                    "internalize_coding_bot hard timeout exceeded for %s; forcing recovery",
-                    bot_name,
+                _log_terminal_component_failure_once(
+                    logger=logger_ref,
+                    component="stale_internalization_timeout",
+                    message="internalize_coding_bot hard timeout exceeded for %s; forcing recovery",
+                    args=(bot_name,),
                     extra={
                         "bot": bot_name,
                         "in_flight_seconds": age,
@@ -7303,9 +7358,11 @@ def internalize_coding_bot(
                                 )
                                 return fallback_manager
 
-                            logger_ref.error(
-                                "internalize_coding_bot retry failed for %s with no degraded fallback",
-                                bot_name,
+                            _log_terminal_component_failure_once(
+                                logger=logger_ref,
+                                component="manager_construction_timeout_retry",
+                                message="internalize_coding_bot retry failed for %s with no degraded fallback",
+                                args=(bot_name,),
                                 extra={
                                     **retry_event,
                                     "retry_error": repr(retry_exc),
@@ -7348,10 +7405,14 @@ def internalize_coding_bot(
                             "fallback_used": fallback_manager is not None,
                         }
                         if fallback_manager is not None:
-                            logger_ref.warning(
-                                "internalize_coding_bot transient timeout for %s; returning degraded fallback manager",
-                                bot_name,
-                                extra=timeout_event,
+                            _log_internalize_bootstrap_failure_rate_limited(
+                                logger=logger_ref,
+                                reason="manager_construction_timeout_transient",
+                                message="internalize_coding_bot transient timeout for %s; returning degraded fallback manager",
+                                bot=bot_name,
+                                args=(bot_name,),
+                                bootstrap_state="manager_construction_timeout",
+                                promotion_state="fallback_returned",
                             )
                             if FailureGuard is not None:
                                 with FailureGuard(
@@ -7372,9 +7433,11 @@ def internalize_coding_bot(
                                     )
                             return fallback_manager
 
-                        logger_ref.error(
-                            "internalize_coding_bot hard failure for %s after manager construction timeout; degraded fallback unavailable",
-                            bot_name,
+                        _log_terminal_component_failure_once(
+                            logger=logger_ref,
+                            component="manager_construction_timeout",
+                            message="internalize_coding_bot hard failure for %s after manager construction timeout; degraded fallback unavailable",
+                            args=(bot_name,),
                             extra={
                                 **timeout_event,
                                 "fallback_error": repr(fallback_error),

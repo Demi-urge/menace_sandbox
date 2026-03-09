@@ -1223,3 +1223,72 @@ def test_prepare_pipeline_enforces_minimum_timeout(monkeypatch, caplog):
     assert degraded_events, "watchdog should record degraded readiness when overruns occur"
     last_stage = degraded_events[-1]
     assert last_stage.get("resolved_timeout", 0) >= cbi._MIN_STAGE_TIMEOUT
+
+
+def test_self_coding_managed_init_logs_first_info_then_debug(monkeypatch):
+    class _Registry(DummyRegistry):
+        def register_bot(self, name, *_args, **kwargs):
+            return super().register_bot(name, **kwargs)
+
+    registry = _Registry()
+    data_bot = DummyDataBot()
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class Bot:
+        name = "loggy"
+
+        def __init__(self):
+            pass
+
+    logged: list[tuple[int, dict[str, Any]]] = []
+    original_log = cbi.logger.log
+
+    def _capture(level, msg, *args, **kwargs):
+        extra = kwargs.get("extra", {})
+        if isinstance(extra, dict) and str(extra.get("event", "")).startswith("self_coding_managed_init"):
+            logged.append((level, dict(extra)))
+        return original_log(level, msg, *args, **kwargs)
+
+    monkeypatch.setattr(cbi.logger, "log", _capture)
+
+    Bot()
+    Bot()
+
+    assert len(logged) >= 2
+    assert logged[0][0] == logging.INFO
+    assert logged[1][0] == logging.DEBUG
+    assert logged[1][1].get("init_count", 0) >= 2
+
+
+def test_bootstrap_failure_messages_rate_limited_by_reason(monkeypatch):
+    with cbi._BOOTSTRAP_FAILURE_LOG_LOCK:
+        cbi._BOOTSTRAP_FAILURE_LOG_COUNTS.clear()
+
+    logged: list[tuple[int, dict[str, Any]]] = []
+    original_log = cbi.logger.log
+
+    def _capture(level, msg, *args, **kwargs):
+        extra = kwargs.get("extra", {})
+        if isinstance(extra, dict) and extra.get("bootstrap_failure_reason") == "same_reason":
+            logged.append((level, dict(extra)))
+        return original_log(level, msg, *args, **kwargs)
+
+    monkeypatch.setattr(cbi.logger, "log", _capture)
+
+    cbi._log_bootstrap_failure_rate_limited(
+        reason="same_reason",
+        message="SelfCodingManager bootstrap failed for %s: %s",
+        bot="BotA",
+        exc=RuntimeError("boom"),
+    )
+    cbi._log_bootstrap_failure_rate_limited(
+        reason="same_reason",
+        message="SelfCodingManager bootstrap failed for %s: %s",
+        bot="BotA",
+        exc=RuntimeError("boom2"),
+    )
+
+    assert len(logged) == 2
+    assert logged[0][0] == logging.WARNING
+    assert logged[1][0] == logging.DEBUG
+    assert logged[1][1].get("bootstrap_failure_count", 0) == 2
