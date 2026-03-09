@@ -396,15 +396,50 @@ def _dependency_provision_worker() -> None:
     logger = logging.getLogger("dependency_provision_worker")
     _log_worker_startup("dependency_provision_worker")
     provisioner = ExternalDependencyProvisioner()
-    try:
-        provisioner.provision()
-    except Exception as exc:
-        if provisioner.provisioning_optional():
-            logger.warning(
-                "dependency provisioning disabled/degraded (optional mode): %s", exc
+    retry_base = float(os.getenv("DEPENDENCY_PROVISION_RETRY_BASE_SECS", "30"))
+    retry_max = float(os.getenv("DEPENDENCY_PROVISION_RETRY_MAX_SECS", "300"))
+    attempt = 0
+    last_degraded_message = ""
+    while True:
+        try:
+            result = provisioner.provision()
+        except Exception as exc:
+            if not provisioner.provisioning_optional():
+                raise
+            result = None
+            degraded_message = (
+                f"dependency provisioning disabled/degraded (optional mode): {exc}"
             )
-            return
-        raise
+        else:
+            degraded_message = (
+                f"dependency provisioning unavailable (degraded mode): {result.message}"
+                if result.is_unavailable
+                else ""
+            )
+
+        if degraded_message:
+            if degraded_message != last_degraded_message:
+                logger.warning(degraded_message)
+                last_degraded_message = degraded_message
+            wait_seconds = min(retry_base * (2 ** attempt), retry_max)
+            logger.info(
+                "dependency provisioning retry in %.1fs (attempt=%s)",
+                wait_seconds,
+                attempt + 1,
+            )
+            attempt += 1
+            try:
+                time.sleep(wait_seconds)
+            except KeyboardInterrupt:
+                logger.info("dependency provision worker interrupted")
+                return
+            continue
+
+        if result is not None and result.status == "managed_externally":
+            logger.info("dependency provisioning skipped: %s", result.message)
+        attempt = 0
+        break
+
     interval = float(os.getenv("WATCHDOG_INTERVAL", "60"))
     endpoints = _parse_map(os.getenv("DEPENDENCY_ENDPOINTS", ""))
     backups = _parse_map(os.getenv("DEPENDENCY_BACKUPS", ""))

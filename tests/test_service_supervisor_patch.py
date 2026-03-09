@@ -518,6 +518,33 @@ def test_dependency_provision_worker_degrades_when_optional(monkeypatch):
     monkeypatch.setattr(ss, "ExternalDependencyProvisioner", _FailingProvisioner)
     monkeypatch.setattr(ss, "DependencyWatchdog", lambda *a, **k: types.SimpleNamespace(check=lambda: called.__setitem__("check", called["check"] + 1)))
 
+    def _interrupt(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ss.time, "sleep", _interrupt)
+
+    ss._dependency_provision_worker()
+    assert called["check"] == 0
+
+
+def test_dependency_provision_worker_degraded_unavailable(monkeypatch):
+    called = {"check": 0}
+
+    class _Provisioner:
+        def provision(self):
+            return types.SimpleNamespace(is_unavailable=True, message="no compose", status="unavailable")
+
+        def provisioning_optional(self):
+            return False
+
+    monkeypatch.setattr(ss, "ExternalDependencyProvisioner", _Provisioner)
+    monkeypatch.setattr(ss, "DependencyWatchdog", lambda *a, **k: types.SimpleNamespace(check=lambda: called.__setitem__("check", called["check"] + 1)))
+
+    def _interrupt(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ss.time, "sleep", _interrupt)
+
     ss._dependency_provision_worker()
     assert called["check"] == 0
 
