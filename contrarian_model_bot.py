@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Iterable, Dict, Any, Optional
 from dynamic_path_router import resolve_path
 
-from .research_aggregator_bot import ResearchAggregatorBot
+from .research_aggregator_bot import ResearchAggregatorBot, get_or_create_research_aggregator
 from .research_data import InfoDB, ResearchItem
 from .chatgpt_enhancement_bot import EnhancementDB
 from .prediction_manager_bot import PredictionManager
@@ -171,11 +171,13 @@ class ContrarianModelBot:
         self.enh_db = enhancements_db or EnhancementDB()
 
         if aggregator is None:
-            aggregator = ResearchAggregatorBot(
+            aggregator = get_or_create_research_aggregator(
                 [],
                 info_db=self.info_db,
                 enhancements_db=self.enh_db,
                 context_builder=self.context_builder,
+                caller_label="ContrarianModelBot.__init__",
+                creation_reason="default_aggregator",
             )
         elif not (
             hasattr(aggregator, "context_builder")

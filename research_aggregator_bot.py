@@ -62,6 +62,8 @@ from typing import Any, Iterable, List, Mapping, Optional, cast
 
 import os
 import logging
+import threading
+import uuid
 from types import ModuleType, SimpleNamespace
 
 from .chatgpt_enhancement_bot import (
@@ -115,6 +117,8 @@ _DEGRADED_BOOTSTRAP_LOG_COUNTS: dict[tuple[str, str], int] = {}
 _BOOTSTRAP_OUTCOME_STATE = "pending"
 _BOOTSTRAP_OUTCOME_ROOT_CAUSE: str | None = None
 _BOOTSTRAP_OUTCOME_STAGE: str | None = None
+_INSTANCE_CACHE_LOCK = threading.Lock()
+_CACHED_RESEARCH_AGGREGATOR: "ResearchAggregatorBot | None" = None
 
 
 @dataclass
@@ -2064,6 +2068,7 @@ class ResearchAggregatorBot:
         allow_fallback: bool | None = None,
         strict_bootstrap: bool | None = None,
     ) -> None:
+        self.instance_uuid = str(uuid.uuid4())
         init_start = time.perf_counter()
         resolved_strict = (
             strict_bootstrap
@@ -2719,6 +2724,47 @@ if _runtime_state is not None:
         return refined
 
 
+def get_or_create_research_aggregator(
+    requirements: Iterable[str],
+    *,
+    caller_label: str = "unknown",
+    creation_reason: str = "default",
+    reset: bool = False,
+    **kwargs: Any,
+) -> ResearchAggregatorBot:
+    """Return a process-shared :class:`ResearchAggregatorBot` instance."""
+
+    global _CACHED_RESEARCH_AGGREGATOR
+    with _INSTANCE_CACHE_LOCK:
+        if reset:
+            _CACHED_RESEARCH_AGGREGATOR = None
+            logger.info(
+                "ResearchAggregatorBot cache reset requested",
+                extra={
+                    "event": "research-aggregator-cache-reset",
+                    "caller_label": caller_label,
+                    "creation_reason": creation_reason,
+                },
+            )
+
+        if _CACHED_RESEARCH_AGGREGATOR is not None:
+            return _CACHED_RESEARCH_AGGREGATOR
+
+        instance = ResearchAggregatorBot(requirements, **kwargs)
+        _CACHED_RESEARCH_AGGREGATOR = instance
+        logger.info(
+            "ResearchAggregatorBot created and cached",
+            extra={
+                "event": "research-aggregator-created",
+                "instance_id": id(instance),
+                "instance_uuid": getattr(instance, "instance_uuid", None),
+                "caller_label": caller_label,
+                "creation_reason": creation_reason,
+            },
+        )
+        return instance
+
+
 def send_to_stage3(items: Iterable[ResearchItem]) -> None:
     """Forward *items* to Stage 3 via HTTP if ``requests`` is available."""
 
@@ -2750,5 +2796,6 @@ __all__ = [
     "VideoResearchBot",
     "ChatGPTResearchBot",
     "ResearchAggregatorBot",
+    "get_or_create_research_aggregator",
     "send_to_stage3",
 ]

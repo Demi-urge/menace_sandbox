@@ -86,9 +86,14 @@ class _LazyAggregator:
 def _load_research_aggregator(
     context_builder: ContextBuilder,
 ) -> "ResearchAggregatorBot":
-    from .research_aggregator_bot import ResearchAggregatorBot
+    from .research_aggregator_bot import get_or_create_research_aggregator
 
-    return ResearchAggregatorBot([], context_builder=context_builder)
+    return get_or_create_research_aggregator(
+        [],
+        context_builder=context_builder,
+        caller_label="model_automation_dependencies._load_research_aggregator",
+        creation_reason="pipeline_lazy_loader",
+    )
 
 
 def _make_research_item(**kwargs: Any) -> "ResearchItem":

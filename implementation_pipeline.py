@@ -92,8 +92,13 @@ class ImplementationPipeline:
                 pass
             self.researcher = researcher
         elif isinstance(ResearchAggregatorBot, type) and ResearchAggregatorBot is not object:
-            self.researcher = ResearchAggregatorBot(
-                [], context_builder=context_builder
+            from .research_aggregator_bot import get_or_create_research_aggregator
+
+            self.researcher = get_or_create_research_aggregator(
+                [],
+                context_builder=context_builder,
+                caller_label="ImplementationPipeline.__init__",
+                creation_reason="default_researcher",
             )  # type: ignore
         else:
             self.researcher = None
