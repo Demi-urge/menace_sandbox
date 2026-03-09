@@ -9,8 +9,9 @@ refreshed at startup to ensure ranking reflects the latest metrics.
 
 import logging
 import threading
+from importlib import import_module
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from .chaos_scheduler import ChaosScheduler
 from .watchdog import Watchdog
@@ -19,10 +20,47 @@ from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .advanced_error_management import AutomatedRollbackManager
 
-try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder
-except Exception:  # pragma: no cover - surface early
-    ContextBuilder = None  # type: ignore
+def _resolve_context_builder_class() -> type[Any] | None:
+    """Return the canonical :class:`ContextBuilder` class if available."""
+
+    for module_path in (
+        "vector_service.context_builder",
+        "menace_sandbox.vector_service.context_builder",
+    ):
+        try:
+            module = import_module(module_path)
+        except Exception:
+            continue
+        builder_cls = getattr(module, "ContextBuilder", None)
+        if isinstance(builder_cls, type):
+            return builder_cls
+    return None
+
+
+ContextBuilder = _resolve_context_builder_class()
+
+
+def resolve_context_builder(value: Any) -> Any:
+    """Normalise a worker-provided builder or builder factory input."""
+
+    candidate = value() if callable(value) else value
+    if ContextBuilder is None:
+        return candidate
+    if isinstance(candidate, ContextBuilder):
+        return candidate
+    if (
+        candidate is not None
+        and candidate.__class__.__name__ == "ContextBuilder"
+        and candidate.__class__.__module__.endswith("vector_service.context_builder")
+    ):
+        kwargs = {
+            attr: getattr(candidate, attr)
+            for attr in ("bots_db", "code_db", "errors_db", "workflows_db")
+            if hasattr(candidate, attr)
+        }
+        if kwargs:
+            return ContextBuilder(**kwargs)
+    return candidate
 
 
 class ChaosMonitoringService:
@@ -48,7 +86,11 @@ class ChaosMonitoringService:
             Builder used for contextual analysis.
         """
         if ContextBuilder is None or not isinstance(context_builder, ContextBuilder):
-            raise TypeError("context_builder must be a ContextBuilder instance")
+            received_cls = context_builder.__class__
+            raise TypeError(
+                "context_builder must be a ContextBuilder instance; "
+                f"received {received_cls.__module__}.{received_cls.__name__}"
+            )
         try:
             context_builder.refresh_db_weights()
         except Exception as exc:  # pragma: no cover - surface configuration issues
