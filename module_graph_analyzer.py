@@ -389,7 +389,14 @@ def cluster_modules(
             undirected[b][a]["weight"] += w
         else:
             undirected.add_edge(a, b, weight=w)
-    undirected.add_nodes_from(graph.nodes)
+    # Support both full networkx and the local lightweight graph stub, which
+    # only implements ``add_node``.
+    add_nodes_from = getattr(undirected, "add_nodes_from", None)
+    if callable(add_nodes_from):
+        add_nodes_from(graph.nodes)
+    else:
+        for node in graph.nodes:
+            undirected.add_node(node)
     if use_semantic and root is not None:
         docs: Dict[str, str] = {}
         for node in graph.nodes:
@@ -452,16 +459,19 @@ def cluster_modules(
         except Exception:
             pass
 
-    if algorithm == "label":
-        from networkx.algorithms.community import asyn_lpa_communities
+    try:
+        if algorithm == "label":
+            from networkx.algorithms.community import asyn_lpa_communities
 
-        communities = list(asyn_lpa_communities(undirected, weight="weight"))
-    else:
-        from networkx.algorithms.community import greedy_modularity_communities
+            communities = list(asyn_lpa_communities(undirected, weight="weight"))
+        else:
+            from networkx.algorithms.community import greedy_modularity_communities
 
-        communities = list(
-            greedy_modularity_communities(undirected, weight="weight")
-        )
+            communities = list(
+                greedy_modularity_communities(undirected, weight="weight")
+            )
+    except Exception:
+        communities = [set(component) for component in nx.connected_components(undirected)]
 
     mapping: Dict[str, int] = {}
     for idx, comm in enumerate(communities):
