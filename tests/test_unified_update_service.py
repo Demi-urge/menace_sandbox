@@ -18,8 +18,10 @@ class DummyDeployer:
         self.event_bus = bus
         self.updated = []
         self.deploy_called = False
+        self.deploy_spec = None
     def deploy(self, name, bots, spec):
         self.deploy_called = True
+        self.deploy_spec = spec
     def auto_update_nodes(self, nodes, branch="main"):
         self.updated.append(list(nodes))
         for n in nodes:
@@ -54,6 +56,20 @@ def test_staged_rollout(monkeypatch):
     svc._cycle()
     assert upd.calls == ["vh"]
     assert dep.updated == [["a", "b"], ["c"]]
+
+
+def test_cycle_constructs_deployment_spec_with_required_fields(monkeypatch):
+    bus = UnifiedEventBus()
+    upd = DummyUpdate()
+    dep = DummyDeployer(bus)
+    svc = UnifiedUpdateService(updater_service=upd, deployer=dep)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.delenv("NODES", raising=False)
+    svc._cycle()
+    assert dep.deploy_called is True
+    assert dep.deploy_spec.name == "auto-update"
+    assert dep.deploy_spec.env == {}
+    assert dep.deploy_spec.resources == {}
 
 
 def test_rollout_failure_triggers_rollback(monkeypatch):
@@ -96,3 +112,38 @@ def test_rollback_errors_logged(monkeypatch, caplog):
     with pytest.raises(RuntimeError):
         svc._cycle()
     assert "rollback failed" in caplog.text
+
+
+def test_run_continuous_recovers_when_spec_construction_fails(monkeypatch, caplog):
+    bus = UnifiedEventBus()
+    upd = DummyUpdate()
+    dep = DummyDeployer(bus)
+    svc = UnifiedUpdateService(updater_service=upd, deployer=dep)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    from menace import unified_update_service as uus
+
+    class BrokenSpec:
+        def __init__(self, *args, **kwargs):
+            raise ValueError("bad spec")
+
+    monkeypatch.setattr(uus, "DeploymentSpec", BrokenSpec)
+
+    import threading
+
+    stop = threading.Event()
+    caplog.set_level("ERROR")
+
+    class ImmediateThread:
+        def __init__(self, target, daemon):
+            self.target = target
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(stop, "wait", lambda _interval: True)
+
+    svc.run_continuous(interval=0.01, stop_event=stop)
+    assert "failed to build deployment spec" in caplog.text
+    assert "cycle failed and will be retried on next interval" in caplog.text
