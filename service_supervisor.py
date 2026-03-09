@@ -120,6 +120,9 @@ KnowledgeGraph = _import_supervisor_module(".knowledge_graph", "knowledge_graph"
 ChaosMonitoringService = _import_supervisor_module(
     ".chaos_monitoring_service", "chaos_monitoring_service"
 ).ChaosMonitoringService
+resolve_chaos_context_builder = _import_supervisor_module(
+    ".chaos_monitoring_service", "chaos_monitoring_service"
+).resolve_context_builder
 ModelEvaluationService = _import_supervisor_module(
     ".model_evaluation_service", "model_evaluation_service"
 ).ModelEvaluationService
@@ -314,6 +317,7 @@ def _dep_update_worker() -> None:
 def _chaos_worker(context_builder: ContextBuilder) -> None:
     """Continuously inject faults and rollback on failure."""
     logger = logging.getLogger("chaos_worker")
+    context_builder = resolve_chaos_context_builder(context_builder)
     service = ChaosMonitoringService(context_builder=context_builder)
     stop = Event()
     interval = float(os.getenv("CHAOS_INTERVAL", "300"))

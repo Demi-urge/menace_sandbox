@@ -137,10 +137,16 @@ def test_weights_refreshed_on_startup():
 
 
 def test_requires_context_builder_instance():
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError) as exc:
         mod.ChaosMonitoringService(context_builder=object())
+    assert "builtins.object" in str(exc.value)
 
 
 def test_refresh_errors_surface_early():
     with pytest.raises(RuntimeError):
         mod.ChaosMonitoringService(context_builder=BrokenBuilder())
+
+
+def test_resolve_context_builder_accepts_factory_input():
+    builder = mod.resolve_context_builder(lambda: DummyBuilder())
+    assert isinstance(builder, DummyBuilder)
