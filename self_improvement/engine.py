@@ -107,6 +107,9 @@ _qfe_log("os imported")
 import importlib
 _qfe_log("importlib imported")
 
+import random
+_qfe_log("random imported")
+
 _MANUAL_LAUNCH_TRIGGERED = False
 _AUTONOMOUS_SANDBOX_LAUNCH_ENV = "MENACE_AUTONOMOUS_SANDBOX_LAUNCH_ON_IMPORT"
 
@@ -576,6 +579,102 @@ _LOCAL_KNOWLEDGE_IMPORT_STATE: dict[str, Any] = {
     "init_local_knowledge": None,
 }
 _LOCAL_KNOWLEDGE_RELOAD_MIN_BACKOFF_SECONDS = 45.0
+_SI2F_LOCAL_RETRY_BASE_SECONDS = 1.0
+_SI2F_LOCAL_RETRY_MAX_SECONDS = 30.0
+_SI2F_LOCAL_RETRY_JITTER_SECONDS = 0.5
+_SI2F_LOCAL_BREAKER_ATTEMPTS = 5
+_SI2F_LOCAL_BREAKER_WINDOW_SECONDS = 60.0
+_SI2F_LOCAL_BREAKER_PAUSE_SECONDS = 90.0
+_SI2F_LOCAL_ATTEMPT_TIMESTAMPS: list[float] = []
+_SI2F_LOCAL_BREAKER_STATE = "closed"
+_SI2F_LOCAL_BREAKER_OPENED_AT = 0.0
+_SI2F_LOCAL_LAST_SUCCESS_AT = 0.0
+_SI2F_LOCAL_LAST_EXCEPTION: BaseException | None = None
+_SI2F_LOCAL_LAST_ROOT_CAUSE: BaseException | None = None
+_SI2F_LOCAL_RETRY_TOTAL = 0
+
+
+def _si2f_local_metrics_snapshot(now: float | None = None) -> dict[str, Any]:
+    ts_now = time.monotonic() if now is None else now
+    window_start = ts_now - _SI2F_LOCAL_BREAKER_WINDOW_SECONDS
+    attempts_in_window = sum(1 for ts in _SI2F_LOCAL_ATTEMPT_TIMESTAMPS if ts >= window_start)
+    return {
+        "retry_rate_per_second": attempts_in_window / _SI2F_LOCAL_BREAKER_WINDOW_SECONDS,
+        "attempts_in_window": attempts_in_window,
+        "breaker_state": _SI2F_LOCAL_BREAKER_STATE,
+        "last_success_monotonic": _SI2F_LOCAL_LAST_SUCCESS_AT or None,
+    }
+
+
+def _si2f_local_retry_delay_seconds(attempt: int) -> float:
+    backoff = min(
+        _SI2F_LOCAL_RETRY_MAX_SECONDS,
+        _SI2F_LOCAL_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1)),
+    )
+    return backoff + random.uniform(0.0, _SI2F_LOCAL_RETRY_JITTER_SECONDS)
+
+
+def _si2f_local_record_retry() -> int:
+    global _SI2F_LOCAL_RETRY_TOTAL
+
+    _SI2F_LOCAL_RETRY_TOTAL += 1
+    return _SI2F_LOCAL_RETRY_TOTAL
+
+
+def _si2f_local_record_success(now: float) -> None:
+    global _SI2F_LOCAL_LAST_SUCCESS_AT
+
+    _SI2F_LOCAL_LAST_SUCCESS_AT = now
+
+
+def _si2f_local_reset_breaker() -> None:
+    global _SI2F_LOCAL_BREAKER_STATE, _SI2F_LOCAL_BREAKER_OPENED_AT
+
+    _SI2F_LOCAL_BREAKER_STATE = "closed"
+    _SI2F_LOCAL_BREAKER_OPENED_AT = 0.0
+
+
+def _si2f_local_probe_allowed(*, explicit_recovery: bool, now: float) -> bool:
+    global _SI2F_LOCAL_BREAKER_STATE
+
+    if _SI2F_LOCAL_BREAKER_STATE != "open":
+        return True
+    if explicit_recovery or (now - _SI2F_LOCAL_BREAKER_OPENED_AT) >= _SI2F_LOCAL_BREAKER_PAUSE_SECONDS:
+        _SI2F_LOCAL_BREAKER_STATE = "half-open"
+        return True
+    return False
+
+
+def _si2f_local_record_failure(exc: BaseException, *, now: float) -> None:
+    global _SI2F_LOCAL_BREAKER_STATE, _SI2F_LOCAL_BREAKER_OPENED_AT
+    global _SI2F_LOCAL_LAST_EXCEPTION, _SI2F_LOCAL_LAST_ROOT_CAUSE
+
+    _SI2F_LOCAL_LAST_EXCEPTION = exc
+    _SI2F_LOCAL_LAST_ROOT_CAUSE = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+    _SI2F_LOCAL_ATTEMPT_TIMESTAMPS.append(now)
+    window_start = now - _SI2F_LOCAL_BREAKER_WINDOW_SECONDS
+    _SI2F_LOCAL_ATTEMPT_TIMESTAMPS[:] = [ts for ts in _SI2F_LOCAL_ATTEMPT_TIMESTAMPS if ts >= window_start]
+    attempts_in_window = len(_SI2F_LOCAL_ATTEMPT_TIMESTAMPS)
+    if attempts_in_window >= _SI2F_LOCAL_BREAKER_ATTEMPTS and _SI2F_LOCAL_BREAKER_STATE != "open":
+        _SI2F_LOCAL_BREAKER_STATE = "open"
+        _SI2F_LOCAL_BREAKER_OPENED_AT = now
+        logger.error(
+            "SI-2f.local circuit breaker opened; pausing local import/bootstrap retries",
+            extra=log_record(
+                event="si-2f.local-breaker-open",
+                breaker_window_seconds=_SI2F_LOCAL_BREAKER_WINDOW_SECONDS,
+                breaker_pause_seconds=_SI2F_LOCAL_BREAKER_PAUSE_SECONDS,
+                last_exception_type=type(exc).__name__,
+                last_exception=str(exc),
+                root_cause_type=(
+                    type(_SI2F_LOCAL_LAST_ROOT_CAUSE).__name__
+                    if _SI2F_LOCAL_LAST_ROOT_CAUSE is not None
+                    else None
+                ),
+                root_cause=(str(_SI2F_LOCAL_LAST_ROOT_CAUSE) if _SI2F_LOCAL_LAST_ROOT_CAUSE is not None else None),
+                **_si2f_local_metrics_snapshot(now),
+            ),
+        )
 
 
 def _resolve_local_knowledge_module_hash(module_name: str) -> str | None:
@@ -1685,13 +1784,8 @@ class SelfImprovementEngine:
         runner_config: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        _LocalKnowledgeModule, _init_local_knowledge = _load_local_knowledge_symbols(
-            caller=self.__class__.__name__,
-            reason="constructor",
-            reload_requested=local_knowledge_reload,
-            trigger=local_knowledge_reload_trigger or "engine-init",
-            failure_recovery=local_knowledge_failure_recovery,
-        )
+        caller = self.__class__.__name__
+        reason = "constructor"
 
         if gpt_memory is None:
             gpt_memory = kwargs.get("gpt_memory_manager")
@@ -1751,37 +1845,78 @@ class SelfImprovementEngine:
                 getattr(self.pipeline_manager, "bootstrap_mode", False)
             )
         self.research_aggregation_available = True
-        try:
-            self.aggregator = get_or_create_research_aggregator(
-                [bot_name],
-                info_db=self.info_db,
-                context_builder=context_builder,
-                manager=self.pipeline_manager,
-                pipeline=self.pipeline,
-                pipeline_promoter=self.pipeline_promoter,
-                bootstrap_owner=bootstrap_owner_token,
-                bootstrap=bootstrap_active,
-                allow_fallback=not strict_bootstrap,
-                strict_bootstrap=strict_bootstrap,
-                defer_migrations_until_ready=True,
-                caller_label="SelfImprovementEngine.__init__",
-                creation_reason="si-2f.local-orchestration",
-            )
-        except Exception as exc:
-            root_cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
-            logger.warning(
-                "research aggregator unavailable; continuing without it",
-                exc_info=exc,
-                extra=log_record(
-                    event="research-aggregator-init-failed",
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                    root_cause=str(root_cause) if root_cause else None,
-                    root_cause_type=type(root_cause).__name__ if root_cause else None,
-                ),
-            )
-            self.research_aggregation_available = False
-            self.aggregator = None
+
+        attempt = 0
+        while True:
+            now = time.monotonic()
+            if not _si2f_local_probe_allowed(
+                explicit_recovery=local_knowledge_failure_recovery,
+                now=now,
+            ):
+                logger.warning(
+                    "SI-2f.local setup paused while circuit breaker is open",
+                    extra=log_record(
+                        event="si-2f.local-breaker-paused",
+                        explicit_recovery_required=True,
+                        half_open_after_seconds=_SI2F_LOCAL_BREAKER_PAUSE_SECONDS,
+                        **_si2f_local_metrics_snapshot(now),
+                    ),
+                )
+                self.research_aggregation_available = False
+                self.aggregator = None
+                _LocalKnowledgeModule = LocalKnowledgeModule
+                _init_local_knowledge = init_local_knowledge
+                break
+            attempt += 1
+            try:
+                _LocalKnowledgeModule, _init_local_knowledge = _load_local_knowledge_symbols(
+                    caller=caller,
+                    reason=reason,
+                    reload_requested=local_knowledge_reload,
+                    trigger=local_knowledge_reload_trigger or "engine-init",
+                    failure_recovery=local_knowledge_failure_recovery,
+                )
+                self.aggregator = get_or_create_research_aggregator(
+                    [bot_name],
+                    info_db=self.info_db,
+                    context_builder=context_builder,
+                    manager=self.pipeline_manager,
+                    pipeline=self.pipeline,
+                    pipeline_promoter=self.pipeline_promoter,
+                    bootstrap_owner=bootstrap_owner_token,
+                    bootstrap=bootstrap_active,
+                    allow_fallback=not strict_bootstrap,
+                    strict_bootstrap=strict_bootstrap,
+                    defer_migrations_until_ready=True,
+                    caller_label="SelfImprovementEngine.__init__",
+                    creation_reason="si-2f.local-orchestration",
+                )
+            except Exception as exc:
+                retry_total = _si2f_local_record_retry()
+                _si2f_local_record_failure(exc, now=now)
+                if _SI2F_LOCAL_BREAKER_STATE == "open":
+                    self.research_aggregation_available = False
+                    self.aggregator = None
+                    _LocalKnowledgeModule = LocalKnowledgeModule
+                    _init_local_knowledge = init_local_knowledge
+                    break
+                delay = _si2f_local_retry_delay_seconds(attempt)
+                logger.warning(
+                    "SI-2f.local setup retry scheduled",
+                    exc_info=exc,
+                    extra=log_record(
+                        event="si-2f.local-retry",
+                        attempt=attempt,
+                        sleep_seconds=delay,
+                        retry_total=retry_total,
+                        **_si2f_local_metrics_snapshot(now),
+                    ),
+                )
+                time.sleep(delay)
+                continue
+            _si2f_local_reset_breaker()
+            _si2f_local_record_success(now)
+            break
         if self.aggregator is not None and getattr(self.pipeline, "aggregator", None) is not self.aggregator:
             attach_helper = getattr(self.pipeline, "_attach_helper", None)
             if callable(attach_helper):
