@@ -588,3 +588,83 @@ def test_self_test_worker_invocation_contract(monkeypatch):
     assert run_kwargs["interval"] == 42.0
     assert "stop_event" in run_kwargs
     assert run_kwargs["stop_event"].is_set()
+
+
+def test_dependency_watchdog_opens_circuit_and_reports_status(monkeypatch):
+    supervisor = object.__new__(ss.ServiceSupervisor)
+    supervisor.logger = logging.getLogger("ServiceSupervisorWatchdog")
+    supervisor.logger.handlers = []
+    supervisor.logger.addHandler(logging.NullHandler())
+    supervisor.check_interval = 1.0
+    supervisor._watchdog_failure_timestamps = []
+    supervisor._watchdog_consecutive_failures = 0
+    supervisor._watchdog_circuit_state = "closed"
+    supervisor._watchdog_opened_at = 0.0
+    supervisor._watchdog_next_action_at = 0.0
+    supervisor._watchdog_is_degraded = False
+    supervisor._watchdog_restart_window_seconds = 300.0
+    supervisor._watchdog_circuit_threshold = 2
+    supervisor._watchdog_backoff_base_seconds = 2.0
+    supervisor._watchdog_backoff_max_seconds = 60.0
+    supervisor._watchdog_backoff_jitter_ratio = 0.0
+    supervisor._watchdog_probe_interval_seconds = 30.0
+    supervisor.processes = {}
+
+    heals: list[str] = []
+    supervisor._heal = lambda name: heals.append(name)
+
+    supervisor._handle_dependency_watchdog_exit(100.0)
+    supervisor._handle_dependency_watchdog_exit(101.0)
+
+    assert supervisor._watchdog_circuit_state == "open"
+    assert supervisor._watchdog_is_degraded is True
+    assert heals == ["dependency_watchdog"]
+
+    status = supervisor.status()
+    assert status["dependency_watchdog_breaker"]["state"] == "open"
+    assert status["dependency_watchdog_breaker"]["degraded"] is True
+
+
+def test_dependency_watchdog_half_open_probe_and_recovery(monkeypatch):
+    supervisor = object.__new__(ss.ServiceSupervisor)
+    supervisor.logger = logging.getLogger("ServiceSupervisorWatchdogRecovery")
+    supervisor.logger.handlers = []
+    supervisor.logger.addHandler(logging.NullHandler())
+    supervisor.check_interval = 1.0
+    supervisor._watchdog_failure_timestamps = [1.0, 2.0]
+    supervisor._watchdog_consecutive_failures = 2
+    supervisor._watchdog_circuit_state = "open"
+    supervisor._watchdog_opened_at = 10.0
+    supervisor._watchdog_next_action_at = 15.0
+    supervisor._watchdog_is_degraded = True
+    supervisor._watchdog_restart_window_seconds = 300.0
+    supervisor._watchdog_circuit_threshold = 5
+    supervisor._watchdog_backoff_base_seconds = 2.0
+    supervisor._watchdog_backoff_max_seconds = 60.0
+    supervisor._watchdog_backoff_jitter_ratio = 0.0
+    supervisor._watchdog_probe_interval_seconds = 30.0
+
+    heals: list[str] = []
+    supervisor._heal = lambda name: heals.append(name)
+
+    supervisor._handle_dependency_watchdog_exit(16.0)
+    assert supervisor._watchdog_circuit_state == "half_open"
+    assert heals == ["dependency_watchdog"]
+
+    supervisor._handle_dependency_watchdog_alive()
+    assert supervisor._watchdog_circuit_state == "closed"
+    assert supervisor._watchdog_is_degraded is False
+    assert supervisor._watchdog_consecutive_failures == 0
+    assert supervisor._watchdog_failure_timestamps == []
+
+
+def test_dependency_watchdog_backoff_uses_exponential_strategy():
+    supervisor = object.__new__(ss.ServiceSupervisor)
+    supervisor.check_interval = 1.0
+    supervisor._watchdog_consecutive_failures = 3
+    supervisor._watchdog_backoff_base_seconds = 2.0
+    supervisor._watchdog_backoff_max_seconds = 60.0
+    supervisor._watchdog_backoff_jitter_ratio = 0.0
+
+    delay = supervisor._compute_watchdog_backoff()
+    assert delay == pytest.approx(8.0)
