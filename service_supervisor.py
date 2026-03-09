@@ -222,9 +222,29 @@ def _parse_map(value: str) -> dict[str, str]:
     return result
 
 
+def _log_worker_startup(worker_name: str, *, imported_module: object | None = None) -> None:
+    """Emit startup diagnostics for spawn/import troubleshooting."""
+    logger = logging.getLogger(worker_name)
+    module_path = None
+    module_name = __name__
+    module_package = __package__
+    if imported_module is not None:
+        module_path = getattr(imported_module, "__file__", None)
+        module_name = getattr(imported_module, "__name__", module_name)
+        module_package = getattr(imported_module, "__package__", module_package)
+    logger.info(
+        "worker startup import context: module=%s package=%s path=%s supervisor_mode=%s",
+        module_name,
+        module_package,
+        module_path,
+        _IMPORT_MODE,
+    )
+
+
 def _orchestrator_worker(context_builder: ContextBuilder) -> None:
     """Run the main Menace orchestration loop."""
     logger = logging.getLogger("orchestrator_worker")
+    _log_worker_startup("orchestrator_worker")
     _init_unused_bots()
     models = os.environ.get("MODELS", "demo").split(",")
     sleep_seconds = float(os.environ.get("SLEEP_SECONDS", "0"))
@@ -250,6 +270,7 @@ def _orchestrator_worker(context_builder: ContextBuilder) -> None:
 def _microtrend_worker() -> None:
     """Continuously run the microtrend service."""
     logger = logging.getLogger("microtrend_worker")
+    _log_worker_startup("microtrend_worker")
     service = MicrotrendService()
     stop = Event()
     service.run_continuous(
@@ -267,6 +288,7 @@ def _microtrend_worker() -> None:
 def _self_eval_worker() -> None:
     """Run the self-evaluation service combining trends and cloning."""
     logger = logging.getLogger("self_eval_worker")
+    _log_worker_startup("self_eval_worker")
     service = SelfEvaluationService()
     stop = Event()
     interval = float(os.getenv("SELF_EVAL_INTERVAL", "3600"))
@@ -281,12 +303,14 @@ def _self_eval_worker() -> None:
 
 def _learning_worker() -> None:
     """Run the self-learning coordinator."""
+    _log_worker_startup("learning_worker")
     learning_main(stop_event=Event())
 
 
 def _ranking_worker() -> None:
     """Periodically rank models and redeploy the best."""
     logger = logging.getLogger("ranking_worker")
+    _log_worker_startup("ranking_worker")
     service = ModelRankingService()
     stop = Event()
     interval = float(os.getenv("MODEL_RANK_INTERVAL", "86400"))
@@ -302,6 +326,7 @@ def _ranking_worker() -> None:
 def _dep_update_worker() -> None:
     """Periodically update dependencies and redeploy."""
     logger = logging.getLogger("dependency_update_worker")
+    _log_worker_startup("dependency_update_worker")
     service = DependencyUpdateService()
     stop = Event()
     interval = float(os.getenv("DEP_UPDATE_INTERVAL", "86400"))
@@ -317,6 +342,7 @@ def _dep_update_worker() -> None:
 def _chaos_worker(context_builder: ContextBuilder) -> None:
     """Continuously inject faults and rollback on failure."""
     logger = logging.getLogger("chaos_worker")
+    _log_worker_startup("chaos_worker")
     context_builder = resolve_chaos_context_builder(context_builder)
     service = ChaosMonitoringService(context_builder=context_builder)
     stop = Event()
@@ -333,6 +359,7 @@ def _chaos_worker(context_builder: ContextBuilder) -> None:
 def _eval_worker() -> None:
     """Periodic self-hosted model evaluation."""
     logger = logging.getLogger("evaluation_worker")
+    _log_worker_startup("evaluation_worker")
     service = ModelEvaluationService()
     stop = Event()
     interval = float(os.getenv("EVAL_INTERVAL", "43200"))
@@ -347,8 +374,11 @@ def _eval_worker() -> None:
 
 def _debug_worker(context_builder: ContextBuilder) -> None:
     """Continuously run telemetry-driven debugging."""
-    from .debug_loop_service import DebugLoopService
+    from menace_sandbox import debug_loop_service
+
+    DebugLoopService = debug_loop_service.DebugLoopService
     logger = logging.getLogger("debug_worker")
+    _log_worker_startup("debug_worker", imported_module=debug_loop_service)
     service = DebugLoopService(context_builder=context_builder)
     stop = Event()
     interval = float(os.getenv("DEBUG_INTERVAL", "300"))
@@ -364,6 +394,7 @@ def _debug_worker(context_builder: ContextBuilder) -> None:
 def _dependency_provision_worker() -> None:
     """Provision external dependencies and monitor them."""
     logger = logging.getLogger("dependency_provision_worker")
+    _log_worker_startup("dependency_provision_worker")
     ExternalDependencyProvisioner().provision()
     interval = float(os.getenv("WATCHDOG_INTERVAL", "60"))
     endpoints = _parse_map(os.getenv("DEPENDENCY_ENDPOINTS", ""))
@@ -380,6 +411,7 @@ def _dependency_provision_worker() -> None:
 def _dependency_monitor_worker() -> None:
     """Periodically verify critical dependencies and config."""
     logger = logging.getLogger("dependency_monitor_worker")
+    _log_worker_startup("dependency_monitor_worker")
     interval = float(os.getenv("DEPENDENCY_MONITOR_INTERVAL", "3600"))
     try:
         while True:
@@ -397,6 +429,7 @@ def _dependency_monitor_worker() -> None:
 def _env_restore_worker() -> None:
     """Continuously restore the environment using the bootstrapper."""
     logger = logging.getLogger("env_restore_worker")
+    _log_worker_startup("env_restore_worker")
     service = EnvironmentRestorationService()
     stop = Event()
     interval = float(os.getenv("ENV_RESTORE_INTERVAL", "3600"))
@@ -412,6 +445,7 @@ def _env_restore_worker() -> None:
 def _update_worker() -> None:
     """Run unified dependency updates and redeploy."""
     logger = logging.getLogger("update_worker")
+    _log_worker_startup("update_worker")
     svc = UnifiedUpdateService()
     stop = Event()
     interval = float(os.getenv("UPDATE_INTERVAL", "86400"))
@@ -427,6 +461,7 @@ def _update_worker() -> None:
 def _self_test_worker(builder: ContextBuilder) -> None:
     """Execute the self test suite periodically."""
     logger = logging.getLogger("self_test_worker")
+    _log_worker_startup("self_test_worker")
     svc = SelfTestService(context_builder=builder)
     stop = Event()
     interval = float(os.getenv("SELF_TEST_INTERVAL", "86400"))
@@ -442,6 +477,7 @@ def _self_test_worker(builder: ContextBuilder) -> None:
 def _autoscale_worker() -> None:
     """Adjust resources based on system load."""
     logger = logging.getLogger("autoscale_worker")
+    _log_worker_startup("autoscale_worker")
     auto = Autoscaler()
     interval = float(os.getenv("AUTOSCALE_INTERVAL", "0"))
     if interval <= 0:
@@ -468,6 +504,7 @@ def _autoscale_worker() -> None:
 def _secret_rotation_worker() -> None:
     """Periodically rotate configured secrets."""
     logger = logging.getLogger("secret_rotation_worker")
+    _log_worker_startup("secret_rotation_worker")
     service = SecretRotationService()
     stop = Event()
     interval = float(os.getenv("SECRET_ROTATION_INTERVAL", "86400"))
