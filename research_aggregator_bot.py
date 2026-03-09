@@ -86,6 +86,7 @@ logger = logging.getLogger(__name__)
 _VECTOR_BOOTSTRAP_SKIP_ENV = "SKIP_VECTOR_BOOTSTRAP"
 _VECTOR_SEEDING_STRICT_ENV = "VECTOR_SEEDING_STRICT"
 _RESEARCH_AGGREGATOR_STRICT_ENV = "RESEARCH_AGGREGATOR_STRICT_BOOTSTRAP"
+_DEGRADED_RETRY_BUDGET_ENV = "MENACE_RA_MAX_DEGRADED_RETRIES"
 
 
 def _vector_bootstrap_disabled() -> bool:
@@ -113,6 +114,84 @@ _BOOTSTRAP_BROKER: object | None = None
 _DEGRADED_BOOTSTRAP_LOG_COUNTS: dict[tuple[str, str], int] = {}
 
 
+@dataclass
+class _DegradedBootstrapRetryState:
+    max_retries: int
+    retries_used: int = 0
+    terminal: bool = False
+    terminal_stage: str | None = None
+    root_cause: str | None = None
+    root_cause_type: str | None = None
+    final_error_emitted: bool = False
+
+
+def _resolve_degraded_retry_budget() -> int:
+    raw_value = os.getenv(_DEGRADED_RETRY_BUDGET_ENV, "1").strip()
+    if not raw_value:
+        return 1
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r; defaulting degraded retry budget to 1",
+            _DEGRADED_RETRY_BUDGET_ENV,
+            raw_value,
+        )
+        return 1
+    return max(0, parsed)
+
+
+_DEGRADED_RETRY_STATE = _DegradedBootstrapRetryState(
+    max_retries=_resolve_degraded_retry_budget()
+)
+
+
+def _mark_terminal_bootstrap_failure(
+    *,
+    stage: str,
+    exc: BaseException,
+    strict_bootstrap: bool,
+    allow_fallback: bool,
+) -> None:
+    _DEGRADED_RETRY_STATE.terminal = True
+    _DEGRADED_RETRY_STATE.terminal_stage = stage
+    _DEGRADED_RETRY_STATE.root_cause = str(exc)
+    _DEGRADED_RETRY_STATE.root_cause_type = exc.__class__.__name__
+    if _DEGRADED_RETRY_STATE.final_error_emitted:
+        return
+    _DEGRADED_RETRY_STATE.final_error_emitted = True
+    logger.error(
+        "ResearchAggregatorBot bootstrap failed permanently after degraded retry budget exhaustion",
+        extra={
+            "event": "research-aggregator-bootstrap-terminal-failure",
+            "stage": stage,
+            "strict_bootstrap": strict_bootstrap,
+            "allow_fallback": allow_fallback,
+            "retries_used": _DEGRADED_RETRY_STATE.retries_used,
+            "max_retries": _DEGRADED_RETRY_STATE.max_retries,
+            "root_cause": _DEGRADED_RETRY_STATE.root_cause,
+            "root_cause_type": _DEGRADED_RETRY_STATE.root_cause_type,
+        },
+    )
+
+
+def _consume_degraded_retry_budget(
+    *, stage: str, exc: BaseException, strict_bootstrap: bool, allow_fallback: bool
+) -> bool:
+    if strict_bootstrap or not allow_fallback or _DEGRADED_RETRY_STATE.terminal:
+        return False
+    if _DEGRADED_RETRY_STATE.retries_used >= _DEGRADED_RETRY_STATE.max_retries:
+        _mark_terminal_bootstrap_failure(
+            stage=stage,
+            exc=exc,
+            strict_bootstrap=strict_bootstrap,
+            allow_fallback=allow_fallback,
+        )
+        return False
+    _DEGRADED_RETRY_STATE.retries_used += 1
+    return True
+
+
 def _log_degraded_bootstrap_warning(
     event: str,
     message: str,
@@ -121,6 +200,9 @@ def _log_degraded_bootstrap_warning(
     extra: Mapping[str, object] | None = None,
 ) -> None:
     """Log degraded bootstrap warnings once, then downgrade repeats to debug."""
+
+    if _DEGRADED_RETRY_STATE.terminal and event.startswith("research-aggregator-"):
+        return
 
     payload: dict[str, object] = dict(extra or {})
     resolved_reason = reason or str(
@@ -1919,7 +2001,6 @@ class ResearchAggregatorBot:
         allow_fallback: bool | None = None,
         strict_bootstrap: bool | None = None,
     ) -> None:
-        _ensure_bootstrap_ready("ResearchAggregatorBot")
         init_start = time.perf_counter()
         resolved_strict = (
             strict_bootstrap
@@ -1927,6 +2008,17 @@ class ResearchAggregatorBot:
             else _resolve_research_aggregator_strict()
         )
         resolved_allow_fallback = False if resolved_strict else bool(True if allow_fallback is None else allow_fallback)
+        if _DEGRADED_RETRY_STATE.terminal:
+            stage = _DEGRADED_RETRY_STATE.terminal_stage or "runtime-initialisation"
+            root_cause = _DEGRADED_RETRY_STATE.root_cause or "unknown"
+            raise RuntimeError(
+                "ResearchAggregatorBot bootstrap is in terminal failed state; "
+                f"stage={stage} cause={root_cause}"
+            )
+        _ensure_bootstrap_ready(
+            "ResearchAggregatorBot",
+            allow_degraded=resolved_allow_fallback,
+        )
         try:
             deps = _ensure_runtime_dependencies(
                 bootstrap_owner=bootstrap_owner,
@@ -1938,6 +2030,16 @@ class ResearchAggregatorBot:
         except RuntimeError as exc:
             if resolved_strict or not resolved_allow_fallback:
                 raise
+            if not _consume_degraded_retry_budget(
+                stage="runtime-dependency-resolution",
+                exc=exc,
+                strict_bootstrap=resolved_strict,
+                allow_fallback=resolved_allow_fallback,
+            ):
+                raise RuntimeError(
+                    "ResearchAggregatorBot degraded bootstrap retry budget exhausted; "
+                    f"cause={exc}"
+                ) from exc
             _log_degraded_bootstrap_warning(
                 "research-aggregator-degraded-init",
                 "ResearchAggregatorBot runtime dependencies unavailable; proceeding in degraded mode: %s",
@@ -1948,15 +2050,26 @@ class ResearchAggregatorBot:
                     "allow_fallback": resolved_allow_fallback,
                     "broker_owner": bool(getattr(_bootstrap_dependency_broker(), "active_owner", False)),
                     "degraded_reason": str(exc),
+                    "degraded_retry_budget": _DEGRADED_RETRY_STATE.max_retries,
+                    "degraded_retry_used": _DEGRADED_RETRY_STATE.retries_used,
                 },
             )
-            deps = _ensure_runtime_dependencies(
-                bootstrap_owner=bootstrap_owner,
-                pipeline_override=pipeline,
-                manager_override=manager,
-                promote_pipeline=pipeline_promoter,
-                allow_fallback=True,
-            )
+            try:
+                deps = _ensure_runtime_dependencies(
+                    bootstrap_owner=bootstrap_owner,
+                    pipeline_override=pipeline,
+                    manager_override=manager,
+                    promote_pipeline=pipeline_promoter,
+                    allow_fallback=True,
+                )
+            except RuntimeError as degraded_exc:
+                _mark_terminal_bootstrap_failure(
+                    stage="runtime-dependency-resolution",
+                    exc=degraded_exc,
+                    strict_bootstrap=resolved_strict,
+                    allow_fallback=resolved_allow_fallback,
+                )
+                raise
         _ensure_self_coding_decorated(deps)
         builder = context_builder or deps.context_builder
         if builder is None:
