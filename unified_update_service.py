@@ -36,7 +36,10 @@ class UnifiedUpdateService:
             try:
                 verify_host = os.getenv("DEP_VERIFY_HOST")
                 self.update_service._run_once(verify_host=verify_host)
-                spec = DeploymentSpec(resources={})
+                try:
+                    spec = DeploymentSpec(name="auto-update", resources={}, env={})
+                except Exception as spec_exc:
+                    raise RuntimeError(f"failed to build deployment spec: {spec_exc}") from spec_exc
                 self.deployer.deploy("auto-update", [], spec)
                 subprocess.run(["pytest", "-q"], check=True)
 
@@ -73,7 +76,10 @@ class UnifiedUpdateService:
 
         def _loop() -> None:
             while not stop_event.is_set():
-                self._cycle()
+                try:
+                    self._cycle()
+                except Exception as exc:
+                    self.logger.error("cycle failed and will be retried on next interval: %s", exc)
                 if stop_event.wait(interval):
                     break
 
