@@ -3888,3 +3888,58 @@ def test_internalize_in_flight_dedup_skips_manager_construction_and_logs_drop(mo
     assert getattr(record, "reason", None) == "skipped_in_flight"
     assert getattr(record, "source", None) == "in_flight_guard"
     assert getattr(record, "active_attempt_age_seconds", 0.0) >= 0.0
+
+
+def test_internalize_bootstrap_failure_rate_limited(caplog):
+    logger = logging.getLogger("internalize-rate-limit")
+    with scm._INTERNALIZE_BOOTSTRAP_LOG_LOCK:
+        scm._INTERNALIZE_BOOTSTRAP_REASON_COUNTS.clear()
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        scm._log_internalize_bootstrap_failure_rate_limited(
+            logger=logger,
+            reason="manager_construction_timeout_transient",
+            message="internalize_coding_bot transient timeout for %s; returning degraded fallback manager",
+            bot="BotX",
+            args=("BotX",),
+            bootstrap_state="manager_construction_timeout",
+            promotion_state="fallback_returned",
+        )
+        scm._log_internalize_bootstrap_failure_rate_limited(
+            logger=logger,
+            reason="manager_construction_timeout_transient",
+            message="internalize_coding_bot transient timeout for %s; returning degraded fallback manager",
+            bot="BotX",
+            args=("BotX",),
+        )
+
+    records = [r for r in caplog.records if getattr(r, "reason", "") == "manager_construction_timeout_transient"]
+    assert len(records) == 2
+    assert records[0].levelno == logging.INFO
+    assert records[1].levelno == logging.DEBUG
+    assert getattr(records[1], "repeat_count", 0) == 2
+
+
+def test_terminal_component_failure_preserves_first_error(caplog):
+    logger = logging.getLogger("internalize-terminal")
+    with scm._INTERNALIZE_BOOTSTRAP_LOG_LOCK:
+        scm._INTERNALIZE_TERMINAL_FAILURE_COMPONENTS.clear()
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        scm._log_terminal_component_failure_once(
+            logger=logger,
+            component="manager_construction_timeout",
+            message="terminal for %s",
+            args=("BotY",),
+        )
+        scm._log_terminal_component_failure_once(
+            logger=logger,
+            component="manager_construction_timeout",
+            message="terminal for %s",
+            args=("BotY",),
+        )
+
+    records = [r for r in caplog.records if "terminal for" in r.getMessage()]
+    assert len(records) == 2
+    assert records[0].levelno == logging.ERROR
+    assert records[1].levelno == logging.DEBUG
