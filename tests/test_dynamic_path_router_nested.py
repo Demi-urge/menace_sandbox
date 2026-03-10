@@ -81,3 +81,25 @@ def test_resolve_path_with_relocated_root(monkeypatch):
             repo / "patches" / "patch_provenance.py"  # path-ignore
         ).resolve()
         assert dpr.resolve_dir("patches") == (repo / "patches").resolve()
+
+
+def test_resolve_module_path_rejects_empty_name(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    with TemporaryDirectory() as td:
+        repo = Path(td) / "repo"
+        repo.mkdir(parents=True)
+
+        shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")  # path-ignore
+
+        dpr = _load_router(repo / "dynamic_path_router.py")  # path-ignore
+        monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+        dpr.clear_cache()
+
+        import pytest
+
+        with pytest.raises(FileNotFoundError, match="Invalid module name"):
+            dpr.resolve_module_path("")
+        with pytest.raises(FileNotFoundError, match="Invalid module name"):
+            dpr.resolve_module_path(".")
+        with pytest.raises(FileNotFoundError, match="Invalid module name"):
+            dpr.resolve_module_path("...")

@@ -297,7 +297,11 @@ def resolve_path(
 def resolve_module_path(module_name: str) -> Path:
     """Resolve dotted ``module_name`` to a Python source file across all roots."""
 
-    module_path = Path(*module_name.split("."))
+    parts = [part for part in module_name.strip().split(".") if part]
+    if not parts:
+        raise FileNotFoundError(f"Invalid module name: {module_name!r}")
+
+    module_path = Path(*parts)
     try:
         return resolve_path(module_path.with_suffix(".py").as_posix())
     except FileNotFoundError:
