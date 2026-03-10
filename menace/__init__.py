@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from menace_sandbox.legacy_symbol_compat import resolve_legacy_symbol
+
 try:  # pragma: no cover - optional helper module
     from dynamic_path_router import repo_root as _repo_root
 except ModuleNotFoundError:  # pragma: no cover - fallback when module missing
@@ -40,4 +42,23 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
 
-__all__ = ["RAISE_ERRORS", "MenaceDB", "NUMERIC_BACKEND"]
+_LEGACY_SYMBOL_ALIASES = {
+    "audit_logger": "audit_logger",
+    "self_debugger_sandbox": "self_debugger_sandbox",
+    "patch_generator": "menace_sandbox.patch_generator",
+    "sandbox_runner": "sandbox_runner",
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _LEGACY_SYMBOL_ALIASES:
+        resolved = resolve_legacy_symbol(
+            symbol=name,
+            aliases=_LEGACY_SYMBOL_ALIASES,
+            package_name=__name__,
+        )
+        globals()[name] = resolved
+        return resolved
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+__all__ = ["RAISE_ERRORS", "MenaceDB", "NUMERIC_BACKEND", *sorted(_LEGACY_SYMBOL_ALIASES)]
