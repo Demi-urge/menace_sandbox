@@ -62,3 +62,22 @@ def test_light_imports_prefers_fallback(monkeypatch):
 
     assert module.USING_SANDBOX_SETTINGS_FALLBACK is True
 
+
+def test_fallback_uses_env_override_paths(monkeypatch, tmp_path):
+    """Fallback should load defaults from env-configured JSON artifacts."""
+
+    module_path = Path(__file__).resolve().parents[1] / "sandbox_settings_fallback.py"
+    defaults = tmp_path / "defaults.json"
+    env_map = tmp_path / "env_map.json"
+    model_defaults = tmp_path / "model_defaults.json"
+    defaults.write_text('{"severity_score_map": {"critical": 9.0}}', encoding="utf-8")
+    env_map.write_text('{"sandbox_data_dir": ["SANDBOX_DATA_DIR"]}', encoding="utf-8")
+    model_defaults.write_text('{"tiny": {"max_tokens": 128}}', encoding="utf-8")
+
+    monkeypatch.setenv("SANDBOX_SETTINGS_DEFAULTS_PATH", str(defaults))
+    monkeypatch.setenv("SANDBOX_SETTINGS_ENV_MAP_PATH", str(env_map))
+    monkeypatch.setenv("SANDBOX_SETTINGS_MODEL_DEFAULTS_PATH", str(model_defaults))
+
+    module = _load_flat_module(module_path, name="sandbox_settings_fallback_env_override")
+
+    assert module.DEFAULT_SEVERITY_SCORE_MAP["critical"] == 9.0
