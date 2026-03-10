@@ -864,16 +864,36 @@ if '_PATCH_APP_ERROR' in globals() and _PATCH_APP_ERROR is not None:
     )
 
 
-TelemetryEvent = None  # type: ignore[assignment]
+"""Temporary compatibility shim for optional ``TelemetryEvent`` import.
+
+The shim remains constructor-safe and side-effect-free until the real
+``error_logger.TelemetryEvent`` class is lazily imported.
+"""
+
+
+class _TelemetryEventShim:
+    """Transitional compatibility shim for telemetry events."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.module = kwargs.get("module", "")
+        self.patch_id = kwargs.get("patch_id")
+        self.resolution_status = kwargs.get("resolution_status", "unknown")
+        self.metadata = dict(kwargs)
+        if args:
+            self.metadata["args"] = list(args)
+
+
+TelemetryEvent = _TelemetryEventShim  # type: ignore[assignment]
 _TELEMETRY_EVENT_ERROR: BaseException | None = None
 _TELEMETRY_EVENT_WARNED = False
+_TELEMETRY_EVENT_UNRESOLVED = True
 
 
 def _load_telemetry_event() -> type:
     """Resolve :class:`TelemetryEvent` lazily."""
 
-    global TelemetryEvent, _TELEMETRY_EVENT_ERROR
-    if TelemetryEvent is not None:
+    global TelemetryEvent, _TELEMETRY_EVENT_ERROR, _TELEMETRY_EVENT_UNRESOLVED
+    if not _TELEMETRY_EVENT_UNRESOLVED:
         return TelemetryEvent
     if _TELEMETRY_EVENT_ERROR is not None:
         raise RuntimeError("TelemetryEvent previously failed to import") from _TELEMETRY_EVENT_ERROR
@@ -892,6 +912,7 @@ def _load_telemetry_event() -> type:
     except AttributeError as exc:  # pragma: no cover - unexpected layout
         _TELEMETRY_EVENT_ERROR = exc
         raise RuntimeError("TelemetryEvent missing from error_logger") from exc
+    _TELEMETRY_EVENT_UNRESOLVED = False
 
     return TelemetryEvent
 
