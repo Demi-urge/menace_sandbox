@@ -397,9 +397,6 @@ def _dependency_provision_worker() -> None:
     logger = logging.getLogger("dependency_provision_worker")
     _log_worker_startup("dependency_provision_worker")
     provisioner = ExternalDependencyProvisioner()
-    retry_base = float(os.getenv("DEPENDENCY_PROVISION_RETRY_BASE_SECS", "30"))
-    retry_max = float(os.getenv("DEPENDENCY_PROVISION_RETRY_MAX_SECS", "300"))
-    attempt = 0
     last_degraded_message = ""
     while True:
         try:
@@ -414,7 +411,7 @@ def _dependency_provision_worker() -> None:
         else:
             degraded_message = (
                 f"dependency provisioning unavailable (degraded mode): {result.message}"
-                if result.is_unavailable
+                if result.is_unavailable or getattr(result, "is_degraded", False)
                 else ""
             )
 
@@ -422,23 +419,10 @@ def _dependency_provision_worker() -> None:
             if degraded_message != last_degraded_message:
                 logger.warning(degraded_message)
                 last_degraded_message = degraded_message
-            wait_seconds = min(retry_base * (2 ** attempt), retry_max)
-            logger.info(
-                "dependency provisioning retry in %.1fs (attempt=%s)",
-                wait_seconds,
-                attempt + 1,
-            )
-            attempt += 1
-            try:
-                time.sleep(wait_seconds)
-            except KeyboardInterrupt:
-                logger.info("dependency provision worker interrupted")
-                return
-            continue
+            break
 
         if result is not None and result.status == "managed_externally":
             logger.info("dependency provisioning skipped: %s", result.message)
-        attempt = 0
         break
 
     interval = float(os.getenv("WATCHDOG_INTERVAL", "60"))
@@ -684,6 +668,7 @@ class ServiceSupervisor:
         self._watchdog_probe_interval_seconds = float(
             os.getenv("DEPENDENCY_WATCHDOG_HALF_OPEN_PROBE_SECS", "30")
         )
+        self._watchdog_last_warning_key = ""
 
     def _resolve_bootstrap_handles(
         self,
@@ -748,12 +733,15 @@ class ServiceSupervisor:
         self._watchdog_opened_at = now
         self._watchdog_next_action_at = now + self._watchdog_probe_interval_seconds
         self._watchdog_is_degraded = True
-        self.logger.error(
-            "dependency_watchdog circuit opened: reason=%s failures=%s probe_at=%.2f",
+        self.logger.warning(
+            "dependency_watchdog disabled by circuit breaker (reason=%s failures=%s). "
+            "Remediation: verify Docker/Compose access or set "
+            "MENACE_EXTERNAL_DEPS_MANAGED_EXTERNALLY=1. Next probe at %.2f",
             reason,
             len(self._watchdog_failure_timestamps),
             self._watchdog_next_action_at,
         )
+        self._watchdog_last_warning_key = f"open:{reason}"
 
     def _watchdog_status(self) -> dict[str, object]:
         return {
@@ -780,7 +768,7 @@ class ServiceSupervisor:
                 return
             self._watchdog_circuit_state = "half_open"
             self._watchdog_next_action_at = now + self._watchdog_probe_interval_seconds
-            self.logger.warning("dependency_watchdog circuit half-open probe")
+            self.logger.info("dependency_watchdog circuit half-open probe")
             self._heal("dependency_watchdog")
             return
 
@@ -805,11 +793,14 @@ class ServiceSupervisor:
 
         delay = self._compute_watchdog_backoff()
         self._watchdog_next_action_at = now + delay
-        self.logger.warning(
-            "dependency_watchdog restart scheduled in %.2fs (consecutive_failures=%s)",
-            delay,
-            self._watchdog_consecutive_failures,
-        )
+        if getattr(self, "_watchdog_last_warning_key", "") != "restart_backoff":
+            self.logger.warning(
+                "dependency_watchdog crash loop detected; restart attempts are backoff-limited "
+                "(next in %.2fs). Remediation: verify Docker/Compose access or set "
+                "MENACE_EXTERNAL_DEPS_MANAGED_EXTERNALLY=1.",
+                delay,
+            )
+            self._watchdog_last_warning_key = "restart_backoff"
         self._heal("dependency_watchdog")
 
     def _handle_dependency_watchdog_alive(self) -> None:
@@ -819,6 +810,7 @@ class ServiceSupervisor:
         self._watchdog_is_degraded = False
         self._watchdog_consecutive_failures = 0
         self._watchdog_failure_timestamps = []
+        self._watchdog_last_warning_key = ""
 
     # ------------------------------------------------------------------
     def deploy_patch(self, path: Path, description: str) -> None:

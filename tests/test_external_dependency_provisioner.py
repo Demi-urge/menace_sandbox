@@ -2,7 +2,10 @@ import subprocess
 
 import pytest
 
-from menace.external_dependency_provisioner import ExternalDependencyProvisioner
+from menace.external_dependency_provisioner import (
+    DependencyProvisioningResult,
+    ExternalDependencyProvisioner,
+)
 
 
 def test_detect_compose_command_prefers_docker_compose(monkeypatch):
@@ -90,3 +93,42 @@ def test_provision_uses_detected_command(tmp_path, monkeypatch):
     result = prov.provision()
     assert result.status == "provisioned"
     assert ["docker", "compose", "-f", str(compose), "up", "-d"] in calls
+
+
+def test_provision_returns_degraded_when_compose_unavailable(monkeypatch, tmp_path):
+    compose = tmp_path / "docker-compose.yml"
+
+    monkeypatch.setattr(
+        ExternalDependencyProvisioner,
+        "_detect_compose_command",
+        lambda self: DependencyProvisioningResult(
+            status="unavailable", message="docker not available"
+        ),
+    )
+
+    prov = ExternalDependencyProvisioner(str(compose))
+    result = prov.provision()
+    assert result.status == "degraded"
+
+
+def test_provision_returns_degraded_on_permission_denied(tmp_path, monkeypatch):
+    compose = tmp_path / "docker-compose.yml"
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["docker", "compose", "version"]:
+            return subprocess.CompletedProcess(cmd, 0, "ok", "")
+        if cmd[:2] == ["docker", "compose"] and cmd[-2:] == ["up", "-d"]:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                output="",
+                stderr="Got permission denied while trying to connect to the Docker daemon socket",
+            )
+        raise AssertionError(f"unexpected command {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    prov = ExternalDependencyProvisioner(str(compose))
+
+    result = prov.provision()
+    assert result.status == "degraded"
+    assert "permission" in result.message.lower()
