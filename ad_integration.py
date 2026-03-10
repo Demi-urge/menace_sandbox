@@ -23,7 +23,10 @@ try:
     import requests  # type: ignore
 except Exception as exc:  # pragma: no cover - optional dependency
     logger.warning("requests library missing, using urllib fallback: %s", exc)
-    import types
+
+    # Shim for external dependency: ``requests``.
+    class _RequestsShim:
+        Session: type["_LocalSession"]
 
     class _LocalResponse:
         def __init__(self, data: bytes, status_code: int = 200) -> None:
@@ -38,19 +41,32 @@ except Exception as exc:  # pragma: no cover - optional dependency
                 raise RuntimeError(self.status_code)
 
     class _LocalSession:
-        def get(self, url: str, timeout: int = 10) -> _LocalResponse:
+        def get(
+            self,
+            url: str,
+            params: Mapping[str, object] | None = None,
+            timeout: int = 10,
+        ) -> _LocalResponse:
             logger.warning("LocalSession GET %s", url)
+            if params:
+                separator = "&" if "?" in url else "?"
+                url = f"{url}{separator}{urlencode(sorted(params.items()))}"
             with urllib.request.urlopen(url, timeout=timeout) as fh:
                 data = fh.read()
             return _LocalResponse(data, 200)
 
-    requests = types.SimpleNamespace(Session=_LocalSession)  # type: ignore
+    _REQUESTS_SHIM = _RequestsShim()
+    _REQUESTS_SHIM.Session = _LocalSession
+    requests = _REQUESTS_SHIM  # type: ignore
 
 try:  # optional async HTTP client
     httpx = importlib.import_module("httpx")
 except Exception as exc:  # pragma: no cover - optional dependency
     logger.warning("httpx library missing, using async urllib fallback: %s", exc)
-    import types
+
+    # Shim for external dependency: ``httpx``.
+    class _HttpxShim:
+        AsyncClient: type["_LocalAsyncClient"]
 
     class _LocalAsyncResponse:
         def __init__(self, data: bytes, status_code: int = 200) -> None:
@@ -71,8 +87,16 @@ except Exception as exc:  # pragma: no cover - optional dependency
         async def __aexit__(self, exc_type, exc, tb) -> None:
             return None
 
-        async def get(self, url: str, timeout: int = 10) -> _LocalAsyncResponse:
+        async def get(
+            self,
+            url: str,
+            params: Mapping[str, object] | None = None,
+            timeout: int = 10,
+        ) -> _LocalAsyncResponse:
             logger.warning("LocalAsyncClient GET %s", url)
+            if params:
+                separator = "&" if "?" in url else "?"
+                url = f"{url}{separator}{urlencode(sorted(params.items()))}"
             loop = asyncio.get_running_loop()
 
             def _fetch() -> bytes:
@@ -82,7 +106,9 @@ except Exception as exc:  # pragma: no cover - optional dependency
             data = await loop.run_in_executor(None, _fetch)
             return _LocalAsyncResponse(data)
 
-    httpx = types.SimpleNamespace(AsyncClient=_LocalAsyncClient)  # type: ignore
+    _HTTPX_SHIM = _HttpxShim()
+    _HTTPX_SHIM.AsyncClient = _LocalAsyncClient
+    httpx = _HTTPX_SHIM  # type: ignore
 
 from .finance_router_bot import FinanceRouterBot  # noqa: E402
 from .revenue_amplifier import SalesSpikeMonitor  # noqa: E402

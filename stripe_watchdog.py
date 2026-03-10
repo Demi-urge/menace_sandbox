@@ -55,7 +55,6 @@ from audit_trail import AuditTrail
 from logging.handlers import RotatingFileHandler
 import gzip
 import shutil
-import types
 from snippet_compressor import compress_snippets
 
 from bootstrap_placeholder import advertise_broker_placeholder
@@ -83,12 +82,23 @@ except Exception:  # pragma: no cover - fallback stubs if import fails
     logger.warning(
         "menace_sanity_layer import failed; using no-op stubs for feedback",
     )
-    menace_sanity_layer = types.SimpleNamespace(
-        record_payment_anomaly=lambda *a, **k: None,
-        EVENT_TYPE_INSTRUCTIONS={},
-        refresh_billing_instructions=lambda *a, **k: None,
-        fetch_recent_billing_issues=lambda *a, **k: [],
-    )
+    # Shim for external dependency: ``menace_sanity_layer`` module.
+    class _SanityLayerShim:
+        EVENT_TYPE_INSTRUCTIONS: dict[str, str]
+
+        def __init__(self) -> None:
+            self.EVENT_TYPE_INSTRUCTIONS = {}
+
+        def record_payment_anomaly(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+        def refresh_billing_instructions(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+        def fetch_recent_billing_issues(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            return []
+
+    menace_sanity_layer = _SanityLayerShim()
 
     _SANITY_LAYER_OPTIONAL = os.getenv("MENACE_SANITY_OPTIONAL")
 
