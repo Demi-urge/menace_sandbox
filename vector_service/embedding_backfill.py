@@ -95,7 +95,11 @@ except Exception:  # pragma: no cover - legacy flat import support
     try:
         from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
     except Exception:  # pragma: no cover
-        EmbeddableDBMixin = object  # type: ignore
+        class EmbeddableDBMixin:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
 
 # Registry describing databases capable of embedding backfills. The file
 # ``embedding_registry.json`` lives alongside this module and maps a short name

@@ -1281,7 +1281,16 @@ except ImportError:  # pragma: no cover - fallback for flat layout
         _qfe_log("✅ SI-2f.retire module_retirement_service imported (flat)")
     except ImportError:  # pragma: no cover - last resort
         _qfe_log("⚠️ SI-2f.retire module_retirement_service unavailable")
-        ModuleRetirementService = object  # type: ignore
+        class ModuleRetirementService:  # type: ignore[no-redef]
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+            def run_once(self):
+                return {}, []
+
+            def process_flags(self, *_args, **_kwargs):
+                return {}
 _qfe_log("📦 SI-2f.relevancy importing menace_sandbox.relevancy_metrics_db")
 try:  # pragma: no cover - allow flat imports
     from menace_sandbox.relevancy_metrics_db import RelevancyMetricsDB
@@ -1586,7 +1595,29 @@ except ImportError as exc:  # pragma: no cover - fallback for tests
         extra=log_record(module=__name__, dependency="adaptive_roi_predictor"),
         exc_info=exc,
     )
-    AdaptiveROIPredictor = object  # type: ignore
+    class AdaptiveROIPredictor:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self.cv = None
+            self.param_grid = None
+
+        def predict(self, features):
+            if isinstance(features, list) and features:
+                return [0.0 for _ in features], "unknown", None, None
+            return 0.0, "unknown", None, None
+
+        def evaluate_model(self, *_args, **_kwargs):
+            return 0.0, 0.0
+
+        def record_drift(self, *_args, **_kwargs):
+            return None
+
+        def partial_fit(self, *_args, **_kwargs):
+            return None
+
+        def train(self, *_args, **_kwargs):
+            return None
 
     def load_training_data(*a, **k):  # type: ignore
         return []

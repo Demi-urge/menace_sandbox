@@ -57,7 +57,11 @@ try:  # pragma: no cover - optional dependency
     from watchdog.observers import Observer  # type: ignore
 except Exception:  # pragma: no cover - fallback when module missing
     Observer = None  # type: ignore[misc,assignment]
-    FileSystemEventHandler = object  # type: ignore[misc,assignment]
+
+    class FileSystemEventHandler:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
 finally:  # ensure path restoration
     sys.path = _orig_sys_path
 

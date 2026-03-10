@@ -19,8 +19,20 @@ if TYPE_CHECKING:  # pragma: no cover - optional heavy deps
     from .research_aggregator_bot import ResearchAggregatorBot
     from .ipo_bot import IPOBot
 else:  # pragma: no cover - avoid heavy import at runtime
-    ResearchAggregatorBot = object  # type: ignore
-    IPOBot = object  # type: ignore
+    class _ResearchAggregatorBotShim:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+
+    class _IPOBotShim:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+
+    ResearchAggregatorBot = _ResearchAggregatorBotShim  # type: ignore
+    IPOBot = _IPOBotShim  # type: ignore
 
 
 @dataclass
@@ -91,7 +103,7 @@ class ImplementationPipeline:
             except Exception:
                 pass
             self.researcher = researcher
-        elif isinstance(ResearchAggregatorBot, type) and ResearchAggregatorBot is not object:
+        elif isinstance(ResearchAggregatorBot, type) and ResearchAggregatorBot is not _ResearchAggregatorBotShim:
             from .research_aggregator_bot import get_or_create_research_aggregator
 
             self.researcher = get_or_create_research_aggregator(
@@ -108,7 +120,7 @@ class ImplementationPipeline:
             except Exception:
                 pass
             self.ipo = ipo
-        elif isinstance(IPOBot, type) and IPOBot is not object:
+        elif isinstance(IPOBot, type) and IPOBot is not _IPOBotShim:
             self.ipo = IPOBot(context_builder=context_builder)  # type: ignore
         else:
             self.ipo = None

@@ -10,7 +10,11 @@ from forecast_logger import ForecastLogger
 try:  # pragma: no cover - optional dependency
     from workflow_graph import WorkflowGraph
 except Exception:  # pragma: no cover
-    WorkflowGraph = object  # type: ignore[misc,assignment]
+    class WorkflowGraph:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
 
 
 _reason_roi = "projected_roi_below_threshold"

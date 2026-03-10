@@ -119,7 +119,13 @@ if TYPE_CHECKING:  # pragma: no cover - circular imports
     from .research_data import InfoDB
     from .databases import MenaceDB
 else:  # pragma: no cover
-    BotDB = InfoDB = MenaceDB = object  # type: ignore
+    class _FallbackDB:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+
+    BotDB = InfoDB = MenaceDB = _FallbackDB  # type: ignore
 
 try:  # pragma: no cover - support flat imports
     from .unified_event_bus import UnifiedEventBus

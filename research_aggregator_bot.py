@@ -45,7 +45,11 @@ from .self_coding_engine import SelfCodingEngine
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .model_automation_pipeline import ModelAutomationPipeline
 else:  # pragma: no cover - runtime fallback keeps runtime import lazy
-    ModelAutomationPipeline = object  # type: ignore[misc, assignment]
+    class ModelAutomationPipeline:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager

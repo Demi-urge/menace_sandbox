@@ -64,7 +64,7 @@ if TYPE_CHECKING:  # pragma: no cover - import only for static analysis
     from .error_bot import ErrorBot
     from .self_coding_manager import SelfCodingManager
 else:  # pragma: no cover - runtime fallback when manager is unused
-    SelfCodingManager = object  # type: ignore[assignment]
+    from self_coding_manager_shim import SelfCodingManagerShim as SelfCodingManager
 
 
 @dataclass

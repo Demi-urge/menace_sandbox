@@ -15,7 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .genetic_algorithm_bot import GeneticAlgorithmBot
     from .self_coding_manager import SelfCodingManager
 else:  # pragma: no cover - runtime fallback when manager is unused
-    SelfCodingManager = object  # type: ignore[assignment]
+    from self_coding_manager_shim import SelfCodingManagerShim as SelfCodingManager
 
 
 @lru_cache(maxsize=1)
