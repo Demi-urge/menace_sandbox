@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
+from dataclasses import dataclass
 from typing import Any, Iterable, cast
 
 from ..data_interfaces import DataBotInterface, RawMetrics
@@ -21,6 +21,14 @@ _data_bot_fallback_logged = False
 _shared_data_bot_instance: DataBotInterface | None = None
 
 
+@dataclass
+class _FallbackDB:
+    """Minimal DB shim used by the fallback data bot."""
+
+    def fetch(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+
 def _build_fallback_data_bot() -> DataBotInterface:
     """Return a minimal :class:`DataBotInterface` implementation."""
 
@@ -28,7 +36,7 @@ def _build_fallback_data_bot() -> DataBotInterface:
         """Lightweight stand-in used when the real DataBot cannot load."""
 
         def __init__(self) -> None:
-            self.db = SimpleNamespace(fetch=lambda *args, **kwargs: [])
+            self.db = _FallbackDB()
 
         def collect(
             self,

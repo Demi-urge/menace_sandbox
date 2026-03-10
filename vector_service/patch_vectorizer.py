@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterator, Tuple, List
 import threading
-from types import SimpleNamespace
+from dataclasses import dataclass
 import logging
 import time
 
@@ -19,6 +19,20 @@ from dynamic_path_router import resolve_path
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _PatchVectorizerWarmupDBShim:
+    """Warmup DB shim exposing the subset of PatchHistoryDB API used pre-activation."""
+
+    path: str | Path
+    router: Any = None
+    _vec_db_enabled: bool = False
+
+    def get(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
 
 
 class PatchVectorizer(EmbeddableDBMixin):
@@ -100,11 +114,8 @@ class PatchVectorizer(EmbeddableDBMixin):
     ) -> None:
         """Initialise a lightweight placeholder during bootstrap warmup."""
 
-        self.db = SimpleNamespace(
+        self.db = _PatchVectorizerWarmupDBShim(
             path=path if path is not None else self.DB_FILE,
-            router=None,
-            get=lambda *_a, **_k: None,
-            _vec_db_enabled=False,
         )
         self.conn = None
         self.index_path = index_path if index_path is not None else f"{self.db.path}.patch.index"

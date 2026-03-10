@@ -3,7 +3,7 @@ from __future__ import annotations
 """Bootstrap the sandbox and launch a self-improvement cycle."""
 
 import logging
-import types
+from dataclasses import dataclass
 
 from sandbox_settings import SandboxSettings
 from sandbox_runner.bootstrap import (
@@ -17,6 +17,26 @@ from bot_discovery import discover_and_register_coding_bots
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _SelfCodingManagerShim:
+    """Minimal manager shim for orchestrator bootstrap wiring."""
+
+    bot_registry: object
+    bot_name: str = ""
+    event_bus: object | None = None
+
+
+class _EvolutionManagerShim:
+    """Bootstrap shim exposing evolution-manager API expected by orchestrator."""
+
+    def __init__(self) -> None:
+        self.bots: list[str] = []
+
+    def run_cycle(self) -> list[object]:
+        return []
+
 
 
 def main() -> int:
@@ -71,12 +91,12 @@ def main() -> int:
         data_bot = _DataBot()
         capital = _Capital(data_bot)
         improv = _Improvement(data_bot)
-        manager = types.SimpleNamespace(bot_registry=registry, bot_name="", event_bus=None)
+        manager = _SelfCodingManagerShim(bot_registry=registry)
         orchestrator = EvolutionOrchestrator(
             data_bot,
             capital,
             improv,
-            types.SimpleNamespace(),
+            _EvolutionManagerShim(),
             selfcoding_manager=manager,
         )
     except Exception as exc:  # pragma: no cover - orchestrator optional
