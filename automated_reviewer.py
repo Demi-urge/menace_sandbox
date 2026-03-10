@@ -55,13 +55,17 @@ try:  # pragma: no cover - optional dependency used in runtime
     from vector_service import FallbackResult  # type: ignore
 except Exception:  # pragma: no cover - module missing the attribute
     class FallbackResult:  # type: ignore[override]
-        pass
+        """Minimal fallback marker when vector_service omits FallbackResult."""
+
+        __slots__ = ()
 
 try:  # pragma: no cover - optional dependency used in runtime
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - module missing the attribute
     class ErrorResult(Exception):  # type: ignore[override]
-        pass
+        """Minimal fallback error type when vector_service omits ErrorResult."""
+
+        __slots__ = ()
 
 from snippet_compressor import compress_snippets
 

@@ -48,7 +48,13 @@ class Index:
         pass
 
 
-event = SimpleNamespace(listen=lambda *_args, **_kwargs: None)
+class _EventShim:
+    @staticmethod
+    def listen(*_args, **_kwargs) -> None:
+        return None
+
+
+event = _EventShim()
 
 __all__ = [
     "ArgumentError",

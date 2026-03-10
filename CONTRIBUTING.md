@@ -170,6 +170,21 @@ of constructing raw prompts or silently ignoring the issue. New modules should
 avoid bespoke ``try``/``except`` wrappers around prompt creation and rely on
 the helper for error reporting.
 
+
+## Runtime shims and placeholders
+
+Runtime fallback shims must follow the deterministic patterns documented in
+[`docs/runtime_shim_patterns.md`](docs/runtime_shim_patterns.md). CI and pre-commit
+run `scripts/check_invalid_stubs.py` and fail on risky placeholders such as
+`NAME = object`, callable `NAME = None` sentinels, `SimpleNamespace` service shims,
+or bare `pass` branches in shim-heavy modules.
+
+Run locally before pushing:
+
+```bash
+python scripts/check_invalid_stubs.py
+```
+
 ## Coding bot registration
 
 All new coding bots must be created via the `@self_coding_managed` decorator
