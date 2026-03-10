@@ -238,11 +238,28 @@ try:  # pragma: no cover - optional dependency
         resolve_vector_bootstrap_flags,
     )
 except Exception:  # pragma: no cover
-    VectorMetricsDB = None  # type: ignore
-    get_bootstrap_shared_vector_metrics_db = None  # type: ignore
-    get_shared_vector_metrics_db = None  # type: ignore
-    activate_shared_vector_metrics_db = None  # type: ignore
-    resolve_vector_bootstrap_flags = None  # type: ignore
+    class VectorMetricsDB:  # type: ignore[no-redef]
+        def __init__(self, *_, **__):
+            self._weights = {}
+
+        def get_db_weights(self, *_args, **_kwargs):
+            return dict(self._weights)
+
+        def set_db_weight(self, key: str, value: float):
+            self._weights[str(key)] = float(value)
+            return {"status": "ok"}
+
+    def get_bootstrap_shared_vector_metrics_db(*_args, **_kwargs):  # type: ignore[no-redef]
+        return VectorMetricsDB()
+
+    def get_shared_vector_metrics_db(*_args, **_kwargs):  # type: ignore[no-redef]
+        return VectorMetricsDB()
+
+    def activate_shared_vector_metrics_db(*_args, **_kwargs):  # type: ignore[no-redef]
+        return VectorMetricsDB()
+
+    def resolve_vector_bootstrap_flags(*_args, **_kwargs):  # type: ignore[no-redef]
+        return False, False, False, False
 
 _VECTOR_SERVICE_WARMUP = os.getenv("VECTOR_SERVICE_WARMUP", "").lower() in {
     "1",
@@ -403,8 +420,16 @@ try:  # pragma: no cover - optional dependency
         StackDatasetStreamer as _StackDatasetStreamer,
     )
 except Exception:  # pragma: no cover - stack ingestion optional
-    _ensure_stack_background = None  # type: ignore
-    _StackDatasetStreamer = None  # type: ignore
+    def _ensure_stack_background(*_args, **_kwargs):  # type: ignore[no-redef]
+        return {"status": "noop"}
+
+    class _StackDatasetStreamer:  # type: ignore[no-redef]
+        @classmethod
+        def from_environment(cls, *_args, **_kwargs):
+            return cls()
+
+        def retrieve(self, *_args, **_kwargs):
+            return []
 
 # Alias retained for backward compatibility with tests expecting
 # ``UniversalRetriever`` to be injectable.
@@ -834,13 +859,17 @@ except Exception:  # pragma: no cover - fallback when undefined
 try:  # pragma: no cover - heavy dependency
     from menace_memory_manager import MenaceMemoryManager
 except Exception:  # pragma: no cover
-    MenaceMemoryManager = None  # type: ignore
+    class MenaceMemoryManager:  # type: ignore[no-redef]
+        def store(self, *_args, **_kwargs):
+            return {"status": "noop"}
 
 # Optional patch history ----------------------------------------------------
 try:  # pragma: no cover - optional dependency
     from code_database import PatchHistoryDB  # type: ignore
 except Exception:  # pragma: no cover
-    PatchHistoryDB = None  # type: ignore
+    class PatchHistoryDB:  # type: ignore[no-redef]
+        def get(self, *_args, **_kwargs):
+            return None
 
 
 @dataclass

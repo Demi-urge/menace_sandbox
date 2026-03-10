@@ -101,29 +101,45 @@ try:  # pragma: no cover - optional dependencies
         resolve_vector_bootstrap_flags,
     )
 except Exception:  # pragma: no cover
-    VectorMetricsDB = None  # type: ignore
-    get_bootstrap_vector_metrics_db = None  # type: ignore
-    resolve_vector_bootstrap_flags = None  # type: ignore
+    class VectorMetricsDB:  # type: ignore[no-redef]
+        def record(self, *_args, **_kwargs):
+            return {"status": "noop"}
+
+    def get_bootstrap_vector_metrics_db(*_args, **_kwargs):  # type: ignore[no-redef]
+        return VectorMetricsDB()
+
+    def resolve_vector_bootstrap_flags(*_args, **_kwargs):  # type: ignore[no-redef]
+        return False, False, False, False
 
 try:  # pragma: no cover
     from code_database import PatchHistoryDB  # type: ignore
 except Exception:  # pragma: no cover
-    PatchHistoryDB = None  # type: ignore
+    class PatchHistoryDB:  # type: ignore[no-redef]
+        def get(self, *_args, **_kwargs):
+            return None
+
+        def add(self, *_args, **_kwargs):
+            return {"status": "noop"}
 
 try:  # pragma: no cover - optional dependency
     from unified_event_bus import UnifiedEventBus  # type: ignore
 except Exception:  # pragma: no cover
-    UnifiedEventBus = None  # type: ignore
+    class UnifiedEventBus:  # type: ignore[no-redef]
+        def publish(self, *_args, **_kwargs):
+            return {"status": "noop"}
 
 try:  # pragma: no cover - optional dependency
     from roi_tracker import ROITracker  # type: ignore
 except Exception:  # pragma: no cover
-    ROITracker = None  # type: ignore
+    class ROITracker:  # type: ignore[no-redef]
+        def update(self, *_args, **_kwargs):
+            return {"status": "noop"}
 
 try:  # pragma: no cover - optional patch score logging
     from patch_score_backend import _log_outcome as _ps_log_outcome  # type: ignore
 except Exception:  # pragma: no cover
-    _ps_log_outcome = None  # type: ignore
+    def _ps_log_outcome(*_args, **_kwargs):  # type: ignore[no-redef]
+        return {"status": "noop"}
 
 # Restricted set of ROI tags used to annotate patch outcomes is defined in
 # ``roi_tags.RoiTag``.
@@ -190,12 +206,22 @@ except Exception:  # pragma: no cover - lightweight fallback
 try:  # pragma: no cover - optional info database
     from research_storage import InfoDB, ResearchItem  # type: ignore
 except Exception:  # pragma: no cover
-    InfoDB = ResearchItem = None  # type: ignore
+    class ResearchItem(dict):
+        pass
+
+    class InfoDB:  # type: ignore[no-redef]
+        def add(self, *_args, **_kwargs):
+            return {"status": "noop"}
 
 try:  # pragma: no cover - optional enhancement database
     from chatgpt_enhancement_bot import EnhancementDB, Enhancement  # type: ignore
 except Exception:  # pragma: no cover
-    EnhancementDB = Enhancement = None  # type: ignore
+    class Enhancement(dict):
+        pass
+
+    class EnhancementDB:  # type: ignore[no-redef]
+        def add(self, *_args, **_kwargs):
+            return {"status": "noop"}
 
 
 logger = logging.getLogger(__name__)

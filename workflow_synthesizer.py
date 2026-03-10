@@ -67,8 +67,20 @@ except Exception:  # pragma: no cover - allow running as script
 try:  # Optional import; makes the synthesizer work in minimal environments
     from analysis import ModuleSignature, get_io_signature
 except Exception:  # pragma: no cover - best effort fall back
-    ModuleSignature = None  # type: ignore[misc]
-    get_io_signature = None  # type: ignore[misc]
+    @dataclass
+    class ModuleSignature:  # type: ignore[no-redef]
+        name: str
+        functions: Dict[str, Any] = field(default_factory=dict)
+        classes: Dict[str, Any] = field(default_factory=dict)
+        globals: Set[str] = field(default_factory=set)
+        files_read: Set[str] = field(default_factory=set)
+        files_written: Set[str] = field(default_factory=set)
+        inputs: List[str] = field(default_factory=list)
+        outputs: List[str] = field(default_factory=list)
+
+    def get_io_signature(path: Path | str) -> ModuleSignature:  # type: ignore[no-redef]
+        pth = Path(path)
+        return ModuleSignature(name=pth.stem)
 
 try:  # Optional imports; fall back to stubs in tests
     from module_synergy_grapher import (
@@ -77,19 +89,32 @@ try:  # Optional imports; fall back to stubs in tests
         load_graph,
     )
 except Exception:  # pragma: no cover - graceful degradation
-    ModuleSynergyGrapher = None  # type: ignore[misc]
-    get_synergy_cluster = None  # type: ignore[misc]
-    load_graph = None  # type: ignore[misc]
+    class ModuleSynergyGrapher:  # type: ignore[no-redef]
+        def __init__(self, *_, **__):
+            pass
+
+        def get_graph(self):
+            return {}
+
+    def get_synergy_cluster(*_args, **_kwargs):  # type: ignore[no-redef]
+        return []
+
+    def load_graph(*_args, **_kwargs):  # type: ignore[no-redef]
+        return {}
 
 try:  # Optional dependency
     from intent_clusterer import IntentClusterer
 except Exception:  # pragma: no cover - graceful degradation
-    IntentClusterer = None  # type: ignore[misc]
+    class IntentClusterer:  # type: ignore[no-redef]
+        def score_modules(self, *_args, **_kwargs) -> Dict[str, float]:
+            return {}
 
 try:  # Optional lightweight fallback
     from intent_db import IntentDB  # type: ignore
 except Exception:  # pragma: no cover - gracefully degrade
-    IntentDB = None  # type: ignore[misc]
+    class IntentDB:  # type: ignore[no-redef]
+        def query(self, *_args, **_kwargs) -> List[Dict[str, Any]]:
+            return []
 
 
 logger = logging.getLogger(__name__)

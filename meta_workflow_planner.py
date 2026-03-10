@@ -54,8 +54,22 @@ try:  # pragma: no cover - optional heavy dependency
     from vector_service.context_builder import ContextBuilder  # type: ignore
 except Exception:  # pragma: no cover - allow running without retriever
     logger.warning("vector_service.retriever import failed; similar search disabled")
-    Retriever = None  # type: ignore
-    ContextBuilder = None  # type: ignore
+
+    class ContextBuilder:  # type: ignore[no-redef]
+        def build(self, *_args, **_kwargs):
+            return {}
+
+    class Retriever:  # type: ignore[no-redef]
+        def __init__(self, *_, **__):
+            pass
+
+        def _get_retriever(self):
+            class _UR:
+                @staticmethod
+                def retrieve(*_args, **_kwargs):
+                    return [], 0.0, {}
+
+            return _UR()
 from context_builder_util import ensure_fresh_weights
 
 try:  # pragma: no cover - optional heavy dependency
@@ -82,14 +96,27 @@ except Exception:  # pragma: no cover - allow running without stability db
     logger.warning(
         "workflow_stability_db import failed; stability tracking disabled"
     )
-    WorkflowStabilityDB = None  # type: ignore
+
+    class WorkflowStabilityDB:  # type: ignore[no-redef]
+        def record_metrics(self, *_args, **_kwargs) -> dict[str, object]:
+            return {"status": "noop"}
 
 try:  # pragma: no cover - optional heavy dependency
     import networkx as nx  # type: ignore
     _HAS_NX = True
 except Exception:  # pragma: no cover - executed when networkx missing
     logger.warning("networkx import failed; graph features will be limited")
-    nx = None  # type: ignore
+
+    class _NetworkXShim:
+        @staticmethod
+        def ancestors(*_args, **_kwargs):
+            return set()
+
+        @staticmethod
+        def shortest_path_length(*_args, **_kwargs):
+            return 0
+
+    nx = _NetworkXShim()  # type: ignore
     _HAS_NX = False
 
 try:  # pragma: no cover - optional heavy dependency
@@ -115,7 +142,13 @@ try:  # pragma: no cover - optional code database
     from code_database import CodeDB  # type: ignore
 except Exception:  # pragma: no cover - database unavailable
     logger.warning("code_database import failed; code context features disabled")
-    CodeDB = None  # type: ignore
+
+    class CodeDB:  # type: ignore[no-redef]
+        db_path = ""
+
+        def search(self, *_args, **_kwargs):
+            return []
+
     sys.modules.pop("code_database", None)
 
 try:  # pragma: no cover - optional persistence helper
@@ -128,7 +161,15 @@ try:  # pragma: no cover - optional clustering dependency
     _HAS_SKLEARN = True
 except Exception:  # pragma: no cover - allow running without scikit-learn
     logger.warning("scikit-learn import failed; clustering disabled")
-    DBSCAN = None  # type: ignore
+
+    class DBSCAN:  # type: ignore[no-redef]
+        def __init__(self, *_, **__):
+            self.labels_ = []
+
+        def fit(self, data):
+            self.labels_ = [0 for _ in data]
+            return self
+
     _HAS_SKLEARN = False
 
 if TYPE_CHECKING:  # pragma: no cover - typing only

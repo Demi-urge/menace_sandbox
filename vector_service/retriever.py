@@ -45,7 +45,9 @@ from .exceptions import (
 try:  # pragma: no cover - optional dependency
     from code_database import PatchHistoryDB  # type: ignore
 except Exception:  # pragma: no cover
-    PatchHistoryDB = None  # type: ignore
+    class PatchHistoryDB:  # type: ignore[no-redef]
+        def get(self, *_args, **_kwargs):
+            return None
 
 try:  # pragma: no cover - optional dependency
     from vector_metrics_db import (  # type: ignore
@@ -54,9 +56,15 @@ try:  # pragma: no cover - optional dependency
         resolve_vector_bootstrap_flags,
     )
 except Exception:  # pragma: no cover
-    VectorMetricsDB = None  # type: ignore
-    get_bootstrap_vector_metrics_db = None  # type: ignore
-    resolve_vector_bootstrap_flags = None  # type: ignore
+    class VectorMetricsDB:  # type: ignore[no-redef]
+        def record(self, *_args, **_kwargs) -> dict[str, object]:
+            return {"status": "noop"}
+
+    def get_bootstrap_vector_metrics_db(*_args, **_kwargs):  # type: ignore[no-redef]
+        return VectorMetricsDB()
+
+    def resolve_vector_bootstrap_flags(*_args, **_kwargs):  # type: ignore[no-redef]
+        return False, False, False, False
 
 _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 
@@ -64,12 +72,28 @@ _DEFAULT_LICENSE_DENYLIST = set(_LICENSE_DENYLIST.values())
 try:  # pragma: no cover - optional dependency
     from universal_retriever import UniversalRetriever  # type: ignore
 except Exception:  # pragma: no cover - fallback when not available
-    UniversalRetriever = None  # type: ignore
+    class UniversalRetriever:  # type: ignore[no-redef]
+        def __init__(self, *_, **__):
+            pass
+
+        def retrieve(self, *_args, **_kwargs):
+            return [], 0.0, {}
+
+        def retrieve_with_confidence(self, *_args, **_kwargs):
+            return [], 0.0, {}
+
+        def reload_reliability_scores(self) -> None:
+            return None
 
 try:  # pragma: no cover - optional dependency for stack integration
     from .stack_retriever import StackRetriever as _StackDatasetRetriever  # type: ignore
 except Exception:  # pragma: no cover - stack dataset optional
-    _StackDatasetRetriever = None  # type: ignore
+    class _StackDatasetRetriever:  # type: ignore[no-redef]
+        def __init__(self, *_, **__):
+            pass
+
+        def retrieve(self, *_args, **_kwargs):
+            return []
 
 logger = logging.getLogger(__name__)
 

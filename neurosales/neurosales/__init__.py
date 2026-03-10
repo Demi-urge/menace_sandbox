@@ -23,8 +23,12 @@ from .adaptive_ranking import AdaptiveRanker
 try:  # pragma: no cover - optional dependency
     from .response_generation import ResponseCandidateGenerator, redundancy_filter
 except Exception:  # pragma: no cover - allow partial import when dependency missing
-    ResponseCandidateGenerator = None  # type: ignore
-    redundancy_filter = None  # type: ignore
+    class ResponseCandidateGenerator:  # type: ignore[no-redef]
+        def generate(self, *_args, **_kwargs):
+            return []
+
+    def redundancy_filter(candidates, *_args, **_kwargs):  # type: ignore[no-redef]
+        return list(candidates or [])
 from .influence_graph import InfluenceGraph
 from .psychological_graph import PsychologicalGraph, RuleNode
 from .archetype_graph import ArchetypeGraph, ArchetypeNode, RelationshipEdge
@@ -117,12 +121,41 @@ try:  # optional heavy deps
     from .intent_classifier import IntentClassifier
     from .sentiment import SentimentAnalyzer, SentimentMemory
 except Exception:  # pragma: no cover - allow partial import
-    TextPreprocessor = PreprocessResult = None  # type: ignore
-    IntentEntityExtractor = IntentProfile = None  # type: ignore
-    EntityDetector = Entity = None  # type: ignore
-    IntentDetector = None  # type: ignore
-    IntentClassifier = None  # type: ignore
-    SentimentAnalyzer = SentimentMemory = None  # type: ignore
+    class PreprocessResult(dict):
+        pass
+
+    class TextPreprocessor:  # type: ignore[no-redef]
+        def preprocess(self, text="", *_args, **_kwargs):
+            return PreprocessResult(text=str(text))
+
+    class IntentProfile(dict):
+        pass
+
+    class IntentEntityExtractor:  # type: ignore[no-redef]
+        def extract(self, *_args, **_kwargs):
+            return IntentProfile()
+
+    class Entity(dict):
+        pass
+
+    class EntityDetector:  # type: ignore[no-redef]
+        def detect(self, *_args, **_kwargs):
+            return []
+
+    class IntentDetector:  # type: ignore[no-redef]
+        def detect(self, *_args, **_kwargs):
+            return "unknown"
+
+    class IntentClassifier:  # type: ignore[no-redef]
+        def predict(self, *_args, **_kwargs):
+            return {"label": "unknown", "score": 0.0}
+
+    class SentimentMemory(dict):
+        pass
+
+    class SentimentAnalyzer:  # type: ignore[no-redef]
+        def analyze(self, *_args, **_kwargs):
+            return {"label": "neutral", "score": 0.0}
 
 try:  # pragma: no cover - optional dependency with richer graph libs
     from .emotion import (
@@ -134,12 +167,26 @@ try:  # pragma: no cover - optional dependency with richer graph libs
         ReinforcementABTest,
     )
 except Exception:  # pragma: no cover - allow partial import when deps missing
-    EmotionLabeler = None  # type: ignore
-    RollingEmotionTensor = None  # type: ignore
-    EmotionMemory = None  # type: ignore
-    DatabaseEmotionMemory = None  # type: ignore
-    GenderStyleAdapter = None  # type: ignore
-    ReinforcementABTest = None  # type: ignore
+    class EmotionLabeler:  # type: ignore[no-redef]
+        def label(self, *_args, **_kwargs):
+            return "neutral"
+
+    class RollingEmotionTensor(list):
+        pass
+
+    class EmotionMemory(dict):
+        pass
+
+    class DatabaseEmotionMemory(EmotionMemory):
+        pass
+
+    class GenderStyleAdapter:  # type: ignore[no-redef]
+        def adapt(self, text="", *_args, **_kwargs):
+            return str(text)
+
+    class ReinforcementABTest:  # type: ignore[no-redef]
+        def record(self, *_args, **_kwargs):
+            return {"status": "noop"}
 from .user_preferences import (
     PreferenceEngine,
     DatabasePreferenceEngine,
