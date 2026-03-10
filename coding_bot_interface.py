@@ -2223,7 +2223,11 @@ class _BootstrapContextGuard:
 
 
 _BOOTSTRAP_THREAD_STATE = threading.local()
-_SENTINEL_UNSET = object()
+class _Sentinel:
+    pass
+
+
+_SENTINEL_UNSET = _Sentinel()
 _PATCH_HISTORY_BOOTSTRAP_FLAG = "PATCH_HISTORY_BOOTSTRAP"
 
 
@@ -2765,7 +2769,7 @@ def _record_cooperative_init_trace(
 _UNSIGNED_COMMIT_PREFIX = "unsigned:"
 _SIGNED_PROVENANCE_WARNING_CACHE: set[tuple[str, str]] = set()
 _SIGNED_PROVENANCE_WARNING_LOCK = threading.Lock()
-_PATCH_PROVENANCE_SERVICE_SENTINEL = object()
+_PATCH_PROVENANCE_SERVICE_SENTINEL = _Sentinel()
 _PATCH_PROVENANCE_SERVICE: Any = _PATCH_PROVENANCE_SERVICE_SENTINEL
 _SIGNED_PROVENANCE_CACHE: dict[Path, tuple[int, int, tuple["_SignedProvenanceEntry", ...]]] = {}
 _PATH_KEY_HINTS: tuple[str, ...] = ("path", "file", "module", "target", "artifact", "source")
@@ -4073,7 +4077,7 @@ _THRESHOLD_LOAD_LOCK = getattr(
     threading.RLock(),
 )
 
-_SELF_CODING_MANAGER_SENTINEL = object()
+_SELF_CODING_MANAGER_SENTINEL = _Sentinel()
 _SELF_CODING_MANAGER_CLS: type[Any] | None | object = _SELF_CODING_MANAGER_SENTINEL
 
 
@@ -5286,7 +5290,7 @@ def _iter_nested_bootstrap_values(value: Any) -> Iterator[Any]:
     yield value
 
 
-_MISSING = object()
+_MISSING = _Sentinel()
 
 
 _LAZY_PROXY_MARKERS = (
@@ -10488,7 +10492,7 @@ def _bootstrap_manager(
 
     global_bootstrap_token = getattr(_BOOTSTRAP_STATE, "active_bootstrap_token", None)
     if global_bootstrap_token is None:
-        global_bootstrap_token = object()
+        global_bootstrap_token = _Sentinel()
         _BOOTSTRAP_STATE.active_bootstrap_token = global_bootstrap_token
         _BOOTSTRAP_STATE.active_bootstrap_guard = owner_guard
     else:
@@ -11372,7 +11376,7 @@ def self_coding_managed(
         bootstrap_error: BaseException | None = None
         bootstrap_done = False
         bootstrap_wait_timeout: float | None = None
-        bootstrap_wait_timeout_unset = object()
+        bootstrap_wait_timeout_unset = _Sentinel()
         wrapped_init_invocations = 0
 
         logger.info(

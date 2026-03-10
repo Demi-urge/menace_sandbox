@@ -251,6 +251,10 @@ class _NullEvolutionManager:
 _shared_orchestrator: "EvolutionOrchestrator" | None = None
 
 
+class _Sentinel:
+    pass
+
+
 @contextmanager
 def _capital_bot_manual_mode(capital_cls: type[Any]) -> Iterator[None]:
     """Temporarily disable self-coding requirements for ``CapitalManagementBot``.
@@ -265,7 +269,7 @@ def _capital_bot_manual_mode(capital_cls: type[Any]) -> Iterator[None]:
     restoring the previous value afterwards.
     """
 
-    unset = object()
+    unset = _Sentinel()
     previous = getattr(capital_cls, "_self_coding_manual_mode", unset)
     capital_cls._self_coding_manual_mode = True  # type: ignore[attr-defined]
     try:
