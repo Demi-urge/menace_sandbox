@@ -128,12 +128,23 @@ except Exception:  # pragma: no cover
 # Restricted set of ROI tags used to annotate patch outcomes is defined in
 # ``roi_tags.RoiTag``.
 
+class _TokenizerShim:
+    """Deterministic fallback tokenizer used when ``tiktoken`` is unavailable."""
+
+    def encode(self, text: str) -> list[int]:
+        return [ord(ch) for ch in text]
+
+    def decode(self, tokens: Sequence[int]) -> str:
+        return "".join(chr(int(tok)) for tok in tokens)
+
+
+_ENCODER: Any = _TokenizerShim()
+
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
     _ENCODER = tiktoken.get_encoding("cl100k_base")
 except Exception:  # pragma: no cover - dependency missing
     tiktoken = None  # type: ignore
-    _ENCODER = None
 
 try:  # pragma: no cover - optional summariser
     from menace_memory_manager import _summarise_text  # type: ignore

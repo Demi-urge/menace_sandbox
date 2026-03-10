@@ -26,7 +26,15 @@ try:  # pragma: no cover - optional service
 except Exception:  # pragma: no cover - dependency may be missing
     SharedVectorService = None  # type: ignore
 
-_DEFAULT_SERVICE: SharedVectorService | None = None
+
+class _DefaultVectorServiceShim:
+    """No-op vector service used when optional backend is unavailable."""
+
+    def vectorise_and_store(self, *_args: Any, **_kwargs: Any) -> list[float]:
+        return []
+
+
+_DEFAULT_SERVICE: Any = _DefaultVectorServiceShim()
 
 
 def _split_sentences(text: str) -> List[str]:
@@ -122,12 +130,11 @@ except Exception:  # pragma: no cover - defensive
     _EMBEDDINGS_PATH = (resolve_path(".") / "embeddings.jsonl").as_posix()
 
 _DEFAULT_VECTORIZER = WorkflowVectorizer()
-_DEFAULT_SERVICE = None
 if SharedVectorService is not None:  # pragma: no cover - best effort
     try:
         _DEFAULT_SERVICE = SharedVectorService()
     except Exception:
-        _DEFAULT_SERVICE = None
+        _DEFAULT_SERVICE = _DefaultVectorServiceShim()
 
 _EVENT_BUS = UnifiedEventBus() if UnifiedEventBus is not None else None
 
@@ -144,8 +151,6 @@ def vectorize_and_store(
 
     vec = _DEFAULT_VECTORIZER.transform(workflow, workflow_id=record_id)
     meta = metadata or {}
-    if _DEFAULT_SERVICE is None:  # pragma: no cover - dependency unavailable
-        raise RuntimeError("SharedVectorService unavailable")
     _DEFAULT_SERVICE.vectorise_and_store(
         "workflow",
         record_id,

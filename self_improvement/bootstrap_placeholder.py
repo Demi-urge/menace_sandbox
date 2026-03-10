@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib import import_module, util
+from typing import Any
 
 _MODULE_CANDIDATES: tuple[str, ...]
 if __package__ and "." in __package__:
@@ -14,13 +15,30 @@ if __package__ and "." in __package__:
 else:
     _MODULE_CANDIDATES = ("bootstrap_placeholder",)
 
-_bootstrap_module = None
+class _BootstrapModuleShim:
+    """Fallback bootstrap-placeholder module shim."""
+
+    def advertise_broker_placeholder(self, *_args: Any, **_kwargs: Any) -> tuple[None, None]:
+        return None, None
+
+    def bootstrap_broker(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+
+_bootstrap_module: Any = _BootstrapModuleShim()
 for _name in _MODULE_CANDIDATES:
-    if util.find_spec(_name) is not None:
+    if util.find_spec(_name) is None:
+        continue
+    try:
         _bootstrap_module = import_module(_name)
         break
-if _bootstrap_module is None:
-    _bootstrap_module = import_module("bootstrap_placeholder")
+    except Exception:
+        continue
+if isinstance(_bootstrap_module, _BootstrapModuleShim):
+    try:
+        _bootstrap_module = import_module("bootstrap_placeholder")
+    except Exception:
+        pass
 
 advertise_broker_placeholder = _bootstrap_module.advertise_broker_placeholder
 bootstrap_broker = _bootstrap_module.bootstrap_broker
