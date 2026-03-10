@@ -13,6 +13,7 @@ sys.modules.setdefault(
 )
 
 import menace_sanity_layer as msl  # noqa: E402
+from tests.builder_shims import BuildContextBuilderShim
 
 msl.refresh_billing_instructions()
 
@@ -186,7 +187,7 @@ def test_watchdog_anomaly_updates_db_memory_and_event_bus(monkeypatch, tmp_path)
     record = {"type": "overcharge", "id": "ch_1", "amount": 5}
     monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
-    builder = types.SimpleNamespace(build=lambda *a, **k: "")
+    builder = BuildContextBuilderShim()
     sw._emit_anomaly(record, False, False, context_builder=builder)
 
     anomalies = msl.list_anomalies()

@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+from tests.builder_shims import BuildContextBuilderShim
 
 
 class DummyMemory:
@@ -70,7 +71,7 @@ def test_emit_anomaly_triggers_feedback(monkeypatch, tmp_path):
 
     record = {"type": "missing_charge", "id": "ch_123", "stripe_account": "acct_1"}
 
-    builder = types.SimpleNamespace(build=lambda *a, **k: "")
+    builder = BuildContextBuilderShim()
     stripe_watchdog._emit_anomaly(
         record, False, False, self_coding_engine=engine, context_builder=builder
     )

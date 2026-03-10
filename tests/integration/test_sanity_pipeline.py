@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+from tests.builder_shims import BuildContextBuilderShim
 
 
 def test_anomaly_threshold_triggers_engine(monkeypatch, tmp_path):
@@ -105,7 +106,7 @@ def test_anomaly_threshold_triggers_engine(monkeypatch, tmp_path):
     threshold = msl.PAYMENT_ANOMALY_THRESHOLD
     monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
-    builder = types.SimpleNamespace(build=lambda *a, **k: "")
+    builder = BuildContextBuilderShim()
 
     for _ in range(threshold + 1):
         sw._emit_anomaly(
