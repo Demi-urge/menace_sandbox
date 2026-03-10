@@ -243,7 +243,11 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-_PATCH_PROVENANCE_UNSET = object()
+class _Sentinel:
+    pass
+
+
+_PATCH_PROVENANCE_UNSET = _Sentinel()
 _patch_provenance_service_cls: object = _PATCH_PROVENANCE_UNSET
 
 

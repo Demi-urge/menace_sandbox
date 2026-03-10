@@ -207,7 +207,11 @@ except Exception:  # pragma: no cover - fallback when self-coding engine absent
         yield None
 
 
-_PIPELINE_STATE_UNSET = object()
+class _Sentinel:
+    pass
+
+
+_PIPELINE_STATE_UNSET = _Sentinel()
 
 
 @contextlib.contextmanager

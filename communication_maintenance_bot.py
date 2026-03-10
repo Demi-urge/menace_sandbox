@@ -45,7 +45,11 @@ data_bot = DataBot(start_server=False)
 _DEFAULT_COMM_REGISTRY = registry
 _DEFAULT_COMM_DATA_BOT = data_bot
 
-_COMM_BOT_MANAGER_UNSET = object()
+class _Sentinel:
+    pass
+
+
+_COMM_BOT_MANAGER_UNSET = _Sentinel()
 
 
 class _CommBotBootstrapState:
