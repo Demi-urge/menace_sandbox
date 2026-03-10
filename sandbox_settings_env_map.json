@@ -167,6 +167,7 @@
   "orphan_retry_attempts": "ORPHAN_RETRY_ATTEMPTS",
   "orphan_retry_delay": "ORPHAN_RETRY_DELAY",
   "orphan_reuse_threshold": "ORPHAN_REUSE_THRESHOLD",
+  "orphan_modules_reintroduction": "ORPHAN_MODULES_REINTRODUCTION",
   "overfitting_entropy_threshold": "OVERFITTING_ENTROPY_THRESHOLD",
   "pass_rate_weight": "PASS_RATE_WEIGHT",
   "patch_retries": "SANDBOX_PATCH_RETRIES",

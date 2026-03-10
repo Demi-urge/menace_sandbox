@@ -9,6 +9,7 @@ generation.  Callers must supply a ready-to-use
 """
 
 import logging
+from dataclasses import asdict, is_dataclass
 
 from .utils import _load_callable, _call_with_retries
 from menace_sandbox.sandbox_settings import SandboxSettings
@@ -35,14 +36,22 @@ except (ImportError, AttributeError) as exc:  # pragma: no cover - best effort
 _settings = SandboxSettings()
 
 
+def _setting_value(config: object, key: str, default: object):
+    if isinstance(config, dict):
+        return config.get(key, default)
+    if is_dataclass(config):
+        return asdict(config).get(key, default)
+    return getattr(config, key, default)
+
+
 def generate_patch(
     module: str,
     manager: "SelfCodingManager",
     *args: object,
     context_builder: "ContextBuilder",
     target_region: "TargetRegion" | None = None,
-    retries: int = _settings.patch_retries,
-    delay: float = _settings.patch_retry_delay,
+    retries: int = int(_setting_value(_settings, "patch_retries", 3)),
+    delay: float = float(_setting_value(_settings, "patch_retry_delay", 0.5)),
     **kwargs: object,
 ) -> int:
     """Generate a patch via :mod:`quick_fix_engine`.

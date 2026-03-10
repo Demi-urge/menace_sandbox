@@ -9,6 +9,7 @@ than the underlying generation details.
 """
 
 from pathlib import Path
+from dataclasses import asdict, is_dataclass
 import logging
 import subprocess
 import tempfile
@@ -35,12 +36,20 @@ except Exception:  # pragma: no cover - fallback
 _settings = SandboxSettings()
 
 
+def _setting_value(config: object, key: str, default: object):
+    if isinstance(config, dict):
+        return config.get(key, default)
+    if is_dataclass(config):
+        return asdict(config).get(key, default)
+    return getattr(config, key, default)
+
+
 def apply_patch(
     patch_id: int,
     repo_path: str | Path,
     *,
-    retries: int = _settings.patch_retries,
-    delay: float = _settings.patch_retry_delay,
+    retries: int = int(_setting_value(_settings, "patch_retries", 3)),
+    delay: float = float(_setting_value(_settings, "patch_retry_delay", 0.5)),
     sign: bool = False,
 ) -> tuple[str, str]:
     """Fetch and apply patch ``patch_id`` to ``repo_path``.

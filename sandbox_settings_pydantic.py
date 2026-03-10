@@ -1436,6 +1436,11 @@ class SandboxSettings(BaseSettings):
         resolve_path("sandbox_data").as_posix(), env="SANDBOX_DATA_DIR"
     )
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
+    SANDBOX_ENV_PRESETS: list[dict[str, Any]] = Field(
+        default_factory=list,
+        env="SANDBOX_ENV_PRESETS",
+        description="Parsed SANDBOX_ENV_PRESETS fallback for lightweight consumers.",
+    )
     required_env_vars: list[str] = Field(
         default_factory=lambda: [
             "OPENAI_API_KEY",
@@ -2320,6 +2325,11 @@ class SandboxSettings(BaseSettings):
         None,
         env="SANDBOX_INCLUDE_ORPHANS",
         description="Include orphan modules during testing when set.",
+    )
+    orphan_modules_reintroduction: bool = Field(
+        False,
+        env="ORPHAN_MODULES_REINTRODUCTION",
+        description="Reintroduce orphan modules at cycle boundaries when enabled.",
     )
     orphan_retry_attempts: int = Field(
         3,

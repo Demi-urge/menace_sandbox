@@ -1,11 +1,23 @@
 """Support modules for sandbox_runner wrapper."""
 import importlib
+from dataclasses import asdict, is_dataclass
+from typing import Any, Mapping
 
 from logging_utils import get_logger
 from sandbox_settings import SandboxSettings
 
 settings = SandboxSettings()
-_LIGHT_IMPORTS = settings.menace_light_imports
+
+
+def _config_value(config: Any, key: str, default: Any) -> Any:
+    if isinstance(config, Mapping):
+        return config.get(key, default)
+    if is_dataclass(config):
+        return asdict(config).get(key, default)
+    return getattr(config, key, default)
+
+
+_LIGHT_IMPORTS = bool(_config_value(settings, "menace_light_imports", True))
 
 _env_mod = None
 _env_simulate_temporal_trajectory = None
