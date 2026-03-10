@@ -20,11 +20,15 @@ class DependencyProvisioningResult:
 
     @property
     def is_success(self) -> bool:
-        return self.status in {"provisioned", "managed_externally", "skipped"}
+        return self.status in {"provisioned", "managed_externally", "skipped", "degraded"}
 
     @property
     def is_unavailable(self) -> bool:
         return self.status == "unavailable"
+
+    @property
+    def is_degraded(self) -> bool:
+        return self.status == "degraded"
 
 
 class ExternalDependencyProvisioner:
@@ -86,6 +90,16 @@ class ExternalDependencyProvisioner:
             ),
         )
 
+    @staticmethod
+    def _is_permission_denied(message: str) -> bool:
+        lower = message.lower()
+        return (
+            "permission denied" in lower
+            or "got permission denied" in lower
+            or "connect: permission denied" in lower
+            or "docker.sock" in lower
+        )
+
     def provision(self) -> DependencyProvisioningResult:
         """Ensure containers are running for required services."""
         if self._env_flag("MENACE_EXTERNAL_DEPS_MANAGED_EXTERNALLY"):
@@ -107,7 +121,24 @@ class ExternalDependencyProvisioner:
         cfg = Path(prov.ensure_compose_file())
         detection = self._detect_compose_command()
         if detection.is_unavailable:
-            return detection
+            if self._is_permission_denied(detection.message):
+                return DependencyProvisioningResult(
+                    status="degraded",
+                    message=(
+                        "Docker detected but inaccessible due to permissions; "
+                        "dependency provisioning running in degraded mode. "
+                        "Remediation: add current user to docker group, run with "
+                        "sufficient privileges, or set "
+                        "MENACE_EXTERNAL_DEPS_MANAGED_EXTERNALLY=1."
+                    ),
+                )
+            return DependencyProvisioningResult(
+                status="degraded",
+                message=(
+                    f"{detection.message} "
+                    "Proceeding without local dependency provisioning."
+                ),
+            )
 
         compose_cmd = list(detection.command)
         up_cmd = [*compose_cmd, "-f", str(cfg), "up", "-d"]
@@ -120,12 +151,24 @@ class ExternalDependencyProvisioner:
                 text=True,
             )
         except subprocess.CalledProcessError as exc:  # pragma: no cover - best effort
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+            details = " ".join(x for x in (str(exc), stdout, stderr) if x).strip()
+            if self._is_permission_denied(details):
+                return DependencyProvisioningResult(
+                    status="degraded",
+                    command=tuple(up_cmd),
+                    message=(
+                        "Docker is installed but permission to access daemon was denied. "
+                        "Running without provisioning external dependencies. "
+                        "Remediation: configure docker socket permissions or set "
+                        "MENACE_EXTERNAL_DEPS_MANAGED_EXTERNALLY=1."
+                    ),
+                )
             self.logger.error(
-                "dependency provisioning failed: command=%s\nerror: %s\nstdout: %s\nstderr: %s",
+                "dependency provisioning failed: command=%s error=%s",
                 " ".join(up_cmd),
                 exc,
-                exc.stdout,
-                exc.stderr,
             )
             subprocess.run(
                 down_cmd,

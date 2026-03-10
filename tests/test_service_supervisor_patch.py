@@ -524,7 +524,7 @@ def test_dependency_provision_worker_degrades_when_optional(monkeypatch):
     monkeypatch.setattr(ss.time, "sleep", _interrupt)
 
     ss._dependency_provision_worker()
-    assert called["check"] == 0
+    assert called["check"] == 1
 
 
 def test_dependency_provision_worker_degraded_unavailable(monkeypatch):
@@ -546,7 +546,7 @@ def test_dependency_provision_worker_degraded_unavailable(monkeypatch):
     monkeypatch.setattr(ss.time, "sleep", _interrupt)
 
     ss._dependency_provision_worker()
-    assert called["check"] == 0
+    assert called["check"] == 1
 
 
 def test_dependency_provision_worker_raises_when_not_optional(monkeypatch):
@@ -668,3 +668,36 @@ def test_dependency_watchdog_backoff_uses_exponential_strategy():
 
     delay = supervisor._compute_watchdog_backoff()
     assert delay == pytest.approx(8.0)
+
+
+def test_dependency_watchdog_warning_is_high_signal_and_deduplicated(caplog):
+    supervisor = object.__new__(ss.ServiceSupervisor)
+    supervisor.logger = logging.getLogger("ServiceSupervisorWatchdogSignal")
+    supervisor.logger.handlers = []
+    supervisor.logger.propagate = True
+    supervisor.check_interval = 1.0
+    supervisor._watchdog_failure_timestamps = []
+    supervisor._watchdog_consecutive_failures = 0
+    supervisor._watchdog_circuit_state = "closed"
+    supervisor._watchdog_opened_at = 0.0
+    supervisor._watchdog_next_action_at = 0.0
+    supervisor._watchdog_is_degraded = False
+    supervisor._watchdog_restart_window_seconds = 300.0
+    supervisor._watchdog_circuit_threshold = 10
+    supervisor._watchdog_backoff_base_seconds = 2.0
+    supervisor._watchdog_backoff_max_seconds = 60.0
+    supervisor._watchdog_backoff_jitter_ratio = 0.0
+    supervisor._watchdog_probe_interval_seconds = 30.0
+    supervisor._watchdog_last_warning_key = ""
+
+    heals: list[str] = []
+    supervisor._heal = lambda name: heals.append(name)
+
+    with caplog.at_level(logging.WARNING):
+        supervisor._handle_dependency_watchdog_exit(10.0)
+        supervisor._handle_dependency_watchdog_exit(12.0)
+
+    warning_lines = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert len([m for m in warning_lines if "crash loop detected" in m]) == 1
+    assert all("Traceback" not in m for m in warning_lines)
+    assert heals == ["dependency_watchdog", "dependency_watchdog"]
