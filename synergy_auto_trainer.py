@@ -36,16 +36,28 @@ try:
 except Exception:  # pragma: no cover - metrics exporter optional
     class _StubGauge:
         def __init__(self, *args, **kwargs):
-            pass
+            self._value = 0.0
 
         def set(self, *args, **kwargs):
-            pass
+            if args:
+                try:
+                    self._value = float(args[0])
+                except Exception:
+                    self._value = 0.0
+            return None
 
         def labels(self, *args, **kwargs):
             return self
 
         def inc(self, *args, **kwargs):
-            pass
+            amount = 1.0
+            if args:
+                try:
+                    amount = float(args[0])
+                except Exception:
+                    amount = 1.0
+            self._value += amount
+            return None
 
     Gauge = _StubGauge  # type: ignore
 

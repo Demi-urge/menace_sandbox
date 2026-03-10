@@ -116,7 +116,9 @@ class _FallbackTelemetryBackend:
     """Telemetry stub returning empty history when backend is missing."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - noop
-        pass
+        self._history: List[Dict[str, Any]] = []
+        self._init_args = args
+        self._init_kwargs = kwargs
 
     def fetch_history(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
         return []

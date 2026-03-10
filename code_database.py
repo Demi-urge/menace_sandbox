@@ -52,13 +52,18 @@ except Exception:  # pragma: no cover - fallback to vector_service, then stubs
 
         class EmbeddableDBMixin:  # type: ignore
             def __init__(self, *a, **k):
-                pass
+                self._embeddings = {}
+                self._init_args = a
+                self._init_kwargs = k
 
             def add_embedding(self, *a, **k):  # pragma: no cover - simple stub
-                pass
+                key = str(a[0]) if a else ""
+                self._embeddings.setdefault(key, [])
+                return None
 
             def try_add_embedding(self, *a, **k):  # pragma: no cover - simple stub
-                pass
+                self.add_embedding(*a, **k)
+                return None
 
             def encode_text(self, text):  # pragma: no cover - simple stub
                 return [0.0]

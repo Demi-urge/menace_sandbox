@@ -39,7 +39,7 @@ else:  # pragma: no cover - executed when run as a script
 if _LIGHT_IMPORTS:
     class ROITracker:  # type: ignore[override]
         def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+            self._baseline: dict[str, float] = {}
 
         def get(self, *_args: object, **_kwargs: object) -> float:
             return 0.0

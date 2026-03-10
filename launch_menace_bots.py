@@ -293,7 +293,8 @@ def debug_and_deploy(
                     """No-op debugger stub used only in explicit degraded mode."""
 
                 def analyse_and_fix(self) -> None:
-                    pass
+                    self.last_result = None
+                    return None
 
             SelfDebuggerSandbox = _SelfDebuggerSandbox
         finally:

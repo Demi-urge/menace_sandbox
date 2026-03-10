@@ -26,7 +26,8 @@ try:  # pragma: no cover - optional predictor dependency
 except Exception:  # pragma: no cover - fallback for tests
     class ErrorClusterPredictor:  # type: ignore
         def __init__(self, *args, **kwargs) -> None:
-            pass
+            self._init_args = args
+            self._init_kwargs = kwargs
 
         def predict_high_risk_modules(
             self, *, min_cluster_size: int = 2, top_n: int = 5

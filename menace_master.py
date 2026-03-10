@@ -501,7 +501,8 @@ def _init_unused_bots() -> None:
 
         class _DummyBuilder:
             def refresh_db_weights(self):
-                pass
+                self._refresh_db_weights_calls = getattr(self, "_refresh_db_weights_calls", 0) + 1
+                return None
 
             def build_context(self, *args: object, **kwargs: object) -> list[object]:
                 return []
@@ -598,7 +599,8 @@ def run_once(models: Iterable[str]) -> None:
 
         class _DummyBuilder:
             def refresh_db_weights(self):
-                pass
+                self._refresh_db_weights_calls = getattr(self, "_refresh_db_weights_calls", 0) + 1
+                return None
 
         builder = _DummyBuilder()
     orchestrator = MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]
@@ -892,7 +894,8 @@ def main(argv: Iterable[str] | None = None) -> None:
 
         class _DummyBuilder:
             def refresh_db_weights(self):
-                pass
+                self._refresh_db_weights_calls = getattr(self, "_refresh_db_weights_calls", 0) + 1
+                return None
 
         builder = _DummyBuilder()
     orchestrator = MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]

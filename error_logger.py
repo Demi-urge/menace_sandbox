@@ -584,7 +584,9 @@ class ErrorLogger:
             if _ErrorDB is None:
                 class _StubDB:
                     def add_telemetry(self, *a: Any, **k: Any) -> None:  # pragma: no cover - no-op
-                        pass
+                        if not hasattr(self, "_telemetry"):
+                            self._telemetry = []
+                        self._telemetry.append({"args": list(a), "kwargs": dict(k)})
 
                 db = _StubDB()
             else:

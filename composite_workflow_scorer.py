@@ -35,7 +35,7 @@ _LIGHT_IMPORTS = os.getenv("MENACE_LIGHT_IMPORTS") not in {"", "0", "false", "Fa
 if _LIGHT_IMPORTS:
     class ROITracker:  # type: ignore[override]
         def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+            self._baseline: dict[str, float] = {}
 
         def get(self, *_args: object, **_kwargs: object) -> float:
             return 0.0

@@ -25,10 +25,11 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - lightweight fallback
     class SharedVectorService:  # type: ignore
         def __init__(self, *args, **kwargs):
-            pass
+            self._calls: list[dict[str, object]] = []
 
         def vectorise_and_store(self, *args, **kwargs):
-            pass
+            self._calls.append({"args": list(args), "kwargs": dict(kwargs)})
+            return [0.0]
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import (

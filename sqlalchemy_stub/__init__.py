@@ -8,7 +8,8 @@ from .exc import ArgumentError  # noqa: F401
 
 class _Type:
     def __init__(self, *args, **kwargs) -> None:
-        pass
+        self.args = args
+        self.kwargs = kwargs
 
 
 Boolean = _Type
@@ -45,7 +46,8 @@ class Table:
 
 class Index:
     def __init__(self, *_args, **_kwargs) -> None:
-        pass
+        self.args = _args
+        self.kwargs = _kwargs
 
 
 class _EventShim:

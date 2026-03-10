@@ -177,10 +177,12 @@ try:  # pragma: no cover - telemetry optional during tests
 except Exception:  # pragma: no cover - provide stub when unavailable
     class TelemetryBackend:  # type: ignore
         def __init__(self, *a: Any, **k: Any) -> None:
-            pass
+            self._events: list[dict[str, Any]] = []
+            self._init_args = a
+            self._init_kwargs = k
 
         def record(self, *a: Any, **k: Any) -> None:
-            pass
+            self._events.append({"args": list(a), "kwargs": dict(k)})
 
     tb = None  # type: ignore
 try:  # pragma: no cover - support package and script imports

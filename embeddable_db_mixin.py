@@ -292,7 +292,7 @@ except (ModuleNotFoundError, AttributeError):  # pragma: no cover - optional dep
 
     class EmbeddingStatsDB:  # type: ignore
         def __init__(self, *_args, **_kwargs):
-            pass
+            self._embedding_logs: list[dict[str, Any]] = []
 
         def log(self, *args, **kwargs):
             return None
