@@ -126,3 +126,25 @@ def test_probe_and_heal_rate_limits_target_warning(monkeypatch, caplog):
         rec.getMessage() for rec in caplog.records if "healthcheck target resolved" in rec.getMessage().lower()
     ]
     assert len(health_target_logs) == 1
+
+
+def test_probe_and_heal_restart_rate_limited(monkeypatch):
+    monkeypatch.delenv("MENACE_HEALTHCHECK_URL", raising=False)
+
+    def unhealthy(url, timeout=2):
+        return type("R", (), {"status_code": 503})()
+
+    healed = []
+    monkeypatch.setattr(aem, "requests", type("Req", (), {"get": staticmethod(unhealthy)}))
+    monkeypatch.setattr(aem.SelfHealingOrchestrator, "heal", lambda self, bot, patch_id=None: healed.append(bot))
+
+    orch = aem.SelfHealingOrchestrator(
+        KnowledgeGraph(),
+        config={"restart_max_attempts": 2, "restart_window_seconds": 120, "runtime_mode": "local"},
+    )
+
+    orch.probe_and_heal("bot1")
+    orch.probe_and_heal("bot1")
+    orch.probe_and_heal("bot1")
+
+    assert healed == ["bot1", "bot1"]

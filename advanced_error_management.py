@@ -466,14 +466,27 @@ class SelfHealingOrchestrator:
             self.extension = config.get("extension", self.extension)
         self.failures: dict[str, int] = {}
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.health_host = os.getenv("MENACE_HEALTHCHECK_HOST", "localhost")
+        self.health_host = os.getenv("MENACE_HEALTHCHECK_HOST", "").strip()
         self.health_url_override = os.getenv("MENACE_HEALTHCHECK_URL", "").strip()
+        self.restart_window_seconds = float(
+            os.getenv("MENACE_HEAL_RESTART_WINDOW_SECONDS", "300")
+        )
+        self.restart_max_attempts = int(
+            os.getenv("MENACE_HEAL_RESTART_MAX_ATTEMPTS", "3")
+        )
         self.runtime_mode = self._detect_runtime_mode()
         self._last_health_target_warning_at = 0.0
         self._health_target_warning_interval = 300.0
+        self._restart_attempts: dict[str, list[float]] = {}
         if config:
             self.health_host = config.get("health_host", self.health_host)
             self.runtime_mode = config.get("runtime_mode", self.runtime_mode)
+            self.restart_window_seconds = float(
+                config.get("restart_window_seconds", self.restart_window_seconds)
+            )
+            self.restart_max_attempts = int(
+                config.get("restart_max_attempts", self.restart_max_attempts)
+            )
         if self.backend == "docker":
             try:  # pragma: no cover - optional dependency
                 import docker  # type: ignore
@@ -507,10 +520,29 @@ class SelfHealingOrchestrator:
             return explicit_url, self.runtime_mode
         if self.health_url_override:
             return self.health_url_override, self.runtime_mode
-        if self.runtime_mode == "container":
-            return "http://menace:8000/health", self.runtime_mode
-        host = self.health_host or "localhost"
+        host = self.health_host
+        if not host:
+            host = "menace" if self.runtime_mode == "container" else "localhost"
         return f"http://{host}:8000/health", self.runtime_mode
+
+    def _allow_restart(self, bot: str) -> bool:
+        now = time.time()
+        attempts = self._restart_attempts.get(bot, [])
+        window_start = now - max(self.restart_window_seconds, 1.0)
+        attempts = [ts for ts in attempts if ts >= window_start]
+        if len(attempts) >= max(self.restart_max_attempts, 1):
+            self._restart_attempts[bot] = attempts
+            self.logger.warning(
+                "Restart suppressed for %s due to restart rate-limit "
+                "(attempts=%s, window_seconds=%s)",
+                bot,
+                len(attempts),
+                self.restart_window_seconds,
+            )
+            return False
+        attempts.append(now)
+        self._restart_attempts[bot] = attempts
+        return True
 
     def _maybe_warn_health_target(self, url: str, runtime_mode: str) -> None:
         now = time.time()
@@ -616,6 +648,8 @@ class SelfHealingOrchestrator:
                     self.error_db.set_safe_mode(bot)
                 except Exception:
                     self.logger.exception("Failed to enable safe mode for %s", bot)
+        if not self._allow_restart(bot):
+            return
         self.heal(bot)
 
 
