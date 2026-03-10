@@ -44,6 +44,12 @@ def _fake_run(cmd, check=False):
     return subprocess.CompletedProcess(cmd, 0)
 
 
+def _pytest_collection_failure(cmd, check=False):
+    if cmd[:2] == ["pytest", "-q"]:
+        raise subprocess.CalledProcessError(2, cmd)
+    return subprocess.CompletedProcess(cmd, 0)
+
+
 def test_staged_rollout(monkeypatch):
     bus = UnifiedEventBus()
     upd = DummyUpdate()
@@ -147,3 +153,91 @@ def test_run_continuous_recovers_when_spec_construction_fails(monkeypatch, caplo
     svc.run_continuous(interval=0.01, stop_event=stop)
     assert "failed to build deployment spec" in caplog.text
     assert "cycle failed and will be retried on next interval" in caplog.text
+
+
+def test_cycle_uses_smoke_scope_by_default(monkeypatch):
+    bus = UnifiedEventBus()
+    upd = DummyUpdate()
+    dep = DummyDeployer(bus)
+    svc = UnifiedUpdateService(updater_service=upd, deployer=dep)
+    commands = []
+
+    def _capture_run(cmd, check=False):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", _capture_run)
+    monkeypatch.delenv("UNIFIED_UPDATE_FULL_SUITE", raising=False)
+    svc._cycle()
+    assert ["pytest", "-q", "-m", "smoke"] in commands
+
+
+def test_cycle_uses_full_suite_when_flag_set(monkeypatch):
+    bus = UnifiedEventBus()
+    upd = DummyUpdate()
+    dep = DummyDeployer(bus)
+    svc = UnifiedUpdateService(updater_service=upd, deployer=dep)
+    commands = []
+
+    def _capture_run(cmd, check=False):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", _capture_run)
+    monkeypatch.setenv("UNIFIED_UPDATE_FULL_SUITE", "true")
+    svc._cycle()
+    assert ["pytest", "-q"] in commands
+
+
+def test_collection_failure_is_terminal_and_skips_retry(monkeypatch, caplog):
+    bus = UnifiedEventBus()
+    upd = DummyUpdate()
+    dep = DummyDeployer(bus)
+    svc = UnifiedUpdateService(updater_service=upd, deployer=dep, max_retries=3)
+    monkeypatch.setattr(subprocess, "run", _pytest_collection_failure)
+
+    sleep_calls = []
+
+    from menace import unified_update_service as uus
+
+    monkeypatch.setattr(uus.time, "sleep", lambda sec: sleep_calls.append(sec))
+    caplog.set_level("ERROR")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        svc._cycle()
+
+    assert sleep_calls == []
+    assert "root-cause=import contract" in caplog.text
+    assert "terminal test failure detected" in caplog.text
+
+
+def test_retry_uses_exponential_backoff(monkeypatch):
+    bus = UnifiedEventBus()
+    upd = DummyUpdate()
+    dep = DummyDeployer(bus)
+    svc = UnifiedUpdateService(
+        updater_service=upd,
+        deployer=dep,
+        max_retries=3,
+        retry_backoff_seconds=0.5,
+        retry_backoff_cap_seconds=1.2,
+    )
+
+    attempts = {"count": 0}
+
+    def _always_fail(cmd, check=False):
+        attempts["count"] += 1
+        raise RuntimeError("network timeout")
+
+    monkeypatch.setattr(subprocess, "run", _always_fail)
+    sleep_calls = []
+
+    from menace import unified_update_service as uus
+
+    monkeypatch.setattr(uus.time, "sleep", lambda sec: sleep_calls.append(sec))
+
+    with pytest.raises(RuntimeError):
+        svc._cycle()
+
+    assert attempts["count"] == 4
+    assert sleep_calls == [0.5, 1.0, 1.2]
