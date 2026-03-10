@@ -20,6 +20,47 @@ from typing import Any, Dict
 _BOOTSTRAP_ERROR: ModuleNotFoundError | None = None
 
 
+class _ImportCompatShim:
+    """No-op import_compat shim for minimal runtime environments."""
+
+    def bootstrap(self, *_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    def load_internal(self, name: str):
+        module_name = name.lstrip(".")
+        if module_name.startswith(f"{__name__}."):
+            module_name = module_name[len(__name__) + 1 :]
+        if module_name.startswith("menace_sandbox."):
+            module_name = module_name[len("menace_sandbox.") :]
+
+        qualified = (
+            f"{__name__}.{module_name}"
+            if not module_name.startswith("vector_service")
+            else module_name
+        )
+        cached = sys.modules.get(qualified) or sys.modules.get(module_name)
+        if cached is not None:
+            return cached
+
+        root = Path(__file__).resolve().parent
+        repo_root = root.parent
+        parts = Path(*module_name.split("."))
+        for base in (root, repo_root):
+            module_path = base / parts
+            candidates = [module_path.with_suffix(".py"), module_path / "__init__.py"]
+            for candidate in candidates:
+                if not candidate.exists():
+                    continue
+                spec = importlib.util.spec_from_file_location(qualified, candidate)
+                if spec is None or spec.loader is None:
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                sys.modules[qualified] = module
+                spec.loader.exec_module(module)
+                return module
+        raise ModuleNotFoundError(module_name)
+
 def _define_fallback_loader(
     bootstrap_error: ModuleNotFoundError | None,
 ) -> None:
@@ -70,33 +111,33 @@ def _define_fallback_loader(
         raise _BOOTSTRAP_ERROR
 
 
-_import_compat = None
+_import_compat: Any = _ImportCompatShim()
 
 if __package__ and "." in __package__:
     try:  # pragma: no cover - prefer relative import when package context known
         from .. import import_compat as _import_compat
     except ImportError:  # pragma: no cover - environment may lack package parent
-        _import_compat = None
+        pass
 
-if _import_compat is None:
+if isinstance(_import_compat, _ImportCompatShim):
     try:  # pragma: no cover - works when menace_sandbox is installed as a package
         from menace_sandbox import import_compat as _import_compat  # type: ignore
     except (ModuleNotFoundError, ImportError):  # pragma: no cover - menace_sandbox not installed
         try:  # pragma: no cover - fallback to local import when running standalone
             import import_compat as _import_compat  # type: ignore
         except ModuleNotFoundError:
-            _import_compat = None
+            pass
 
-if _import_compat is None:
+if isinstance(_import_compat, _ImportCompatShim):
     import importlib
 
     try:  # pragma: no cover - final fallback for flat installs
         _import_compat = importlib.import_module("import_compat")
     except ModuleNotFoundError:
-        _import_compat = None
+        pass
 
 
-if _import_compat is None:
+if isinstance(_import_compat, _ImportCompatShim):
     _define_fallback_loader(None)
 else:
     try:  # pragma: no cover - optional dependencies may prevent full bootstrap

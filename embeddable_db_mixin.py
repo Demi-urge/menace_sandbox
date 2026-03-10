@@ -440,7 +440,29 @@ def _resolve_metrics_db() -> type[Any]:
     return cls
 
 
-_VEC_METRICS: VectorMetricsDB | None = None
+class _VectorMetricsShim:
+    """No-op vector metrics backend for dependency-light environments."""
+
+    def activate_persistence(self) -> bool:
+        return False
+
+    def activate_on_first_write(self) -> bool:
+        return False
+
+    def register_readiness_hook(self, *_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    def prepare_promotion(self, *_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    def log_embedding(self, *_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    def log_retrieval(self, *_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+
+_VEC_METRICS: Any = _VectorMetricsShim()
 _EMBED_STATS_DB = EmbeddingStatsDB("metrics.db")
 
 
@@ -512,6 +534,10 @@ def _vector_metrics_db(
     )
 
     if _VEC_METRICS is not None:
+        if isinstance(_VEC_METRICS, _VectorMetricsShim):
+            if VectorMetricsDB is None:
+                return _VEC_METRICS
+            _VEC_METRICS = None
         if isinstance(_VEC_METRICS, _VectorMetricsWarmupPlaceholder):
             if warmup_stub_requested or warmup_mode:
                 return _VEC_METRICS
@@ -537,7 +563,7 @@ def _vector_metrics_db(
         return _VEC_METRICS
 
     if VectorMetricsDB is None:
-        return None
+        return _VEC_METRICS
 
     warmup_mode = bool(
         warmup_mode or warmup_lite_flag or vector_warmup_flag or warmup_state_flag

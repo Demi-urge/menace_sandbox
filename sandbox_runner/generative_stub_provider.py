@@ -27,7 +27,23 @@ import threading
 from contextlib import AbstractAsyncContextManager
 from typing import get_origin, get_args, Union
 from dataclasses import dataclass, field
-from filelock import FileLock, Timeout
+try:
+    from filelock import FileLock, Timeout
+except Exception:  # pragma: no cover - optional dependency
+    class Timeout(Exception):
+        pass
+
+    class _FileLockShim:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: Any) -> bool:
+            return False
+
+    FileLock = _FileLockShim  # type: ignore
 
 from logging_utils import get_logger, set_correlation_id, log_record
 from vector_service.context_builder import ContextBuilder, build_prompt
@@ -49,8 +65,21 @@ from sandbox_settings import SandboxSettings
 from model_registry import get_client
 
 # Optional dependencies loaded lazily
-pipeline = None  # type: ignore
-openai = None  # type: ignore
+class _PipelineShim:
+    """No-op transformers pipeline shim."""
+
+    def __call__(self, *_args: Any, **_kwargs: Any) -> list[dict[str, str]]:
+        return [{"generated_text": ""}]
+
+
+class _OpenAIShim:
+    """Minimal openai shim preserving the ``api_key`` attribute."""
+
+    api_key: str | None = None
+
+
+pipeline: Any = _PipelineShim()
+openai: Any = _OpenAIShim()
 
 logger = get_logger(__name__)
 
@@ -703,7 +732,7 @@ async def _load_openai_generator() -> Any:
         raise ModelLoadError("OPENAI_API_KEY missing for openai usage")
     try:
         global openai
-        if openai is None:
+        if isinstance(openai, _OpenAIShim):
             openai = importlib.import_module("openai")  # type: ignore
     except ImportError as exc:  # pragma: no cover - library not installed
         raise ModelLoadError(
@@ -722,15 +751,13 @@ async def _load_fallback_pipeline(cfg: StubProviderConfig) -> Any:
         )
     try:
         global pipeline
-        if pipeline is None:
+        if isinstance(pipeline, _PipelineShim):
             transformers = importlib.import_module("transformers")
             pipeline = transformers.pipeline  # type: ignore[attr-defined]
     except ImportError as exc:  # pragma: no cover - library not installed
         raise ModelLoadError(
             "transformers library unavailable; install the 'transformers' package"
         ) from exc
-    if pipeline is None:  # pragma: no cover - defensive
-        raise ModelLoadError("transformers pipeline unavailable")
     try:
         gen = await asyncio.to_thread(
             pipeline,
