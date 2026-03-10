@@ -78,6 +78,11 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox.shared.optional_shims import HumanAlignmentAgentFallback
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    from shared.optional_shims import HumanAlignmentAgentFallback  # type: ignore
+
 _pipeline_wrapper = load_internal("stabilization.pipeline_wrapper")
 stabilize_completion = _pipeline_wrapper.stabilize_completion
 
@@ -1277,9 +1282,9 @@ except Exception as exc:  # pragma: no cover - missing dependency
 try:  # pragma: no cover - optional dependency
     HumanAlignmentAgent = load_internal("human_alignment_agent").HumanAlignmentAgent
 except ModuleNotFoundError:  # pragma: no cover - missing dependency
-    HumanAlignmentAgent = None  # type: ignore[assignment]
+    HumanAlignmentAgent = HumanAlignmentAgentFallback
 except Exception:  # pragma: no cover - missing dependency
-    HumanAlignmentAgent = None  # type: ignore[assignment]
+    HumanAlignmentAgent = HumanAlignmentAgentFallback
 try:  # pragma: no cover - optional dependency
     log_violation = load_internal("violation_logger").log_violation
 except ModuleNotFoundError:  # pragma: no cover - missing dependency
