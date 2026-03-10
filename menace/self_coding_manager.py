@@ -41,6 +41,12 @@ def _reexport(module) -> list[str]:
 _SOURCE_MODULE = _resolve_source_module()
 __all__ = _reexport(_SOURCE_MODULE)
 
+# Ensure the legacy public contract remains available even when the source
+# module narrows ``__all__`` during refactors.
+if "SelfCodingManager" not in __all__ and hasattr(_SOURCE_MODULE, "SelfCodingManager"):
+    SelfCodingManager = getattr(_SOURCE_MODULE, "SelfCodingManager")
+    __all__.append("SelfCodingManager")
+
 # Legacy compatibility: expose ``DataBot`` from this import path even when the
 # source module keeps a narrow ``__all__``.
 try:
