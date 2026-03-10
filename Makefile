@@ -1,4 +1,4 @@
-.PHONY: mypy synergy-graph install-self-improvement-deps check-context-builder self-coding-check
+.PHONY: mypy synergy-graph install-self-improvement-deps check-context-builder self-coding-check placeholder-audit
 mypy:
 	mypy --config mypy.ini self_* sandbox_runner
 	python scripts/check_governed_embeddings.py
@@ -20,3 +20,7 @@ self-coding-check:
 	python tools/find_unmanaged_bots.py
 	python tools/check_coding_bot_decorators.py
 	python tools/qa/check_invalid_stubs.py
+	python tools/audit_placeholder_exports.py --enforce-baseline
+
+placeholder-audit:
+	python tools/audit_placeholder_exports.py --enforce-baseline
