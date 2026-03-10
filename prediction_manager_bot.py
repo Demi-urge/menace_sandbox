@@ -96,13 +96,21 @@ import logging
 from functools import lru_cache
 
 
+
+
+@dataclass
+class _RegistryGraphShim:
+    """Graph shim exposing the ``nodes`` mapping used during bootstrap."""
+
+    nodes: dict[str, dict[str, Any]] = field(default_factory=dict)
+
 class _LazyBotRegistry:
     """Lightweight proxy deferring :class:`BotRegistry` construction."""
 
     def __init__(self) -> None:
         self._real: BotRegistry | None = None
         self._pending: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-        self.graph = SimpleNamespace(nodes={})
+        self.graph = _RegistryGraphShim()
         self.modules: dict[str, Any] = {}
         self._bootstrap = False
 
