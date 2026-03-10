@@ -614,7 +614,13 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed directl
     def _make_gauge_stub(*_a: Any, **_k: Any) -> _GaugeStub:
         return _GaugeStub()
 
-    _me = SimpleNamespace(Gauge=_make_gauge_stub)
+    # Shim for external dependency: ``metrics_exporter`` module.
+    class _MetricsExporterShim:
+        Gauge: Callable[..., _GaugeStub]
+
+    _METRICS_EXPORTER_SHIM = _MetricsExporterShim()
+    _METRICS_EXPORTER_SHIM.Gauge = _make_gauge_stub
+    _me = _METRICS_EXPORTER_SHIM
 except Exception:  # pragma: no cover - fallback when executed directly
 
     class _GaugeStub:
@@ -630,14 +636,42 @@ except Exception:  # pragma: no cover - fallback when executed directly
     def _make_gauge_stub(*_a: Any, **_k: Any) -> _GaugeStub:
         return _GaugeStub()
 
-    _me = SimpleNamespace(Gauge=_make_gauge_stub)
+    # Shim for external dependency: ``metrics_exporter`` module.
+    class _MetricsExporterShim:
+        Gauge: Callable[..., _GaugeStub]
+
+    _METRICS_EXPORTER_SHIM = _MetricsExporterShim()
+    _METRICS_EXPORTER_SHIM.Gauge = _make_gauge_stub
+    _me = _METRICS_EXPORTER_SHIM
 
 try:  # pragma: no cover - optional codex fallback handler
     codex_fallback_handler = load_internal("codex_fallback_handler")
 except ModuleNotFoundError:  # pragma: no cover - fallback for flat layout
-    codex_fallback_handler = SimpleNamespace(handle=lambda *_a, **_k: SimpleNamespace(text=""))
+    # Shim for external dependency: ``codex_fallback_handler`` module.
+    class _CodexFallbackResponseShim:
+        text: str
+
+        def __init__(self) -> None:
+            self.text = ""
+
+    class _CodexFallbackHandlerShim:
+        def handle(self, *_a: Any, **_k: Any) -> _CodexFallbackResponseShim:
+            return _CodexFallbackResponseShim()
+
+    codex_fallback_handler = _CodexFallbackHandlerShim()
 except Exception:  # pragma: no cover - fallback for flat layout
-    codex_fallback_handler = SimpleNamespace(handle=lambda *_a, **_k: SimpleNamespace(text=""))
+    # Shim for external dependency: ``codex_fallback_handler`` module.
+    class _CodexFallbackResponseShim:
+        text: str
+
+        def __init__(self) -> None:
+            self.text = ""
+
+    class _CodexFallbackHandlerShim:
+        def handle(self, *_a: Any, **_k: Any) -> _CodexFallbackResponseShim:
+            return _CodexFallbackResponseShim()
+
+    codex_fallback_handler = _CodexFallbackHandlerShim()
 
 MANAGER_CONTEXT: contextvars.ContextVar[object | None] = contextvars.ContextVar(
     "self_coding_manager", default=None

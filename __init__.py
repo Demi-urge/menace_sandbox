@@ -73,14 +73,27 @@ class _DynamicPathRouterProxy(types.ModuleType):
             try:
                 module = importlib.import_module("menace_sandbox.dynamic_path_router")
             except ModuleNotFoundError:
-                module = types.SimpleNamespace(
-                    resolve_path=lambda p: Path(p),
-                    resolve_dir=lambda p: Path(p),
-                    resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
-                    path_for_prompt=lambda p: Path(p).as_posix(),
-                    get_project_root=lambda: Path("."),
-                    repo_root=lambda: Path("."),
-                )
+                # Shim for external dependency: ``dynamic_path_router`` module.
+                class _DynamicPathRouterShim:
+                    def resolve_path(self, p: str | Path) -> Path:
+                        return Path(p)
+
+                    def resolve_dir(self, p: str | Path) -> Path:
+                        return Path(p)
+
+                    def resolve_module_path(self, m: str) -> Path:
+                        return Path(m.replace(".", "/") + ".py")
+
+                    def path_for_prompt(self, p: str | Path) -> str:
+                        return Path(p).as_posix()
+
+                    def get_project_root(self) -> Path:
+                        return Path(".")
+
+                    def repo_root(self) -> Path:
+                        return Path(".")
+
+                module = _DynamicPathRouterShim()
             else:
                 sys.modules.setdefault("menace_sandbox.dynamic_path_router", module)
                 sys.modules["dynamic_path_router"] = module

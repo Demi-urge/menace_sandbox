@@ -181,13 +181,14 @@ claim_bootstrap_dependency_entry = _coding_bot_interface.claim_bootstrap_depende
 try:
     import sandbox_runner  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
-    import types  # noqa: E402
     import sys  # noqa: E402
 
-    def _fallback_run_sandbox(*args, **kwargs):  # type: ignore[override]
-        return None
+    # Shim for external dependency: ``sandbox_runner`` module.
+    class _SandboxRunnerShim:
+        def _run_sandbox(self, *args, **kwargs):  # type: ignore[override]
+            return None
 
-    sandbox_runner = types.SimpleNamespace(_run_sandbox=_fallback_run_sandbox)  # type: ignore
+    sandbox_runner = _SandboxRunnerShim()  # type: ignore
     sys.modules["sandbox_runner"] = sandbox_runner
 else:
     if not hasattr(sandbox_runner, "_run_sandbox"):
@@ -237,9 +238,13 @@ EnvironmentBootstrapper = _import_module(
 try:
     from menace.shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
-    from types import SimpleNamespace
 
-    LOCAL_KNOWLEDGE_MODULE = SimpleNamespace(memory=None)  # type: ignore
+    # Shim for external dependency: ``menace.shared_knowledge_module``.
+    class _LocalKnowledgeModuleShim:
+        def __init__(self) -> None:
+            self.memory = None
+
+    LOCAL_KNOWLEDGE_MODULE = _LocalKnowledgeModuleShim()  # type: ignore
 from menace.self_learning_service import main as learning_service_main  # noqa: E402
 from menace.self_service_override import SelfServiceOverride  # noqa: E402
 from menace.resource_allocation_optimizer import ROIDB  # noqa: E402

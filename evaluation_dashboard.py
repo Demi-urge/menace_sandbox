@@ -9,7 +9,6 @@ import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
-import types
 from .relevancy_radar import flagged_modules
 
 try:  # pragma: no cover - allow running as script
@@ -23,6 +22,10 @@ import argparse
 try:  # optional dependency
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional
+
+    # Shim for external dependency: ``pandas``.
+    class _PandasShim:
+        DataFrame: type["_SimpleDataFrame"]
 
     class _SimpleDataFrame(list):
         """Very small pandas.DataFrame replacement used when pandas is absent."""
@@ -47,7 +50,9 @@ except Exception:  # pragma: no cover - optional
                 raise ValueError("only orient='records' supported")
             return list(self)
 
-    pd = types.SimpleNamespace(DataFrame=_SimpleDataFrame)
+    _PANDAS_SHIM = _PandasShim()
+    _PANDAS_SHIM.DataFrame = _SimpleDataFrame
+    pd = _PANDAS_SHIM
 
 logger = logging.getLogger(__name__)
 
