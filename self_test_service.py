@@ -15,6 +15,7 @@ import asyncio
 import time
 from asyncio import Lock
 from filelock import FileLock
+from dataclasses import asdict, is_dataclass
 import json
 import logging
 import os
@@ -49,6 +50,16 @@ MENACE_ID = uuid.uuid4().hex
 from pydantic_settings_compat import BaseSettings
 from pydantic import Field
 from sandbox_settings import SandboxSettings
+
+
+def _settings_value(source: Any, key: str, default: Any) -> Any:
+    """Read a value from dict, dataclass, or attribute-style settings objects."""
+
+    if isinstance(source, Mapping):
+        return source.get(key, default)
+    if is_dataclass(source):
+        return asdict(source).get(key, default)
+    return getattr(source, key, default)
 
 
 def _default_local_db_path() -> str:
@@ -138,8 +149,12 @@ class SelfTestEnvSettings(BaseSettings):
 
 env_settings = SelfTestEnvSettings()
 settings = SandboxSettings()
+_RECURSIVE_ORPHAN_SCAN = bool(_settings_value(settings, "recursive_orphan_scan", True))
+_AUTO_INCLUDE_ISOLATED = bool(_settings_value(settings, "auto_include_isolated", False))
+_RECURSIVE_ISOLATED = bool(_settings_value(settings, "recursive_isolated", False))
+_TEST_REDUNDANT_MODULES = bool(_settings_value(settings, "test_redundant_modules", False))
 
-if settings.sandbox_central_logging:
+if _settings_value(settings, "sandbox_central_logging", False):
     from logging_utils import setup_logging
 
     setup_logging()
@@ -576,11 +591,11 @@ class SelfTestService:
         include_orphans: bool = True,
         discover_orphans: bool = True,
         discover_isolated: bool = True,
-        recursive_orphans: bool = getattr(SandboxSettings(), "recursive_orphan_scan", True),
-        auto_include_isolated: bool = SandboxSettings().auto_include_isolated,
-        recursive_isolated: bool = SandboxSettings().recursive_isolated,
+        recursive_orphans: bool = _RECURSIVE_ORPHAN_SCAN,
+        auto_include_isolated: bool = _AUTO_INCLUDE_ISOLATED,
+        recursive_isolated: bool = _RECURSIVE_ISOLATED,
         clean_orphans: bool = False,
-        include_redundant: bool = SandboxSettings().test_redundant_modules,
+        include_redundant: bool = _TEST_REDUNDANT_MODULES,
         report_dir: str | Path = Path(test_config.report_dir),
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
