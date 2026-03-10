@@ -1288,7 +1288,25 @@ except Exception:  # pragma: no cover - missing dependency
         )
 _import_logger = logging.getLogger(__name__)
 
-AutomatedRollbackManager = None  # type: ignore[assignment]
+"""Temporary compatibility shim for optional AutomatedRollbackManager.
+
+The shim provides deterministic rollback tracking while preserving lazy import
+resolution for the real implementation when present.
+"""
+
+
+class _AutomatedRollbackManagerShim:
+    """Temporary compatibility shim with deterministic rollback responses."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.rollback_calls: list[str] = []
+
+    def rollback(self, patch_id: str, *args: Any, **kwargs: Any) -> bool:
+        self.rollback_calls.append(str(patch_id))
+        return False
+
+
+AutomatedRollbackManager = _AutomatedRollbackManagerShim  # type: ignore[assignment]
 _AUTOMATED_ROLLBACK_MANAGER_UNRESOLVED = True
 
 
@@ -1309,7 +1327,7 @@ def _resolve_automated_rollback_manager() -> Any | None:
         _import_logger.warning(
             "AutomatedRollbackManager unavailable; rollbacks disabled: %s", exc
         )
-        AutomatedRollbackManager = None  # type: ignore[assignment]
+        AutomatedRollbackManager = _AutomatedRollbackManagerShim  # type: ignore[assignment]
     finally:
         _AUTOMATED_ROLLBACK_MANAGER_UNRESOLVED = False
 

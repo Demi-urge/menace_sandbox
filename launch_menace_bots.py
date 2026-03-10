@@ -33,9 +33,27 @@ SHARED_DB_PATH = os.getenv(
 )
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
+"""Temporary compatibility shim for the optional SelfDebuggerSandbox import.
+
+The shim is deterministic and no-op so the module remains importable when the
+runtime debugger package is absent.
+"""
+
+
+class _SelfDebuggerSandboxShim:
+    """Temporary compatibility shim with deterministic no-op behavior."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.last_result: dict[str, object] = {"status": "shim"}
+
+    def analyse_and_fix(self) -> dict[str, object]:
+        return {"status": "shim", "applied_fixes": 0}
+
+
 # Placeholder assigned during runtime import within ``debug_and_deploy`` so
 # tests can monkeypatch :class:`SelfDebuggerSandbox`.
-SelfDebuggerSandbox = None  # type: ignore
+SelfDebuggerSandbox = _SelfDebuggerSandboxShim  # type: ignore
+_SELF_DEBUGGER_SANDBOX_UNRESOLVED = True
 
 from menace.code_database import CodeDB  # noqa: E402
 from menace.menace_memory_manager import MenaceMemoryManager  # noqa: E402
@@ -250,8 +268,8 @@ def debug_and_deploy(
             cur = self.db.conn.execute(query, params)
             return {str(r[0]): int(r[1]) for r in cur.fetchall()}
 
-    global SelfDebuggerSandbox
-    if SelfDebuggerSandbox is None:
+    global SelfDebuggerSandbox, _SELF_DEBUGGER_SANDBOX_UNRESOLVED
+    if _SELF_DEBUGGER_SANDBOX_UNRESOLVED:
         try:
             SelfDebuggerSandbox = _resolve_self_debugger_sandbox_class()
         except (ModuleNotFoundError, ImportError) as exc:
@@ -278,6 +296,8 @@ def debug_and_deploy(
                     pass
 
             SelfDebuggerSandbox = _SelfDebuggerSandbox
+        finally:
+            _SELF_DEBUGGER_SANDBOX_UNRESOLVED = False
     sandbox = SelfDebuggerSandbox(
         _TelemProxy(error_db), engine, context_builder=context_builder
     )

@@ -73,7 +73,38 @@ try:  # Optional dependency – shared GPT memory
 except Exception:  # pragma: no cover - best effort
     GPT_MEMORY_MANAGER = None  # type: ignore
 
-MenaceMemoryManager = None  # type: ignore
+"""Temporary compatibility shim for optional Menace memory manager.
+
+The shim keeps lazy imports intact while providing deterministic in-memory
+store/query behavior when the real dependency is unavailable.
+"""
+
+
+class _ShimMemoryRecord:
+    """Deterministic record container returned by the compatibility manager."""
+
+    def __init__(self, data: str = "") -> None:
+        self.data = data
+
+
+class _MenaceMemoryManagerShim:
+    """Temporary compatibility shim with deterministic no-op semantics."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._records: dict[str, list[_ShimMemoryRecord]] = {}
+
+    def store(self, key: str, data: Any, *args: Any, **kwargs: Any) -> bool:
+        payload = json.dumps(data, sort_keys=True) if not isinstance(data, str) else data
+        self._records.setdefault(str(key), []).insert(0, _ShimMemoryRecord(payload))
+        return True
+
+    def query(self, key: str, limit: int = 1, *args: Any, **kwargs: Any) -> list[_ShimMemoryRecord]:
+        items = self._records.get(str(key), [])
+        return items[: max(int(limit), 0)]
+
+
+MenaceMemoryManager = _MenaceMemoryManagerShim  # type: ignore
+_MEMORY_MANAGER_IMPORT_UNRESOLVED = True
 
 logger = logging.getLogger(__name__)
 
@@ -271,15 +302,17 @@ def _allow_event(event_type: str, metadata: Dict[str, Any], severity: float) -> 
 def _get_memory_manager() -> MenaceMemoryManager | None:
     """Lazily construct the shared :class:`MenaceMemoryManager`."""
     global _MEMORY_MANAGER, MenaceMemoryManager
+    global _MEMORY_MANAGER_IMPORT_UNRESOLVED
     if _MEMORY_MANAGER is None:
-        if MenaceMemoryManager is None:
+        if _MEMORY_MANAGER_IMPORT_UNRESOLVED:
             try:  # pragma: no cover - import lazily to avoid heavy deps at import time
                 from menace_memory_manager import MenaceMemoryManager as _MMM
 
                 MenaceMemoryManager = _MMM
             except Exception:  # pragma: no cover - best effort
-                logger.exception("failed to import MenaceMemoryManager")
-                return None
+                logger.exception("failed to import MenaceMemoryManager; using shim")
+            finally:
+                _MEMORY_MANAGER_IMPORT_UNRESOLVED = False
         try:
             _MEMORY_MANAGER = MenaceMemoryManager()
         except Exception:  # pragma: no cover - best effort
