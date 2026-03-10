@@ -78,15 +78,63 @@ _DEFAULTS_PATH = Path(__file__).with_name("sandbox_settings_defaults.json")
 _ENV_MAP_PATH = Path(__file__).with_name("sandbox_settings_env_map.json")
 _MODEL_DEFAULTS_PATH = Path(__file__).with_name("sandbox_settings_model_defaults.json")
 
-with _DEFAULTS_PATH.open("r", encoding="utf-8") as fh:
-    _SANDBOX_DEFAULTS: dict[str, Any] = json.load(fh)
-with _ENV_MAP_PATH.open("r", encoding="utf-8") as fh:
-    _SANDBOX_ENV_MAP: dict[str, list[str]] = json.load(fh)
-with _MODEL_DEFAULTS_PATH.open("r", encoding="utf-8") as fh:
-    _MODEL_DEFAULTS: dict[str, dict[str, Any]] = json.load(fh)
+
+def _load_json_mapping(path: Path, *, env_var: str) -> dict[str, Any]:
+    """Load a JSON object mapping from ``path`` with missing-file fallback."""
+
+    override = os.getenv(env_var)
+    effective_path = Path(override) if override else path
+    if not effective_path.exists():
+        return {}
+    try:
+        with effective_path.open("r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception:
+        logger.warning("failed to parse %s; using empty defaults", effective_path)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@lru_cache(maxsize=1)
+def _sandbox_defaults() -> dict[str, Any]:
+    return _load_json_mapping(
+        _DEFAULTS_PATH,
+        env_var="SANDBOX_SETTINGS_DEFAULTS_PATH",
+    )
+
+
+@lru_cache(maxsize=1)
+def _sandbox_env_map() -> dict[str, list[str]]:
+    data = _load_json_mapping(
+        _ENV_MAP_PATH,
+        env_var="SANDBOX_SETTINGS_ENV_MAP_PATH",
+    )
+    mapped: dict[str, list[str]] = {}
+    for key, value in data.items():
+        if isinstance(value, list):
+            mapped[str(key)] = [str(item) for item in value]
+    return mapped
+
+
+@lru_cache(maxsize=1)
+def _model_defaults() -> dict[str, dict[str, Any]]:
+    base = _load_json_mapping(_MODEL_DEFAULTS_PATH, env_var="")
+    override = _load_json_mapping(
+        _MODEL_DEFAULTS_PATH,
+        env_var="SANDBOX_SETTINGS_MODEL_DEFAULTS_PATH",
+    )
+    merged: dict[str, dict[str, Any]] = {
+        str(key): value
+        for key, value in base.items()
+        if isinstance(value, dict)
+    }
+    for key, value in override.items():
+        if isinstance(value, dict):
+            merged[str(key)] = value
+    return merged
 
 DEFAULT_SEVERITY_SCORE_MAP: dict[str, float] = dict(
-    _SANDBOX_DEFAULTS.get("severity_score_map", {})
+    _sandbox_defaults().get("severity_score_map", {})
 )
 
 
@@ -232,7 +280,7 @@ def _load_threshold_env_overrides() -> dict[str, Any]:
 
     overrides: dict[str, Any] = {}
     for key in ("psi_threshold", "ks_threshold", "enable_truth_calibration"):
-        env_names = _SANDBOX_ENV_MAP.get(key, [])
+        env_names = _sandbox_env_map().get(key, [])
         candidates = env_names if isinstance(env_names, list) else [env_names]
         for env_name in candidates:
             if not env_name:
@@ -240,7 +288,7 @@ def _load_threshold_env_overrides() -> dict[str, Any]:
             raw = os.getenv(env_name)
             if raw is None:
                 continue
-            default = _SANDBOX_DEFAULTS.get(key)
+            default = _sandbox_defaults().get(key)
             try:
                 coerced = _coerce_value(raw, type(default) if default is not None else Any)
             except Exception:
@@ -260,7 +308,7 @@ class _BaseModel:
         return self.model_dump()
 
 def _make_model(name: str) -> type[_BaseModel]:
-    defaults = _MODEL_DEFAULTS[name]
+    defaults = _model_defaults()[name]
     fields_spec = []
     for key, value in defaults.items():
         if isinstance(value, list):
@@ -294,7 +342,7 @@ class SandboxSettings:
         self, *, build_groups: bool = True, bootstrap_fast: bool = False, **overrides: Any
     ) -> None:
         init_start = time.perf_counter()
-        data = _deep_copy(_SANDBOX_DEFAULTS)
+        data = _deep_copy(_sandbox_defaults())
         data.update(self._load_env_overrides())
         data.update(overrides)
         parse_ms = (time.perf_counter() - init_start) * 1000
@@ -414,7 +462,7 @@ class SandboxSettings:
 
     def _load_env_overrides(self) -> dict[str, Any]:
         overrides: dict[str, Any] = {}
-        for key, env_names in _SANDBOX_ENV_MAP.items():
+        for key, env_names in _sandbox_env_map().items():
             candidates = env_names if isinstance(env_names, list) else [env_names]
             for env_name in candidates:
                 if not env_name:
@@ -422,7 +470,7 @@ class SandboxSettings:
                 raw = os.getenv(env_name)
                 if raw is None:
                     continue
-                default = _SANDBOX_DEFAULTS.get(key)
+                default = _sandbox_defaults().get(key)
                 try:
                     coerced = _coerce_value(raw, type(default) if default is not None else Any)
                 except Exception:
@@ -572,7 +620,7 @@ class SandboxThresholds:
 
     def __init__(self, **overrides: Any) -> None:
         start = time.perf_counter()
-        data = _deep_copy(_SANDBOX_DEFAULTS)
+        data = _deep_copy(_sandbox_defaults())
         data.update(_load_threshold_env_overrides())
         data.update(overrides)
         self.psi_threshold = data.get("psi_threshold")
@@ -608,4 +656,3 @@ __all__ = [
     "DEFAULT_SEVERITY_SCORE_MAP",
     "USING_SANDBOX_SETTINGS_FALLBACK",
 ]
-
