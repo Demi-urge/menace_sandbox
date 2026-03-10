@@ -50,13 +50,20 @@ class Index:
         self.kwargs = _kwargs
 
 
-class _EventShim:
+class EventShim:
+    """Deterministic shim for the tiny subset of sqlalchemy.event used here."""
+
     @staticmethod
     def listen(*_args, **_kwargs) -> None:
         return None
 
+    def __getattr__(self, name: str):
+        raise NotImplementedError(
+            f"EventShim does not support '{name}'. Supported methods: listen."
+        )
 
-event = _EventShim()
+
+event = EventShim()
 
 __all__ = [
     "ArgumentError",

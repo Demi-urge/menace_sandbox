@@ -22,6 +22,7 @@ import os
 
 from dynamic_path_router import resolve_path
 from audit_trail import AuditTrail
+from tests.builder_shims import BuildContextBuilderShim
 
 # Stub heavy optional dependencies before importing stripe_watchdog
 sys.modules.setdefault("vector_service", SimpleNamespace(CognitionLayer=lambda: None))
@@ -49,7 +50,7 @@ _dpr.resolve_path = _fake_resolve
 
 import stripe_watchdog as sw  # noqa: E402
 
-BUILDER = SimpleNamespace(build=lambda *a, **k: "")
+BUILDER = BuildContextBuilderShim()
 
 
 @pytest.fixture
