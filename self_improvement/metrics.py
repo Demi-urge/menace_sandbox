@@ -488,7 +488,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     settings = SandboxSettings()
     os.environ["SANDBOX_CENTRAL_LOGGING"] = (
-        "1" if settings.sandbox_central_logging else "0"
+        "1" if getattr(settings, "sandbox_central_logging", False) else "0"
     )
     setup_logging()
 

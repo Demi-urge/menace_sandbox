@@ -1449,7 +1449,7 @@ else:
         logger.debug("initialisation interrupted", exc_info=True)
         _console("initialisation interrupted; exiting")
         raise SystemExit(130) from None
-os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
+os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if getattr(settings, "sandbox_central_logging", False) else "0"
 
 
 # Initialise database router with a unique menace_id. All DB access must go
