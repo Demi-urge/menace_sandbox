@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 from threading import Event
 from typing import Optional
 
@@ -24,12 +25,51 @@ class UnifiedUpdateService:
         rollback_mgr: Optional[RollbackManager] = None,
         *,
         max_retries: int = 0,
+        retry_backoff_seconds: float = 1.0,
+        retry_backoff_cap_seconds: float = 30.0,
+        test_scope: str = "smoke",
+        smoke_marker: str = "smoke",
+        full_test_flag_env: str = "UNIFIED_UPDATE_FULL_SUITE",
     ) -> None:
         self.update_service = updater_service or DependencyUpdateService()
         self.deployer = deployer or DeploymentBot()
         self.rollback_mgr = rollback_mgr
         self.max_retries = max_retries
+        self.retry_backoff_seconds = max(retry_backoff_seconds, 0.0)
+        self.retry_backoff_cap_seconds = max(retry_backoff_cap_seconds, 0.0)
+        self.test_scope = test_scope
+        self.smoke_marker = smoke_marker
+        self.full_test_flag_env = full_test_flag_env
         self.logger = logging.getLogger(self.__class__.__name__)
+
+    @staticmethod
+    def _is_truthy(value: str) -> bool:
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _pytest_cmd(self) -> list[str]:
+        force_full_suite = self._is_truthy(os.getenv(self.full_test_flag_env, "0"))
+        if self.test_scope == "full" or force_full_suite:
+            return ["pytest", "-q"]
+        return ["pytest", "-q", "-m", self.smoke_marker]
+
+    @staticmethod
+    def _is_terminal_cycle_error(exc: Exception) -> bool:
+        return isinstance(exc, subprocess.CalledProcessError) and exc.returncode == 2
+
+    @staticmethod
+    def _root_cause_category(exc: Exception) -> str:
+        msg = str(exc).lower()
+        if any(p in msg for p in ("optional dependency", "extra", "not installed")):
+            return "missing optional pkg"
+        if any(p in msg for p in ("connection", "timeout", "dns", "network")):
+            return "infra dependency"
+        if (
+            isinstance(exc, subprocess.CalledProcessError)
+            and exc.returncode == 2
+            or any(p in msg for p in ("importerror", "modulenotfounderror", "cannot import name"))
+        ):
+            return "import contract"
+        return "unknown"
 
     def _cycle(self) -> None:
         for attempt in range(self.max_retries + 1):
@@ -41,7 +81,7 @@ class UnifiedUpdateService:
                 except Exception as spec_exc:
                     raise RuntimeError(f"failed to build deployment spec: {spec_exc}") from spec_exc
                 self.deployer.deploy("auto-update", [], spec)
-                subprocess.run(["pytest", "-q"], check=True)
+                subprocess.run(self._pytest_cmd(), check=True)
 
                 nodes = [n for n in os.getenv("NODES", "").split(",") if n]
                 if nodes:
@@ -60,15 +100,27 @@ class UnifiedUpdateService:
                 self.logger.info("update cycle successful on attempt %s", attempt + 1)
                 break
             except Exception as exc:
-                self.logger.error("deployment failed on attempt %s: %s", attempt + 1, exc)
+                category = self._root_cause_category(exc)
+                self.logger.error(
+                    "deployment failed on attempt %s (root-cause=%s): %s",
+                    attempt + 1,
+                    category,
+                    exc,
+                )
                 if self.rollback_mgr:
                     try:
                         nodes = [n for n in os.getenv("NODES", "").split(",") if n]
                         self.rollback_mgr.auto_rollback("latest", nodes)
                     except Exception as rb_exc:
                         self.logger.error("rollback failed: %s", rb_exc)
+                if self._is_terminal_cycle_error(exc):
+                    self.logger.error("terminal test failure detected; aborting remaining retries")
+                    raise
                 if attempt == self.max_retries:
                     raise
+                delay = min(self.retry_backoff_seconds * (2**attempt), self.retry_backoff_cap_seconds)
+                if delay > 0:
+                    time.sleep(delay)
 
     def run_continuous(self, interval: float = 86400.0, *, stop_event: Optional[Event] = None) -> None:
         if stop_event is None:
