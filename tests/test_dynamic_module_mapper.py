@@ -205,3 +205,14 @@ def test_hdbscan_algorithm(tmp_path):
     assert mapping["a"] == mapping["b"]
     assert mapping["c"] != mapping["a"]
 
+
+
+def test_discover_module_groups_ignores_root_package_marker(tmp_path):
+    (tmp_path / "__init__.py").write_text('"""root package"""\n')  # path-ignore
+    (tmp_path / "a.py").write_text("def run():\n    return 1\n")  # path-ignore
+
+    groups = dmm.discover_module_groups(tmp_path)
+
+    flattened = [mod for mods in groups.values() for mod in mods]
+    assert "." not in flattened
+    assert "a" in flattened
