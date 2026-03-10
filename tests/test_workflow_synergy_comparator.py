@@ -72,7 +72,7 @@ def _force_simple(monkeypatch):
     monkeypatch.setattr(
         wsc.WorkflowSynergyComparator,
         "best_practices_file",
-        Path("/tmp/wsc_best.json"),
+        Path("wsc_best.json"),
         raising=False,
     )
 
