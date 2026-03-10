@@ -56,7 +56,8 @@ else:
 if _LIGHT_IMPORTS:
     class ROITracker:  # type: ignore[override]
         def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+            self.module_deltas: Dict[str, list[float]] = {}
+            self.correlation_history: Dict[tuple[str, str], list[float]] = {}
     if __package__:
         from .roi_calculator import ROICalculator
     else:  # pragma: no cover - allow execution as script

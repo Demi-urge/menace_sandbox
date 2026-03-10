@@ -113,7 +113,8 @@ except Exception:  # pragma: no cover - fallback when the dependency is missing
         """Minimal stub so ``ErrorDB`` remains importable."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - simple stub
-            pass
+            self.args = args
+            self.kwargs = kwargs
 
 logger = logging.getLogger(__name__)
 

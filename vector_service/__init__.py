@@ -109,7 +109,8 @@ else:
 
 class _Stub:  # pragma: no cover - simple callable placeholder
     def __init__(self, *args, **kwargs):
-        pass
+        self.args = args
+        self.kwargs = kwargs
 
 
 def _noop(*args, **kwargs):  # pragma: no cover - trivial fallback

@@ -18,10 +18,14 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback for tests
     class EmbeddableDBMixin:  # type: ignore
         def __init__(self, *a, **k) -> None:  # noqa: D401 - trivial
-            pass
+            self._metadata = {}
+            self._init_args = a
+            self._init_kwargs = k
 
         def try_add_embedding(self, *a, **k) -> None:
-            pass
+            if not hasattr(self, "_embedding_events"):
+                self._embedding_events = []
+            self._embedding_events.append({"args": list(a), "kwargs": dict(k)})
 
         def search_by_vector(self, *a, **k):  # noqa: D401 - trivial
             return []

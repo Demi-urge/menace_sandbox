@@ -161,7 +161,7 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
     )
 
     class ThresholdService:  # type: ignore[no-redef]
-        pass
+        self._fallback_state: dict[str, Any] = {}
 
 try:
     if _HAS_PACKAGE:
@@ -229,7 +229,7 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
 
     class IntentClusterer:  # type: ignore[no-redef]
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            pass
+            self._fallback_state: dict[str, Any] = {}
 
         def cluster(self, *_args: Any, **_kwargs: Any) -> list[str]:
             return []
@@ -247,7 +247,7 @@ except Exception as exc:  # pragma: no cover - degraded bootstrap
 
     class UniversalRetriever:  # type: ignore[no-redef]
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            pass
+            self._fallback_state: dict[str, Any] = {}
 
         def retrieve(self, *_args: Any, **_kwargs: Any) -> list[str]:
             return []

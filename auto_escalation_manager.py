@@ -58,7 +58,9 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - gracefully degrade in tests
     class UnifiedEventBus:  # type: ignore[override]
         def publish(self, *a, **k) -> None:
-            pass
+            if not hasattr(self, "_published_events"):
+                self._published_events = []
+            self._published_events.append({"args": list(a), "kwargs": dict(k)})
 try:  # pragma: no cover - optional dependency
     from .local_knowledge_module import init_local_knowledge
 except Exception:  # pragma: no cover - gracefully degrade in tests
@@ -72,17 +74,20 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - gracefully degrade in tests
     class SelfHealingOrchestrator:  # type: ignore[override]
         def __init__(self, *a, **k) -> None:
-            pass
+            self._init_args = a
+            self._init_kwargs = k
+            self._probe_runs = 0
 
         def probe_and_heal(self, *a, **k) -> None:
-            pass
+            self._probe_runs = getattr(self, "_probe_runs", 0) + 1
+            self._last_probe = {"args": list(a), "kwargs": dict(k)}
 
 try:  # pragma: no cover - optional dependency
     from .rollback_manager import RollbackManager
 except Exception:  # pragma: no cover - gracefully degrade in tests
     class RollbackManager:  # type: ignore[override]
         def auto_rollback(self, *a, **k) -> None:
-            pass
+            self._last_rollback = {"args": list(a), "kwargs": dict(k)}
 
 
 registry = BotRegistry()
@@ -271,7 +276,8 @@ class AutoEscalationManager:
             else:  # pragma: no cover - fallback when components missing
                 class _DummyDebugger:
                     def analyse_and_fix(self) -> None:
-                        pass
+                        self.last_run = "noop"
+                        return None
 
                 debugger = _DummyDebugger()
         self.debugger = debugger

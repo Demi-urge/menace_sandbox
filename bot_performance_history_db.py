@@ -161,7 +161,8 @@ class BotPerformanceHistoryDB:
             logger.exception("failed to close bot performance db during cleanup")
 
     def close(self) -> None:
-        pass
+        self._closed = True
+        return None
 
     def add(self, rec: PerformanceRecord) -> AddResult:
         data = {f.name: getattr(rec, f.name) for f in fields(PerformanceRecord)}

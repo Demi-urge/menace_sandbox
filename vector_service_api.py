@@ -42,7 +42,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - simple fallback for tests
     class ROITracker:  # type: ignore
         def update_db_metrics(self, metrics: dict | None = None) -> None:
-            pass
+            self._last_metrics = dict(metrics or {})
 
         def origin_db_deltas(self) -> dict:
             return {}

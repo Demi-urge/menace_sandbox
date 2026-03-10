@@ -69,7 +69,7 @@ except Exception as exc:  # pragma: no cover - allow running without ROI tracker
         """Deterministic no-op fallback used when ``roi_tracker`` is unavailable."""
 
         def __init__(self, *_, **__):
-            pass
+            self._scenario_deltas: list[dict[str, Any]] = []
 
         def record_scenario_delta(self, *_, **__):
             """No-op fallback implementation."""

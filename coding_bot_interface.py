@@ -429,7 +429,8 @@ except Exception:  # pragma: no cover - support flat execution
         from db_router import set_audit_bootstrap_safe_default  # type: ignore
     except Exception:  # pragma: no cover - audit safety best effort
         def set_audit_bootstrap_safe_default(enabled: bool = True) -> None:  # type: ignore[override]
-            pass
+            globals()["_AUDIT_BOOTSTRAP_SAFE_DEFAULT"] = bool(enabled)
+            return None
 
 _HELPER_NAME = "import_compat"
 _PACKAGE_NAME = "menace_sandbox"

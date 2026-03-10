@@ -38,7 +38,9 @@ try:  # shared baseline tracker across modules
 except Exception:  # pragma: no cover - fallback stub
     class _BaselineStub:
         def update(self, **metrics: float) -> None:
-            pass
+            if not hasattr(self, "_latest_metrics"):
+                self._latest_metrics: Dict[str, float] = {}
+            self._latest_metrics.update({str(k): float(v) for k, v in metrics.items()})
 
         def get(self, metric: str) -> float:
             return 0.0
