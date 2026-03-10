@@ -56,6 +56,8 @@ jobs:
         run: make self-coding-check
       - name: Detect invalid runtime shims and stubs
         run: python scripts/check_invalid_stubs.py
+      - name: Audit placeholder export shims (Phase 1 baseline)
+        run: python tools/audit_placeholder_exports.py --enforce-baseline
       - name: Prevent unwrapped engine.generate_helper usage
         run: "python tools/check_engine_generate_helper_wrapping.py $(git ls-files '*.py')"
       - name: Ensure helper callers use @self_coding_managed
@@ -121,6 +123,8 @@ jobs:
         run: make self-coding-check
       - name: Detect invalid runtime shims and stubs
         run: python scripts/check_invalid_stubs.py
+      - name: Audit placeholder export shims (Phase 1 baseline)
+        run: python tools/audit_placeholder_exports.py --enforce-baseline
       - name: Prevent unwrapped engine.generate_helper usage
         run: pre-commit run check-engine-generate-helper --all-files
       - name: Ensure helper callers use @self_coding_managed
