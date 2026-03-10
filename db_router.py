@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sqlite3
+from runtime_dependency_shims import SQLParseKeywordShim
 try:  # pragma: no cover - optional dependency
     import sqlparse
     from sqlparse.sql import Identifier, IdentifierList, Parenthesis
@@ -27,7 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
         __slots__ = ()
 
     Identifier = IdentifierList = Parenthesis = _SQLParseStub  # type: ignore
-    Keyword = object()
+    Keyword = SQLParseKeywordShim()
 import threading
 import time
 from collections import defaultdict

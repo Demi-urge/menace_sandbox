@@ -14,9 +14,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import types
 
-sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
+from runtime_dependency_shims import UnifiedEventBusShim
+
+sys.modules.setdefault("unified_event_bus", type("_UnifiedEventBusModuleShim", (), {"UnifiedEventBus": UnifiedEventBusShim})())
 
 from code_database import PatchHistoryDB
 from patch_provenance import (

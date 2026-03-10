@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from flask import Flask, jsonify, request
 import sys
-import types
 import tempfile
 from pathlib import Path
 
+from runtime_dependency_shims import UnifiedEventBusShim
+
 sys.modules.setdefault(
-    "unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
+    "unified_event_bus", type("_UnifiedEventBusModuleShim", (), {"UnifiedEventBus": UnifiedEventBusShim})()
 )
 
 from code_database import PatchHistoryDB, PatchRecord

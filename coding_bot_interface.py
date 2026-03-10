@@ -36,6 +36,7 @@ import threading
 from typing import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
+from runtime_dependency_shims import QuickFixShim
 from typing import Any, Callable, Iterator, Literal, TypeVar, TYPE_CHECKING
 import time
 
@@ -4437,7 +4438,7 @@ class _DisabledSelfCodingManager:
         # without encountering attribute errors during bootstrap.
         self.engine.context_builder = self.engine.cognition_layer.context_builder
         # Mark quick_fix as initialised so downstream code skips heavy bootstrap.
-        self.quick_fix = object()
+        self.quick_fix = QuickFixShim()
         self.error_db = None
         self.evolution_orchestrator = None
         self.manager: Any | None = None

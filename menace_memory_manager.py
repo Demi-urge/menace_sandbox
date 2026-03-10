@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional, Sequence
 
 from db_router import GLOBAL_ROUTER, init_db_router
+from runtime_dependency_shims import EmptyVectorIndexShim
 
 try:
     from sklearn.cluster import KMeans  # type: ignore
@@ -780,7 +781,7 @@ class MenaceMemoryManager(GPTMemoryInterface):
             try:
                 import numpy as np
             except Exception:
-                self._faiss_index = object()
+                self._faiss_index = EmptyVectorIndexShim(dim=len(vectors[0]) if vectors else 0)
                 return 0
             try:
                 arr = np.array(vectors, dtype="float32")
@@ -800,7 +801,7 @@ class MenaceMemoryManager(GPTMemoryInterface):
             try:
                 import numpy as np
             except Exception:
-                self._vector_index = object()
+                self._vector_index = EmptyVectorIndexShim(dim=len(vectors[0]) if vectors else 0)
                 return 0
             arr = np.array(vectors, dtype="float32")
             index = faiss.IndexIDMap(faiss.IndexFlatL2(len(vectors[0])))
