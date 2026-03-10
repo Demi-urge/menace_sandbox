@@ -18,19 +18,33 @@ skipped.  In either case the bootstrapper considers the optional service
 "installed" which prevents noisy warnings during ``manual_bootstrap`` runs.
 """
 
-with open("shim_was_loaded.txt", "w") as f:
-    f.write("YES")
-
 import logging
-import sys
-
-print("[SHIM] quick_fix_engine_service module loaded", flush=True)
-sys.stdout.flush()
+import os
+from pathlib import Path
 
 __all__ = ["start", "is_running"]
 
 _logger = logging.getLogger(__name__)
 _started: bool = False
+
+
+def _write_start_marker() -> None:
+    """Write an optional marker file when requested by the environment.
+
+    Importing this module should never perform filesystem writes.  Tests can
+    opt-in to marker creation by setting ``QUICK_FIX_SHIM_MARKER_PATH``.
+    """
+
+    marker = os.getenv("QUICK_FIX_SHIM_MARKER_PATH")
+    if not marker:
+        return
+
+    path = Path(marker)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("YES", encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - best effort only
+        _logger.debug("failed to write quick-fix shim marker %s: %s", path, exc)
 
 
 def start() -> None:
@@ -44,43 +58,24 @@ def start() -> None:
     """
 
     global _started
-    print("[SHIM] entering start()", flush=True)
-    sys.stdout.flush()
     if _started:
-        print(
-            "[SHIM] start() called but shim is already marked as started; returning",
-            flush=True,
-        )
-        sys.stdout.flush()
         return
 
+    _write_start_marker()
+
     try:
-        print("[SHIM] attempting to import menace_sandbox.quick_fix_engine", flush=True)
-        sys.stdout.flush()
         import menace_sandbox.quick_fix_engine  # noqa: F401  # local import for optional dep
     except Exception as exc:  # pragma: no cover - import failures depend on env
-        print(
-            f"[SHIM] exception during quick_fix_engine import: {exc}",
-            flush=True,
-        )
-        sys.stdout.flush()
         _logger.debug(
             "quick_fix_engine unavailable; skipping optional background worker: %s",
             exc,
         )
     else:
-        print(
-            "[SHIM] quick_fix_engine import succeeded; see logs for next steps",
-            flush=True,
-        )
-        sys.stdout.flush()
         _logger.info(
             "quick_fix_engine_service shim loaded; start the production worker "
             "separately if desired",
         )
     finally:
-        print("[SHIM] marking shim as started and forcing stdout flush", flush=True)
-        sys.stdout.flush()
         _started = True
 
 

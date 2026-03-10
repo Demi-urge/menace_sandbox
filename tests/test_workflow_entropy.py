@@ -25,7 +25,7 @@ def test_workflow_synergy_comparator_uses_entropy():
             {"module": "y"},
         ]
     }
-    WorkflowSynergyComparator.best_practices_file = Path("/tmp/wsc_best.json")
+    WorkflowSynergyComparator.best_practices_file = Path("wsc_best.json")
     result = WorkflowSynergyComparator.compare(spec, spec)
     expected_entropy = compute_workflow_entropy(spec)
     assert result.entropy_a == expected_entropy
