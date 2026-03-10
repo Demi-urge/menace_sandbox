@@ -41,11 +41,20 @@ class SessionVault:
     """Store and retrieve sessions using Redis for speed and SQLite for durability."""
 
     def __init__(self, path: str | None = None, redis_url: str = "redis://localhost:6379/0") -> None:
-        self.conn = router.local_conn
+        self.conn = self._resolve_connection(path)
         self._init_sqlite()
         self.redis = None
         if redis and self._connect_redis(redis_url):
             self.redis_url = redis_url
+
+
+    def _resolve_connection(self, path: str | None) -> sqlite3.Connection:
+        conn = getattr(router, "local_conn", None)
+        if conn is not None:
+            return conn
+        if path:
+            return sqlite3.connect(path)
+        return sqlite3.connect(":memory:")
 
     def _connect_redis(self, url: str) -> bool:
         try:

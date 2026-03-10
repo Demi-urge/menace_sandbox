@@ -232,12 +232,34 @@ def auto_include_modules(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
 
 
 def _get_sandbox_env_presets() -> list[dict[str, Any]]:
-    return _require_environment().SANDBOX_ENV_PRESETS
+    env = _require_environment()
+    raw = getattr(env, "SANDBOX_ENV_PRESETS", [])
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    presets: list[dict[str, Any]] = []
+    for item in raw:
+        if isinstance(item, Mapping):
+            presets.append(dict(item))
+    return presets
 
 
 def _set_sandbox_env_presets(presets: list[dict[str, Any]]) -> None:
     env = _require_environment()
-    env.SANDBOX_ENV_PRESETS = presets
+    env.SANDBOX_ENV_PRESETS = _normalize_presets(presets)
+
+
+def _normalize_presets(presets: Any) -> list[dict[str, Any]]:
+    if isinstance(presets, Mapping):
+        return [dict(presets)]
+    if not isinstance(presets, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in presets:
+        if isinstance(item, Mapping):
+            normalized.append(dict(item))
+    return normalized
 
 
 def _error_category_counts() -> Mapping[str, int]:
@@ -256,7 +278,7 @@ class _CycleModule(ModuleType):
 
     def __setattr__(self, name: str, value: Any) -> None:  # pragma: no cover
         if name == "SANDBOX_ENV_PRESETS":
-            _set_sandbox_env_presets(list(value))
+            _set_sandbox_env_presets(value)
             return
         if name == "ERROR_CATEGORY_COUNTS":
             env = _require_environment()
@@ -657,7 +679,12 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
     """
 
     settings = getattr(ctx, "settings", SandboxSettings())
-    if not getattr(settings, "auto_include_isolated", False):
+    auto_include_isolated = getattr(
+        settings,
+        "auto_include_isolated",
+        getattr(settings, "orphan_modules_reintroduction", False),
+    )
+    if not auto_include_isolated:
         return
 
     repo = Path(resolve_path(getattr(ctx, "repo")))
@@ -807,7 +834,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         entry = traces.setdefault(m, {"parents": []})
         cls = entry.get("classification", "candidate")
         entry.setdefault("classification_history", []).append(cls)
-        deltas = tracker.module_deltas.get(m, [])
+        deltas = getattr(tracker, "module_deltas", {}).get(m, [])
         if deltas:
             entry.setdefault("roi_history", []).extend(deltas)
 

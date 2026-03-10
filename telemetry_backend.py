@@ -15,7 +15,7 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Iterable
 
 from .db_router import (
     DBRouter,
@@ -86,10 +86,15 @@ def _select_router(
         if existing.menace_id != "telemetry":
             existing = None
         else:
-            local_path = _connection_path(existing.local_conn)
-            shared_path = _connection_path(existing.shared_conn)
-            if local_path != desired or shared_path != desired:
+            local_conn = getattr(existing, "local_conn", None)
+            shared_conn = getattr(existing, "shared_conn", None)
+            if local_conn is None or shared_conn is None:
                 existing = None
+            else:
+                local_path = _connection_path(local_conn)
+                shared_path = _connection_path(shared_conn)
+                if local_path != desired or shared_path != desired:
+                    existing = None
     if existing is None:
         return init_db_router(
             "telemetry",
@@ -155,6 +160,32 @@ def get_table_access_counts(*, flush: bool = False) -> Dict[str, Dict[str, Dict[
 
 
 
+def _add_local_table(table_name: str) -> None:
+    """Register a telemetry table name on LOCAL_TABLES tolerating test stubs."""
+
+    try:
+        LOCAL_TABLES.add(table_name)
+        return
+    except AttributeError:
+        pass
+
+    if isinstance(LOCAL_TABLES, dict):
+        LOCAL_TABLES[table_name] = True
+        return
+    if isinstance(LOCAL_TABLES, list):
+        if table_name not in LOCAL_TABLES:
+            LOCAL_TABLES.append(table_name)
+
+
+def _router_connections(router: Any) -> Iterable[tuple[str, sqlite3.Connection]]:
+    local_conn = getattr(router, "local_conn", None)
+    shared_conn = getattr(router, "shared_conn", None)
+    if local_conn is not None:
+        yield "local", local_conn
+    if shared_conn is not None:
+        yield "shared", shared_conn
+
+
 class TelemetryBackend:
     """Persist ROI prediction telemetry using :class:`DBRouter`."""
 
@@ -205,8 +236,8 @@ class TelemetryBackend:
             return
 
         self.router = chosen
-        LOCAL_TABLES.add("roi_telemetry")
-        LOCAL_TABLES.add("roi_prediction_events")
+        _add_local_table("roi_telemetry")
+        _add_local_table("roi_prediction_events")
         try:
             if self.bootstrap_safe and not self._configure_with_deadline(chosen):
                 raise TimeoutError("telemetry bootstrap configuration deadline exceeded")
@@ -227,8 +258,8 @@ class TelemetryBackend:
     def _configure_with_deadline(self, router: DBRouter) -> bool:
         timeout = self.init_timeout_s
         if timeout is None or timeout <= 0:
-            _configure_sqlite_connection(router.local_conn)
-            _configure_sqlite_connection(router.shared_conn)
+            for _, conn in _router_connections(router):
+                _configure_sqlite_connection(conn)
             return True
 
         def _run_config(conn: sqlite3.Connection) -> tuple[bool, Exception | None]:
@@ -247,7 +278,7 @@ class TelemetryBackend:
                 return False, None
             return True, result["exc"]
 
-        for name, conn in (("local", router.local_conn), ("shared", router.shared_conn)):
+        for name, conn in _router_connections(router):
             ok, exc = _run_config(conn)
             if not ok:
                 logger.warning(
