@@ -166,13 +166,18 @@ class KnowledgeGraph:
         return self.graph
 
     # ------------------------------------------------------------------
+    def _graph_for_mutation(self, *, reason: str) -> object | None:
+        with self._graph_lock:
+            return self._ensure_mutable_graph(reason=reason)
+
     def register_service_dependency(self, bot: str, service: str) -> None:
         """Record that ``bot`` depends on external ``service``."""
-        if self.graph is None:
+        graph = self._graph_for_mutation(reason="register_service_dependency")
+        if graph is None:
             return
-        self.graph.add_node(f"bot:{bot}")
-        self.graph.add_node(f"service:{service}")
-        self.graph.add_edge(f"bot:{bot}", f"service:{service}", type="service")
+        graph.add_node(f"bot:{bot}")
+        graph.add_node(f"service:{service}")
+        graph.add_edge(f"bot:{bot}", f"service:{service}", type="service")
 
     # ------------------------------------------------------------------
     def add_bot(
@@ -791,25 +796,27 @@ class KnowledgeGraph:
         performed later.
         """
 
-        if self.graph is None:
-            return
+        with self._graph_lock:
+            graph = self._ensure_mutable_graph(reason="add_error_instance")
+            if graph is None:
+                return
 
-        cnode = f"error_category:{category}"
-        mnode = f"module:{module}"
-        self.graph.add_node(cnode)
-        self.graph.add_node(mnode)
+            cnode = f"error_category:{category}"
+            mnode = f"module:{module}"
+            graph.add_node(cnode)
+            graph.add_node(mnode)
 
-        # increment weights for category node and category->module edge
-        self.graph.nodes[cnode]["weight"] = self.graph.nodes[cnode].get("weight", 0) + 1
-        prev = self.graph.get_edge_data(cnode, mnode, {}).get("weight", 0)
-        self.graph.add_edge(cnode, mnode, type="module", weight=prev + 1)
+            # increment weights for category node and category->module edge
+            graph.nodes[cnode]["weight"] = graph.nodes[cnode].get("weight", 0) + 1
+            prev = graph.get_edge_data(cnode, mnode, {}).get("weight", 0)
+            graph.add_edge(cnode, mnode, type="module", weight=prev + 1)
 
-        if cause:
-            conode = f"cause:{cause}"
-            self.graph.add_node(conode)
-            self.graph.nodes[conode]["weight"] = self.graph.nodes[conode].get("weight", 0) + 1
-            prev = self.graph.get_edge_data(mnode, conode, {}).get("weight", 0)
-            self.graph.add_edge(mnode, conode, type="cause", weight=prev + 1)
+            if cause:
+                conode = f"cause:{cause}"
+                graph.add_node(conode)
+                graph.nodes[conode]["weight"] = graph.nodes[conode].get("weight", 0) + 1
+                prev = graph.get_edge_data(mnode, conode, {}).get("weight", 0)
+                graph.add_edge(mnode, conode, type="cause", weight=prev + 1)
 
     def update_error_stats(self, err_db: object) -> None:
         """Synchronise error statistics from ``err_db``.
@@ -819,42 +826,44 @@ class KnowledgeGraph:
         corresponding edges and node weights in the graph.
         """
 
-        if self.graph is None:
-            return
-
         try:
             stats = err_db.get_error_stats()  # type: ignore[call-arg]
         except Exception:
             return
 
-        totals: Dict[str, int] = {}
-        cause_totals: Dict[str, int] = {}
-        for row in stats:
-            try:
-                etype = row["error_type"]
-                module = row["module"]
-                count = int(row["count"])
-            except Exception:
-                continue
+        with self._graph_lock:
+            graph = self._ensure_mutable_graph(reason="update_error_stats")
+            if graph is None:
+                return
 
-            enode = f"error_type:{etype}"
-            mnode = f"module:{module}"
-            self.graph.add_node(enode)
-            self.graph.add_node(mnode)
-            self.graph.add_edge(enode, mnode, type="module", weight=count)
-            totals[enode] = totals.get(enode, 0) + count
+            totals: Dict[str, int] = {}
+            cause_totals: Dict[str, int] = {}
+            for row in stats:
+                try:
+                    etype = row["error_type"]
+                    module = row["module"]
+                    count = int(row["count"])
+                except Exception:
+                    continue
 
-            cause = row.get("cause")
-            if cause:
-                cnode = f"cause:{cause}"
-                self.graph.add_node(cnode)
-                self.graph.add_edge(mnode, cnode, type="cause", weight=count)
-                cause_totals[cnode] = cause_totals.get(cnode, 0) + count
+                enode = f"error_type:{etype}"
+                mnode = f"module:{module}"
+                graph.add_node(enode)
+                graph.add_node(mnode)
+                graph.add_edge(enode, mnode, type="module", weight=count)
+                totals[enode] = totals.get(enode, 0) + count
 
-        for enode, weight in totals.items():
-            self.graph.nodes[enode]["weight"] = weight
-        for cnode, weight in cause_totals.items():
-            self.graph.nodes[cnode]["weight"] = weight
+                cause = row.get("cause")
+                if cause:
+                    cnode = f"cause:{cause}"
+                    graph.add_node(cnode)
+                    graph.add_edge(mnode, cnode, type="cause", weight=count)
+                    cause_totals[cnode] = cause_totals.get(cnode, 0) + count
+
+            for enode, weight in totals.items():
+                graph.nodes[enode]["weight"] = weight
+            for cnode, weight in cause_totals.items():
+                graph.nodes[cnode]["weight"] = weight
 
     def ingest_error_db(
         self,

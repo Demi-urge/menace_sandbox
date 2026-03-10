@@ -95,3 +95,20 @@ def test_add_telemetry_event_self_heals_invalid_graph_once(caplog):
     assert kg.graph.nodes[enode]["frequency"] == 50
     assert kg.graph.nodes[enode]["weight"] == 50
     assert kg.graph[enode]["module:module.main"].get("weight") == 50
+
+
+def test_add_telemetry_event_rebuilds_invalid_graph_and_inserts_edges():
+    kg = KnowledgeGraph()
+    kg.graph = "invalid-state"
+
+    kg.add_telemetry_event(
+        "bot-z",
+        "RuntimeError",
+        "module.runner",
+        {"module.runner": 2},
+    )
+
+    assert "bot:bot-z" in kg.graph.nodes
+    assert "error_type:RuntimeError" in kg.graph.nodes
+    assert kg.graph.has_edge("error_type:RuntimeError", "bot:bot-z")
+    assert kg.graph["error_type:RuntimeError"]["module:module.runner"]["weight"] == 2
