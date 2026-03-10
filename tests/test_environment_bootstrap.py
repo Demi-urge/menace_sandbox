@@ -569,3 +569,66 @@ def test_bootstrap_timeout_shutdown(monkeypatch):
 
     sleeper.join(0)
     assert not sleeper.is_alive()
+
+
+
+
+def test_resolve_phase_budgets_ignores_invalid_persisted_wait(monkeypatch, caplog):
+    monkeypatch.setattr(bootstrap_mod.bootstrap_metrics, "load_duration_store", lambda: {})
+    monkeypatch.setattr(bootstrap_mod.bootstrap_metrics, "compute_stats", lambda _stats: {})
+    monkeypatch.setattr(
+        bootstrap_mod.bootstrap_metrics,
+        "calibrate_step_budgets",
+        lambda base_budgets, stats, floors: (dict(base_budgets), {}),
+    )
+    monkeypatch.setattr(
+        bootstrap_mod.bootstrap_timeout_policy,
+        "wait_for_bootstrap_quiet_period",
+        lambda logger: (0.0, 1.0),
+    )
+    monkeypatch.setattr(
+        bootstrap_mod.bootstrap_timeout_policy,
+        "enforce_bootstrap_timeout_policy",
+        lambda logger: {"component_floors": {}},
+    )
+    monkeypatch.setattr(
+        bootstrap_mod.bootstrap_timeout_policy,
+        "load_escalated_timeout_floors",
+        lambda: {"MENACE_BOOTSTRAP_WAIT_SECS": 1.0},
+    )
+    monkeypatch.setattr(
+        bootstrap_mod.bootstrap_timeout_policy,
+        "load_persisted_bootstrap_wait",
+        lambda: "invalid",
+    )
+
+    boot = eb.EnvironmentBootstrapper(tf_dir=".")
+    with caplog.at_level("WARNING"):
+        budgets = boot._resolve_phase_budgets(timeout=None)
+
+    assert isinstance(budgets, dict)
+    assert "critical" in budgets
+    assert "ignoring invalid persisted bootstrap wait value" in caplog.text
+
+
+def test_remote_check_logs_success_on_urlopen(monkeypatch, caplog):
+    monkeypatch.setattr(bootstrap_mod.shutil, "which", lambda cmd: None)
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(bootstrap_mod.urllib.request, "urlopen", lambda *_a, **_k: _Resp())
+
+    called = []
+    monkeypatch.setattr(bootstrap_mod.ExternalDependencyProvisioner, "provision", lambda self: called.append(True))
+
+    boot = eb.EnvironmentBootstrapper(tf_dir=".")
+    with caplog.at_level("DEBUG"):
+        boot.check_remote_dependencies(["http://good"])
+
+    assert "remote dependency reachable: http://good" in caplog.text
+    assert called == []

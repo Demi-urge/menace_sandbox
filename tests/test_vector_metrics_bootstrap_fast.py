@@ -652,3 +652,45 @@ def test_vector_identifiers_enable_lazy_bootstrap(monkeypatch, pipeline_module, 
 
     restored = os.getenv("VECTOR_SERVICE_LAZY_BOOTSTRAP")
     assert restored == previous_env
+
+
+
+
+def test_evaluate_patch_safety_handles_invalid_alignment_severity():
+    class DummyPatchSafety:
+        max_alert_severity = 1.0
+        max_alerts = 5
+
+        @staticmethod
+        def evaluate(*_args, **_kwargs):
+            return False, 0.1, {}
+
+    flags, context = quick_fix_engine._evaluate_patch_safety(
+        DummyPatchSafety(),
+        {"alignment_severity": object()},
+    )
+
+    assert flags == ["safety_violation"]
+    assert context["patch_safety_passed"] is False
+
+
+def test_evaluate_patch_safety_handles_invalid_semantic_alerts():
+    class DummyPatchSafety:
+        max_alert_severity = 1.0
+        max_alerts = 0
+
+        @staticmethod
+        def evaluate(*_args, **_kwargs):
+            return False, 0.1, {}
+
+    class BadLen:
+        def __len__(self):
+            raise RuntimeError("boom")
+
+    flags, context = quick_fix_engine._evaluate_patch_safety(
+        DummyPatchSafety(),
+        {"semantic_alerts": BadLen()},
+    )
+
+    assert flags == ["safety_violation"]
+    assert context["patch_safety_passed"] is False

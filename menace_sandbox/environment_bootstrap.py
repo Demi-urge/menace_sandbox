@@ -1448,7 +1448,9 @@ class EnvironmentBootstrapper:
             try:
                 base_wait_floor = max(base_wait_floor, float(persisted_wait))
             except (TypeError, ValueError):
-                pass
+                self.logger.warning(
+                    "ignoring invalid persisted bootstrap wait value %r", persisted_wait
+                )
         phase_floors = {
             phase: max(base_wait_floor, 0.0) * guard_scale for phase in self.PHASES
         }
@@ -1931,7 +1933,7 @@ class EnvironmentBootstrapper:
             try:
                 request = urllib.request.Request(u, method="HEAD")
                 with urllib.request.urlopen(request, timeout=5):
-                    pass
+                    self.logger.debug("remote dependency reachable: %s", u)
             except urllib.error.HTTPError as exc:
                 status = getattr(exc, "code", 0)
                 message = f"remote dependency {u} responded with HTTP {status}"
