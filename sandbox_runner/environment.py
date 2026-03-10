@@ -480,8 +480,50 @@ environment_failure_severity_total = Gauge(
 # Name of the sandbox snippet file.  Configurable to avoid hard-coded paths.
 SNIPPET_NAME = os.getenv("SANDBOX_SNIPPET_NAME", "snippet" + ".py")
 
-DiagnosticManager = None  # type: ignore[assignment]
-ResolutionRecord = None  # type: ignore[assignment]
+"""Temporary compatibility shims for optional diagnostics dependency.
+
+These shims are deterministic and keep imports/call sites functional when
+``menace.diagnostic_manager`` is unavailable.
+"""
+
+
+class _ResolutionRecordShim:
+    """Temporary compatibility shim for diagnostic resolution records."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.issue = str(args[0]) if args else str(kwargs.get("issue", ""))
+        self.action = str(args[1]) if len(args) > 1 else str(kwargs.get("action", ""))
+        self.success = bool(args[2]) if len(args) > 2 else bool(kwargs.get("success", False))
+
+
+class _DiagnosticLogShim:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.records: list[_ResolutionRecordShim] = []
+
+    def add(self, record: Any) -> None:
+        self.records.append(record)
+
+
+class _DiagnosticErrorBotShim:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.last_error = ""
+
+    def handle_error(self, issue: str, *args: Any, **kwargs: Any) -> bool:
+        self.last_error = str(issue)
+        return False
+
+
+class _DiagnosticManagerShim:
+    """Temporary compatibility shim for deterministic no-op diagnostics."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.log = _DiagnosticLogShim()
+        self.error_bot = _DiagnosticErrorBotShim()
+
+
+DiagnosticManager = _DiagnosticManagerShim  # type: ignore[assignment]
+ResolutionRecord = _ResolutionRecordShim  # type: ignore[assignment]
+_DIAGNOSTIC_MANAGER_UNRESOLVED = True
 
 try:  # optional dependency
     from .meta_logger import _SandboxMetaLogger
@@ -1831,8 +1873,8 @@ def _get_history_db() -> InputHistoryDB:
 def _load_diagnostic_manager() -> bool:
     """Attempt to import the optional diagnostic manager lazily."""
 
-    global DiagnosticManager, ResolutionRecord
-    if DiagnosticManager is not None and ResolutionRecord is not None:
+    global DiagnosticManager, ResolutionRecord, _DIAGNOSTIC_MANAGER_UNRESOLVED
+    if not _DIAGNOSTIC_MANAGER_UNRESOLVED:
         return True
     try:  # pragma: no cover - optional dependency
         from menace.diagnostic_manager import (
@@ -1841,11 +1883,11 @@ def _load_diagnostic_manager() -> bool:
         )
     except ImportError as exc:
         get_logger(__name__).debug("diagnostic manager unavailable", exc_info=exc)
-        DiagnosticManager = None  # type: ignore[assignment]
-        ResolutionRecord = None  # type: ignore[assignment]
+        _DIAGNOSTIC_MANAGER_UNRESOLVED = False
         return False
     DiagnosticManager = _DiagnosticManager  # type: ignore[assignment]
     ResolutionRecord = _ResolutionRecord  # type: ignore[assignment]
+    _DIAGNOSTIC_MANAGER_UNRESOLVED = False
     return True
 
 

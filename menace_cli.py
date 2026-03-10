@@ -65,10 +65,40 @@ try:  # pragma: no cover - flat-layout fallback
 except Exception:  # pragma: no cover - fallback when executed outside package
     from self_improvement.patch_application import validate_patch_with_context  # type: ignore
 
-PatchLogger = None  # type: ignore
-build_chain = None  # type: ignore
-search_patches_by_vector = None  # type: ignore
-search_patches_by_license = None  # type: ignore
+"""Temporary compatibility shims for optional patch provenance helpers.
+
+These deterministic shims keep CLI subcommands importable/callable in
+environments where ``patch_provenance`` is not installed.
+"""
+
+
+class _PatchLoggerShim:
+    """Temporary compatibility shim for patch provenance logging."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.patch_db = kwargs.get("patch_db")
+
+    def log_patch(self, *args: object, **kwargs: object) -> bool:
+        return False
+
+
+def _build_chain_shim(*args: object, **kwargs: object) -> list[dict[str, object]]:
+    return []
+
+
+def _search_patches_by_vector_shim(*args: object, **kwargs: object) -> list[dict[str, object]]:
+    return []
+
+
+def _search_patches_by_license_shim(*args: object, **kwargs: object) -> list[dict[str, object]]:
+    return []
+
+
+PatchLogger = _PatchLoggerShim  # type: ignore
+build_chain = _build_chain_shim  # type: ignore
+search_patches_by_vector = _search_patches_by_vector_shim  # type: ignore
+search_patches_by_license = _search_patches_by_license_shim  # type: ignore
+_PATCH_PROVENANCE_UNRESOLVED = True
 
 
 def _ping_vector_service() -> tuple[bool, dict]:
@@ -265,11 +295,12 @@ def handle_patch(args: argparse.Namespace) -> int:
         return 1
     from vector_service.retriever import Retriever
 
-    global PatchLogger
-    if PatchLogger is None:  # pragma: no cover - lazy import
+    global PatchLogger, _PATCH_PROVENANCE_UNRESOLVED
+    if _PATCH_PROVENANCE_UNRESOLVED:  # pragma: no cover - lazy import
         from patch_provenance import PatchLogger as _PatchLogger
 
         PatchLogger = _PatchLogger
+        _PATCH_PROVENANCE_UNRESOLVED = False
 
     builder = args.builder
     retriever = Retriever(context_builder=builder, cache=_get_cache())
@@ -1015,12 +1046,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     if args.cmd == "patches":
-        global build_chain, search_patches_by_vector, search_patches_by_license
-        if (
-            build_chain is None
-            or search_patches_by_vector is None
-            or search_patches_by_license is None
-        ):  # pragma: no cover - lazy import
+        global build_chain, search_patches_by_vector, search_patches_by_license, _PATCH_PROVENANCE_UNRESOLVED
+        if _PATCH_PROVENANCE_UNRESOLVED:  # pragma: no cover - lazy import
             from patch_provenance import (
                 build_chain as _build_chain,
                 search_patches_by_vector as _search_patches_by_vector,
@@ -1029,6 +1056,7 @@ def main(argv: list[str] | None = None) -> int:
             build_chain = _build_chain
             search_patches_by_vector = _search_patches_by_vector
             search_patches_by_license = _search_patches_by_license
+            _PATCH_PROVENANCE_UNRESOLVED = False
 
         db = PatchHistoryDB()
         if args.patches_cmd == "list":
