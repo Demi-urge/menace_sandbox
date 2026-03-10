@@ -42,7 +42,7 @@ dependency_probe = load_internal("self_coding_dependency_probe")
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .self_coding_manager import SelfCodingManager
 else:  # pragma: no cover - runtime fallback for optional manager usage
-    SelfCodingManager = object  # type: ignore[assignment]
+    from self_coding_manager_shim import SelfCodingManagerShim as SelfCodingManager
 ensure_self_coding_ready = dependency_probe.ensure_self_coding_ready
 
 logger = logging.getLogger(__name__)

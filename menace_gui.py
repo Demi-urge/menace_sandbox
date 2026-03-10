@@ -17,7 +17,11 @@ from tkinter import ttk
 try:
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - stub fallback
-    ContextBuilder = object  # type: ignore
+    class ContextBuilder:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
 
 from .conversation_manager_bot import ConversationManagerBot, ChatGPTClient
 from .env_config import OPENAI_API_KEY

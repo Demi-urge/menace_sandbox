@@ -191,7 +191,11 @@ EvolutionEvent = _evolution_history_module.EvolutionEvent
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from menace_sandbox.code_database import PatchHistoryDB as _PatchHistoryDB
 else:
-    _PatchHistoryDB = object
+    class _PatchHistoryDB:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
 
 
 def _get_patch_history_db_cls() -> type[_PatchHistoryDB]:
@@ -232,8 +236,16 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
         load_internal("self_improvement.baseline_tracker").BaselineTracker,
     )
 else:
-    CapitalManagementBot = object  # type: ignore[assignment]
-    BaselineTracker = object  # type: ignore[assignment]
+    class CapitalManagementBot:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    class BaselineTracker:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
 
 MetricRecord = RawMetrics
 
@@ -503,7 +515,11 @@ try:  # pragma: no cover - optional dependency
     from watchdog.events import FileSystemEventHandler  # type: ignore
     from watchdog.observers import Observer  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
-    FileSystemEventHandler = object  # type: ignore
+    class FileSystemEventHandler:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
     Observer = None  # type: ignore
 
 _SC_WATCHER: "Observer | None" = None

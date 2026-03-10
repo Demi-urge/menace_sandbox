@@ -1230,7 +1230,7 @@ def _requires_helper(hints: list[Dict[str, Any]]) -> bool:
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .self_coding_manager import SelfCodingManager
 else:  # pragma: no cover - runtime fallback avoids circular import
-    SelfCodingManager = object  # type: ignore[misc, assignment]
+    from self_coding_manager_shim import SelfCodingManagerShim as SelfCodingManager
 
 
 def _resolve_self_coding_manager_cls() -> type:
