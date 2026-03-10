@@ -33,14 +33,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Tuple, Iterable, Dict, Any, List, Mapping, TYPE_CHECKING, Callable, TypeVar
 
-class _FetchPatchDelegateShim:
-    """No-op patch delegate used when parent quick_fix_engine is unavailable."""
+try:  # pragma: no cover - prefer package import when installed
+    from menace_sandbox.shims.placeholders import CallableShim
+except ModuleNotFoundError:  # pragma: no cover - support flat execution
+    from menace_sandbox.menace_sandbox.shims.placeholders import CallableShim  # type: ignore
 
-    def __call__(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        return {}
-
-
-_FETCH_PATCH_DELEGATE: Callable[..., dict[str, Any]] = _FetchPatchDelegateShim()
+_FETCH_PATCH_DELEGATE: Callable[..., dict[str, Any]] = CallableShim(return_value={})
 _existing_qfe = sys.modules.get("quick_fix_engine")
 if _existing_qfe is not None and _existing_qfe is not sys.modules.get(__name__):
     delegated = getattr(_existing_qfe, "fetch_patch", None)

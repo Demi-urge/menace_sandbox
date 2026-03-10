@@ -4,6 +4,11 @@ import sys
 import types
 from pathlib import Path
 
+try:
+    from menace_sandbox.shims.placeholders import CallableShim
+except ModuleNotFoundError:  # pragma: no cover - namespace package fallback
+    from menace_sandbox.menace_sandbox.shims.placeholders import CallableShim
+
 menace_sandbox_pkg = types.ModuleType("menace_sandbox")
 menace_sandbox_pkg.__path__ = [str(Path(__file__).resolve().parent)]
 sys.modules.setdefault("menace_sandbox", menace_sandbox_pkg)
@@ -45,7 +50,7 @@ metric_stub = types.SimpleNamespace(
 )
 metrics_stub = types.SimpleNamespace(
     Gauge=lambda *a, **k: metric_stub,
-    CollectorRegistry=object,
+    CollectorRegistry=CallableShim,
     self_improvement_failure_total=metric_stub,
     environment_failure_total=metric_stub,
 )
