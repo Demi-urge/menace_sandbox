@@ -24,7 +24,7 @@ except ModuleNotFoundError:  # pragma: no cover - degrade gracefully
     sqlparse = None  # type: ignore
 
     class _SQLParseStub:  # pragma: no cover - lightweight placeholder
-        pass
+        __slots__ = ()
 
     Identifier = IdentifierList = Parenthesis = _SQLParseStub  # type: ignore
     Keyword = object()

@@ -85,6 +85,8 @@ def simulate_temporal_trajectory(
         loader = globals().get("_load_env")
         if loader:
             loader()
+    if _env_simulate_temporal_trajectory is None:
+        raise RuntimeError("simulate_temporal_trajectory is unavailable in sandbox environment")
     return _env_simulate_temporal_trajectory(
         workflow_id,
         workflow,

@@ -203,7 +203,8 @@ try:  # pragma: no cover - upgrade default errors when available
         MalformedPromptError as _MalformedPromptError,
     )
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     VectorServiceError = _VectorServiceError
     RateLimitError = _RateLimitError
@@ -212,7 +213,8 @@ else:
 try:  # pragma: no cover - optional heavy dependency
     from .retriever import Retriever as _Retriever, FallbackResult as _FallbackResult
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     Retriever = _Retriever
     FallbackResult = _FallbackResult
@@ -220,14 +222,16 @@ else:
 try:  # pragma: no cover - optional heavy dependency
     from .patch_logger import PatchLogger as _PatchLogger
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     PatchLogger = _PatchLogger
 
 try:  # pragma: no cover - optional heavy dependency
     from .cognition_layer import CognitionLayer as _CognitionLayer
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     CognitionLayer = _CognitionLayer
 
@@ -245,7 +249,8 @@ else:
 try:  # pragma: no cover - optional heavy dependency
     from .vectorizer import SharedVectorService as _SharedVectorService
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     SharedVectorService = _SharedVectorService
 
@@ -256,7 +261,8 @@ try:  # pragma: no cover - optional heavy dependency
         run_stack_ingestion_async as _run_stack_ingestion_async,
     )
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     StackDatasetStreamer = _StackDatasetStreamer
     ensure_stack_background = _ensure_stack_background
@@ -265,21 +271,24 @@ else:
 try:  # pragma: no cover - optional heavy dependency
     from .stack_retriever import StackRetriever as _StackRetriever
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     StackRetriever = _StackRetriever
 
 try:  # pragma: no cover - prefer lightweight stack retriever facade when available
     from .retriever import StackRetriever as _StackContextRetriever
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     StackRetriever = _StackContextRetriever
 
 try:  # pragma: no cover - optional heavy dependency
     from .context_builder import ContextBuilder as _ContextBuilder
 except Exception:
-    pass
+    # Keep lightweight defaults when optional modules are unavailable.
+    _OPTIONAL_IMPORT_SKIPPED = True
 else:
     ContextBuilder = _ContextBuilder
 
