@@ -11,6 +11,11 @@ from module_graph_analyzer import build_import_graph, cluster_modules
 from dynamic_path_router import resolve_path, resolve_module_path
 
 
+def _is_real_module_name(module_name: str) -> bool:
+    """Return ``True`` for names that can resolve to a module path."""
+    return any(part for part in module_name.strip().split("."))
+
+
 def discover_module_groups(
     repo_path: str | Path,
     *,
@@ -29,7 +34,10 @@ def discover_module_groups(
     )
     groups: Dict[int, list[str]] = {}
     for mod, cid in mapping.items():
-        path = resolve_module_path(mod.replace("/", "."))
+        normalized = mod.replace("/", ".")
+        if not _is_real_module_name(normalized):
+            continue
+        path = resolve_module_path(normalized)
         if "/" in mod:
             groups.setdefault(cid, []).append(mod)
             continue
@@ -67,7 +75,10 @@ def build_module_map(
     if mapping and len(mapping) > 1 and algorithm != "hdbscan":
         filtered: Dict[str, int] = {}
         for mod, grp in mapping.items():
-            path = resolve_module_path(mod.replace("/", "."))
+            normalized = mod.replace("/", ".")
+            if not _is_real_module_name(normalized):
+                continue
+            path = resolve_module_path(normalized)
             if "/" in mod:
                 filtered[mod] = grp
                 continue
