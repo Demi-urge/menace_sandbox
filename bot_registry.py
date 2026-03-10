@@ -239,7 +239,9 @@ except Exception:  # pragma: no cover - fallback for flat layout
 try:  # pragma: no cover - optional dependency
     from .rollback_manager import RollbackManager
 except Exception:  # pragma: no cover - optional dependency
-    RollbackManager = None  # type: ignore
+    class RollbackManager:  # type: ignore[no-redef]
+        def rollback(self, *_args: Any, **_kwargs: Any) -> dict[str, object]:
+            return {"status": "noop"}
 
 logger = logging.getLogger(__name__)
 

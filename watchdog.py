@@ -37,58 +37,124 @@ except Exception:  # pragma: no cover - optional dependency
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
-    requests = None  # type: ignore
+    class _RequestsShim:
+        @staticmethod
+        def post(*_args, **_kwargs):
+            return {"ok": False, "status": "requests-unavailable"}
+
+    requests = _RequestsShim()  # type: ignore
 
 try:
     from celery import Celery
 except Exception:  # pragma: no cover - optional dependency
-    Celery = None  # type: ignore
+    class Celery:  # type: ignore[no-redef]
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.conf = {}
+
+        def task(self, fn=None, *_args, **_kwargs):
+            return fn
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
 except Exception:  # pragma: no cover - optional dependency
-    BackgroundScheduler = None  # type: ignore
+    class BackgroundScheduler:  # type: ignore[no-redef]
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.jobs = []
+
+        def add_job(self, *args, **kwargs) -> None:
+            self.jobs.append((args, kwargs))
+
+        def start(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
 
 try:  # pragma: no cover - optional heavy dependency
     from .auto_escalation_manager import AutoEscalationManager
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    AutoEscalationManager = None  # type: ignore
+    class AutoEscalationManager:  # type: ignore[no-redef]
+        def __init__(self, *_, **__) -> None:
+            pass
+
+        def handle(self, *_args, **_kwargs) -> dict[str, object]:
+            return {"status": "noop"}
 try:  # pragma: no cover - optional dependency
     from .error_bot import ErrorDB
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    ErrorDB = None  # type: ignore
+    class ErrorDB:  # type: ignore[no-redef]
+        def get_recent_errors(self, *_args, **_kwargs):
+            return []
 try:  # pragma: no cover - optional dependency
     from .resource_allocation_optimizer import ROIDB
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    ROIDB = None  # type: ignore
+    class ROIDB:  # type: ignore[no-redef]
+        def fetch_recent_roi(self, *_args, **_kwargs):
+            return []
 try:  # pragma: no cover - optional dependency
     from .data_bot import MetricsDB
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    MetricsDB = None  # type: ignore
+    class MetricsDB:  # type: ignore[no-redef]
+        def latest(self, *_args, **_kwargs):
+            return []
 try:  # pragma: no cover - optional dependency
     from .chaos_tester import ChaosTester
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    ChaosTester = None  # type: ignore
+    class ChaosTester:  # type: ignore[no-redef]
+        @staticmethod
+        def validate_recovery(*_args, **_kwargs) -> bool:
+            return True
 try:  # pragma: no cover - optional dependency
     from .knowledge_graph import KnowledgeGraph
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    KnowledgeGraph = None  # type: ignore
+    class KnowledgeGraph:  # type: ignore[no-redef]
+        def add_relationship(self, *_args, **_kwargs) -> None:
+            return None
 try:  # pragma: no cover - optional dependency
     from .advanced_error_management import SelfHealingOrchestrator, PlaybookGenerator
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    SelfHealingOrchestrator = PlaybookGenerator = None  # type: ignore
+    class SelfHealingOrchestrator:  # type: ignore[no-redef]
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def heal(self, *_args, **_kwargs) -> dict[str, object]:
+            return {"status": "noop"}
+
+    class PlaybookGenerator:  # type: ignore[no-redef]
+        def generate(self, *_args, **_kwargs) -> str:
+            return ""
 try:  # pragma: no cover - optional dependency
     from .bot_registry import BotRegistry
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    BotRegistry = None  # type: ignore
+    class BotRegistry:  # type: ignore[no-redef]
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def get_bot(self, *_args, **_kwargs):
+            return None
 try:  # pragma: no cover - optional dependency
     from .escalation_protocol import EscalationProtocol, EscalationLevel
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    EscalationProtocol = EscalationLevel = None  # type: ignore
+    class EscalationLevel:  # type: ignore[no-redef]
+        def __init__(self, name: str, notifier: object) -> None:
+            self.name = name
+            self.notifier = notifier
+
+    class EscalationProtocol:  # type: ignore[no-redef]
+        def __init__(self, levels) -> None:
+            self.levels = list(levels)
+
+        def escalate(self, message: str, attachments=None) -> None:
+            for level in self.levels:
+                notifier = getattr(level, "notifier", None)
+                if notifier is not None and hasattr(notifier, "notify"):
+                    notifier.notify(message, attachments)
 try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - gracefully degrade in tests
-    UnifiedEventBus = None  # type: ignore
+    class UnifiedEventBus:  # type: ignore[no-redef]
+        def publish(self, *_args, **_kwargs) -> dict[str, object]:
+            return {"status": "noop"}
 from .coding_bot_interface import (
     _BOOTSTRAP_STATE,
     _bootstrap_dependency_broker,
