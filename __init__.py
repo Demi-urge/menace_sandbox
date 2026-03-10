@@ -16,6 +16,8 @@ import types
 from pathlib import Path
 import threading
 
+from .legacy_symbol_compat import resolve_legacy_symbol
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
@@ -302,13 +304,17 @@ except Exception:  # pragma: no cover - gracefully degrade
     IntentClusterer = None  # type: ignore[misc]
 
 
-def __getattr__(name: str) -> object:
-    """Lazily import optional heavy modules on first access.
+_LEGACY_SYMBOL_ALIASES = {
+    "patch_generator": "menace_sandbox.patch_generator",
+    "sandbox_runner": "sandbox_runner",
+    "mvp_brain": "menace_sandbox.mvp_brain",
+    "audit_logger": "audit_logger",
+    "self_debugger_sandbox": "self_debugger_sandbox",
+}
 
-    This keeps initial import costs low while still exposing the class via
-    ``menace_sandbox.CompositeWorkflowScorer``.  If the import fails the
-    attribute resolves to ``None`` instead of raising ``ImportError``.
-    """
+
+def __getattr__(name: str) -> object:
+    """Lazily import optional heavy modules on first access."""
 
     if name == "CompositeWorkflowScorer":  # pragma: no cover - dynamic import
         try:
@@ -320,6 +326,16 @@ def __getattr__(name: str) -> object:
             return None
         globals()[name] = _CompositeWorkflowScorer
         return _CompositeWorkflowScorer
+
+    if name in _LEGACY_SYMBOL_ALIASES:
+        resolved = resolve_legacy_symbol(
+            symbol=name,
+            aliases=_LEGACY_SYMBOL_ALIASES,
+            package_name=__name__,
+        )
+        globals()[name] = resolved
+        return resolved
+
     raise AttributeError(name)
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
@@ -614,4 +630,5 @@ __all__ = [
     "llm_interface",
 ]
 __all__.append("readiness_index")
+__all__.extend(sorted(_LEGACY_SYMBOL_ALIASES))
 __version__ = "0.1.0"
