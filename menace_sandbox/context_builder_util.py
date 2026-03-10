@@ -180,7 +180,7 @@ def create_context_builder(*args, bootstrap_safe: bool = False, **kwargs):  # ty
         try:
             stack_overrides["top_k"] = int(top_k_env)
         except ValueError:  # pragma: no cover - invalid override
-            pass
+            _LOGGER.warning("ignoring invalid STACK_CONTEXT_TOP_K=%r", top_k_env)
     langs_env = os.getenv("STACK_CONTEXT_LANGUAGES")
     if langs_env:
         languages = [part.strip() for part in langs_env.split(",") if part.strip()]
@@ -191,7 +191,7 @@ def create_context_builder(*args, bootstrap_safe: bool = False, **kwargs):  # ty
         try:
             stack_overrides["max_lines"] = int(max_lines_env)
         except ValueError:  # pragma: no cover - invalid override
-            pass
+            _LOGGER.warning("ignoring invalid STACK_CONTEXT_MAX_LINES=%r", max_lines_env)
     if stack_overrides:
         builder_kwargs["stack_config"] = stack_overrides
 

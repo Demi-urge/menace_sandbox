@@ -294,8 +294,11 @@ def _evaluate_patch_safety(
         try:
             if float(sev) > float(getattr(patch_safety, "max_alert_severity", 1.0)):
                 safety_violation = True
-        except Exception:  # pragma: no cover - defensive
-            pass
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.getLogger(__name__).debug(
+                "invalid alignment_severity metadata: %r", sev, exc_info=exc
+            )
+            safety_violation = False
 
     alerts = meta.get("semantic_alerts")
     if alerts is not None:
@@ -303,8 +306,11 @@ def _evaluate_patch_safety(
             count = len(alerts) if isinstance(alerts, (list, tuple, set)) else 1
             if count > int(getattr(patch_safety, "max_alerts", 5)):
                 safety_violation = True
-        except Exception:  # pragma: no cover - defensive
-            pass
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.getLogger(__name__).debug(
+                "invalid semantic_alerts metadata: %r", alerts, exc_info=exc
+            )
+            safety_violation = False
 
     lic = meta.get("license")
     fp = meta.get("license_fingerprint")

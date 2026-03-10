@@ -44,3 +44,26 @@ def test_create_context_builder_bootstraps_missing_dbs(tmp_path, monkeypatch):
         assert str(db_path) == builder.kwargs[filename[:-3] + "_db"]
 
     monkeypatch.delenv("SANDBOX_DATA_DIR", raising=False)
+
+
+
+def test_create_context_builder_ignores_invalid_stack_overrides(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    for name in ("bots.db", "code.db", "errors.db", "workflows.db"):
+        (data_dir / name).touch()
+
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("STACK_CONTEXT_TOP_K", "nope")
+    monkeypatch.setenv("STACK_CONTEXT_MAX_LINES", "bad")
+
+    stub_module = SimpleNamespace(
+        _ensure_readable=lambda path, _filename: str(path),
+        ContextBuilder=_StubContextBuilder,
+    )
+
+    monkeypatch.setattr(context_builder_util, "_MODULE_CACHE", stub_module, raising=False)
+
+    builder = context_builder_util.create_context_builder()
+
+    assert builder.kwargs.get("stack_config") is None
