@@ -96,7 +96,7 @@ repos:
         files: '\.py$'
       - id: check-invalid-stubs
         name: Detect invalid runtime shims and stubs
-        entry: python scripts/check_invalid_stubs.py
+        entry: python tools/qa/check_invalid_stubs.py
         language: system
         pass_filenames: false
         files: '\.py$'

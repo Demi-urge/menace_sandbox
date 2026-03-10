@@ -175,14 +175,14 @@ the helper for error reporting.
 
 Runtime fallback shims must follow the deterministic patterns documented in
 [`docs/runtime_shim_patterns.md`](docs/runtime_shim_patterns.md). CI and pre-commit
-run `scripts/check_invalid_stubs.py` and fail on risky placeholders such as
+run `tools/qa/check_invalid_stubs.py` and fail on risky placeholders such as
 `NAME = object`, callable `NAME = None` sentinels, `SimpleNamespace` service shims,
 or bare `pass` branches in shim-heavy modules.
 
 Run locally before pushing:
 
 ```bash
-python scripts/check_invalid_stubs.py
+python tools/qa/check_invalid_stubs.py
 ```
 
 ## Coding bot registration

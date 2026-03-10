@@ -1,6 +1,6 @@
 # Runtime shim patterns
 
-`python scripts/check_invalid_stubs.py` is a blocking QA check that prevents fragile runtime stubs.
+`python tools/qa/check_invalid_stubs.py` is a blocking QA check that prevents fragile runtime stubs.
 
 ## Accepted patterns
 
@@ -28,7 +28,7 @@ When an optional dependency is missing, use explicit shims that are safe and det
 
 ## Allowlist policy
 
-Any exception must be added in `scripts/check_invalid_stubs.py` with:
+Any exception must be added in `tools/qa/check_invalid_stubs.py` with:
 
 - exact file path,
 - exact check code/symbol,
