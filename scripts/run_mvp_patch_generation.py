@@ -25,6 +25,7 @@ from menace_sandbox.stabilization.logging_wrapper import (
 from menace_sandbox.stabilization.patch_validator import validate_patch_text
 from mvp_evaluator import evaluate_roi
 from prompt_types import Prompt
+from runtime_dependency_shims import ContextBuilderShim
 
 
 @dataclass
@@ -148,7 +149,7 @@ AssertionError: expected 5, got -1
     prompt_text = f"{objective}\n\nConstraints:\n{constraint_block}\n"
     prompt = _build_prompt(prompt_text)
     print(f"LLMClient.generate start backend={backend} model={model}")
-    result = client.generate(prompt, context_builder=object())
+    result = client.generate(prompt, context_builder=ContextBuilderShim())
     print(f"LLMClient.generate end backend={backend} model={model}")
     patch_text = result.text
     normalized_text, sanitized_text, final_text = _normalize_patch_text(patch_text)
