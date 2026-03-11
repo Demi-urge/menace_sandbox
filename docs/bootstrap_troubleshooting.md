@@ -45,3 +45,13 @@ Entry modules that orchestrate a series of imports should centralise this guardr
 
 Following this pattern keeps the guardrails intact and prevents new helpers from triggering the cascade failure mode during bootstrap.
 
+
+## Adding a new production bot/service for supervisor launch + health policy
+
+The supervisor only launches services that are present in `RUNNABLE_BOT_REGISTRY`, and health policy (`critical`, liveness checks, health endpoints) is derived from each registry entry. To keep intended production services explicit and validated:
+
+1. Add the bot name to `INTENDED_PRODUCTION_BOTS` in `intended_production_bots.py`.
+2. Add a matching `RunnableBotEntry` in `runnable_bots_registry.py` with the correct startup callable and health policy fields.
+3. Run `pytest tests/test_runnable_bots_intended_set.py`.
+
+The validation test fails if an intended production bot name is missing from `RUNNABLE_BOT_REGISTRY`. This prevents drift where a service is considered intended for production but is accidentally excluded from supervisor launch and policy enforcement.
