@@ -60,9 +60,9 @@ def _import_supervisor_module(package_module: str, script_module: str):
 log_record = _import_supervisor_module(".logging_utils", "logging_utils").log_record
 
 if _USE_SCRIPT_IMPORTS:
-    from runtime_failure_policy import classify_runtime_failure
+    from runtime_failure_policy import RuntimeFailureReason, classify_runtime_failure
 else:
-    from .runtime_failure_policy import classify_runtime_failure
+    from .runtime_failure_policy import RuntimeFailureReason, classify_runtime_failure
 
 def _hydrate_bootstrap_timeout_env() -> dict[str, float]:
     guard_bootstrap_wait_env()
@@ -989,6 +989,7 @@ class ServiceSupervisor:
                         self._handle_dependency_watchdog_exit(now)
                         continue
                     classification = classify_runtime_failure(
+                        reason_code=RuntimeFailureReason.SERVICE_PROCESS_EXIT,
                         component=name,
                         event="service_process_exit",
                     )

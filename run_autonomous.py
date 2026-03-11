@@ -209,7 +209,7 @@ path_for_prompt = getattr(
 )
 from sandbox_settings import SandboxSettings
 from dependency_hints import format_system_package_instructions
-from runtime_failure_policy import classify_runtime_failure
+from runtime_failure_policy import RuntimeFailureReason, classify_runtime_failure
 
 
 def _extract_flag_value(argv: List[str], flag: str) -> str | None:
@@ -3954,6 +3954,7 @@ def bootstrap(
         while not monitor_stop.wait(5.0):
             if learn_thread.exception is not None:
                 classification = classify_runtime_failure(
+                    reason_code=RuntimeFailureReason.SELF_IMPROVEMENT_WORKER_EXIT,
                     component="self_improvement_cycle",
                     error=learn_thread.exception,
                     event="self_learning_service_exception",
@@ -3972,6 +3973,7 @@ def bootstrap(
                 return
             if not learn_thread.is_alive():
                 classification = classify_runtime_failure(
+                    reason_code=RuntimeFailureReason.SELF_IMPROVEMENT_WORKER_EXIT,
                     component="self_improvement_cycle",
                     event="self_learning_service_unexpected_exit",
                 )
