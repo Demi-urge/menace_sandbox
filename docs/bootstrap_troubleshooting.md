@@ -52,14 +52,14 @@ The supervisor only launches services that are present in `RUNNABLE_BOT_REGISTRY
 
 ### Contract: what "every bot" means here
 
-For production launch orchestration, "every bot" currently means every **production supervisor service**.
-Runnable modules that are not represented in `PRODUCTION_BOT_MANIFEST` are intentionally excluded from `INTENDED_PRODUCTION_BOTS` and from supervisor startup wiring.
+For production launch orchestration, "every bot" means every startup worker in `service_supervisor.py` that is explicitly marked with `@runnable_bot_worker`.
 
-If you want an additional runnable module to count as an "every bot" production target, promote it to a supervisor-managed service by adding manifest metadata for it. Without manifest registration, the module is not in the launch contract.
+`PRODUCTION_BOT_MANIFEST` remains the launch source of truth, but it is now validated against marker-based discovery so new runnable workers cannot be added without manifest coverage.
 
 1. Add a new `ProductionBotManifestEntry` in `production_bot_manifest.py` with startup callable and health policy fields.
 2. Keep `intended_for_production=True` when the service should launch in production (set it to `False` for non-production-only entries).
-3. Ensure the startup callable is importable and supervisor-safe.
-4. Run `pytest tests/test_runnable_bots_intended_set.py`.
+3. Mark the corresponding worker function in `service_supervisor.py` with `@runnable_bot_worker`.
+4. Ensure the startup callable is importable and supervisor-safe.
+5. Run `pytest tests/test_runnable_bots_intended_set.py`.
 
-`RUNNABLE_BOT_REGISTRY` and `INTENDED_PRODUCTION_BOTS` are generated from this manifest, and validation tests fail if production-intended services are missing from registry/supervisor orchestration. This rule keeps production launch intent and launch wiring aligned.
+`RUNNABLE_BOT_REGISTRY` and `INTENDED_PRODUCTION_BOTS` are generated from this manifest, and validation tests also fail if a discovered `@runnable_bot_worker` callable is missing from manifest coverage. This rule keeps production launch intent and launch wiring aligned.

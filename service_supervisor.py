@@ -255,6 +255,19 @@ def _log_worker_startup(worker_name: str, *, imported_module: object | None = No
     )
 
 
+
+
+def runnable_bot_worker(func: Callable[..., None]) -> Callable[..., None]:
+    """Mark a supervisor worker callable as a runnable bot startup target.
+
+    Any worker decorated with this marker is part of the canonical "every bot"
+    discovery set and must be represented in ``PRODUCTION_BOT_MANIFEST``.
+    """
+
+    setattr(func, "_is_runnable_bot_worker", True)
+    return func
+
+@runnable_bot_worker
 def _orchestrator_worker(context_builder: ContextBuilder) -> None:
     """Run the main Menace orchestration loop."""
     logger = logging.getLogger("orchestrator_worker")
@@ -281,6 +294,7 @@ def _orchestrator_worker(context_builder: ContextBuilder) -> None:
             orch.stop_scheduled_jobs()
 
 
+@runnable_bot_worker
 def _microtrend_worker() -> None:
     """Continuously run the microtrend service."""
     logger = logging.getLogger("microtrend_worker")
@@ -299,6 +313,7 @@ def _microtrend_worker() -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _self_eval_worker() -> None:
     """Run the self-evaluation service combining trends and cloning."""
     logger = logging.getLogger("self_eval_worker")
@@ -315,12 +330,14 @@ def _self_eval_worker() -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _learning_worker() -> None:
     """Run the self-learning coordinator."""
     _log_worker_startup("learning_worker")
     learning_main(stop_event=Event())
 
 
+@runnable_bot_worker
 def _ranking_worker() -> None:
     """Periodically rank models and redeploy the best."""
     logger = logging.getLogger("ranking_worker")
@@ -337,6 +354,7 @@ def _ranking_worker() -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _dep_update_worker() -> None:
     """Periodically update dependencies and redeploy."""
     logger = logging.getLogger("dependency_update_worker")
@@ -353,6 +371,7 @@ def _dep_update_worker() -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _chaos_worker(context_builder: ContextBuilder) -> None:
     """Continuously inject faults and rollback on failure."""
     logger = logging.getLogger("chaos_worker")
@@ -370,6 +389,7 @@ def _chaos_worker(context_builder: ContextBuilder) -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _eval_worker() -> None:
     """Periodic self-hosted model evaluation."""
     logger = logging.getLogger("evaluation_worker")
@@ -386,6 +406,7 @@ def _eval_worker() -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _debug_worker(context_builder: ContextBuilder) -> None:
     """Continuously run telemetry-driven debugging."""
     from menace_sandbox import debug_loop_service
@@ -405,6 +426,7 @@ def _debug_worker(context_builder: ContextBuilder) -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _dependency_provision_worker() -> None:
     """Provision external dependencies and monitor them."""
     logger = logging.getLogger("dependency_provision_worker")
@@ -450,6 +472,7 @@ def _dependency_provision_worker() -> None:
         logger.info("dependency provision worker interrupted")
 
 
+@runnable_bot_worker
 def _dependency_monitor_worker() -> None:
     """Periodically verify critical dependencies and config."""
     logger = logging.getLogger("dependency_monitor_worker")
@@ -468,6 +491,7 @@ def _dependency_monitor_worker() -> None:
         logger.info("dependency monitor worker interrupted")
 
 
+@runnable_bot_worker
 def _env_restore_worker() -> None:
     """Continuously restore the environment using the bootstrapper."""
     logger = logging.getLogger("env_restore_worker")
@@ -484,6 +508,7 @@ def _env_restore_worker() -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _update_worker() -> None:
     """Run unified dependency updates and redeploy."""
     logger = logging.getLogger("update_worker")
@@ -500,6 +525,7 @@ def _update_worker() -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _self_test_worker(builder: ContextBuilder) -> None:
     """Execute the self test suite periodically."""
     logger = logging.getLogger("self_test_worker")
@@ -516,6 +542,7 @@ def _self_test_worker(builder: ContextBuilder) -> None:
         stop.set()
 
 
+@runnable_bot_worker
 def _autoscale_worker() -> None:
     """Adjust resources based on system load."""
     logger = logging.getLogger("autoscale_worker")
@@ -543,6 +570,7 @@ def _autoscale_worker() -> None:
         logger.info("autoscale worker interrupted")
 
 
+@runnable_bot_worker
 def _secret_rotation_worker() -> None:
     """Periodically rotate configured secrets."""
     logger = logging.getLogger("secret_rotation_worker")
@@ -1128,6 +1156,8 @@ def main() -> None:
     )
     builder = create_context_builder()
     sup = ServiceSupervisor(context_builder=builder)
+    # Production launch source of truth: RUNNABLE_BOT_REGISTRY,
+    # which must cover every @runnable_bot_worker discovered worker.
     for entry in _iter_enabled_runnable_bots():
         sup.register(
             entry.name,
