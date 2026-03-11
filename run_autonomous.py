@@ -255,6 +255,36 @@ def _ensure_autonomous_readiness(args: argparse.Namespace) -> None:
     )
     logger.warning("%s", message)
     _console(message)
+    if _fail_open_enabled(args):
+        logger.warning("fail-open active; bypassing readiness acknowledgement gate")
+        _console("fail-open active; bypassing readiness acknowledgement gate")
+        return
+    raise SystemExit(message)
+
+
+def _fail_open_enabled(args: argparse.Namespace | None = None) -> bool:
+    """Return ``True`` when operators explicitly request fail-open mode."""
+
+    if args is not None and getattr(args, "fail_open", False):
+        return True
+    env_value = os.getenv("MENACE_FAIL_OPEN", "")
+    return env_value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _warn_or_raise_noncritical_gate(
+    *,
+    message: str,
+    args: argparse.Namespace | None = None,
+    exc: BaseException | None = None,
+) -> None:
+    """Raise ``SystemExit`` unless fail-open is explicitly enabled."""
+
+    if _fail_open_enabled(args):
+        logger.warning("%s", message)
+        _console(message)
+        return
+    if exc is not None:
+        raise SystemExit(message) from exc
     raise SystemExit(message)
 
 
@@ -1062,9 +1092,13 @@ def _initialise_settings() -> SandboxSettings:
             )
             _console("dependency enforcement failed; retrying without strict checks")
 
-        if _STRICT_DEPENDENCIES:
+        if _STRICT_DEPENDENCIES and not _fail_open_enabled():
             _emit_dependency_summary()
             raise
+        if _STRICT_DEPENDENCIES and _fail_open_enabled():
+            _console(
+                "fail-open active; continuing despite strict dependency bootstrap failure"
+            )
 
         # Allow downstream imports to continue even when optional dependencies
         # are unavailable.  ``sandbox_runner`` exits eagerly during import when
@@ -1171,6 +1205,14 @@ def _build_argument_parser(settings: SandboxSettings | None = None) -> argparse.
         "--strict-dependencies",
         action="store_true",
         help="fail fast instead of relaxing dependency checks",
+    )
+    parser.add_argument(
+        "--fail-open",
+        action="store_true",
+        help=(
+            "convert non-critical startup SystemExit gates into warnings "
+            "(or set MENACE_FAIL_OPEN=1)"
+        ),
     )
     parser.add_argument(
         "--dashboard-port",
@@ -2809,6 +2851,8 @@ def main(argv: List[str] | None = None) -> None:
     os.environ["SANDBOX_MONITOR_ROI_BACKOFF"] = (
         "1" if getattr(args, "monitor_roi_backoff", False) else "0"
     )
+    if _fail_open_enabled(args):
+        os.environ["MENACE_FAIL_OPEN"] = "1"
 
     configure_logging = (
         setup_logging if callable(setup_logging) else _basic_setup_logging
@@ -2845,8 +2889,15 @@ def main(argv: List[str] | None = None) -> None:
 
         try:
             check_env()
-        except SystemExit:
-            raise
+        except SystemExit as exc:
+            _warn_or_raise_noncritical_gate(
+                message=(
+                    "non-critical environment validation failed after SANDBOX_REPO_PATH "
+                    "fallback; continuing because fail-open mode is enabled"
+                ),
+                args=args,
+                exc=exc,
+            )
 
     else:
         repo_missing_after_fallback = repo_missing_initial
@@ -2954,7 +3005,17 @@ def main(argv: List[str] | None = None) -> None:
     logger.info("validating environment variables")
     _console("validating environment variables")
     _ensure_repo_path_environment()
-    check_env()
+    try:
+        check_env()
+    except SystemExit as exc:
+        _warn_or_raise_noncritical_gate(
+            message=(
+                "non-critical environment validation failed during runtime bootstrap; "
+                "continuing because fail-open mode is enabled"
+            ),
+            args=args,
+            exc=exc,
+        )
     logger.info("environment validation complete")
     _console("environment validation complete")
 
