@@ -482,12 +482,20 @@ else:  # pragma: no cover - ensure helper aliases exist
 import_compat.bootstrap(__name__, __file__)
 load_internal = import_compat.load_internal
 
-from shared.provenance_state import (
-    PATCH_HASH_CACHE as _PATCH_HASH_CACHE,
-    PATCH_HASH_LOCK as _PATCH_HASH_LOCK,
-    UNSIGNED_WARNING_CACHE as _UNSIGNED_WARNING_CACHE,
-    UNSIGNED_WARNING_LOCK as _UNSIGNED_WARNING_LOCK,
-)
+try:  # pragma: no cover - prefer package import when available
+    from menace_sandbox.shared.provenance_state import (
+        PATCH_HASH_CACHE as _PATCH_HASH_CACHE,
+        PATCH_HASH_LOCK as _PATCH_HASH_LOCK,
+        UNSIGNED_WARNING_CACHE as _UNSIGNED_WARNING_CACHE,
+        UNSIGNED_WARNING_LOCK as _UNSIGNED_WARNING_LOCK,
+    )
+except Exception:  # pragma: no cover - support flat execution
+    from shared.provenance_state import (  # type: ignore
+        PATCH_HASH_CACHE as _PATCH_HASH_CACHE,
+        PATCH_HASH_LOCK as _PATCH_HASH_LOCK,
+        UNSIGNED_WARNING_CACHE as _UNSIGNED_WARNING_CACHE,
+        UNSIGNED_WARNING_LOCK as _UNSIGNED_WARNING_LOCK,
+    )
 
 try:  # pragma: no cover - shared bus optional during tests
     from menace_sandbox.shared_event_bus import event_bus as _SHARED_EVENT_BUS
