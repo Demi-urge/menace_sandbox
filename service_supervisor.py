@@ -1000,9 +1000,23 @@ class ServiceSupervisor:
                         classification.should_exit,
                     )
                     registration = self.targets[name]
+                    critical_reason = None
                     if registration.critical:
+                        critical_reason = (
+                            f"registry critical flag; classification={classification.reason}"
+                        )
+                    elif classification.should_exit:
+                        critical_reason = (
+                            f"runtime classification should_exit ({classification.reason})"
+                        )
+                    if critical_reason is not None:
+                        self.logger.error(
+                            "critical service failure detected: service=%s reason=%s",
+                            name,
+                            critical_reason,
+                        )
                         raise RuntimeError(
-                            f"critical service failure for {name}: {classification.reason}"
+                            f"critical service failure for {name}: {critical_reason}"
                         )
                     self.healer.heal(name)
                     continue

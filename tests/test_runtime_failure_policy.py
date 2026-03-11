@@ -13,6 +13,23 @@ def test_classify_runtime_failure_critical_buckets():
     assert cycle.should_exit is True
 
 
+def test_classify_runtime_failure_self_improvement_and_learning_variants_are_critical():
+    learning = classify_runtime_failure(component="self_learning_service")
+    assert learning.category == "critical"
+    assert learning.reason == "self_learning_service_failure"
+    assert learning.should_exit is True
+
+    improvement = classify_runtime_failure(event="self improvement controller failed")
+    assert improvement.category == "critical"
+    assert improvement.reason == "self_improvement_cycle_failure"
+    assert improvement.should_exit is True
+
+    managed_worker = classify_runtime_failure(component="supervisor_self_coding_worker")
+    assert managed_worker.category == "critical"
+    assert managed_worker.reason == "self_coding_engine_failure"
+    assert managed_worker.should_exit is True
+
+
 def test_classify_runtime_failure_non_critical_buckets():
     telemetry = classify_runtime_failure(component="synergy_exporter", event="telemetry write failure")
     assert telemetry.category == "non_critical"
