@@ -911,13 +911,35 @@ class ServiceSupervisor:
                         "workflow integration failed after patch: %s", wf_exc
                     )
         except Exception as exc:
-            self.logger.error("patch deployment failed: %s", exc)
+            classification = classify_runtime_failure(
+                reason_code=RuntimeFailureReason.SELF_CODING_ENGINE_CRASH,
+                component="self_coding_engine",
+                error=exc,
+                event="deploy_patch_failure",
+            )
+            self.logger.error(
+                "patch deployment failed: %s (category=%s reason=%s should_exit=%s)",
+                exc,
+                classification.category,
+                classification.reason,
+                classification.should_exit,
+            )
             if self.rollback_mgr:
                 try:
                     self.rollback_mgr.auto_rollback("latest", [])
                 except Exception as rb_exc:
                     self.logger.warning("auto rollback failed: %s", rb_exc)
                     self._record_failure("rollback_failure")
+            if classification.should_exit:
+                self.logger.critical(
+                    "critical self-coding runtime failure detected: component=%s reason=%s",
+                    "self_coding_engine",
+                    classification.reason,
+                )
+                raise RuntimeError(
+                    "fatal self-coding deployment failure: "
+                    f"component=self_coding_engine reason={classification.reason}"
+                ) from exc
 
     # ------------------------------------------------------------------
     def register(
@@ -956,7 +978,35 @@ class ServiceSupervisor:
         try:
             self.fix_engine.run(bot)
         except Exception as exc:
-            self.logger.error("quick fix failed: %s", exc)
+            classification = classify_runtime_failure(
+                reason_code=RuntimeFailureReason.SELF_CODING_ENGINE_CRASH,
+                component=bot,
+                error=exc,
+                event="self_heal_quick_fix_failure",
+            )
+            self.logger.error(
+                "quick fix failed: %s (category=%s reason=%s should_exit=%s component=%s)",
+                exc,
+                classification.category,
+                classification.reason,
+                classification.should_exit,
+                bot,
+            )
+            if classification.should_exit:
+                if self.rollback_mgr:
+                    try:
+                        self.rollback_mgr.auto_rollback("latest", [])
+                    except Exception as rb_exc:
+                        self.logger.warning("auto rollback failed: %s", rb_exc)
+                        self._record_failure("rollback_failure")
+                self.logger.critical(
+                    "critical self-coding runtime failure detected: component=%s reason=%s",
+                    bot,
+                    classification.reason,
+                )
+                raise RuntimeError(
+                    f"fatal self-heal failure: component={bot} reason={classification.reason}"
+                ) from exc
         if bot in self.processes:
             self.logger.warning("restarting %s", bot)
             self._start(bot)
