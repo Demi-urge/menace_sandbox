@@ -763,6 +763,13 @@ def test_monitor_exits_when_classification_requires_exit(monkeypatch):
     assert heals == []
 
 
+def test_runnable_bot_critical_policy_self_improvement_only():
+    critical_flags = {entry.name: entry.critical for entry in ss.RUNNABLE_BOT_REGISTRY}
+
+    assert critical_flags["self_learning_service"] is True
+    assert critical_flags["self_test_service"] is False
+
+
 def test_iter_enabled_runnable_bots_filters_env(monkeypatch):
     entries = [
         types.SimpleNamespace(name="always", enabled_if_env=None),
