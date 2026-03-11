@@ -490,12 +490,21 @@ try:  # pragma: no cover - prefer package import when available
         UNSIGNED_WARNING_LOCK as _UNSIGNED_WARNING_LOCK,
     )
 except Exception:  # pragma: no cover - support flat execution
-    from shared.provenance_state import (  # type: ignore
-        PATCH_HASH_CACHE as _PATCH_HASH_CACHE,
-        PATCH_HASH_LOCK as _PATCH_HASH_LOCK,
-        UNSIGNED_WARNING_CACHE as _UNSIGNED_WARNING_CACHE,
-        UNSIGNED_WARNING_LOCK as _UNSIGNED_WARNING_LOCK,
+    _provenance_path = Path(__file__).resolve().parent / "shared" / "provenance_state.py"
+    _provenance_spec = importlib.util.spec_from_file_location(
+        "menace_sandbox.shared.provenance_state",
+        _provenance_path,
     )
+    if _provenance_spec is None or _provenance_spec.loader is None:  # pragma: no cover - defensive
+        raise ImportError(f"unable to load provenance state from {_provenance_path!s}")
+    _provenance_module = importlib.util.module_from_spec(_provenance_spec)
+    sys.modules.setdefault("shared.provenance_state", _provenance_module)
+    sys.modules.setdefault("menace_sandbox.shared.provenance_state", _provenance_module)
+    _provenance_spec.loader.exec_module(_provenance_module)
+    _PATCH_HASH_CACHE = _provenance_module.PATCH_HASH_CACHE
+    _PATCH_HASH_LOCK = _provenance_module.PATCH_HASH_LOCK
+    _UNSIGNED_WARNING_CACHE = _provenance_module.UNSIGNED_WARNING_CACHE
+    _UNSIGNED_WARNING_LOCK = _provenance_module.UNSIGNED_WARNING_LOCK
 
 try:  # pragma: no cover - shared bus optional during tests
     from menace_sandbox.shared_event_bus import event_bus as _SHARED_EVENT_BUS
