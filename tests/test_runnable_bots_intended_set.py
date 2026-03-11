@@ -23,3 +23,9 @@ def test_intended_production_tuple_is_manifest_derived():
         entry.name for entry in PRODUCTION_BOT_MANIFEST if entry.intended_for_production
     )
     assert INTENDED_PRODUCTION_BOTS == discovered
+
+
+def test_runnable_registry_tracks_manifest_entries_exactly():
+    manifest_names = tuple(entry.name for entry in PRODUCTION_BOT_MANIFEST)
+    registry_names = tuple(entry.name for entry in RUNNABLE_BOT_REGISTRY)
+    assert registry_names == manifest_names

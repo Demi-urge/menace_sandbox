@@ -2,6 +2,11 @@ from __future__ import annotations
 
 """Canonical manifest of supervisor-manageable services.
 
+Contract note:
+    In this codebase, "every bot" for production launch means every *service*
+    that the production supervisor is expected to start. Standalone runnable
+    bot modules are out-of-scope unless they are explicitly represented here.
+
 A bot is considered "intended for production" when its manifest entry sets
 ``intended_for_production=True``. This keeps production intent colocated with
 startup metadata so registry and validation logic share a single source of
