@@ -57,7 +57,6 @@ RUNNABLE_BOT_REGISTRY: tuple[RunnableBotEntry, ...] = (
         name="self_test_service",
         startup_module="service_supervisor",
         startup_callable="_self_test_worker",
-        critical=True,
         needs_context_builder=True,
     ),
     RunnableBotEntry(
