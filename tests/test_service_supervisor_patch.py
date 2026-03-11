@@ -728,7 +728,7 @@ def test_monitor_raises_on_critical_classification(monkeypatch):
         supervisor._monitor()
 
 
-def test_monitor_restarts_non_critical_even_on_should_exit(monkeypatch):
+def test_monitor_exits_when_classification_requires_exit(monkeypatch):
     supervisor = object.__new__(ss.ServiceSupervisor)
     supervisor.logger = logging.getLogger("ServiceSupervisorNonCritical")
     supervisor.logger.handlers = []
@@ -757,10 +757,10 @@ def test_monitor_restarts_non_critical_even_on_should_exit(monkeypatch):
 
     monkeypatch.setattr(ss.time, "sleep", _sleep_then_stop)
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(RuntimeError, match="runtime classification should_exit"):
         supervisor._monitor()
 
-    assert heals == ["optional_worker"]
+    assert heals == []
 
 
 def test_iter_enabled_runnable_bots_filters_env(monkeypatch):

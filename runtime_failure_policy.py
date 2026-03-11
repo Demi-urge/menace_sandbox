@@ -8,6 +8,7 @@ from dataclasses import dataclass
 CRITICAL_FAILURES = {
     "self_coding_engine_failure",
     "self_improvement_cycle_failure",
+    "self_learning_service_failure",
 }
 
 NON_CRITICAL_FAILURES = {
@@ -46,7 +47,39 @@ def classify_runtime_failure(
             should_exit=True,
         )
 
-    if "self_improvement_cycle" in haystack or "self-improvement cycle" in haystack:
+    if any(
+        marker in haystack
+        for marker in (
+            "self_coding_worker",
+            "self-coding worker",
+            "self_coding_manager",
+            "self-coding manager",
+        )
+    ):
+        return RuntimeFailureClassification(
+            category="critical",
+            reason="self_coding_engine_failure",
+            should_exit=True,
+        )
+
+    if "self_learning_service" in haystack or "self-learning service" in haystack:
+        return RuntimeFailureClassification(
+            category="critical",
+            reason="self_learning_service_failure",
+            should_exit=True,
+        )
+
+    if any(
+        marker in haystack
+        for marker in (
+            "self_improvement_cycle",
+            "self-improvement cycle",
+            "self improvement cycle",
+            "self_improvement",
+            "self-improvement",
+            "self improvement",
+        )
+    ):
         return RuntimeFailureClassification(
             category="critical",
             reason="self_improvement_cycle_failure",
@@ -87,4 +120,3 @@ __all__ = [
     "RuntimeFailureClassification",
     "classify_runtime_failure",
 ]
-

@@ -26,7 +26,12 @@ RUNNABLE_BOT_REGISTRY: tuple[RunnableBotEntry, ...] = (
     ),
     RunnableBotEntry("microtrend_service", "service_supervisor", "_microtrend_worker"),
     RunnableBotEntry("self_evaluation_service", "service_supervisor", "_self_eval_worker"),
-    RunnableBotEntry("self_learning_service", "service_supervisor", "_learning_worker"),
+    RunnableBotEntry(
+        "self_learning_service",
+        "service_supervisor",
+        "_learning_worker",
+        critical=True,
+    ),
     RunnableBotEntry("model_ranking_service", "service_supervisor", "_ranking_worker"),
     RunnableBotEntry("dependency_update_service", "service_supervisor", "_dep_update_worker"),
     RunnableBotEntry(
@@ -50,6 +55,7 @@ RUNNABLE_BOT_REGISTRY: tuple[RunnableBotEntry, ...] = (
         name="self_test_service",
         startup_module="service_supervisor",
         startup_callable="_self_test_worker",
+        critical=True,
         needs_context_builder=True,
     ),
     RunnableBotEntry(
