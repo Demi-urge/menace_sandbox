@@ -701,3 +701,28 @@ def test_dependency_watchdog_warning_is_high_signal_and_deduplicated(caplog):
     assert len([m for m in warning_lines if "crash loop detected" in m]) == 1
     assert all("Traceback" not in m for m in warning_lines)
     assert heals == ["dependency_watchdog", "dependency_watchdog"]
+
+
+def test_monitor_raises_on_critical_classification(monkeypatch):
+    supervisor = object.__new__(ss.ServiceSupervisor)
+    supervisor.logger = logging.getLogger("ServiceSupervisorCritical")
+    supervisor.logger.handlers = []
+    supervisor.logger.addHandler(logging.NullHandler())
+    supervisor.check_interval = 0.01
+    supervisor.processes = {"self_coding_engine": types.SimpleNamespace(is_alive=lambda: False)}
+    supervisor.targets = {"self_coding_engine": (lambda: None, None)}
+    supervisor.healer = types.SimpleNamespace(heal=lambda _name: None)
+
+    monkeypatch.setattr(
+        ss,
+        "classify_runtime_failure",
+        lambda **_kwargs: types.SimpleNamespace(
+            category="critical",
+            reason="self_coding_engine_failure",
+            should_exit=True,
+        ),
+    )
+    monkeypatch.setattr(ss.time, "sleep", lambda _interval: None)
+
+    with pytest.raises(RuntimeError, match="self_coding_engine_failure"):
+        supervisor._monitor()
