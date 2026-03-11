@@ -47,6 +47,22 @@ _REPO_ROOT = Path(__file__).resolve().parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+
+def _load_shared_module(module_name: str) -> ModuleType:
+    """Load a module from the local ``shared`` directory.
+
+    This fallback keeps flat execution layouts working even when ``shared``
+    is not import-resolvable via ``sys.path``.
+    """
+
+    module_path = _REPO_ROOT / "shared" / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(f"shared.{module_name}", module_path)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive guard
+        raise ModuleNotFoundError(f"Unable to load shared module: {module_name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 # Ensure key decorator symbols are available immediately to avoid circular
 # import failures when dependent modules import this module while it is still
 # initialising.
@@ -315,10 +331,15 @@ try:  # pragma: no cover - prefer package-relative import
         self_coding_import_depth,
     )
 except ModuleNotFoundError:  # pragma: no cover - support flat execution
-    from shared.self_coding_import_guard import (  # type: ignore
-        self_coding_import_guard,
-        self_coding_import_depth,
-    )
+    try:
+        from shared.self_coding_import_guard import (  # type: ignore
+            self_coding_import_guard,
+            self_coding_import_depth,
+        )
+    except ModuleNotFoundError:  # pragma: no cover - ultimate flat fallback
+        _self_coding_import_guard_module = _load_shared_module("self_coding_import_guard")
+        self_coding_import_guard = _self_coding_import_guard_module.self_coding_import_guard
+        self_coding_import_depth = _self_coding_import_guard_module.self_coding_import_depth
 
 try:  # pragma: no cover - prefer package-relative import
     from menace_sandbox.shared.cooperative_init import (
@@ -326,10 +347,15 @@ try:  # pragma: no cover - prefer package-relative import
         cooperative_init_call,
     )
 except ModuleNotFoundError:  # pragma: no cover - support flat execution
-    from shared.cooperative_init import (  # type: ignore
-        COOPERATIVE_INIT_KWARGS,
-        cooperative_init_call,
-    )
+    try:
+        from shared.cooperative_init import (  # type: ignore
+            COOPERATIVE_INIT_KWARGS,
+            cooperative_init_call,
+        )
+    except ModuleNotFoundError:  # pragma: no cover - ultimate flat fallback
+        _cooperative_init_module = _load_shared_module("cooperative_init")
+        COOPERATIVE_INIT_KWARGS = _cooperative_init_module.COOPERATIVE_INIT_KWARGS
+        cooperative_init_call = _cooperative_init_module.cooperative_init_call
 
 try:  # pragma: no cover - prefer package import when available
     from menace_sandbox.self_coding_dependency_probe import ensure_self_coding_ready
