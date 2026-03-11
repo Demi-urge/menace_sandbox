@@ -12,10 +12,11 @@ import time
 import uuid
 from importlib.util import find_spec
 from importlib import import_module
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from threading import Event
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict
 
 _PACKAGE_CONTEXT = (__package__ or "").strip()
 _USE_SCRIPT_IMPORTS = _PACKAGE_CONTEXT == ""
@@ -190,6 +191,13 @@ self_coding_managed = _coding_bot_interface.self_coding_managed
 get_orchestrator = _import_supervisor_module(
     ".shared_evolution_orchestrator", "shared_evolution_orchestrator"
 ).get_orchestrator
+
+_registry_module = _import_supervisor_module(
+    ".runnable_bots_registry", "runnable_bots_registry"
+)
+RUNNABLE_BOT_REGISTRY = _registry_module.RUNNABLE_BOT_REGISTRY
+RunnableBotEntry = _registry_module.RunnableBotEntry
+
 if _USE_SCRIPT_IMPORTS:
     from context_builder_util import create_context_builder  # noqa: E402
     from vector_service.context_builder import ContextBuilder  # noqa: E402
@@ -552,6 +560,15 @@ def _secret_rotation_worker() -> None:
 
 
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class RegisteredService:
+    target: Callable[[], None]
+    health_url: str | None = None
+    critical: bool = False
+    liveness_check: str = "process_alive"
+
+
+# ---------------------------------------------------------------------------
 @self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ServiceSupervisor:
     """Supervisor managing Menace background processes."""
@@ -575,7 +592,7 @@ class ServiceSupervisor:
         self.logger.setLevel(logging.INFO)
         self.check_interval = check_interval
         self.restart_log = restart_log
-        self.targets: Dict[str, Tuple[Callable[[], None], Optional[str]]] = {}
+        self.targets: Dict[str, RegisteredService] = {}
         self.processes: Dict[str, mp.Process] = {}
         self._pipeline_promoter: Callable[[object], None] | None = pipeline_promoter
         self._bootstrap_dependency_broker = (
@@ -908,12 +925,20 @@ class ServiceSupervisor:
         name: str,
         target: Callable[[], None],
         health_url: str | None = None,
+        *,
+        critical: bool = False,
+        liveness_check: str = "process_alive",
     ) -> None:
-        self.targets[name] = (target, health_url)
+        self.targets[name] = RegisteredService(
+            target=target,
+            health_url=health_url,
+            critical=critical,
+            liveness_check=liveness_check,
+        )
 
     # ------------------------------------------------------------------
     def _start(self, name: str) -> None:
-        target, _ = self.targets[name]
+        target = self.targets[name].target
         proc = mp.Process(target=target, name=name, daemon=True)
         proc.start()
         self.processes[name] = proc
@@ -974,7 +999,8 @@ class ServiceSupervisor:
                         classification.reason,
                         classification.should_exit,
                     )
-                    if classification.should_exit:
+                    registration = self.targets[name]
+                    if registration.critical:
                         raise RuntimeError(
                             f"critical service failure for {name}: {classification.reason}"
                         )
@@ -982,13 +1008,35 @@ class ServiceSupervisor:
                     continue
                 if name == "dependency_watchdog":
                     self._handle_dependency_watchdog_alive()
-                url = self.targets[name][1]
+                registration = self.targets[name]
+                url = registration.health_url
                 if url:
                     try:
                         self.healer.probe_and_heal(name, url)
                     except Exception as exc:
                         self.logger.warning("health probe failed for %s: %s", name, exc)
                         self._record_failure("probe_failure")
+
+
+def _resolve_registry_callable(entry: RunnableBotEntry, builder: ContextBuilder) -> Callable[[], None]:
+    module_name = entry.startup_module
+    if module_name in {"service_supervisor", __name__, f"{_PACKAGE_NAME}.service_supervisor"}:
+        module = sys.modules[__name__]
+    else:
+        module = import_module(module_name)
+    target = getattr(module, entry.startup_callable)
+    if entry.needs_context_builder:
+        return partial(target, builder)
+    return target
+
+
+def _iter_enabled_runnable_bots() -> list[RunnableBotEntry]:
+    enabled: list[RunnableBotEntry] = []
+    for entry in RUNNABLE_BOT_REGISTRY:
+        if entry.enabled_if_env and os.getenv(entry.enabled_if_env) != "1":
+            continue
+        enabled.append(entry)
+    return enabled
 
 
 # ---------------------------------------------------------------------------
@@ -1015,25 +1063,15 @@ def main() -> None:
     )
     builder = create_context_builder()
     sup = ServiceSupervisor(context_builder=builder)
-    sup.register("orchestrator", partial(_orchestrator_worker, builder))
-    sup.register("microtrend_service", _microtrend_worker)
-    sup.register("self_evaluation_service", _self_eval_worker)
-    sup.register("self_learning_service", _learning_worker)
-    sup.register("model_ranking_service", _ranking_worker)
-    sup.register("dependency_update_service", _dep_update_worker)
-    sup.register("chaos_monitoring_service", partial(_chaos_worker, builder))
-    sup.register("model_evaluation_service", _eval_worker)
-    sup.register("debug_loop_service", partial(_debug_worker, builder))
-    sup.register("dependency_watchdog", _dependency_provision_worker)
-    sup.register("dependency_monitor", _dependency_monitor_worker)
-    sup.register("environment_restoration", _env_restore_worker)
-    sup.register("unified_update_service", _update_worker)
-    sup.register("self_test_service", partial(_self_test_worker, builder))
-    if os.getenv("ENABLE_AUTOSCALER") == "1":
-        sup.register("autoscaler", _autoscale_worker)
-    if os.getenv("AUTO_ROTATE_SECRETS") == "1":
-        sup.register("secret_rotation_service", _secret_rotation_worker)
+    for entry in _iter_enabled_runnable_bots():
+        sup.register(
+            entry.name,
+            _resolve_registry_callable(entry, builder),
+            health_url=entry.health_endpoint,
+            critical=entry.critical,
+            liveness_check=entry.liveness_check,
+        )
     sup.start_all()
 
 
-__all__ = ["ServiceSupervisor", "main"]
+__all__ = ["RegisteredService", "ServiceSupervisor", "main"]

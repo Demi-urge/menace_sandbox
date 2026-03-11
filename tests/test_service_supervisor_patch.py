@@ -710,7 +710,7 @@ def test_monitor_raises_on_critical_classification(monkeypatch):
     supervisor.logger.addHandler(logging.NullHandler())
     supervisor.check_interval = 0.01
     supervisor.processes = {"self_coding_engine": types.SimpleNamespace(is_alive=lambda: False)}
-    supervisor.targets = {"self_coding_engine": (lambda: None, None)}
+    supervisor.targets = {"self_coding_engine": ss.RegisteredService(target=lambda: None, critical=True)}
     supervisor.healer = types.SimpleNamespace(heal=lambda _name: None)
 
     monkeypatch.setattr(
@@ -726,3 +726,54 @@ def test_monitor_raises_on_critical_classification(monkeypatch):
 
     with pytest.raises(RuntimeError, match="self_coding_engine_failure"):
         supervisor._monitor()
+
+
+def test_monitor_restarts_non_critical_even_on_should_exit(monkeypatch):
+    supervisor = object.__new__(ss.ServiceSupervisor)
+    supervisor.logger = logging.getLogger("ServiceSupervisorNonCritical")
+    supervisor.logger.handlers = []
+    supervisor.logger.addHandler(logging.NullHandler())
+    supervisor.check_interval = 0.01
+    supervisor.processes = {"optional_worker": types.SimpleNamespace(is_alive=lambda: False)}
+    supervisor.targets = {"optional_worker": ss.RegisteredService(target=lambda: None, critical=False)}
+    heals: list[str] = []
+    supervisor.healer = types.SimpleNamespace(heal=lambda name: heals.append(name))
+
+    monkeypatch.setattr(
+        ss,
+        "classify_runtime_failure",
+        lambda **_kwargs: types.SimpleNamespace(
+            category="critical",
+            reason="optional_worker_failure",
+            should_exit=True,
+        ),
+    )
+    sleep_calls = {"count": 0}
+
+    def _sleep_then_stop(_interval):
+        sleep_calls["count"] += 1
+        if sleep_calls["count"] > 1:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(ss.time, "sleep", _sleep_then_stop)
+
+    with pytest.raises(KeyboardInterrupt):
+        supervisor._monitor()
+
+    assert heals == ["optional_worker"]
+
+
+def test_iter_enabled_runnable_bots_filters_env(monkeypatch):
+    entries = [
+        types.SimpleNamespace(name="always", enabled_if_env=None),
+        types.SimpleNamespace(name="gated", enabled_if_env="ENABLE_FOO"),
+    ]
+    monkeypatch.setattr(ss, "RUNNABLE_BOT_REGISTRY", tuple(entries))
+    monkeypatch.delenv("ENABLE_FOO", raising=False)
+
+    selected = ss._iter_enabled_runnable_bots()
+    assert [entry.name for entry in selected] == ["always"]
+
+    monkeypatch.setenv("ENABLE_FOO", "1")
+    selected = ss._iter_enabled_runnable_bots()
+    assert [entry.name for entry in selected] == ["always", "gated"]
