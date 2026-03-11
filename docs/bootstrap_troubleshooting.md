@@ -48,10 +48,18 @@ Following this pattern keeps the guardrails intact and prevents new helpers from
 
 ## Adding a new production bot/service for supervisor launch + health policy
 
-The supervisor only launches services that are present in `RUNNABLE_BOT_REGISTRY`, and health policy (`critical`, liveness checks, health endpoints) is derived from each registry entry. Production intent is now declared in the canonical `PRODUCTION_BOT_MANIFEST` (`production_bot_manifest.py`) via `intended_for_production=True`.
+The supervisor only launches services that are present in `RUNNABLE_BOT_REGISTRY`, and health policy (`critical`, liveness checks, health endpoints) is derived from each registry entry. Production intent is declared in the canonical `PRODUCTION_BOT_MANIFEST` (`production_bot_manifest.py`) via `intended_for_production=True`.
 
-1. Add a new `ProductionBotManifestEntry` in `production_bot_manifest.py` with the startup callable and health policy fields.
-2. Keep `intended_for_production=True` when the bot should launch in production (set it to `False` for non-production-only entries).
-3. Run `pytest tests/test_runnable_bots_intended_set.py`.
+### Contract: what "every bot" means here
 
-`RUNNABLE_BOT_REGISTRY` and `INTENDED_PRODUCTION_BOTS` are generated from this manifest, and the validation test fails if production-intended names are missing from `RUNNABLE_BOT_REGISTRY`. This onboarding rule means that adding a new production bot must include supervisor registration metadata in the manifest, or CI will fail.
+For production launch orchestration, "every bot" currently means every **production supervisor service**.
+Runnable modules that are not represented in `PRODUCTION_BOT_MANIFEST` are intentionally excluded from `INTENDED_PRODUCTION_BOTS` and from supervisor startup wiring.
+
+If you want an additional runnable module to count as an "every bot" production target, promote it to a supervisor-managed service by adding manifest metadata for it. Without manifest registration, the module is not in the launch contract.
+
+1. Add a new `ProductionBotManifestEntry` in `production_bot_manifest.py` with startup callable and health policy fields.
+2. Keep `intended_for_production=True` when the service should launch in production (set it to `False` for non-production-only entries).
+3. Ensure the startup callable is importable and supervisor-safe.
+4. Run `pytest tests/test_runnable_bots_intended_set.py`.
+
+`RUNNABLE_BOT_REGISTRY` and `INTENDED_PRODUCTION_BOTS` are generated from this manifest, and validation tests fail if production-intended services are missing from registry/supervisor orchestration. This rule keeps production launch intent and launch wiring aligned.

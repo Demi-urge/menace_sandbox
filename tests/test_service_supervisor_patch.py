@@ -784,3 +784,56 @@ def test_iter_enabled_runnable_bots_filters_env(monkeypatch):
     monkeypatch.setenv("ENABLE_FOO", "1")
     selected = ss._iter_enabled_runnable_bots()
     assert [entry.name for entry in selected] == ["always", "gated"]
+
+
+def test_main_registers_every_enabled_runnable_bot(monkeypatch):
+    entries = [
+        types.SimpleNamespace(
+            name="always",
+            health_endpoint="http://always",
+            critical=False,
+            liveness_check="process_alive",
+            enabled_if_env=None,
+        ),
+        types.SimpleNamespace(
+            name="gated",
+            health_endpoint=None,
+            critical=True,
+            liveness_check="process_alive",
+            enabled_if_env="ENABLE_FOO",
+        ),
+    ]
+
+    class _FakeBootstrapper:
+        def bootstrap(self):
+            return None
+
+        def readiness_state(self):
+            return {"gates": {}}
+
+    registered: list[tuple[str, str | None, bool, str]] = []
+
+    class _FakeSupervisor:
+        def __init__(self, context_builder):
+            self.context_builder = context_builder
+
+        def register(self, name, target, health_url=None, critical=False, liveness_check="process_alive"):
+            registered.append((name, health_url, critical, liveness_check))
+
+        def start_all(self):
+            return None
+
+    monkeypatch.setattr(ss, "RUNNABLE_BOT_REGISTRY", tuple(entries))
+    monkeypatch.setattr(ss, "EnvironmentBootstrapper", _FakeBootstrapper)
+    monkeypatch.setattr(ss, "create_context_builder", lambda: object())
+    monkeypatch.setattr(ss, "ServiceSupervisor", _FakeSupervisor)
+    monkeypatch.setattr(ss, "_resolve_registry_callable", lambda _entry, _builder: (lambda: None))
+
+    monkeypatch.delenv("ENABLE_FOO", raising=False)
+    ss.main()
+    assert [name for name, *_ in registered] == ["always"]
+
+    registered.clear()
+    monkeypatch.setenv("ENABLE_FOO", "1")
+    ss.main()
+    assert [name for name, *_ in registered] == ["always", "gated"]
