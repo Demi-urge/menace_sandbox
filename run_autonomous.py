@@ -209,6 +209,7 @@ path_for_prompt = getattr(
 )
 from sandbox_settings import SandboxSettings
 from dependency_hints import format_system_package_instructions
+from runtime_failure_policy import classify_runtime_failure
 
 
 def _extract_flag_value(argv: List[str], flag: str) -> str | None:
@@ -3891,14 +3892,38 @@ def bootstrap(
             return
         while not monitor_stop.wait(5.0):
             if learn_thread.exception is not None:
-                logger.critical(
-                    "self-learning service failed", exc_info=learn_thread.exception
+                classification = classify_runtime_failure(
+                    component="self_improvement_cycle",
+                    error=learn_thread.exception,
+                    event="self_learning_service_exception",
                 )
-                _thread.interrupt_main()
+                logger.critical(
+                    "self-learning service failed (category=%s reason=%s should_exit=%s)",
+                    classification.category,
+                    classification.reason,
+                    classification.should_exit,
+                    exc_info=learn_thread.exception,
+                )
+                if classification.should_exit:
+                    _thread.interrupt_main()
+                    return
+                logger.warning("non-critical learning thread failure; continuing")
                 return
             if not learn_thread.is_alive():
-                logger.critical("self-learning service exited unexpectedly")
-                _thread.interrupt_main()
+                classification = classify_runtime_failure(
+                    component="self_improvement_cycle",
+                    event="self_learning_service_unexpected_exit",
+                )
+                logger.critical(
+                    "self-learning service exited unexpectedly (category=%s reason=%s should_exit=%s)",
+                    classification.category,
+                    classification.reason,
+                    classification.should_exit,
+                )
+                if classification.should_exit:
+                    _thread.interrupt_main()
+                    return
+                logger.warning("non-critical learning thread exit; continuing")
                 return
 
     monitor_thread = threading.Thread(target=_monitor_learning, daemon=True)

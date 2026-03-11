@@ -58,6 +58,11 @@ def _import_supervisor_module(package_module: str, script_module: str):
 
 log_record = _import_supervisor_module(".logging_utils", "logging_utils").log_record
 
+if _USE_SCRIPT_IMPORTS:
+    from runtime_failure_policy import classify_runtime_failure
+else:
+    from .runtime_failure_policy import classify_runtime_failure
+
 def _hydrate_bootstrap_timeout_env() -> dict[str, float]:
     guard_bootstrap_wait_env()
     defaults = derive_bootstrap_timeout_env(
@@ -958,6 +963,21 @@ class ServiceSupervisor:
                     if name == "dependency_watchdog":
                         self._handle_dependency_watchdog_exit(now)
                         continue
+                    classification = classify_runtime_failure(
+                        component=name,
+                        event="service_process_exit",
+                    )
+                    self.logger.warning(
+                        "service %s exited (category=%s reason=%s should_exit=%s)",
+                        name,
+                        classification.category,
+                        classification.reason,
+                        classification.should_exit,
+                    )
+                    if classification.should_exit:
+                        raise RuntimeError(
+                            f"critical service failure for {name}: {classification.reason}"
+                        )
                     self.healer.heal(name)
                     continue
                 if name == "dependency_watchdog":
