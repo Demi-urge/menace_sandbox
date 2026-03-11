@@ -241,6 +241,17 @@ async def live() -> Dict[str, str]:  # pragma: no cover - trivial
 
 @app.get("/health/ready")
 async def ready() -> Dict[str, Any]:
+    return _ready_payload()
+
+
+@app.get("/ready")
+async def ready_alias() -> Dict[str, Any]:
+    """Compatibility alias for legacy readiness probes."""
+
+    return _ready_payload()
+
+
+def _ready_payload() -> Dict[str, Any]:
     thread = getattr(app.state, "watch_thread", None)
     watcher_alive = bool(thread and thread.is_alive())
     scheduler = getattr(app.state, "embedding_scheduler", None)
