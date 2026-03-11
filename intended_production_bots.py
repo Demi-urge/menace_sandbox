@@ -1,29 +1,17 @@
 from __future__ import annotations
 
-"""Canonical list of supervisor-managed production services.
+"""Derived list of services intended for production supervisor launch.
 
-The names in :data:`INTENDED_PRODUCTION_BOTS` represent the services that should
-exist in ``RUNNABLE_BOT_REGISTRY`` so they are eligible for supervisor launch
-and runtime health policy enforcement.
+Production intent is declared in :mod:`production_bot_manifest` via the
+``ProductionBotManifestEntry.intended_for_production`` marker.
+:data:`INTENDED_PRODUCTION_BOTS` is generated from that canonical manifest to
+avoid drift between intent and supervisor registry wiring.
 """
 
-INTENDED_PRODUCTION_BOTS: tuple[str, ...] = (
-    "orchestrator",
-    "microtrend_service",
-    "self_evaluation_service",
-    "self_learning_service",
-    "model_ranking_service",
-    "dependency_update_service",
-    "chaos_monitoring_service",
-    "model_evaluation_service",
-    "debug_loop_service",
-    "dependency_watchdog",
-    "dependency_monitor",
-    "environment_restoration",
-    "unified_update_service",
-    "self_test_service",
-    "autoscaler",
-    "secret_rotation_service",
+from production_bot_manifest import PRODUCTION_BOT_MANIFEST
+
+INTENDED_PRODUCTION_BOTS: tuple[str, ...] = tuple(
+    entry.name for entry in PRODUCTION_BOT_MANIFEST if entry.intended_for_production
 )
 
 
