@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from intended_production_bots import INTENDED_PRODUCTION_BOTS
+
 
 @dataclass(frozen=True)
 class RunnableBotEntry:
@@ -73,4 +75,4 @@ RUNNABLE_BOT_REGISTRY: tuple[RunnableBotEntry, ...] = (
 )
 
 
-__all__ = ["RunnableBotEntry", "RUNNABLE_BOT_REGISTRY"]
+__all__ = ["RunnableBotEntry", "RUNNABLE_BOT_REGISTRY", "INTENDED_PRODUCTION_BOTS"]
