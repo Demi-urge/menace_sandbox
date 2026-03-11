@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from intended_production_bots import INTENDED_PRODUCTION_BOTS
+from production_bot_manifest import PRODUCTION_BOT_MANIFEST
 
 
 @dataclass(frozen=True)
@@ -19,58 +20,18 @@ class RunnableBotEntry:
     needs_context_builder: bool = False
 
 
-RUNNABLE_BOT_REGISTRY: tuple[RunnableBotEntry, ...] = (
+RUNNABLE_BOT_REGISTRY: tuple[RunnableBotEntry, ...] = tuple(
     RunnableBotEntry(
-        name="orchestrator",
-        startup_module="service_supervisor",
-        startup_callable="_orchestrator_worker",
-        needs_context_builder=True,
-    ),
-    RunnableBotEntry("microtrend_service", "service_supervisor", "_microtrend_worker"),
-    RunnableBotEntry("self_evaluation_service", "service_supervisor", "_self_eval_worker"),
-    RunnableBotEntry(
-        "self_learning_service",
-        "service_supervisor",
-        "_learning_worker",
-        critical=True,
-    ),
-    RunnableBotEntry("model_ranking_service", "service_supervisor", "_ranking_worker"),
-    RunnableBotEntry("dependency_update_service", "service_supervisor", "_dep_update_worker"),
-    RunnableBotEntry(
-        name="chaos_monitoring_service",
-        startup_module="service_supervisor",
-        startup_callable="_chaos_worker",
-        needs_context_builder=True,
-    ),
-    RunnableBotEntry("model_evaluation_service", "service_supervisor", "_eval_worker"),
-    RunnableBotEntry(
-        name="debug_loop_service",
-        startup_module="service_supervisor",
-        startup_callable="_debug_worker",
-        needs_context_builder=True,
-    ),
-    RunnableBotEntry("dependency_watchdog", "service_supervisor", "_dependency_provision_worker"),
-    RunnableBotEntry("dependency_monitor", "service_supervisor", "_dependency_monitor_worker"),
-    RunnableBotEntry("environment_restoration", "service_supervisor", "_env_restore_worker"),
-    RunnableBotEntry("unified_update_service", "service_supervisor", "_update_worker"),
-    RunnableBotEntry(
-        name="self_test_service",
-        startup_module="service_supervisor",
-        startup_callable="_self_test_worker",
-        needs_context_builder=True,
-    ),
-    RunnableBotEntry(
-        name="autoscaler",
-        startup_module="service_supervisor",
-        startup_callable="_autoscale_worker",
-        enabled_if_env="ENABLE_AUTOSCALER",
-    ),
-    RunnableBotEntry(
-        name="secret_rotation_service",
-        startup_module="service_supervisor",
-        startup_callable="_secret_rotation_worker",
-        enabled_if_env="AUTO_ROTATE_SECRETS",
-    ),
+        name=entry.name,
+        startup_module=entry.startup_module,
+        startup_callable=entry.startup_callable,
+        health_endpoint=entry.health_endpoint,
+        liveness_check=entry.liveness_check,
+        critical=entry.critical,
+        enabled_if_env=entry.enabled_if_env,
+        needs_context_builder=entry.needs_context_builder,
+    )
+    for entry in PRODUCTION_BOT_MANIFEST
 )
 
 

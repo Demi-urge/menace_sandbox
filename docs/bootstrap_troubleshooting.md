@@ -48,10 +48,10 @@ Following this pattern keeps the guardrails intact and prevents new helpers from
 
 ## Adding a new production bot/service for supervisor launch + health policy
 
-The supervisor only launches services that are present in `RUNNABLE_BOT_REGISTRY`, and health policy (`critical`, liveness checks, health endpoints) is derived from each registry entry. To keep intended production services explicit and validated:
+The supervisor only launches services that are present in `RUNNABLE_BOT_REGISTRY`, and health policy (`critical`, liveness checks, health endpoints) is derived from each registry entry. Production intent is now declared in the canonical `PRODUCTION_BOT_MANIFEST` (`production_bot_manifest.py`) via `intended_for_production=True`.
 
-1. Add the bot name to `INTENDED_PRODUCTION_BOTS` in `intended_production_bots.py`.
-2. Add a matching `RunnableBotEntry` in `runnable_bots_registry.py` with the correct startup callable and health policy fields.
+1. Add a new `ProductionBotManifestEntry` in `production_bot_manifest.py` with the startup callable and health policy fields.
+2. Keep `intended_for_production=True` when the bot should launch in production (set it to `False` for non-production-only entries).
 3. Run `pytest tests/test_runnable_bots_intended_set.py`.
 
-The validation test fails if an intended production bot name is missing from `RUNNABLE_BOT_REGISTRY`. This prevents drift where a service is considered intended for production but is accidentally excluded from supervisor launch and policy enforcement.
+`RUNNABLE_BOT_REGISTRY` and `INTENDED_PRODUCTION_BOTS` are generated from this manifest, and the validation test fails if production-intended names are missing from `RUNNABLE_BOT_REGISTRY`. This onboarding rule means that adding a new production bot must include supervisor registration metadata in the manifest, or CI will fail.
