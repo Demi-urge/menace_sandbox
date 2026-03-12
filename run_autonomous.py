@@ -658,6 +658,8 @@ def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
             return True
     runs_val = _extract_flag_value(argv, "--runs")
     if runs_val is not None:
+        if runs_val.strip().lower() in {"inf", "infinite", "forever"}:
+            return False
         try:
             if int(runs_val) <= 0:
                 return True
@@ -1142,6 +1144,12 @@ _LKM_REFRESH_THREAD: threading.Thread | None = None
 
 
 def _build_argument_parser(settings: SandboxSettings | None = None) -> argparse.ArgumentParser:
+    def _parse_runs_arg(value: str) -> int | None:
+        token = str(value).strip().lower()
+        if token in {"inf", "infinite", "forever"}:
+            return None
+        return int(value)
+
     parser = argparse.ArgumentParser(
         description="Run full autonomous sandbox with environment presets",
     )
@@ -1183,9 +1191,12 @@ def _build_argument_parser(settings: SandboxSettings | None = None) -> argparse.
     )
     parser.add_argument(
         "--runs",
-        type=int,
+        type=_parse_runs_arg,
         default=1,
-        help="maximum number of full sandbox runs to execute",
+        help=(
+            "maximum number of full sandbox runs to execute "
+            "(use 'inf' for unbounded runs)"
+        ),
     )
     parser.add_argument(
         "--ack-autonomous-ready",

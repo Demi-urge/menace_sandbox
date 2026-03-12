@@ -429,3 +429,21 @@ def test_discover_isolated_flag_overrides_env(monkeypatch, tmp_path):
     sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
     assert capture.get("discover_isolated") is True
     assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
+
+
+def test_runs_inf_cli_token_maps_to_unbounded(monkeypatch):
+    mod = _load_module(monkeypatch)
+
+    parser = mod._build_argument_parser(None)
+    args = parser.parse_args(["--runs", "inf"])
+
+    assert args.runs is None
+
+
+def test_runs_forever_cli_token_maps_to_unbounded(monkeypatch):
+    mod = _load_module(monkeypatch)
+
+    parser = mod._build_argument_parser(None)
+    args = parser.parse_args(["--runs", "forever"])
+
+    assert args.runs is None
