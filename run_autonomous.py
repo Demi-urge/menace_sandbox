@@ -1495,7 +1495,7 @@ if __name__ == "__main__":
         _DEFER_BOOTSTRAP = _DEFER_BOOTSTRAP or (
             parsed.check_settings
             or parsed.smoke_test
-            or _runs_requests_noop(parsed.runs)
+            or (parsed.runs is not None and parsed.runs <= 0)
             or parsed.max_iterations <= 0
         )
 

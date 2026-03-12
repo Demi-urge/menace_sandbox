@@ -447,17 +447,3 @@ def test_runs_forever_cli_token_maps_to_unbounded(monkeypatch):
     args = parser.parse_args(["--runs", "forever"])
 
     assert args.runs is None
-
-
-def test_runs_requests_noop_handles_unbounded_runs(monkeypatch):
-    mod = _load_module(monkeypatch)
-
-    assert mod._runs_requests_noop(None) is False
-
-
-def test_runs_requests_noop_handles_zero_and_negative(monkeypatch):
-    mod = _load_module(monkeypatch)
-
-    assert mod._runs_requests_noop(0) is True
-    assert mod._runs_requests_noop(-1) is True
-    assert mod._runs_requests_noop(1) is False
