@@ -58,3 +58,15 @@ def test_invalid_database_url_raises_in_production(monkeypatch):
 
     with pytest.raises(ValueError):
         importlib.reload(env_config)
+
+
+def test_load_env_runtime_file_overrides_process_env(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env.runtime"
+    env_file.write_text("DATABASE_URL=sqlite:///runtime.db\n", encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///shell.db")
+
+    import env_config
+
+    env_config.load_env(str(env_file))
+
+    assert env_config.os.getenv("DATABASE_URL") == "sqlite:///runtime.db"

@@ -634,11 +634,13 @@ def auto_configure_env(settings: SandboxSettings) -> None:
     bundle.
     """
 
+    env_readonly = os.getenv("MENACE_ENV_READONLY", "1") == "1"
     env_file = Path(getattr(settings, "menace_env_file", ".env"))
     if not env_file.is_absolute():
         env_file = repo_root() / env_file
-    ensure_env(str(env_file))
-    DefaultConfigManager(str(env_file)).apply_defaults()
+    if not env_readonly:
+        ensure_env(str(env_file))
+        DefaultConfigManager(str(env_file)).apply_defaults()
 
     # load existing env file into a dictionary for easy updates
     existing: dict[str, str] = {}
@@ -685,7 +687,7 @@ def auto_configure_env(settings: SandboxSettings) -> None:
         existing["MODELS"] = str(model_path)
         changed = True
 
-    if changed:
+    if changed and not env_readonly:
         env_file.write_text("\n".join(f"{k}={v}" for k, v in sorted(existing.items())))
 
 
