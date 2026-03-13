@@ -675,6 +675,12 @@ def _should_defer_bootstrap(argv: List[str] | None = None) -> bool:
     return False
 
 
+def _runs_requests_noop(runs: int | None) -> bool:
+    """Return ``True`` when ``runs`` requests no autonomous execution."""
+
+    return runs is not None and runs <= 0
+
+
 _ORIGINAL_LOGGER_ERROR = logging.Logger.error
 _ORIGINAL_LOGGER_WARNING = logging.Logger.warning
 
@@ -2917,7 +2923,7 @@ def main(argv: List[str] | None = None) -> None:
         _ensure_repo_path_environment()
 
     if (
-        args.runs == 0
+        _runs_requests_noop(args.runs)
         and not args.check_settings
         and not args.foresight_trend
         and not args.foresight_stable
